@@ -1,0 +1,50 @@
+[tools]
+dotnet = "10.0"
+
+[tasks.restore]
+run = "dotnet restore"
+
+[tasks.tool-restore]
+run = "dotnet tool restore"
+
+[tasks.build]
+run = "dotnet build"
+depends = ["restore"]
+
+[tasks.test]
+run = "dotnet test --coverage --coverage-output-format cobertura --coverage-output $PWD/coverage/coverage.cobertura.xml"
+depends = ["build"]
+
+[tasks.format]
+run = "dotnet fantomas src/ tests/"
+depends = ["tool-restore"]
+
+[tasks.format-check]
+run = "dotnet fantomas src/ tests/ --check"
+depends = ["tool-restore"]
+
+[tasks.lint]
+run = "dotnet fsharplint lint FSharpOssTooling.slnx"
+depends = ["build", "tool-restore"]
+
+[tasks.check]
+depends = ["format", "lint", "docs"]
+
+[tasks.ci]
+depends = ["format-check", "lint", "docs"]
+
+[tasks.pack]
+run = """
+dotnet pack src/CoverageRatchet/CoverageRatchet.fsproj -c Release -o artifacts/
+dotnet pack src/SyncDocs/SyncDocs.fsproj -c Release -o artifacts/
+dotnet pack src/FsSemanticTagger/FsSemanticTagger.fsproj -c Release -o artifacts/
+"""
+depends = ["build"]
+
+[tasks.docs]
+run = "dotnet fsdocs build --output output/docs --clean"
+depends = ["build", "tool-restore"]
+
+[tasks.docs-watch]
+run = "dotnet fsdocs watch"
+depends = ["build", "tool-restore"]
