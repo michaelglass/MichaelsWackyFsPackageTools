@@ -78,7 +78,9 @@ let parseXml (xmlContent: string) : FileCoverage list =
 
                             match branchMap.TryGetValue(lineNum) with
                             | true, (existingC, existingT) ->
-                                branchMap.[lineNum] <- (max existingC covered, max existingT total)
+                                // Keep the entry with the better coverage ratio
+                                if covered * existingT > existingC * total then
+                                    branchMap.[lineNum] <- (covered, total)
                             | false, _ -> branchMap.[lineNum] <- (covered, total)
 
         let totalLines = lineMap.Count
