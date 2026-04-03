@@ -50,27 +50,20 @@ let getAssemblySearchPaths (dllPath: string) : string list =
         if Directory.Exists(sharedBase) then
             Directory.GetDirectories(sharedBase)
             |> Array.toList
-            |> List.collect (fun fwDir ->
-                Directory.GetDirectories(fwDir) |> Array.toList)
+            |> List.collect (fun fwDir -> Directory.GetDirectories(fwDir) |> Array.toList)
         else
             []
 
     let nugetDirs =
         let home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
 
-        let nugetBase =
-            Path.Combine(home, ".nuget", "packages", "fsharp.core")
+        let nugetBase = Path.Combine(home, ".nuget", "packages", "fsharp.core")
 
         if Directory.Exists(nugetBase) then
             Directory.GetDirectories(nugetBase)
             |> Array.toList
             |> List.collect (fun versionDir ->
-                let tfms =
-                    [ "net10.0"
-                      "net9.0"
-                      "net8.0"
-                      "netstandard2.1"
-                      "netstandard2.0" ]
+                let tfms = [ "net10.0"; "net9.0"; "net8.0"; "netstandard2.1"; "netstandard2.0" ]
 
                 tfms
                 |> List.map (fun tfm -> Path.Combine(versionDir, "lib", tfm))
@@ -93,7 +86,8 @@ let createResolver (dllPath: string) : MetadataAssemblyResolver =
                 [])
 
     // Deduplicate by filename, keeping first occurrence (search paths are priority-ordered)
-    let seen = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    let seen =
+        System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
 
     let uniqueDlls =
         allDlls
@@ -110,10 +104,7 @@ let rec formatTypeName (t: Type) : string =
     elif t.IsGenericType then
         let baseName = t.Name.Substring(0, t.Name.IndexOf('`'))
 
-        let args =
-            t.GetGenericArguments()
-            |> Array.map formatTypeName
-            |> String.concat ", "
+        let args = t.GetGenericArguments() |> Array.map formatTypeName |> String.concat ", "
 
         sprintf "%s<%s>" baseName args
     else
@@ -124,8 +115,7 @@ let extractFromAssembly (dllPath: string) : ApiSignature list =
     let resolver = createResolver dllPath
     use context = new MetadataLoadContext(resolver)
 
-    let assembly =
-        context.LoadFromAssemblyPath(Path.GetFullPath(dllPath))
+    let assembly = context.LoadFromAssemblyPath(Path.GetFullPath(dllPath))
 
     [ for t in assembly.GetExportedTypes() do
           yield ApiSignature(sprintf "type %s" t.FullName)
@@ -144,10 +134,7 @@ let extractFromAssembly (dllPath: string) : ApiSignature list =
                       |> Array.map (fun p -> formatTypeName p.ParameterType)
                       |> String.concat ", "
 
-                  yield
-                      ApiSignature(
-                          sprintf "  %s::%s(%s): %s" t.Name m.Name ps (formatTypeName m.ReturnType)
-                      )
+                  yield ApiSignature(sprintf "  %s::%s(%s): %s" t.Name m.Name ps (formatTypeName m.ReturnType))
 
           // Properties
           for p in
@@ -157,18 +144,10 @@ let extractFromAssembly (dllPath: string) : ApiSignature list =
                   ||| BindingFlags.Static
                   ||| BindingFlags.DeclaredOnly
               ) do
-              yield
-                  ApiSignature(
-                      sprintf "  %s::%s: %s" t.Name p.Name (formatTypeName p.PropertyType)
-                  )
+              yield ApiSignature(sprintf "  %s::%s: %s" t.Name p.Name (formatTypeName p.PropertyType))
 
           // Constructors
-          for c in
-              t.GetConstructors(
-                  BindingFlags.Public
-                  ||| BindingFlags.Instance
-                  ||| BindingFlags.DeclaredOnly
-              ) do
+          for c in t.GetConstructors(BindingFlags.Public ||| BindingFlags.Instance ||| BindingFlags.DeclaredOnly) do
               let ps =
                   c.GetParameters()
                   |> Array.map (fun p -> formatTypeName p.ParameterType)

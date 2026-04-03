@@ -1,0 +1,19 @@
+{
+  "overrides": {
+    "Cobertura.fs": {
+      "line": 98.82352941176471,
+      "branch": 87.03703703703704,
+      "reason": "F# compiler generates extra branches for null checks and pattern matching"
+    },
+    "Program.fs": {
+      "line": 88.23529411764706,
+      "branch": 80.76923076923077,
+      "reason": "CLI entry point with private functions and CWD-dependent file discovery"
+    },
+    "Thresholds.fs": {
+      "line": 98.59154929577466,
+      "branch": 80,
+      "reason": "F# compiler generates extra branches for pattern matching"
+    }
+  }
+}

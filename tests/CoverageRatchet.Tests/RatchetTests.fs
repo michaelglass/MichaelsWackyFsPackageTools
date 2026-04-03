@@ -103,3 +103,23 @@ let ``ratchet handles files not in overrides`` () =
     test <@ result.Overrides.["Foo.fs"].Line = 75.0 @>
     // Bar.fs should NOT get a new override (it wasn't in overrides before)
     test <@ result.Overrides.ContainsKey("Bar.fs") = false @>
+
+[<Fact>]
+let ``ratchet keeps override unchanged when file not in coverage data`` () =
+    let config =
+        { defaultsConfig with
+            Overrides =
+                Map.ofList
+                    [ "Missing.fs",
+                      { Line = 60.0
+                        Branch = 50.0
+                        Reason = "file removed or not covered" } ] }
+
+    // Coverage data has no entry for Missing.fs
+    let files = [ makeFile "Other.fs" 100.0 100.0 4 4 ]
+    let result = ratchet config files
+
+    test <@ result.Overrides.ContainsKey("Missing.fs") @>
+    test <@ result.Overrides.["Missing.fs"].Line = 60.0 @>
+    test <@ result.Overrides.["Missing.fs"].Branch = 50.0 @>
+    test <@ result.Overrides.["Missing.fs"].Reason = "file removed or not covered" @>

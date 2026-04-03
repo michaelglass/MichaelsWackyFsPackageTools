@@ -18,7 +18,11 @@
     <Compile Include="VersionTests.fs" />
     <Compile Include="ApiTests.fs" />
     <Compile Include="ConfigTests.fs" />
+    <Compile Include="ShellTests.fs" />
+    <Compile Include="VcsTests.fs" />
+    <Compile Include="ReleaseTests.fs" />
     <Compile Include="BumpTests.fs" />
+    <Compile Include="ProgramTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />

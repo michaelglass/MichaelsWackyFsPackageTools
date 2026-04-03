@@ -14,17 +14,14 @@ type FileCoverage =
 
 let private includedExtensions = [| ".fs" |]
 
-let private excludedPatterns =
-    [| "Test"; "AssemblyInfo"; "AssemblyAttributes" |]
+let private excludedPatterns = [| "Test"; "AssemblyInfo"; "AssemblyAttributes" |]
 
 let private branchRegex = Regex(@"\((\d+)/(\d+)\)", RegexOptions.Compiled)
 
 let private isIncluded (fileName: string) =
-    let hasValidExt =
-        includedExtensions |> Array.exists fileName.EndsWith
+    let hasValidExt = includedExtensions |> Array.exists fileName.EndsWith
 
-    let isExcluded =
-        excludedPatterns |> Array.exists fileName.Contains
+    let isExcluded = excludedPatterns |> Array.exists fileName.Contains
 
     hasValidExt && not isExcluded
 
@@ -46,11 +43,9 @@ let parseXml (xmlContent: string) : FileCoverage list =
     |> List.map (fun (fileName, items) ->
         let classElements = items |> List.map snd
 
-        let lineMap =
-            System.Collections.Generic.Dictionary<int, bool>()
+        let lineMap = System.Collections.Generic.Dictionary<int, bool>()
 
-        let branchMap =
-            System.Collections.Generic.Dictionary<int, int * int>()
+        let branchMap = System.Collections.Generic.Dictionary<int, int * int>()
 
         for classEl in classElements do
             for line in classEl.Descendants(ns + "line") do
@@ -66,8 +61,7 @@ let parseXml (xmlContent: string) : FileCoverage list =
                     | true, existing -> lineMap.[lineNum] <- existing || wasHit
                     | false, _ -> lineMap.[lineNum] <- wasHit
 
-                    let cc =
-                        line.Attribute(XName.Get("condition-coverage"))
+                    let cc = line.Attribute(XName.Get("condition-coverage"))
 
                     if not (isNull cc) then
                         let m = branchRegex.Match(cc.Value)
