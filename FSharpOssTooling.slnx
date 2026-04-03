@@ -1,2 +1,8 @@
 <Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CoverageRatchet/CoverageRatchet.fsproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CoverageRatchet.Tests/CoverageRatchet.Tests.fsproj" />
+  </Folder>
 </Solution>
