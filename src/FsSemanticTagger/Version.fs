@@ -11,7 +11,6 @@ type VersionStage =
     | PreRelease of PreRelease
     | Stable
 
-[<Struct>]
 type Version =
     { Major: int
       Minor: int

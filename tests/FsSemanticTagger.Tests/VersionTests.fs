@@ -92,19 +92,25 @@ let ``firstAlpha is 0.1.0-alpha.1`` () =
     test <@ firstAlpha = { Major = 0; Minor = 1; Patch = 0; Stage = PreRelease(Alpha 1) } @>
 
 [<Fact>]
-let ``sortKey orders correctly`` () =
-    test
-        <@ sortKey (parse "0.1.0-alpha.1")
-           < sortKey (parse "0.1.0-alpha.2") @>
+let ``sortKey alpha.1 less than alpha.2`` () =
+    let a = sortKey (parse "0.1.0-alpha.1")
+    let b = sortKey (parse "0.1.0-alpha.2")
+    test <@ a < b @>
 
-    test
-        <@ sortKey (parse "0.1.0-alpha.2")
-           < sortKey (parse "0.1.0-beta.1") @>
+[<Fact>]
+let ``sortKey alpha less than beta`` () =
+    let a = sortKey (parse "0.1.0-alpha.2")
+    let b = sortKey (parse "0.1.0-beta.1")
+    test <@ a < b @>
 
-    test
-        <@ sortKey (parse "0.1.0-beta.1")
-           < sortKey (parse "0.1.0-rc.1") @>
+[<Fact>]
+let ``sortKey beta less than rc`` () =
+    let a = sortKey (parse "0.1.0-beta.1")
+    let b = sortKey (parse "0.1.0-rc.1")
+    test <@ a < b @>
 
-    test
-        <@ sortKey (parse "0.1.0-rc.1")
-           < sortKey (parse "0.1.0") @>
+[<Fact>]
+let ``sortKey rc less than stable`` () =
+    let a = sortKey (parse "0.1.0-rc.1")
+    let b = sortKey (parse "0.1.0")
+    test <@ a < b @>
