@@ -297,3 +297,72 @@ let ``load falls back to discover when no JSON file`` () =
         test <@ config.Packages[0].TagPrefix = "v" @>
     finally
         Directory.Delete(tmpDir, true)
+
+[<Fact>]
+let ``findPackableProjects finds packable fsproj files`` () =
+    let tmpDir =
+        Path.Combine(Path.GetTempPath(), "fssemtagger-test-" + Path.GetRandomFileName())
+
+    let srcDir1 = Path.Combine(tmpDir, "src", "Lib1")
+    let srcDir2 = Path.Combine(tmpDir, "src", "Lib2")
+    Directory.CreateDirectory(srcDir1) |> ignore
+    Directory.CreateDirectory(srcDir2) |> ignore
+
+    let packableFsproj name =
+        sprintf
+            """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>%s</PackageId>
+  </PropertyGroup>
+</Project>"""
+            name
+
+    File.WriteAllText(Path.Combine(srcDir1, "Lib1.fsproj"), packableFsproj "Lib1")
+    File.WriteAllText(Path.Combine(srcDir2, "Lib2.fsproj"), packableFsproj "Lib2")
+
+    try
+        let projects = findPackableProjects tmpDir
+        test <@ projects.Length = 2 @>
+        test <@ projects |> List.exists (fun (name, _) -> name = "Lib1") @>
+        test <@ projects |> List.exists (fun (name, _) -> name = "Lib2") @>
+    finally
+        Directory.Delete(tmpDir, true)
+
+[<Fact>]
+let ``findPackableProjects skips non-packable`` () =
+    let tmpDir =
+        Path.Combine(Path.GetTempPath(), "fssemtagger-test-" + Path.GetRandomFileName())
+
+    let srcDir = Path.Combine(tmpDir, "src", "MyLib")
+    let testDir = Path.Combine(tmpDir, "tests", "MyLib.Tests")
+    Directory.CreateDirectory(srcDir) |> ignore
+    Directory.CreateDirectory(testDir) |> ignore
+
+    File.WriteAllText(
+        Path.Combine(srcDir, "MyLib.fsproj"),
+        """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>MyLib</PackageId>
+  </PropertyGroup>
+</Project>"""
+    )
+
+    File.WriteAllText(
+        Path.Combine(testDir, "MyLib.Tests.fsproj"),
+        """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>MyLib.Tests</PackageId>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>"""
+    )
+
+    try
+        let projects = findPackableProjects tmpDir
+        test <@ projects.Length = 1 @>
+        test <@ projects[0] |> fst = "MyLib" @>
+    finally
+        Directory.Delete(tmpDir, true)
