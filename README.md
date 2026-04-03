@@ -1,6 +1,6 @@
 # MichaelsWackyFsPackageTools
 
-<!-- sync:intro -->
+<!-- sync:intro:start -->
 A collection of three dotnet CLI tools that help maintain F# open-source projects. Each tool solves a common pain point in library maintenance:
 
 | Tool | What it does |
@@ -10,7 +10,7 @@ A collection of three dotnet CLI tools that help maintain F# open-source project
 | [SyncDocs](src/SyncDocs/) | Keeps sections of your README in sync with your docs site, so you never have stale documentation |
 <!-- sync:intro:end -->
 
-<!-- sync:getting-started -->
+<!-- sync:getting-started:start -->
 ## Getting Started
 
 ### Prerequisites
@@ -43,7 +43,7 @@ syncdocs --help
 ```
 <!-- sync:getting-started:end -->
 
-<!-- sync:tool-overviews -->
+<!-- sync:tool-overviews:start -->
 ## Tool Overviews
 
 ### CoverageRatchet
@@ -92,3 +92,43 @@ syncdocs sync
 
 See the [SyncDocs README](src/SyncDocs/) for the full marker format and conventions.
 <!-- sync:tool-overviews:end -->
+
+## Development
+
+### Building from source
+
+```bash
+git clone https://github.com/michaelglass/MichaelsWackyFsPackageTools.git
+cd MichaelsWackyFsPackageTools
+dotnet build
+dotnet test
+```
+
+### Project structure
+
+```
+src/
+  CoverageRatchet/     # Coverage threshold enforcement
+  FsSemanticTagger/    # Semantic version automation
+  SyncDocs/            # README-to-docs syncing
+tests/
+  CoverageRatchet.Tests/
+  FsSemanticTagger.Tests/
+  SyncDocs.Tests/
+docs/                  # Generated documentation (synced from READMEs)
+```
+
+### Running checks locally
+
+If you have [mise](https://mise.jdx.dev/) installed:
+
+```bash
+mise run build       # Build all projects
+mise run test        # Run all tests with coverage
+mise run check       # Format, lint, and docs checks
+mise run ci          # Full CI pipeline locally
+```
+
+## License
+
+MIT

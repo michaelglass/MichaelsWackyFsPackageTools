@@ -39,24 +39,31 @@ let deriveDllPath (fsprojPath: string) : string =
 
     Path.Combine(dir, "bin", "Release", "net10.0", name + ".dll")
 
-/// Discover a single-package config by finding the packable fsproj
-let discover (rootDir: string) : ToolConfig =
-    let fsprojs =
-        Directory.GetFiles(rootDir, "*.fsproj", SearchOption.AllDirectories)
-        |> Array.filter (fun path ->
-            let content = File.ReadAllText(path)
-            let hasPackageId = packageIdRegex.IsMatch(content)
-            let isNotPackable = isPackableFalseRegex.IsMatch(content)
-            hasPackageId && not isNotPackable)
-
-    match fsprojs.Length with
-    | 0 -> failwith "No packable .fsproj found (must have <PackageId>)"
-    | 1 ->
-        let fsproj = fsprojs[0]
-        let relativePath = Path.GetRelativePath(rootDir, fsproj)
-        let content = File.ReadAllText(fsproj)
+/// Find all packable fsproj files, returning (packageName, relativePath) list
+let findPackableProjects (rootDir: string) : (string * string) list =
+    Directory.GetFiles(rootDir, "*.fsproj", SearchOption.AllDirectories)
+    |> Array.filter (fun path ->
+        let content = File.ReadAllText(path)
+        let hasPackageId = packageIdRegex.IsMatch(content)
+        let isNotPackable = isPackableFalseRegex.IsMatch(content)
+        hasPackageId && not isNotPackable)
+    |> Array.map (fun path ->
+        let content = File.ReadAllText(path)
         let packageIdMatch = packageIdRegex.Match(content)
         let name = packageIdMatch.Groups[1].Value
+        let relativePath = Path.GetRelativePath(rootDir, path)
+        (name, relativePath))
+    |> Array.toList
+
+/// Discover a single-package config by finding the packable fsproj
+let discover (rootDir: string) : ToolConfig =
+    let projects = findPackableProjects rootDir
+
+    match projects.Length with
+    | 0 -> failwith "No packable .fsproj found (must have <PackageId>)"
+    | 1 ->
+        let name, relativePath = projects[0]
+        let fsproj = Path.Combine(rootDir, relativePath)
 
         { Packages =
             [ { Name = name
