@@ -66,9 +66,7 @@ let discover (rootDir: string) : ToolConfig =
                 ExtraFsprojs = [] } ]
           ReservedVersions = Set.empty }
     | n ->
-        failwithf
-            "Found %d packable .fsproj files; create a semantic-tagger.json to configure multi-package release"
-            n
+        failwithf "Found %d packable .fsproj files; create a semantic-tagger.json to configure multi-package release" n
 
 /// Parse a semantic-tagger.json config string
 let parseJson (json: string) : ToolConfig =
@@ -112,8 +110,7 @@ let parseJson (json: string) : ToolConfig =
                       // Derive from fsproj: read the fsproj to get assembly name
                       let dir = Path.GetDirectoryName(fsproj)
 
-                      let assemblyName =
-                          Path.GetFileNameWithoutExtension(fsproj)
+                      let assemblyName = Path.GetFileNameWithoutExtension(fsproj)
 
                       Path.Combine(dir, "bin", "Release", "net10.0", assemblyName + ".dll")
 

@@ -98,8 +98,7 @@ Old usage
 <!-- sync:usage:end -->
 """
 
-    let sections =
-        Map.ofList [ "intro", "\nNew intro\n"; "usage", "\nNew usage\n" ]
+    let sections = Map.ofList [ "intro", "\nNew intro\n"; "usage", "\nNew usage\n" ]
 
     let result = replaceSections target sections
 
@@ -238,7 +237,11 @@ let ``discoverPairs - finds README to docs index`` () =
 
         let pairs = discoverPairs tmpDir
 
-        test <@ pairs |> List.exists (fun (s, t) -> s.EndsWith "README.md" && t.EndsWith "index.md") @>
+        test
+            <@
+                pairs
+                |> List.exists (fun (s, t) -> s.EndsWith "README.md" && t.EndsWith "index.md")
+            @>
     finally
         cleanupDir tmpDir
 
@@ -259,7 +262,10 @@ let ``discoverPairs - finds src subdirectory READMEs`` () =
         let hasPair =
             pairs
             |> List.exists (fun (s, t) ->
-                s.Contains "MyLib" && s.EndsWith "README.md" && t.Contains "MyLib" && t.EndsWith "index.md")
+                s.Contains "MyLib"
+                && s.EndsWith "README.md"
+                && t.Contains "MyLib"
+                && t.EndsWith "index.md")
 
         test <@ hasPair @>
     finally
@@ -273,5 +279,88 @@ let ``discoverPairs - returns empty when no READMEs found`` () =
         let pairs = discoverPairs tmpDir
 
         test <@ pairs.IsEmpty @>
+    finally
+        cleanupDir tmpDir
+
+[<Fact>]
+let ``syncPair check mode - returns InSync for full-file sync when content matches`` () =
+    let tmpDir = createTempDir ()
+
+    try
+        let source = Path.Combine(tmpDir, "README.md")
+        let target = Path.Combine(tmpDir, "index.md")
+
+        File.WriteAllText(source, "Same content no sync tags")
+        File.WriteAllText(target, "Same content no sync tags")
+
+        let result = syncPair true source target
+
+        test <@ result = InSync @>
+    finally
+        cleanupDir tmpDir
+
+[<Fact>]
+let ``syncPair check mode - returns OutOfSync for full-file sync when content differs`` () =
+    let tmpDir = createTempDir ()
+
+    try
+        let source = Path.Combine(tmpDir, "README.md")
+        let target = Path.Combine(tmpDir, "index.md")
+
+        File.WriteAllText(source, "New full file content")
+        File.WriteAllText(target, "Old full file content")
+
+        let result = syncPair true source target
+
+        test <@ result = OutOfSync @>
+    finally
+        cleanupDir tmpDir
+
+[<Fact>]
+let ``syncPair sync mode - updates section-based content when it differs`` () =
+    let tmpDir = createTempDir ()
+
+    try
+        let source = Path.Combine(tmpDir, "README.md")
+        let target = Path.Combine(tmpDir, "index.md")
+
+        File.WriteAllText(
+            source,
+            """<!-- sync:intro:start -->
+Updated section content
+<!-- sync:intro:end -->"""
+        )
+
+        File.WriteAllText(
+            target,
+            """# Docs page
+<!-- sync:intro -->
+Old section content
+<!-- sync:intro:end -->"""
+        )
+
+        let result = syncPair false source target
+        let updatedTarget = File.ReadAllText(target)
+
+        test <@ result = Updated @>
+        test <@ updatedTarget.Contains "Updated section content" @>
+        test <@ not (updatedTarget.Contains "Old section content") @>
+    finally
+        cleanupDir tmpDir
+
+[<Fact>]
+let ``discoverPairs - ignores src dirs where README exists but target does not`` () =
+    let tmpDir = createTempDir ()
+
+    try
+        let srcDir = Path.Combine(tmpDir, "src", "MyLib")
+        Directory.CreateDirectory(srcDir) |> ignore
+        File.WriteAllText(Path.Combine(srcDir, "README.md"), "lib readme")
+
+        let pairs = discoverPairs tmpDir
+
+        let hasPair = pairs |> List.exists (fun (s, _) -> s.Contains "MyLib")
+
+        test <@ not hasPair @>
     finally
         cleanupDir tmpDir

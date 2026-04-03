@@ -26,12 +26,9 @@ let ``parseJson with single package`` () =
     test <@ config.Packages[0].Fsproj = "src/MyLib/MyLib.fsproj" @>
     test <@ config.Packages[0].TagPrefix = "v" @>
 
-    test
-        <@
-            config.Packages[0].DllPath = Path.Combine("src/MyLib", "bin", "Release", "net10.0", "MyLib.dll")
-        @>
+    test <@ config.Packages[0].DllPath = Path.Combine("src/MyLib", "bin", "Release", "net10.0", "MyLib.dll") @>
 
-    test <@ config.Packages[0].ExtraFsprojs = [] @>
+    test <@ config.Packages[0].ExtraFsprojs |> List.isEmpty @>
     test <@ config.ReservedVersions = Set.empty @>
 
 [<Fact>]
@@ -62,7 +59,7 @@ let ``parseJson with multi-package includes extraFsprojs`` () =
     test <@ config.Packages[0].ExtraFsprojs = [ "src/Shared/Shared.fsproj" ] @>
     test <@ config.Packages[1].Name = "Plugin" @>
     test <@ config.Packages[1].TagPrefix = "plugin-v" @>
-    test <@ config.Packages[1].ExtraFsprojs = [] @>
+    test <@ config.Packages[1].ExtraFsprojs |> List.isEmpty @>
 
 [<Fact>]
 let ``parseJson with reservedVersions`` () =
@@ -84,7 +81,9 @@ let ``parseJson with reservedVersions`` () =
 
 [<Fact>]
 let ``discover with one packable fsproj`` () =
-    let tmpDir = Path.Combine(Path.GetTempPath(), "fssemtagger-test-" + Path.GetRandomFileName())
+    let tmpDir =
+        Path.Combine(Path.GetTempPath(), "fssemtagger-test-" + Path.GetRandomFileName())
+
     let srcDir = Path.Combine(tmpDir, "src", "MyLib")
     Directory.CreateDirectory(srcDir) |> ignore
 
@@ -105,23 +104,15 @@ let ``discover with one packable fsproj`` () =
         test <@ config.Packages[0].Name = "MyLib" @>
         test <@ config.Packages[0].TagPrefix = "v" @>
 
-        test
-            <@
-                config.Packages[0].DllPath = Path.Combine(
-                    "src",
-                    "MyLib",
-                    "bin",
-                    "Release",
-                    "net10.0",
-                    "MyLib.dll"
-                )
-            @>
+        test <@ config.Packages[0].DllPath = Path.Combine("src", "MyLib", "bin", "Release", "net10.0", "MyLib.dll") @>
     finally
         Directory.Delete(tmpDir, true)
 
 [<Fact>]
 let ``discover skips non-packable fsproj`` () =
-    let tmpDir = Path.Combine(Path.GetTempPath(), "fssemtagger-test-" + Path.GetRandomFileName())
+    let tmpDir =
+        Path.Combine(Path.GetTempPath(), "fssemtagger-test-" + Path.GetRandomFileName())
+
     let srcDir = Path.Combine(tmpDir, "src", "MyLib")
     let testDir = Path.Combine(tmpDir, "tests", "MyLib.Tests")
     Directory.CreateDirectory(srcDir) |> ignore
@@ -156,7 +147,9 @@ let ``discover skips non-packable fsproj`` () =
 
 [<Fact>]
 let ``load prefers JSON file over discovery`` () =
-    let tmpDir = Path.Combine(Path.GetTempPath(), "fssemtagger-test-" + Path.GetRandomFileName())
+    let tmpDir =
+        Path.Combine(Path.GetTempPath(), "fssemtagger-test-" + Path.GetRandomFileName())
+
     let srcDir = Path.Combine(tmpDir, "src", "MyLib")
     Directory.CreateDirectory(srcDir) |> ignore
 
@@ -189,5 +182,118 @@ let ``load prefers JSON file over discovery`` () =
         let config = load tmpDir
         test <@ config.Packages[0].Name = "CustomName" @>
         test <@ config.Packages[0].TagPrefix = "custom-v" @>
+    finally
+        Directory.Delete(tmpDir, true)
+
+[<Fact>]
+let ``discover fails with no packable fsproj`` () =
+    let tmpDir =
+        Path.Combine(Path.GetTempPath(), "fssemtagger-test-" + Path.GetRandomFileName())
+
+    Directory.CreateDirectory(tmpDir) |> ignore
+
+    let nonPackableFsproj =
+        """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+</Project>"""
+
+    let srcDir = Path.Combine(tmpDir, "src")
+    Directory.CreateDirectory(srcDir) |> ignore
+    File.WriteAllText(Path.Combine(srcDir, "Lib.fsproj"), nonPackableFsproj)
+
+    try
+        let ex = Assert.Throws<System.Exception>(fun () -> discover tmpDir |> ignore)
+        test <@ ex.Message.Contains("No packable") @>
+    finally
+        Directory.Delete(tmpDir, true)
+
+[<Fact>]
+let ``discover fails with multiple packable fsprojs`` () =
+    let tmpDir =
+        Path.Combine(Path.GetTempPath(), "fssemtagger-test-" + Path.GetRandomFileName())
+
+    let srcDir1 = Path.Combine(tmpDir, "src", "Lib1")
+    let srcDir2 = Path.Combine(tmpDir, "src", "Lib2")
+    Directory.CreateDirectory(srcDir1) |> ignore
+    Directory.CreateDirectory(srcDir2) |> ignore
+
+    let packableFsproj name =
+        sprintf
+            """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>%s</PackageId>
+  </PropertyGroup>
+</Project>"""
+            name
+
+    File.WriteAllText(Path.Combine(srcDir1, "Lib1.fsproj"), packableFsproj "Lib1")
+    File.WriteAllText(Path.Combine(srcDir2, "Lib2.fsproj"), packableFsproj "Lib2")
+
+    try
+        let ex = Assert.Throws<System.Exception>(fun () -> discover tmpDir |> ignore)
+        test <@ ex.Message.Contains("2 packable") @>
+    finally
+        Directory.Delete(tmpDir, true)
+
+[<Fact>]
+let ``parseJson with explicit dllPath`` () =
+    let json =
+        """
+        {
+            "packages": [
+                {
+                    "name": "MyLib",
+                    "fsproj": "src/MyLib/MyLib.fsproj",
+                    "dllPath": "custom/path/MyLib.dll"
+                }
+            ]
+        }
+        """
+
+    let config = parseJson json
+    test <@ config.Packages[0].DllPath = "custom/path/MyLib.dll" @>
+
+[<Fact>]
+let ``parseJson uses default tagPrefix when not specified`` () =
+    let json =
+        """
+        {
+            "packages": [
+                {
+                    "name": "MyLib",
+                    "fsproj": "src/MyLib/MyLib.fsproj"
+                }
+            ]
+        }
+        """
+
+    let config = parseJson json
+    test <@ config.Packages[0].TagPrefix = "v" @>
+
+[<Fact>]
+let ``load falls back to discover when no JSON file`` () =
+    let tmpDir =
+        Path.Combine(Path.GetTempPath(), "fssemtagger-test-" + Path.GetRandomFileName())
+
+    let srcDir = Path.Combine(tmpDir, "src", "MyLib")
+    Directory.CreateDirectory(srcDir) |> ignore
+
+    let fsprojContent =
+        """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>MyLib</PackageId>
+  </PropertyGroup>
+</Project>"""
+
+    File.WriteAllText(Path.Combine(srcDir, "MyLib.fsproj"), fsprojContent)
+
+    try
+        let config = load tmpDir
+        test <@ config.Packages[0].Name = "MyLib" @>
+        test <@ config.Packages[0].TagPrefix = "v" @>
     finally
         Directory.Delete(tmpDir, true)

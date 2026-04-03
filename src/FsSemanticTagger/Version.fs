@@ -76,16 +76,13 @@ let nextAlphaCycle (v: Version) : Version =
         Patch = 0
         Stage = PreRelease(Alpha 1) }
 
-let toBeta (v: Version) : Version =
-    { v with Stage = PreRelease(Beta 1) }
+let toBeta (v: Version) : Version = { v with Stage = PreRelease(Beta 1) }
 
-let toRC (v: Version) : Version =
-    { v with Stage = PreRelease(RC 1) }
+let toRC (v: Version) : Version = { v with Stage = PreRelease(RC 1) }
 
 let toStable (v: Version) : Version = { v with Stage = Stable }
 
-let bumpPatch (v: Version) : Version =
-    { v with Patch = v.Patch + 1 }
+let bumpPatch (v: Version) : Version = { v with Patch = v.Patch + 1 }
 
 let bumpMinor (v: Version) : Version =
     { v with

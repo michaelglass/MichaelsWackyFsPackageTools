@@ -36,11 +36,15 @@ let determineBump (current: Version) (change: ApiChange) : Version =
     | Stable ->
         match change with
         | Breaking _ ->
-            if current.Major >= 1 then bumpMajor current
-            else bumpMinor current
+            if current.Major >= 1 then
+                bumpMajor current
+            else
+                bumpMinor current
         | Addition _ ->
-            if current.Major >= 1 then bumpMinor current
-            else bumpPatch current
+            if current.Major >= 1 then
+                bumpMinor current
+            else
+                bumpPatch current
         | NoChange -> bumpPatch current
 
 /// Determine version for a specific command (non-Auto)
@@ -57,31 +61,40 @@ let forCommand (state: ReleaseState) (cmd: ReleaseCommand) : Version option =
 let updateFsprojVersion (fsprojPath: string) (version: Version) : unit =
     let content = System.IO.File.ReadAllText(fsprojPath)
 
-    let pattern =
-        System.Text.RegularExpressions.Regex("<Version>[^<]+</Version>")
+    let pattern = System.Text.RegularExpressions.Regex("<Version>[^<]+</Version>")
 
     let newContent =
         pattern.Replace(content, sprintf "<Version>%s</Version>" (format version))
 
     System.IO.File.WriteAllText(fsprojPath, newContent)
 
+let private runOrFail (run: string -> string -> CommandResult) (cmd: string) (args: string) : string =
+    match run cmd args with
+    | Success output -> output
+    | Failure error -> failwithf "%s %s failed: %s" cmd args error
+
 /// Main release orchestration
-let release (config: ToolConfig) (cmd: ReleaseCommand) (mode: PublishMode) : int =
+let release
+    (run: string -> string -> CommandResult)
+    (config: ToolConfig)
+    (cmd: ReleaseCommand)
+    (mode: PublishMode)
+    : int =
     // 1. Check for uncommitted changes
-    if hasUncommittedChanges () then
+    if hasUncommittedChanges run then
         printfn "Error: uncommitted changes detected"
         1
     else
         // 2. Build in Release mode
         printfn "Building in Release mode..."
-        runOrFail "dotnet" "build -c Release" |> ignore
+        runOrFail run "dotnet" "build -c Release" |> ignore
 
         // 3. For each package: determine release state and version bump
         let bumps =
             config.Packages
             |> List.choose (fun pkg ->
                 let state =
-                    match getLatestTag pkg.TagPrefix with
+                    match getLatestTag run pkg.TagPrefix with
                     | Some tag ->
                         let versionStr = tag.Substring(pkg.TagPrefix.Length)
                         HasPreviousRelease(tag, parse versionStr)
@@ -135,17 +148,16 @@ let release (config: ToolConfig) (cmd: ReleaseCommand) (mode: PublishMode) : int
 
             // 6. Commit and tag
             let tags =
-                bumps
-                |> List.map (fun (pkg, version) -> commitAndTag pkg.TagPrefix version)
+                bumps |> List.map (fun (pkg, version) -> commitAndTag run pkg.TagPrefix version)
 
             // 7. Publish or push tags
             match mode with
             | GitHubActions ->
-                pushTags tags
+                pushTags run tags
                 printfn "Tags pushed. GitHub Actions will handle the release."
             | LocalPublish ->
                 for (pkg, _version) in bumps do
-                    runOrFail "dotnet" (sprintf "pack %s -c Release -o artifacts/" pkg.Fsproj)
+                    runOrFail run "dotnet" (sprintf "pack %s -c Release -o artifacts/" pkg.Fsproj)
                     |> ignore
 
                     printfn "Packed: %s" pkg.Name

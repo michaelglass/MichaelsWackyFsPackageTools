@@ -1,0 +1,14 @@
+{
+  "overrides": {
+    "Program.fs": {
+      "line": 76.92307692307693,
+      "branch": 90,
+      "reason": "CLI entry point using exit and CWD"
+    },
+    "Sync.fs": {
+      "line": 100,
+      "branch": 90,
+      "reason": "F# compiler generates extra branch for discoverPairs pattern matching"
+    }
+  }
+}

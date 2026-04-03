@@ -13,8 +13,7 @@ type SyncResult =
 /// Extract tagged sections from source content.
 /// Tags: <!-- sync:name:start -->...<!-- sync:name:end -->
 let extractSections (content: string) : Map<string, string> =
-    let pattern =
-        @"<!-- sync:([\w][\w-]*):start -->([\s\S]*?)<!-- sync:\1:end -->"
+    let pattern = @"<!-- sync:([\w][\w-]*):start -->([\s\S]*?)<!-- sync:\1:end -->"
 
     Regex.Matches(content, pattern)
     |> Seq.cast<Match>

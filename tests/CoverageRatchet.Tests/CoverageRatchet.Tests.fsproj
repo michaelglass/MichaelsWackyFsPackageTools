@@ -18,6 +18,7 @@
     <Compile Include="CoberturaTests.fs" />
     <Compile Include="ThresholdsTests.fs" />
     <Compile Include="RatchetTests.fs" />
+    <Compile Include="ProgramTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />

@@ -12,8 +12,28 @@ run = "dotnet build"
 depends = ["restore"]
 
 [tasks.test]
-run = "dotnet test --coverage --coverage-output-format cobertura --coverage-output $PWD/coverage/coverage.cobertura.xml"
+run = """
+dotnet test --project tests/CoverageRatchet.Tests --coverage --coverage-output-format cobertura --coverage-output $PWD/coverage/CoverageRatchet/coverage.cobertura.xml
+dotnet test --project tests/FsSemanticTagger.Tests --coverage --coverage-output-format cobertura --coverage-output $PWD/coverage/FsSemanticTagger/coverage.cobertura.xml
+dotnet test --project tests/SyncDocs.Tests --coverage --coverage-output-format cobertura --coverage-output $PWD/coverage/SyncDocs/coverage.cobertura.xml
+"""
 depends = ["build"]
+
+[tasks.coverage-check]
+run = """
+(cd coverage/CoverageRatchet && dotnet run --project ../../src/CoverageRatchet -- check --config ../../coverage-ratchet-CoverageRatchet.json)
+(cd coverage/FsSemanticTagger && dotnet run --project ../../src/CoverageRatchet -- check --config ../../coverage-ratchet-FsSemanticTagger.json)
+(cd coverage/SyncDocs && dotnet run --project ../../src/CoverageRatchet -- check --config ../../coverage-ratchet-SyncDocs.json)
+"""
+depends = ["test"]
+
+[tasks.coverage-ratchet]
+run = """
+(cd coverage/CoverageRatchet && dotnet run --project ../../src/CoverageRatchet -- ratchet --config ../../coverage-ratchet-CoverageRatchet.json)
+(cd coverage/FsSemanticTagger && dotnet run --project ../../src/CoverageRatchet -- ratchet --config ../../coverage-ratchet-FsSemanticTagger.json)
+(cd coverage/SyncDocs && dotnet run --project ../../src/CoverageRatchet -- ratchet --config ../../coverage-ratchet-SyncDocs.json)
+"""
+depends = ["test"]
 
 [tasks.format]
 run = "dotnet fantomas src/ tests/"
@@ -31,7 +51,7 @@ depends = ["build", "tool-restore"]
 depends = ["format", "lint", "docs"]
 
 [tasks.ci]
-depends = ["format-check", "lint", "docs"]
+depends = ["format-check", "lint", "docs", "coverage-check"]
 
 [tasks.pack]
 run = """
