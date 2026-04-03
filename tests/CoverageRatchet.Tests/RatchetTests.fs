@@ -1,0 +1,1 @@
+module CoverageRatchet.Tests.RatchetTests
