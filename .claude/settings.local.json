@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E '\\\\.\\(dll|pdb|cache|assets\\\\.cache\\)$')",
+      "Bash(xargs rm:*)"
+    ]
+  }
+}
