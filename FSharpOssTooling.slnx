@@ -1,10 +1,12 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/CoverageRatchet/CoverageRatchet.fsproj" />
+    <Project Path="src/FsSemanticTagger/FsSemanticTagger.fsproj" />
     <Project Path="src/SyncDocs/SyncDocs.fsproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/CoverageRatchet.Tests/CoverageRatchet.Tests.fsproj" />
+    <Project Path="tests/FsSemanticTagger.Tests/FsSemanticTagger.Tests.fsproj" />
     <Project Path="tests/SyncDocs.Tests/SyncDocs.Tests.fsproj" />
   </Folder>
 </Solution>
