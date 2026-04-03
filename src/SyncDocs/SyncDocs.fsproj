@@ -16,7 +16,7 @@
     <Authors>michaelglass</Authors>
     <Description>README-to-docs section syncing with convention-based discovery</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/michaelglass/FSharpOssTooling</RepositoryUrl>
+    <RepositoryUrl>https://github.com/michaelglass/MichaelsWackyFsPackageTools</RepositoryUrl>
     <PackageTags>docs;documentation;readme;sync</PackageTags>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>

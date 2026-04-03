@@ -16,7 +16,7 @@
     <Authors>michaelglass</Authors>
     <Description>Per-file coverage enforcement with automatic threshold ratcheting from Cobertura XML</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/michaelglass/FSharpOssTooling</RepositoryUrl>
+    <RepositoryUrl>https://github.com/michaelglass/MichaelsWackyFsPackageTools</RepositoryUrl>
     <PackageTags>coverage;testing;cobertura;ratchet</PackageTags>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>

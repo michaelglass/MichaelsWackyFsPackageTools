@@ -16,7 +16,7 @@
     <Authors>michaelglass</Authors>
     <Description>Semantic versioning with API change detection for F# NuGet packages</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/michaelglass/FSharpOssTooling</RepositoryUrl>
+    <RepositoryUrl>https://github.com/michaelglass/MichaelsWackyFsPackageTools</RepositoryUrl>
     <PackageTags>fsharp;semver;release;nuget;api</PackageTags>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
