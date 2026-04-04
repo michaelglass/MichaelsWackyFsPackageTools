@@ -131,6 +131,43 @@ let parseJson (json: string) : ToolConfig =
     { Packages = packages
       ReservedVersions = reservedVersions }
 
+/// Serialize a ToolConfig to JSON string
+let toJson (config: ToolConfig) : string =
+    use stream = new System.IO.MemoryStream()
+    use writer = new Utf8JsonWriter(stream, JsonWriterOptions(Indented = true))
+    writer.WriteStartObject()
+    writer.WriteStartArray("packages")
+
+    for pkg in config.Packages do
+        writer.WriteStartObject()
+        writer.WriteString("name", pkg.Name)
+        writer.WriteString("fsproj", pkg.Fsproj)
+        writer.WriteString("tagPrefix", pkg.TagPrefix)
+
+        if not pkg.ExtraFsprojs.IsEmpty then
+            writer.WriteStartArray("extraFsprojs")
+
+            for extra in pkg.ExtraFsprojs do
+                writer.WriteStringValue(extra)
+
+            writer.WriteEndArray()
+
+        writer.WriteEndObject()
+
+    writer.WriteEndArray()
+
+    if not config.ReservedVersions.IsEmpty then
+        writer.WriteStartArray("reservedVersions")
+
+        for v in config.ReservedVersions do
+            writer.WriteStringValue(v)
+
+        writer.WriteEndArray()
+
+    writer.WriteEndObject()
+    writer.Flush()
+    System.Text.Encoding.UTF8.GetString(stream.ToArray())
+
 /// Load config: try semantic-tagger.json first, fall back to discover
 let load (rootDir: string) : ToolConfig =
     let jsonPath = Path.Combine(rootDir, "semantic-tagger.json")

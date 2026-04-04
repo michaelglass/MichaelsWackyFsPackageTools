@@ -366,3 +366,37 @@ let ``findPackableProjects skips non-packable`` () =
         test <@ projects[0] |> fst = "MyLib" @>
     finally
         Directory.Delete(tmpDir, true)
+
+[<Fact>]
+let ``toJson roundtrips through parseJson`` () =
+    let config =
+        { Packages =
+            [ { Name = "MyLib"
+                Fsproj = "src/MyLib/MyLib.fsproj"
+                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                TagPrefix = "mylib-v"
+                ExtraFsprojs = [ "src/Shared/Shared.fsproj" ] } ]
+          ReservedVersions = set [ "1.0.0" ] }
+
+    let json = toJson config
+    let roundtripped = parseJson json
+    test <@ roundtripped.Packages.Length = 1 @>
+    test <@ roundtripped.Packages[0].Name = "MyLib" @>
+    test <@ roundtripped.Packages[0].Fsproj = "src/MyLib/MyLib.fsproj" @>
+    test <@ roundtripped.Packages[0].TagPrefix = "mylib-v" @>
+    test <@ roundtripped.Packages[0].ExtraFsprojs = [ "src/Shared/Shared.fsproj" ] @>
+    test <@ roundtripped.ReservedVersions = set [ "1.0.0" ] @>
+
+[<Fact>]
+let ``toJson omits empty reservedVersions`` () =
+    let config =
+        { Packages =
+            [ { Name = "MyLib"
+                Fsproj = "src/MyLib/MyLib.fsproj"
+                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                TagPrefix = "v"
+                ExtraFsprojs = [] } ]
+          ReservedVersions = Set.empty }
+
+    let json = toJson config
+    test <@ not (json.Contains "reservedVersions") @>
