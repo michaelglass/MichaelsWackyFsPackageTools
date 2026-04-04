@@ -97,7 +97,7 @@ For monorepos or custom setups, create a `semantic-tagger.json`:
       "name": "MyLib",
       "fsproj": "src/MyLib/MyLib.fsproj",
       "tagPrefix": "v",
-      "extraFsprojs": ["src/MyLib.Extensions/MyLib.Extensions.fsproj"]
+      "fsProjsSharingSameTag": ["src/MyLib.Extensions/MyLib.Extensions.fsproj"]
     }
   ],
   "reservedVersions": ["1.0.0"]
@@ -113,7 +113,7 @@ For monorepos or custom setups, create a `semantic-tagger.json`:
 | `packages[].fsproj` | string | Path to the project file |
 | `packages[].dllPath` | string? | Path to compiled DLL (auto-derived if omitted) |
 | `packages[].tagPrefix` | string? | Git/jj tag prefix (default: `"v"`) |
-| `packages[].extraFsprojs` | string[]? | Other `.fsproj` files to update with the same version |
+| `packages[].fsProjsSharingSameTag` | string[]? | Other `.fsproj` files to update with the same version |
 | `reservedVersions` | string[]? | Versions to skip |
 
 ## Pre-release Version Flow
