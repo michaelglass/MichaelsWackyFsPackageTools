@@ -14,6 +14,9 @@ permissions:
 jobs:
   deploy-docs:
     runs-on: ubuntu-latest
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: true
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -24,14 +27,30 @@ jobs:
           dotnet-version: '10.0.x'
       - run: dotnet restore
       - run: dotnet tool restore
+      - name: Check if docs already deployed for this commit
+        id: check-deployed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deployed=$(gh api repos/${{ github.repository }}/deployments \
+            --jq "[.[] | select(.sha == \"${{ github.sha }}\" and .environment == \"github-pages\")] | length")
+          if [ "$deployed" -gt "0" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "Docs already deployed for this commit, skipping."
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
       - name: Build docs
+        if: steps.check-deployed.outputs.skip != 'true'
         run: dotnet fsdocs build --output output/docs --clean ${{ inputs.fsdocs-parameters }}
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Upload pages artifact
+        if: steps.check-deployed.outputs.skip != 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: output/docs
       - name: Deploy to GitHub Pages
+        if: steps.check-deployed.outputs.skip != 'true'
         id: deployment
         uses: actions/deploy-pages@v4
