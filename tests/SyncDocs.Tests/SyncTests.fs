@@ -5,6 +5,7 @@ open System.IO
 open Xunit
 open Swensen.Unquote
 open SyncDocs.Sync
+open SyncDocs.Tests.TestHelpers
 
 // --- extractSections tests ---
 
@@ -109,15 +110,6 @@ Old usage
     test <@ not (result.Contains "Old usage") @>
 
 // --- syncPair tests ---
-
-let createTempDir () =
-    let dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
-    Directory.CreateDirectory(dir) |> ignore
-    dir
-
-let cleanupDir dir =
-    if Directory.Exists(dir) then
-        Directory.Delete(dir, true)
 
 [<Fact>]
 let ``syncPair check mode - returns InSync when content matches`` () =

@@ -93,7 +93,11 @@ SyncDocs automatically finds sync pairs based on file location:
 | `src/MyLib/README.md` | `docs/MyLib/index.md` |
 | `src/OtherTool/README.md` | `docs/OtherTool/index.md` |
 
-Both the source and target file must exist for the pair to be discovered. SyncDocs skips missing files rather than creating them.
+Both the source and target file must exist for the pair to be discovered. If only one side of a pair exists, SyncDocs prints a helpful warning telling you which file to create:
+
+```
+  Warning: To sync docs for MyLib, create docs/MyLib/index.md
+```
 
 ## Example Workflow
 

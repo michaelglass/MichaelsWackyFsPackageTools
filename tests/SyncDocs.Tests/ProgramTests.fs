@@ -1,19 +1,10 @@
 module SyncDocs.Tests.ProgramTests
 
-open System
 open System.IO
 open Xunit
 open Swensen.Unquote
 open SyncDocs.Program
-
-let createTempDir () =
-    let dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
-    Directory.CreateDirectory(dir) |> ignore
-    dir
-
-let cleanupDir dir =
-    if Directory.Exists(dir) then
-        Directory.Delete(dir, true)
+open SyncDocs.Tests.TestHelpers
 
 [<Fact>]
 let ``run - check prints warnings for incomplete pairs`` () =

@@ -42,17 +42,15 @@ let deriveDllPath (fsprojPath: string) : string =
 /// Find all packable fsproj files, returning (packageName, relativePath) list
 let findPackableProjects (rootDir: string) : (string * string) list =
     Directory.GetFiles(rootDir, "*.fsproj", SearchOption.AllDirectories)
-    |> Array.filter (fun path ->
+    |> Array.choose (fun path ->
         let content = File.ReadAllText(path)
-        let hasPackageId = packageIdRegex.IsMatch(content)
-        let isNotPackable = isPackableFalseRegex.IsMatch(content)
-        hasPackageId && not isNotPackable)
-    |> Array.map (fun path ->
-        let content = File.ReadAllText(path)
-        let packageIdMatch = packageIdRegex.Match(content)
-        let name = packageIdMatch.Groups[1].Value
-        let relativePath = Path.GetRelativePath(rootDir, path)
-        (name, relativePath))
+        let m = packageIdRegex.Match(content)
+
+        if m.Success && not (isPackableFalseRegex.IsMatch(content)) then
+            let relativePath = Path.GetRelativePath(rootDir, path)
+            Some(m.Groups[1].Value, relativePath)
+        else
+            None)
     |> Array.toList
 
 /// Discover a single-package config by finding the packable fsproj
@@ -114,7 +112,6 @@ let parseJson (json: string) : ToolConfig =
                   if pkg.TryGetProperty("dllPath") |> fst then
                       pkg.GetProperty("dllPath").GetString()
                   else
-                      // Derive from fsproj: read the fsproj to get assembly name
                       let dir = Path.GetDirectoryName(fsproj)
 
                       let assemblyName = Path.GetFileNameWithoutExtension(fsproj)
@@ -166,14 +163,27 @@ let toJson (config: ToolConfig) : string =
 
     writer.WriteEndObject()
     writer.Flush()
-    System.Text.Encoding.UTF8.GetString(stream.ToArray())
+    System.Text.Encoding.UTF8.GetString(stream.GetBuffer(), 0, int stream.Length)
 
-/// Load config: try semantic-tagger.json first, fall back to discover
+/// Load config: try semantic-tagger.json first, fall back to discover.
+/// DLL paths are always re-derived from the fsproj on disk so that
+/// AssemblyName overrides are respected (parseJson can't do I/O).
 let load (rootDir: string) : ToolConfig =
     let jsonPath = Path.Combine(rootDir, "semantic-tagger.json")
 
     if File.Exists(jsonPath) then
         let json = File.ReadAllText(jsonPath)
-        parseJson json
+        let config = parseJson json
+
+        { config with
+            Packages =
+                config.Packages
+                |> List.map (fun pkg ->
+                    let fsprojFull = Path.Combine(rootDir, pkg.Fsproj)
+
+                    if File.Exists fsprojFull then
+                        { pkg with DllPath = Path.GetRelativePath(rootDir, deriveDllPath fsprojFull) }
+                    else
+                        pkg) }
     else
         discover rootDir

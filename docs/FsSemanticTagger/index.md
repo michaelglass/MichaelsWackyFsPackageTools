@@ -20,6 +20,16 @@ dotnet tool install -g FsSemanticTagger
 
 ## Usage
 
+### Generate a config file
+
+For monorepos with multiple packages, generate a `semantic-tagger.json` config:
+
+```bash
+fssemantictagger init
+```
+
+This scans for packable `.fsproj` files and writes a config with sensible defaults. For single-package repos, the tag prefix is `"v"`. For multi-package repos, each package gets a prefix like `"mylib-v"`.
+
 ### Extract the public API from a DLL
 
 ```bash
