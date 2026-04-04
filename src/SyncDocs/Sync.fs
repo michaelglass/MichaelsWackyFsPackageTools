@@ -91,3 +91,32 @@ let discoverPairs (rootDir: string) : (string * string) list =
                 pairs.Add(readme, target)
 
     pairs |> Seq.toList
+
+/// Discover incomplete sync pairs and return friendly warning messages.
+let discoverWarnings (rootDir: string) : string list =
+    let warnings = ResizeArray<string>()
+
+    // Root level: README.md and docs/index.md
+    let rootReadme = Path.Combine(rootDir, "README.md")
+    let rootTarget = Path.Combine(rootDir, "docs", "index.md")
+
+    if File.Exists rootReadme && not (File.Exists rootTarget) then
+        warnings.Add("To sync docs for your project, create docs/index.md")
+    elif File.Exists rootTarget && not (File.Exists rootReadme) then
+        warnings.Add("To sync docs for your project, create README.md")
+
+    // src/*/: For each subdirectory in src/
+    let srcDir = Path.Combine(rootDir, "src")
+
+    if Directory.Exists srcDir then
+        for dir in Directory.GetDirectories(srcDir) do
+            let dirName = Path.GetFileName dir
+            let readme = Path.Combine(dir, "README.md")
+            let target = Path.Combine(rootDir, "docs", dirName, "index.md")
+
+            if File.Exists readme && not (File.Exists target) then
+                warnings.Add(sprintf "To sync docs for %s, create docs/%s/index.md" dirName dirName)
+            elif File.Exists target && not (File.Exists readme) then
+                warnings.Add(sprintf "To sync docs for %s, create src/%s/README.md" dirName dirName)
+
+    warnings |> Seq.toList

@@ -364,3 +364,88 @@ let ``discoverPairs - ignores src dirs where README exists but target does not``
         test <@ not hasPair @>
     finally
         cleanupDir tmpDir
+
+// --- discoverWarnings tests ---
+
+[<Fact>]
+let ``discoverWarnings - warns when src README exists but docs target missing`` () =
+    let tmpDir = createTempDir ()
+
+    try
+        let srcDir = Path.Combine(tmpDir, "src", "MyLib")
+        Directory.CreateDirectory(srcDir) |> ignore
+        File.WriteAllText(Path.Combine(srcDir, "README.md"), "lib readme")
+        let warnings = discoverWarnings tmpDir
+        test <@ warnings.Length = 1 @>
+        test <@ warnings[0].Contains "MyLib" @>
+        test <@ warnings[0].Contains "docs/MyLib/index.md" @>
+    finally
+        cleanupDir tmpDir
+
+[<Fact>]
+let ``discoverWarnings - warns when docs target exists but src README missing`` () =
+    let tmpDir = createTempDir ()
+
+    try
+        let docsDir = Path.Combine(tmpDir, "docs", "MyLib")
+        Directory.CreateDirectory(docsDir) |> ignore
+        File.WriteAllText(Path.Combine(docsDir, "index.md"), "lib docs")
+        let srcDir = Path.Combine(tmpDir, "src", "MyLib")
+        Directory.CreateDirectory(srcDir) |> ignore
+        // No README.md created
+        let warnings = discoverWarnings tmpDir
+        test <@ warnings.Length = 1 @>
+        test <@ warnings[0].Contains "MyLib" @>
+        test <@ warnings[0].Contains "src/MyLib/README.md" @>
+    finally
+        cleanupDir tmpDir
+
+[<Fact>]
+let ``discoverWarnings - warns when root README exists but docs/index.md missing`` () =
+    let tmpDir = createTempDir ()
+
+    try
+        File.WriteAllText(Path.Combine(tmpDir, "README.md"), "root readme")
+        let warnings = discoverWarnings tmpDir
+        test <@ warnings.Length = 1 @>
+        test <@ warnings[0].Contains "docs/index.md" @>
+    finally
+        cleanupDir tmpDir
+
+[<Fact>]
+let ``discoverWarnings - warns when docs/index.md exists but root README missing`` () =
+    let tmpDir = createTempDir ()
+
+    try
+        let docsDir = Path.Combine(tmpDir, "docs")
+        Directory.CreateDirectory(docsDir) |> ignore
+        File.WriteAllText(Path.Combine(docsDir, "index.md"), "docs index")
+        let warnings = discoverWarnings tmpDir
+        test <@ warnings.Length = 1 @>
+        test <@ warnings[0].Contains "README.md" @>
+    finally
+        cleanupDir tmpDir
+
+[<Fact>]
+let ``discoverWarnings - no warnings when pairs are complete`` () =
+    let tmpDir = createTempDir ()
+
+    try
+        let docsDir = Path.Combine(tmpDir, "docs")
+        Directory.CreateDirectory(docsDir) |> ignore
+        File.WriteAllText(Path.Combine(tmpDir, "README.md"), "root readme")
+        File.WriteAllText(Path.Combine(docsDir, "index.md"), "docs index")
+        let warnings = discoverWarnings tmpDir
+        test <@ warnings.IsEmpty @>
+    finally
+        cleanupDir tmpDir
+
+[<Fact>]
+let ``discoverWarnings - no warnings when nothing exists`` () =
+    let tmpDir = createTempDir ()
+
+    try
+        let warnings = discoverWarnings tmpDir
+        test <@ warnings.IsEmpty @>
+    finally
+        cleanupDir tmpDir
