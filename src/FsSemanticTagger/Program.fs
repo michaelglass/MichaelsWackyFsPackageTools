@@ -1,7 +1,54 @@
 module FsSemanticTagger.Program
 
+open System.IO
+
+let initCommand (rootDir: string) : Result<int, string> =
+    let jsonPath = Path.Combine(rootDir, "semantic-tagger.json")
+
+    if File.Exists(jsonPath) then
+        printfn "semantic-tagger.json already exists. No changes made."
+        Ok 0
+    else
+        let projects = Config.findPackableProjects rootDir
+
+        if projects.IsEmpty then
+            Error "No packable .fsproj files found. Each package needs a <PackageId> element."
+        else
+            let isMulti = projects.Length > 1
+
+            let packages =
+                projects
+                |> List.map (fun (name, relativePath) ->
+                    let fsprojFullPath = Path.Combine(rootDir, relativePath)
+                    let dllPath = Path.GetRelativePath(rootDir, Config.deriveDllPath fsprojFullPath)
+
+                    let tagPrefix =
+                        if isMulti then
+                            name.ToLowerInvariant() + "-v"
+                        else
+                            "v"
+
+                    ({ Name = name
+                       Fsproj = relativePath
+                       DllPath = dllPath
+                       TagPrefix = tagPrefix
+                       ExtraFsprojs = [] }: Config.PackageConfig))
+
+            let config: Config.ToolConfig =
+                { Packages = packages
+                  ReservedVersions = Set.empty }
+
+            File.WriteAllText(jsonPath, Config.toJson config)
+            printfn "Created semantic-tagger.json with %d package(s):" projects.Length
+
+            for (name, _) in projects do
+                printfn "  - %s" name
+
+            Ok 0
+
 let run (argv: string array) : Result<int, string> =
     match argv with
+    | [| "init" |] -> initCommand (System.IO.Directory.GetCurrentDirectory())
     | [| "extract-api"; dllPath |] ->
         if not (System.IO.File.Exists dllPath) then
             Error(sprintf "DLL not found: %s" dllPath)
@@ -65,9 +112,10 @@ let run (argv: string array) : Result<int, string> =
             Ok(Release.release Shell.run config cmd mode)
     | _ ->
         Error(
-            "Usage: fssemantictagger <release|check-api|extract-api> [options]\n\
+            "Usage: fssemantictagger <init|release|check-api|extract-api> [options]\n\
              \n\
              Commands:\n\
+             \  init\n\
              \  release [auto|alpha|beta|rc|stable] [--publish]\n\
              \  check-api <old.dll> <new.dll>\n\
              \  extract-api <dll-path>"
