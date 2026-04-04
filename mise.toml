@@ -21,17 +21,23 @@ depends = ["build"]
 
 [tasks.coverage-check]
 run = """
-(cd coverage/CoverageRatchet && dotnet run --project ../../src/CoverageRatchet -- check --config ../../coverage-ratchet-CoverageRatchet.json)
-(cd coverage/FsSemanticTagger && dotnet run --project ../../src/CoverageRatchet -- check --config ../../coverage-ratchet-FsSemanticTagger.json)
-(cd coverage/SyncDocs && dotnet run --project ../../src/CoverageRatchet -- check --config ../../coverage-ratchet-SyncDocs.json)
+for config in coverage-ratchet-*.json; do
+  [ -f "$config" ] || continue
+  project=$(echo "$config" | sed 's/coverage-ratchet-\\(.*\\)\\.json/\\1/')
+  echo "Checking $project..."
+  (cd "coverage/$project" && coverageratchet check --config "../../$config")
+done
 """
 depends = ["test"]
 
 [tasks.coverage-ratchet]
 run = """
-(cd coverage/CoverageRatchet && dotnet run --project ../../src/CoverageRatchet -- ratchet --config ../../coverage-ratchet-CoverageRatchet.json)
-(cd coverage/FsSemanticTagger && dotnet run --project ../../src/CoverageRatchet -- ratchet --config ../../coverage-ratchet-FsSemanticTagger.json)
-(cd coverage/SyncDocs && dotnet run --project ../../src/CoverageRatchet -- ratchet --config ../../coverage-ratchet-SyncDocs.json)
+for config in coverage-ratchet-*.json; do
+  [ -f "$config" ] || continue
+  project=$(echo "$config" | sed 's/coverage-ratchet-\\(.*\\)\\.json/\\1/')
+  echo "Ratcheting $project..."
+  (cd "coverage/$project" && coverageratchet ratchet --config "../../$config")
+done
 """
 depends = ["test"]
 
