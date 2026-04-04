@@ -75,7 +75,11 @@ jobs:
           recreate: true
           path: code-coverage-results.md
       - name: Coverage ratchet check
-        run: dotnet coverageratchet check
+        run: |
+          for config in coverage-ratchet-*.json; do
+            echo "Checking $config..."
+            (cd coverage && dotnet run --project ../src/CoverageRatchet -- check --config "../$config")
+          done
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v4
