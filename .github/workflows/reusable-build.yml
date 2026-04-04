@@ -67,7 +67,7 @@ jobs:
           badge: true
           format: markdown
           output: both
-          thresholds: ${{ inputs.coverage-thresholds }}
+          thresholds: '50 70'
       - name: Coverage PR comment
         if: github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2
