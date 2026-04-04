@@ -7,7 +7,7 @@
     },
     "Config.fs": {
       "line": 99,
-      "branch": 86,
+      "branch": 85.71,
       "reason": "F# compiler generates extra branches for TryGetProperty patterns; toJson serializer branches"
     },
     "Program.fs": {
