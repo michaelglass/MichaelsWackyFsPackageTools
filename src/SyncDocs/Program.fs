@@ -12,33 +12,32 @@ let run (argv: string array) (rootDir: string) : Result<int, string> =
     match checkResult with
     | Error msg -> Error msg
     | Ok check ->
-        let warnings = discoverWarnings rootDir
+        let pairs, warnings = discoverPairsAndWarnings rootDir
 
         for w in warnings do
             printfn "  Warning: %s" w
-
-        let pairs = discoverPairs rootDir
 
         if pairs.IsEmpty then
             printfn "No README.md -> docs/ pairs found"
             Ok 0
         else
-            let mutable exitCode = 0
+            let results =
+                pairs
+                |> List.map (fun (source, target) ->
+                    let shortSource = System.IO.Path.GetRelativePath(rootDir, source)
+                    let shortTarget = System.IO.Path.GetRelativePath(rootDir, target)
+                    let result = syncPair check source target
 
-            for (source, target) in pairs do
-                let shortSource = System.IO.Path.GetRelativePath(rootDir, source)
-                let shortTarget = System.IO.Path.GetRelativePath(rootDir, target)
+                    match result with
+                    | InSync -> printfn "  %s -> %s: in sync" shortSource shortTarget
+                    | Updated -> printfn "  %s -> %s: updated" shortSource shortTarget
+                    | OutOfSync -> printfn "  %s -> %s: OUT OF SYNC" shortSource shortTarget
+                    | SourceMissing -> printfn "  %s: source missing (skipped)" shortSource
+                    | TargetMissing -> printfn "  %s -> %s: target missing (skipped)" shortSource shortTarget
 
-                match syncPair check source target with
-                | InSync -> printfn "  %s -> %s: in sync" shortSource shortTarget
-                | Updated -> printfn "  %s -> %s: updated" shortSource shortTarget
-                | OutOfSync ->
-                    printfn "  %s -> %s: OUT OF SYNC" shortSource shortTarget
-                    exitCode <- 1
-                | SourceMissing -> printfn "  %s: source missing (skipped)" shortSource
-                | TargetMissing -> printfn "  %s -> %s: target missing (skipped)" shortSource shortTarget
+                    result)
 
-            Ok exitCode
+            Ok(if results |> List.contains OutOfSync then 1 else 0)
 
 [<EntryPoint>]
 let main argv =

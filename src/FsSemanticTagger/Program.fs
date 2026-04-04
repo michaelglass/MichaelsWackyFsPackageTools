@@ -28,7 +28,7 @@ let initCommand (rootDir: string) : Result<int, string> =
                        Fsproj = relativePath
                        DllPath = dllPath
                        TagPrefix = tagPrefix
-                       ExtraFsprojs = [] }
+                       FsProjsSharingSameTag = [] }
                     : Config.PackageConfig))
 
             let config: Config.ToolConfig =
