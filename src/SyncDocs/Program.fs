@@ -12,6 +12,11 @@ let run (argv: string array) (rootDir: string) : Result<int, string> =
     match checkResult with
     | Error msg -> Error msg
     | Ok check ->
+        let warnings = discoverWarnings rootDir
+
+        for w in warnings do
+            printfn "  Warning: %s" w
+
         let pairs = discoverPairs rootDir
 
         if pairs.IsEmpty then
