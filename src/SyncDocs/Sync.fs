@@ -66,57 +66,43 @@ let syncPair (check: bool) (sourcePath: string) (targetPath: string) : SyncResul
                 File.WriteAllText(targetPath, replaced)
                 Updated
 
+/// Enumerate all conventional (name, source, target) candidates.
+let private candidatePairs (rootDir: string) : (string * string * string) list =
+    [
+        yield "your project", Path.Combine(rootDir, "README.md"), Path.Combine(rootDir, "docs", "index.md")
+
+        let srcDir = Path.Combine(rootDir, "src")
+
+        if Directory.Exists srcDir then
+            for dir in Directory.GetDirectories(srcDir) do
+                let dirName = Path.GetFileName dir
+
+                yield
+                    dirName,
+                    Path.Combine(dir, "README.md"),
+                    Path.Combine(rootDir, "docs", dirName, "index.md")
+    ]
+
 /// Discover sync pairs by convention.
 /// README.md -> docs/index.md, src/*/README.md -> docs/*/index.md
 let discoverPairs (rootDir: string) : (string * string) list =
-    let pairs = ResizeArray<string * string>()
-
-    // Root README.md -> docs/index.md
-    let rootReadme = Path.Combine(rootDir, "README.md")
-    let rootTarget = Path.Combine(rootDir, "docs", "index.md")
-
-    if File.Exists rootReadme && File.Exists rootTarget then
-        pairs.Add(rootReadme, rootTarget)
-
-    // src/*/README.md -> docs/*/index.md
-    let srcDir = Path.Combine(rootDir, "src")
-
-    if Directory.Exists srcDir then
-        for dir in Directory.GetDirectories(srcDir) do
-            let readme = Path.Combine(dir, "README.md")
-            let dirName = Path.GetFileName dir
-            let target = Path.Combine(rootDir, "docs", dirName, "index.md")
-
-            if File.Exists readme && File.Exists target then
-                pairs.Add(readme, target)
-
-    pairs |> Seq.toList
+    candidatePairs rootDir
+    |> List.choose (fun (_, src, tgt) ->
+        if File.Exists src && File.Exists tgt then
+            Some(src, tgt)
+        else
+            None)
 
 /// Discover incomplete sync pairs and return friendly warning messages.
 let discoverWarnings (rootDir: string) : string list =
-    let warnings = ResizeArray<string>()
+    candidatePairs rootDir
+    |> List.choose (fun (name, src, tgt) ->
+        let srcRel = Path.GetRelativePath(rootDir, src)
+        let tgtRel = Path.GetRelativePath(rootDir, tgt)
 
-    // Root level: README.md and docs/index.md
-    let rootReadme = Path.Combine(rootDir, "README.md")
-    let rootTarget = Path.Combine(rootDir, "docs", "index.md")
-
-    if File.Exists rootReadme && not (File.Exists rootTarget) then
-        warnings.Add("To sync docs for your project, create docs/index.md")
-    elif File.Exists rootTarget && not (File.Exists rootReadme) then
-        warnings.Add("To sync docs for your project, create README.md")
-
-    // src/*/: For each subdirectory in src/
-    let srcDir = Path.Combine(rootDir, "src")
-
-    if Directory.Exists srcDir then
-        for dir in Directory.GetDirectories(srcDir) do
-            let dirName = Path.GetFileName dir
-            let readme = Path.Combine(dir, "README.md")
-            let target = Path.Combine(rootDir, "docs", dirName, "index.md")
-
-            if File.Exists readme && not (File.Exists target) then
-                warnings.Add(sprintf "To sync docs for %s, create docs/%s/index.md" dirName dirName)
-            elif File.Exists target && not (File.Exists readme) then
-                warnings.Add(sprintf "To sync docs for %s, create src/%s/README.md" dirName dirName)
-
-    warnings |> Seq.toList
+        if File.Exists src && not (File.Exists tgt) then
+            Some(sprintf "To sync docs for %s, create %s" name tgtRel)
+        elif File.Exists tgt && not (File.Exists src) then
+            Some(sprintf "To sync docs for %s, create %s" name srcRel)
+        else
+            None)
