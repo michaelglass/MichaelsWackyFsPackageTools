@@ -78,7 +78,7 @@ jobs:
         run: |
           for config in coverage-ratchet-*.json; do
             echo "Checking $config..."
-            (cd coverage && dotnet run --project ../src/CoverageRatchet -- check --config "../$config")
+            dotnet run --project src/CoverageRatchet -- check --config "$config"
           done
       - name: Upload coverage report
         if: always()
