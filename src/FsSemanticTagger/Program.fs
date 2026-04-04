@@ -22,17 +22,14 @@ let initCommand (rootDir: string) : Result<int, string> =
                     let fsprojFullPath = Path.Combine(rootDir, relativePath)
                     let dllPath = Path.GetRelativePath(rootDir, Config.deriveDllPath fsprojFullPath)
 
-                    let tagPrefix =
-                        if isMulti then
-                            name.ToLowerInvariant() + "-v"
-                        else
-                            "v"
+                    let tagPrefix = if isMulti then name.ToLowerInvariant() + "-v" else "v"
 
                     ({ Name = name
                        Fsproj = relativePath
                        DllPath = dllPath
                        TagPrefix = tagPrefix
-                       ExtraFsprojs = [] }: Config.PackageConfig))
+                       ExtraFsprojs = [] }
+                    : Config.PackageConfig))
 
             let config: Config.ToolConfig =
                 { Packages = packages

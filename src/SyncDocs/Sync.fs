@@ -68,20 +68,15 @@ let syncPair (check: bool) (sourcePath: string) (targetPath: string) : SyncResul
 
 /// Enumerate all conventional (name, source, target) candidates.
 let private candidatePairs (rootDir: string) : (string * string * string) list =
-    [
-        yield "your project", Path.Combine(rootDir, "README.md"), Path.Combine(rootDir, "docs", "index.md")
+    [ yield "your project", Path.Combine(rootDir, "README.md"), Path.Combine(rootDir, "docs", "index.md")
 
-        let srcDir = Path.Combine(rootDir, "src")
+      let srcDir = Path.Combine(rootDir, "src")
 
-        if Directory.Exists srcDir then
-            for dir in Directory.GetDirectories(srcDir) do
-                let dirName = Path.GetFileName dir
+      if Directory.Exists srcDir then
+          for dir in Directory.GetDirectories(srcDir) do
+              let dirName = Path.GetFileName dir
 
-                yield
-                    dirName,
-                    Path.Combine(dir, "README.md"),
-                    Path.Combine(rootDir, "docs", dirName, "index.md")
-    ]
+              yield dirName, Path.Combine(dir, "README.md"), Path.Combine(rootDir, "docs", dirName, "index.md") ]
 
 /// Discover sync pairs by convention.
 /// README.md -> docs/index.md, src/*/README.md -> docs/*/index.md
