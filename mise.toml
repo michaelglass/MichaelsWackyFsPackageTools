@@ -13,9 +13,14 @@ depends = ["restore"]
 
 [tasks.test]
 run = """
-dotnet test --project tests/CoverageRatchet.Tests --coverage --coverage-output-format cobertura --coverage-output $PWD/coverage/CoverageRatchet/coverage.cobertura.xml
-dotnet test --project tests/FsSemanticTagger.Tests --coverage --coverage-output-format cobertura --coverage-output $PWD/coverage/FsSemanticTagger/coverage.cobertura.xml
-dotnet test --project tests/SyncDocs.Tests --coverage --coverage-output-format cobertura --coverage-output $PWD/coverage/SyncDocs/coverage.cobertura.xml
+for proj in $(find tests -name '*.Tests.fsproj' | sort); do
+  project_name=$(basename "$(dirname "$proj")" | sed 's/\\.Tests$//')
+  echo "Testing $proj (coverage -> coverage/$project_name/)"
+  dotnet test --project "$proj" \
+    --coverage \
+    --coverage-output-format cobertura \
+    --coverage-output "$PWD/coverage/$project_name/coverage.cobertura.xml"
+done
 """
 depends = ["build"]
 

@@ -14,19 +14,11 @@ permissions:
 jobs:
   deploy-docs:
     runs-on: ubuntu-latest
-    concurrency:
-      group: pages-deploy
-      cancel-in-progress: true
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-      - run: dotnet restore
-      - run: dotnet tool restore
       - name: Check if docs already deployed for this commit
         id: check-deployed
         env:
@@ -40,6 +32,13 @@ jobs:
           else
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
+      - uses: actions/setup-dotnet@v4
+        if: steps.check-deployed.outputs.skip != 'true'
+        with:
+          dotnet-version: '10.0.x'
+      - name: Restore
+        if: steps.check-deployed.outputs.skip != 'true'
+        run: dotnet restore && dotnet tool restore
       - name: Build docs
         if: steps.check-deployed.outputs.skip != 'true'
         run: dotnet fsdocs build --output output/docs --clean ${{ inputs.fsdocs-parameters }}
