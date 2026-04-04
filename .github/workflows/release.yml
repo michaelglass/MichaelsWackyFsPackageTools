@@ -1,0 +1,45 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'coverageratchet-v*'
+      - 'syncdocs-v*'
+      - 'fssemantictagger-v*'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release-coverageratchet:
+    if: startsWith(github.ref, 'refs/tags/coverageratchet-v')
+    uses: ./.github/workflows/michaels-wacky-release.yml
+    with:
+      package-name: CoverageRatchet
+      tag-prefix: coverageratchet-v
+      fsproj-path: src/CoverageRatchet/CoverageRatchet.fsproj
+    permissions:
+      contents: write
+      id-token: write
+
+  release-syncdocs:
+    if: startsWith(github.ref, 'refs/tags/syncdocs-v')
+    uses: ./.github/workflows/michaels-wacky-release.yml
+    with:
+      package-name: SyncDocs
+      tag-prefix: syncdocs-v
+      fsproj-path: src/SyncDocs/SyncDocs.fsproj
+    permissions:
+      contents: write
+      id-token: write
+
+  release-fssemantictagger:
+    if: startsWith(github.ref, 'refs/tags/fssemantictagger-v')
+    uses: ./.github/workflows/michaels-wacky-release.yml
+    with:
+      package-name: FsSemanticTagger
+      tag-prefix: fssemantictagger-v
+      fsproj-path: src/FsSemanticTagger/FsSemanticTagger.fsproj
+    permissions:
+      contents: write
+      id-token: write
