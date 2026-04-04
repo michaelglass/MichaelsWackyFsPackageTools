@@ -24,6 +24,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Verify CI passed for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Checking CI status for commit ${{ github.sha }}..."
+          status=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/status --jq '.state')
+          if [ "$status" != "success" ]; then
+            echo "::error::CI has not passed for this commit (status: $status). Push to main first."
+            exit 1
+          fi
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
