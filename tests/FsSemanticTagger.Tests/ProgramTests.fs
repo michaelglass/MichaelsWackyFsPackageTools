@@ -118,10 +118,16 @@ let ``init creates semantic-tagger.json for multiple packages`` () =
         test <@ config.Packages.Length = 2 @>
 
         test
-            <@ config.Packages |> List.exists (fun p -> p.Name = "ToolA" && p.TagPrefix = "toola-v") @>
+            <@
+                config.Packages
+                |> List.exists (fun p -> p.Name = "ToolA" && p.TagPrefix = "toola-v")
+            @>
 
         test
-            <@ config.Packages |> List.exists (fun p -> p.Name = "ToolB" && p.TagPrefix = "toolb-v") @>
+            <@
+                config.Packages
+                |> List.exists (fun p -> p.Name = "ToolB" && p.TagPrefix = "toolb-v")
+            @>
     finally
         Directory.Delete(tmpDir, true)
 
@@ -180,7 +186,6 @@ let ``init fails when no packable projects found`` () =
     try
         let result = initCommand tmpDir
 
-        test
-            <@ result = Error "No packable .fsproj files found. Each package needs a <PackageId> element." @>
+        test <@ result = Error "No packable .fsproj files found. Each package needs a <PackageId> element." @>
     finally
         Directory.Delete(tmpDir, true)

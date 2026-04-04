@@ -182,7 +182,8 @@ let load (rootDir: string) : ToolConfig =
                     let fsprojFull = Path.Combine(rootDir, pkg.Fsproj)
 
                     if File.Exists fsprojFull then
-                        { pkg with DllPath = Path.GetRelativePath(rootDir, deriveDllPath fsprojFull) }
+                        { pkg with
+                            DllPath = Path.GetRelativePath(rootDir, deriveDllPath fsprojFull) }
                     else
                         pkg) }
     else
