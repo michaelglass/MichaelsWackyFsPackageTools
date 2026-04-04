@@ -36,7 +36,7 @@ jobs:
       - name: Format check
         run: dotnet fantomas ${{ inputs.fantomas-paths }} --check
       - name: Sync docs check
-        run: dotnet run --project src/SyncDocs -- check
+        run: syncdocs check
       - name: Build
         run: dotnet build --warnaserror --no-restore
       - name: Lint
@@ -51,9 +51,14 @@ jobs:
           path: output/docs
       - name: Test with coverage
         run: |
-          dotnet test --project tests/CoverageRatchet.Tests --coverage --coverage-output-format cobertura --coverage-output ${{ github.workspace }}/coverage/CoverageRatchet/coverage.cobertura.xml
-          dotnet test --project tests/FsSemanticTagger.Tests --coverage --coverage-output-format cobertura --coverage-output ${{ github.workspace }}/coverage/FsSemanticTagger/coverage.cobertura.xml
-          dotnet test --project tests/SyncDocs.Tests --coverage --coverage-output-format cobertura --coverage-output ${{ github.workspace }}/coverage/SyncDocs/coverage.cobertura.xml
+          for proj in $(find tests -name '*.Tests.fsproj' | sort); do
+            project_name=$(basename "$(dirname "$proj")" | sed 's/\.Tests$//')
+            echo "Testing $proj (coverage -> coverage/$project_name/)"
+            dotnet test --project "$proj" \
+              --coverage \
+              --coverage-output-format cobertura \
+              --coverage-output "${{ github.workspace }}/coverage/$project_name/coverage.cobertura.xml"
+          done
       - name: Coverage report
         uses: danielpalme/ReportGenerator-GitHub-Action@5
         with:
@@ -77,9 +82,10 @@ jobs:
       - name: Coverage ratchet check
         run: |
           for config in coverage-ratchet-*.json; do
+            [ -f "$config" ] || continue
             project=$(echo "$config" | sed 's/coverage-ratchet-\(.*\)\.json/\1/')
             echo "Checking $project..."
-            (cd "coverage/$project" && dotnet run --project "../../src/CoverageRatchet" -- check --config "../../$config")
+            (cd "coverage/$project" && coverageratchet check --config "../../$config")
           done
       - name: Upload coverage report
         if: always()
