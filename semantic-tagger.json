@@ -1,0 +1,19 @@
+{
+  "packages": [
+    {
+      "name": "FsSemanticTagger",
+      "fsproj": "src/FsSemanticTagger/FsSemanticTagger.fsproj",
+      "tagPrefix": "fssemantictagger-v"
+    },
+    {
+      "name": "CoverageRatchet",
+      "fsproj": "src/CoverageRatchet/CoverageRatchet.fsproj",
+      "tagPrefix": "coverageratchet-v"
+    },
+    {
+      "name": "SyncDocs",
+      "fsproj": "src/SyncDocs/SyncDocs.fsproj",
+      "tagPrefix": "syncdocs-v"
+    }
+  ]
+}
