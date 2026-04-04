@@ -29,9 +29,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "Checking CI status for commit ${{ github.sha }}..."
-          status=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/status --jq '.state')
-          if [ "$status" != "success" ]; then
-            echo "::error::CI has not passed for this commit (status: $status). Push to main first."
+          failed=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+            --jq '[.check_runs[] | select(.conclusion != "success" and .conclusion != "skipped" and .conclusion != null)] | length')
+          total=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs --jq '.total_count')
+          if [ "$total" -eq "0" ]; then
+            echo "::error::No CI checks found for this commit. Push to main first."
+            exit 1
+          fi
+          if [ "$failed" -gt "0" ]; then
+            echo "::error::CI has failing checks for this commit."
             exit 1
           fi
       - uses: actions/setup-dotnet@v4

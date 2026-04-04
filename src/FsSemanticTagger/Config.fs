@@ -117,7 +117,10 @@ let parseJson (json: string) : ToolConfig =
                   pkg
                   |> tryGet "dllPath"
                   |> Option.map _.GetString()
-                  |> Option.defaultWith (fun () -> deriveDllPathFromContent fsproj "")
+                  |> Option.defaultWith (fun () ->
+                      let dir = Path.GetDirectoryName(fsproj)
+                      let name = Path.GetFileNameWithoutExtension(fsproj)
+                      Path.Combine(dir, "bin", "Release", "net10.0", name + ".dll"))
 
               yield
                   { Name = name

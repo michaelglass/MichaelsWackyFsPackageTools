@@ -33,7 +33,7 @@ jobs:
         run: |
           FSPROJ="src/${{ inputs.package }}/${{ inputs.package }}.fsproj"
           sed -i "s|<Version>[^<]*</Version>|<Version>${{ inputs.version }}</Version>|" "$FSPROJ"
-          dotnet pack "$FSPROJ" -c Release -o ./artifacts
+          dotnet pack "$FSPROJ" -c Release --no-build -o ./artifacts
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
