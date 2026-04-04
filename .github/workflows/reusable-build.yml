@@ -11,9 +11,6 @@ on:
       fantomas-paths:
         type: string
         default: 'src/ tests/'
-      coverage-thresholds:
-        type: string
-        default: '50/70'
       has-examples:
         type: boolean
         default: false
@@ -53,17 +50,20 @@ jobs:
           name: docs
           path: output/docs
       - name: Test with coverage
-        run: dotnet test --coverage --coverage-output-format cobertura --coverage-output ${{ github.workspace }}/coverage/coverage.cobertura.xml
+        run: |
+          dotnet test --project tests/CoverageRatchet.Tests --coverage --coverage-output-format cobertura --coverage-output ${{ github.workspace }}/coverage/CoverageRatchet/coverage.cobertura.xml
+          dotnet test --project tests/FsSemanticTagger.Tests --coverage --coverage-output-format cobertura --coverage-output ${{ github.workspace }}/coverage/FsSemanticTagger/coverage.cobertura.xml
+          dotnet test --project tests/SyncDocs.Tests --coverage --coverage-output-format cobertura --coverage-output ${{ github.workspace }}/coverage/SyncDocs/coverage.cobertura.xml
       - name: Coverage report
         uses: danielpalme/ReportGenerator-GitHub-Action@5
         with:
-          reports: coverage/coverage.cobertura.xml
+          reports: coverage/*/coverage.cobertura.xml
           targetdir: coverage/report
           reporttypes: 'HtmlInline;MarkdownSummaryGithub'
       - name: Coverage summary
         uses: irongut/CodeCoverageSummary@v1.3.0
         with:
-          filename: coverage/coverage.cobertura.xml
+          filename: coverage/*/coverage.cobertura.xml
           badge: true
           format: markdown
           output: both
@@ -77,8 +77,9 @@ jobs:
       - name: Coverage ratchet check
         run: |
           for config in coverage-ratchet-*.json; do
-            echo "Checking $config..."
-            dotnet run --project src/CoverageRatchet -- check --config "$config"
+            project=$(echo "$config" | sed 's/coverage-ratchet-\(.*\)\.json/\1/')
+            echo "Checking $project..."
+            (cd "coverage/$project" && dotnet run --project "../../src/CoverageRatchet" -- check --config "../../$config")
           done
       - name: Upload coverage report
         if: always()
