@@ -1,0 +1,24 @@
+name: Deploy Docs
+on:
+  push:
+    tags:
+      - 'coverageratchet-v*'
+      - 'syncdocs-v*'
+      - 'fssemantictagger-v*'
+
+concurrency:
+  group: docs-${{ github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  docs:
+    uses: ./.github/workflows/michaels-wacky-docs.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write

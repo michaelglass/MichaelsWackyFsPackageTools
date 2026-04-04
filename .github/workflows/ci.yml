@@ -2,16 +2,13 @@ name: CI
 on:
   push:
     branches: [main, master]
-    tags: ['coverageratchet-v*', 'syncdocs-v*', 'fssemantictagger-v*']
   pull_request:
     branches: [main, master]
 
 permissions:
-  contents: write
+  contents: read
   checks: write
   pull-requests: write
-  id-token: write
-  pages: write
 
 jobs:
   build:
@@ -23,39 +20,3 @@ jobs:
       contents: read
       checks: write
       pull-requests: write
-
-  release-coverageratchet:
-    if: startsWith(github.ref, 'refs/tags/coverageratchet-v')
-    needs: build
-    uses: ./.github/workflows/michaels-wacky-release.yml
-    with:
-      package-name: CoverageRatchet
-      tag-prefix: coverageratchet-v
-      fsproj-path: src/CoverageRatchet/CoverageRatchet.fsproj
-    permissions:
-      contents: write
-      id-token: write
-
-  release-syncdocs:
-    if: startsWith(github.ref, 'refs/tags/syncdocs-v')
-    needs: build
-    uses: ./.github/workflows/michaels-wacky-release.yml
-    with:
-      package-name: SyncDocs
-      tag-prefix: syncdocs-v
-      fsproj-path: src/SyncDocs/SyncDocs.fsproj
-    permissions:
-      contents: write
-      id-token: write
-
-  release-fssemantictagger:
-    if: startsWith(github.ref, 'refs/tags/fssemantictagger-v')
-    needs: build
-    uses: ./.github/workflows/michaels-wacky-release.yml
-    with:
-      package-name: FsSemanticTagger
-      tag-prefix: fssemantictagger-v
-      fsproj-path: src/FsSemanticTagger/FsSemanticTagger.fsproj
-    permissions:
-      contents: write
-      id-token: write
