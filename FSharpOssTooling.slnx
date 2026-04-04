@@ -5,6 +5,7 @@
     <Project Path="src/SyncDocs/SyncDocs.fsproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Tests.Common/Tests.Common.fsproj" />
     <Project Path="tests/CoverageRatchet.Tests/CoverageRatchet.Tests.fsproj" />
     <Project Path="tests/FsSemanticTagger.Tests/FsSemanticTagger.Tests.fsproj" />
     <Project Path="tests/SyncDocs.Tests/SyncDocs.Tests.fsproj" />

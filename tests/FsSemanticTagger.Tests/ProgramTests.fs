@@ -5,6 +5,8 @@ open Xunit
 open Swensen.Unquote
 open FsSemanticTagger.Program
 open FsSemanticTagger
+open FsSemanticTagger.Tests.ConfigTests
+open Tests.Common.TestHelpers
 
 [<Fact>]
 let ``run - no args returns Error with usage`` () =
@@ -88,28 +90,15 @@ let ``run - check-api same dll returns Ok 0`` () =
 
 [<Fact>]
 let ``init creates semantic-tagger.json for multiple packages`` () =
-    let tmpDir =
-        Path.Combine(Path.GetTempPath(), "fssemtagger-test-" + Path.GetRandomFileName())
+    withTempDir (fun tmpDir ->
+        let srcDir1 = Path.Combine(tmpDir, "src", "ToolA")
+        let srcDir2 = Path.Combine(tmpDir, "src", "ToolB")
+        Directory.CreateDirectory(srcDir1) |> ignore
+        Directory.CreateDirectory(srcDir2) |> ignore
 
-    let srcDir1 = Path.Combine(tmpDir, "src", "ToolA")
-    let srcDir2 = Path.Combine(tmpDir, "src", "ToolB")
-    Directory.CreateDirectory(srcDir1) |> ignore
-    Directory.CreateDirectory(srcDir2) |> ignore
+        File.WriteAllText(Path.Combine(srcDir1, "ToolA.fsproj"), packableFsproj "ToolA")
+        File.WriteAllText(Path.Combine(srcDir2, "ToolB.fsproj"), packableFsproj "ToolB")
 
-    let packableFsproj name =
-        sprintf
-            """<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <PackageId>%s</PackageId>
-  </PropertyGroup>
-</Project>"""
-            name
-
-    File.WriteAllText(Path.Combine(srcDir1, "ToolA.fsproj"), packableFsproj "ToolA")
-    File.WriteAllText(Path.Combine(srcDir2, "ToolB.fsproj"), packableFsproj "ToolB")
-
-    try
         let result = initCommand tmpDir
         test <@ result = Ok 0 @>
         let jsonPath = Path.Combine(tmpDir, "semantic-tagger.json")
@@ -127,65 +116,45 @@ let ``init creates semantic-tagger.json for multiple packages`` () =
             <@
                 config.Packages
                 |> List.exists (fun p -> p.Name = "ToolB" && p.TagPrefix = "toolb-v")
-            @>
-    finally
-        Directory.Delete(tmpDir, true)
+            @>)
 
 [<Fact>]
 let ``init uses v prefix for single package`` () =
-    let tmpDir =
-        Path.Combine(Path.GetTempPath(), "fssemtagger-test-" + Path.GetRandomFileName())
+    withTempDir (fun tmpDir ->
+        let srcDir = Path.Combine(tmpDir, "src", "MyLib")
+        Directory.CreateDirectory(srcDir) |> ignore
 
-    let srcDir = Path.Combine(tmpDir, "src", "MyLib")
-    Directory.CreateDirectory(srcDir) |> ignore
-
-    File.WriteAllText(
-        Path.Combine(srcDir, "MyLib.fsproj"),
-        """<Project Sdk="Microsoft.NET.Sdk">
+        File.WriteAllText(
+            Path.Combine(srcDir, "MyLib.fsproj"),
+            """<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <PackageId>MyLib</PackageId>
   </PropertyGroup>
 </Project>"""
-    )
+        )
 
-    try
         let result = initCommand tmpDir
         test <@ result = Ok 0 @>
 
         let config =
             Config.parseJson (File.ReadAllText(Path.Combine(tmpDir, "semantic-tagger.json")))
 
-        test <@ config.Packages[0].TagPrefix = "v" @>
-    finally
-        Directory.Delete(tmpDir, true)
+        test <@ config.Packages[0].TagPrefix = "v" @>)
 
 [<Fact>]
 let ``init does not overwrite existing config`` () =
-    let tmpDir =
-        Path.Combine(Path.GetTempPath(), "fssemtagger-test-" + Path.GetRandomFileName())
+    withTempDir (fun tmpDir ->
+        let jsonPath = Path.Combine(tmpDir, "semantic-tagger.json")
+        File.WriteAllText(jsonPath, """{"packages":[]}""")
 
-    Directory.CreateDirectory(tmpDir) |> ignore
-    let jsonPath = Path.Combine(tmpDir, "semantic-tagger.json")
-    File.WriteAllText(jsonPath, """{"packages":[]}""")
-
-    try
         let result = initCommand tmpDir
         test <@ result = Ok 0 @>
-        test <@ File.ReadAllText(jsonPath) = """{"packages":[]}""" @>
-    finally
-        Directory.Delete(tmpDir, true)
+        test <@ File.ReadAllText(jsonPath) = """{"packages":[]}""" @>)
 
 [<Fact>]
 let ``init fails when no packable projects found`` () =
-    let tmpDir =
-        Path.Combine(Path.GetTempPath(), "fssemtagger-test-" + Path.GetRandomFileName())
-
-    Directory.CreateDirectory(tmpDir) |> ignore
-
-    try
+    withTempDir (fun tmpDir ->
         let result = initCommand tmpDir
 
-        test <@ result = Error "No packable .fsproj files found. Each package needs a <PackageId> element." @>
-    finally
-        Directory.Delete(tmpDir, true)
+        test <@ result = Error "No packable .fsproj files found. Each package needs a <PackageId> element." @>)

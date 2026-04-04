@@ -7,6 +7,7 @@ open Swensen.Unquote
 open CoverageRatchet.Cobertura
 open CoverageRatchet.Thresholds
 open CoverageRatchet.Program
+open Tests.Common.TestHelpers
 
 // --- parseArgs tests ---
 
@@ -124,15 +125,6 @@ let private makeCoverageXml (linePct: int) =
   </packages>
 </coverage>"""
         (String.concat "\n" lines)
-
-let private withTempDir (action: string -> 'a) =
-    let tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
-    Directory.CreateDirectory(tmpDir) |> ignore
-
-    try
-        action tmpDir
-    finally
-        Directory.Delete(tmpDir, true)
 
 [<Fact>]
 let ``run - check with no coverage file returns Error`` () =

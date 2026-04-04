@@ -92,7 +92,7 @@ let ``release - Auto with no previous tags returns 0 with no packages`` () =
                 Fsproj = "src/MyLib/MyLib.fsproj"
                 DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
                 TagPrefix = "v"
-                ExtraFsprojs = [] } ]
+                FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty }
 
     let result = release fakeRun config Auto GitHubActions
@@ -135,7 +135,7 @@ let ``release - StartAlpha with FirstRelease creates version`` () =
                     Fsproj = tmpFile
                     DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
                     TagPrefix = "v"
-                    ExtraFsprojs = [] } ]
+                    FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty }
 
         let result = release fakeRun config StartAlpha GitHubActions

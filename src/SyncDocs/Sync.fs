@@ -10,8 +10,8 @@ type SyncResult =
     | SourceMissing
     | TargetMissing
 
-/// Extract tagged sections from source content.
-/// Tags: <!-- sync:name:start -->...<!-- sync:name:end -->
+/// Extract tagged sections from source (README) content.
+/// Source uses: <!-- sync:name:start -->...<!-- sync:name:end -->
 let extractSections (content: string) : Map<string, string> =
     let pattern = @"<!-- sync:([\w][\w-]*):start -->([\s\S]*?)<!-- sync:\1:end -->"
 
@@ -20,8 +20,8 @@ let extractSections (content: string) : Map<string, string> =
     |> Seq.map (fun m -> m.Groups.[1].Value, m.Groups.[2].Value)
     |> Map.ofSeq
 
-/// Replace tagged sections in target content with new content.
-/// Tags: <!-- sync:name -->...<!-- sync:name:end -->
+/// Replace tagged sections in target (docs) content with new content from source.
+/// Target uses: <!-- sync:name -->...<!-- sync:name:end --> (no :start suffix).
 let replaceSections (content: string) (sections: Map<string, string>) : string =
     sections
     |> Map.fold
@@ -78,26 +78,35 @@ let private candidatePairs (rootDir: string) : (string * string * string) list =
 
               yield dirName, Path.Combine(dir, "README.md"), Path.Combine(rootDir, "docs", dirName, "index.md") ]
 
-/// Discover sync pairs by convention.
+/// Discover sync pairs and warnings in a single pass over candidates.
 /// README.md -> docs/index.md, src/*/README.md -> docs/*/index.md
-let discoverPairs (rootDir: string) : (string * string) list =
+let discoverPairsAndWarnings (rootDir: string) : (string * string) list * string list =
     candidatePairs rootDir
-    |> List.choose (fun (_, src, tgt) ->
-        if File.Exists src && File.Exists tgt then
-            Some(src, tgt)
-        else
-            None)
+    |> List.fold
+        (fun (pairs, warnings) (name, src, tgt) ->
+            let srcExists = File.Exists src
+            let tgtExists = File.Exists tgt
 
-/// Discover incomplete sync pairs and return friendly warning messages.
-let discoverWarnings (rootDir: string) : string list =
-    candidatePairs rootDir
-    |> List.choose (fun (name, src, tgt) ->
-        let srcRel = Path.GetRelativePath(rootDir, src)
-        let tgtRel = Path.GetRelativePath(rootDir, tgt)
+            let pairs =
+                if srcExists && tgtExists then
+                    (src, tgt) :: pairs
+                else
+                    pairs
 
-        if File.Exists src && not (File.Exists tgt) then
-            Some(sprintf "To sync docs for %s, create %s" name tgtRel)
-        elif File.Exists tgt && not (File.Exists src) then
-            Some(sprintf "To sync docs for %s, create %s" name srcRel)
-        else
-            None)
+            let warnings =
+                if srcExists && not tgtExists then
+                    sprintf "To sync docs for %s, create %s" name (Path.GetRelativePath(rootDir, tgt))
+                    :: warnings
+                elif tgtExists && not srcExists then
+                    sprintf "To sync docs for %s, create %s" name (Path.GetRelativePath(rootDir, src))
+                    :: warnings
+                else
+                    warnings
+
+            pairs, warnings)
+        ([], [])
+    |> fun (pairs, warnings) -> List.rev pairs, List.rev warnings
+
+let discoverPairs (rootDir: string) : (string * string) list = discoverPairsAndWarnings rootDir |> fst
+
+let discoverWarnings (rootDir: string) : string list = discoverPairsAndWarnings rootDir |> snd

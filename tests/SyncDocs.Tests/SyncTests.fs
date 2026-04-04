@@ -5,7 +5,7 @@ open System.IO
 open Xunit
 open Swensen.Unquote
 open SyncDocs.Sync
-open SyncDocs.Tests.TestHelpers
+open Tests.Common.TestHelpers
 
 // --- extractSections tests ---
 

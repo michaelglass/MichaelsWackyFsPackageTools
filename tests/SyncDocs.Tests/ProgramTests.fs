@@ -4,7 +4,7 @@ open System.IO
 open Xunit
 open Swensen.Unquote
 open SyncDocs.Program
-open SyncDocs.Tests.TestHelpers
+open Tests.Common.TestHelpers
 
 [<Fact>]
 let ``run - check prints warnings for incomplete pairs`` () =

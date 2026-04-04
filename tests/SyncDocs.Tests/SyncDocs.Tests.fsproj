@@ -13,9 +13,9 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/SyncDocs/SyncDocs.fsproj" />
+    <ProjectReference Include="../Tests.Common/Tests.Common.fsproj" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="TestHelpers.fs" />
     <Compile Include="SyncTests.fs" />
     <Compile Include="ProgramTests.fs" />
   </ItemGroup>

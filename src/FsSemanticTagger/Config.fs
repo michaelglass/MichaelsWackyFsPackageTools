@@ -10,7 +10,7 @@ type PackageConfig =
       Fsproj: string
       DllPath: string
       TagPrefix: string
-      ExtraFsprojs: string list }
+      FsProjsSharingSameTag: string list }
 
 type ToolConfig =
     { Packages: PackageConfig list
@@ -25,10 +25,9 @@ let private packageIdRegex =
 let private isPackableFalseRegex =
     Regex(@"<IsPackable>\s*false\s*</IsPackable>", RegexOptions.Compiled ||| RegexOptions.IgnoreCase)
 
-/// Derive the DLL path from an fsproj file path
-let deriveDllPath (fsprojPath: string) : string =
+/// Derive the DLL output path from an fsproj path and its content.
+let deriveDllPathFromContent (fsprojPath: string) (content: string) : string =
     let dir = Path.GetDirectoryName(fsprojPath)
-    let content = File.ReadAllText(fsprojPath)
     let assemblyNameMatch = assemblyNameRegex.Match(content)
 
     let name =
@@ -38,6 +37,10 @@ let deriveDllPath (fsprojPath: string) : string =
             Path.GetFileNameWithoutExtension(fsprojPath)
 
     Path.Combine(dir, "bin", "Release", "net10.0", name + ".dll")
+
+/// Derive the DLL path from an fsproj file path (reads the file).
+let deriveDllPath (fsprojPath: string) : string =
+    deriveDllPathFromContent fsprojPath (File.ReadAllText(fsprojPath))
 
 /// Find all packable fsproj files, returning (packageName, relativePath) list
 let findPackableProjects (rootDir: string) : (string * string) list =
@@ -68,10 +71,15 @@ let discover (rootDir: string) : ToolConfig =
                 Fsproj = relativePath
                 DllPath = Path.GetRelativePath(rootDir, deriveDllPath fsproj)
                 TagPrefix = "v"
-                ExtraFsprojs = [] } ]
+                FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty }
     | n ->
         failwithf "Found %d packable .fsproj files; create a semantic-tagger.json to configure multi-package release" n
+
+let private tryGet (name: string) (el: JsonElement) =
+    match el.TryGetProperty(name) with
+    | true, v -> Some v
+    | _ -> None
 
 /// Parse a semantic-tagger.json config string
 let parseJson (json: string) : ToolConfig =
@@ -79,14 +87,13 @@ let parseJson (json: string) : ToolConfig =
     let root = doc.RootElement
 
     let reservedVersions =
-        if root.TryGetProperty("reservedVersions") |> fst then
-            let prop = root.GetProperty("reservedVersions")
-
+        root
+        |> tryGet "reservedVersions"
+        |> Option.map (fun prop ->
             [ for item in prop.EnumerateArray() do
                   yield item.GetString() ]
-            |> Set.ofList
-        else
-            Set.empty
+            |> Set.ofList)
+        |> Option.defaultValue Set.empty
 
     let packages =
         let pkgs = root.GetProperty("packages")
@@ -96,34 +103,28 @@ let parseJson (json: string) : ToolConfig =
               let fsproj = pkg.GetProperty("fsproj").GetString()
 
               let tagPrefix =
-                  if pkg.TryGetProperty("tagPrefix") |> fst then
-                      pkg.GetProperty("tagPrefix").GetString()
-                  else
-                      "v"
+                  pkg |> tryGet "tagPrefix" |> Option.map _.GetString() |> Option.defaultValue "v"
 
               let extraFsprojs =
-                  if pkg.TryGetProperty("extraFsprojs") |> fst then
-                      [ for item in pkg.GetProperty("extraFsprojs").EnumerateArray() do
-                            yield item.GetString() ]
-                  else
-                      []
+                  pkg
+                  |> tryGet "fsProjsSharingSameTag"
+                  |> Option.map (fun arr ->
+                      [ for item in arr.EnumerateArray() do
+                            yield item.GetString() ])
+                  |> Option.defaultValue []
 
               let dllPath =
-                  if pkg.TryGetProperty("dllPath") |> fst then
-                      pkg.GetProperty("dllPath").GetString()
-                  else
-                      let dir = Path.GetDirectoryName(fsproj)
-
-                      let assemblyName = Path.GetFileNameWithoutExtension(fsproj)
-
-                      Path.Combine(dir, "bin", "Release", "net10.0", assemblyName + ".dll")
+                  pkg
+                  |> tryGet "dllPath"
+                  |> Option.map _.GetString()
+                  |> Option.defaultWith (fun () -> deriveDllPathFromContent fsproj "")
 
               yield
                   { Name = name
                     Fsproj = fsproj
                     DllPath = dllPath
                     TagPrefix = tagPrefix
-                    ExtraFsprojs = extraFsprojs } ]
+                    FsProjsSharingSameTag = extraFsprojs } ]
 
     { Packages = packages
       ReservedVersions = reservedVersions }
@@ -141,10 +142,10 @@ let toJson (config: ToolConfig) : string =
         writer.WriteString("fsproj", pkg.Fsproj)
         writer.WriteString("tagPrefix", pkg.TagPrefix)
 
-        if not pkg.ExtraFsprojs.IsEmpty then
-            writer.WriteStartArray("extraFsprojs")
+        if not pkg.FsProjsSharingSameTag.IsEmpty then
+            writer.WriteStartArray("fsProjsSharingSameTag")
 
-            for extra in pkg.ExtraFsprojs do
+            for extra in pkg.FsProjsSharingSameTag do
                 writer.WriteStringValue(extra)
 
             writer.WriteEndArray()

@@ -143,7 +143,7 @@ let release
             for (pkg, version) in bumps do
                 updateFsprojVersion pkg.Fsproj version
 
-                for extra in pkg.ExtraFsprojs do
+                for extra in pkg.FsProjsSharingSameTag do
                     updateFsprojVersion extra version
 
             // 6. Commit and tag
