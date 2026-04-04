@@ -39,7 +39,7 @@ jobs:
       - name: Format check
         run: dotnet fantomas ${{ inputs.fantomas-paths }} --check
       - name: Sync docs check
-        run: dotnet syncdocs check
+        run: dotnet run --project src/SyncDocs -- check
       - name: Build
         run: dotnet build --warnaserror --no-restore
       - name: Lint
