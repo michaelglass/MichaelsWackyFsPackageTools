@@ -105,7 +105,7 @@ let parseJson (json: string) : ToolConfig =
               let tagPrefix =
                   pkg |> tryGet "tagPrefix" |> Option.map _.GetString() |> Option.defaultValue "v"
 
-              let extraFsprojs =
+              let fsProjsSharingSameTag =
                   pkg
                   |> tryGet "fsProjsSharingSameTag"
                   |> Option.map (fun arr ->
@@ -124,7 +124,7 @@ let parseJson (json: string) : ToolConfig =
                     Fsproj = fsproj
                     DllPath = dllPath
                     TagPrefix = tagPrefix
-                    FsProjsSharingSameTag = extraFsprojs } ]
+                    FsProjsSharingSameTag = fsProjsSharingSameTag } ]
 
     { Packages = packages
       ReservedVersions = reservedVersions }
