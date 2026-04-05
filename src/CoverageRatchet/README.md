@@ -1,15 +1,16 @@
 # CoverageRatchet
 
-Per-file code coverage enforcement that only goes up. CoverageRatchet reads your Cobertura XML coverage reports, compares each file against its threshold, and prevents coverage from ever regressing.
+Per-file code coverage enforcement that only goes up. CoverageRatchet reads your Cobertura XML coverage reports, compares each file against its threshold, and helps prevent coverage from regressing.
 
 ## How It Works
 
 1. Your test suite generates a Cobertura XML coverage report (most .NET coverage tools support this format).
 2. CoverageRatchet reads the report and compares each file's line and branch coverage against its threshold.
 3. **`check`** fails the build if any file drops below its threshold.
-4. **`ratchet`** updates thresholds to match current coverage -- thresholds only go up, never down.
+4. **`ratchet`** (the default command) updates thresholds to match current coverage -- thresholds only go up, not down.
+5. **`loosen`** sets thresholds to whatever coverage is right now, so `check` passes immediately.
 
-The default threshold for every file is **100% line and branch coverage**. Files that can't reach 100% (like CLI entry points) get per-file overrides with a documented reason.
+The default threshold for every file is **100% line and branch coverage**. Files that can't easily reach 100% (like CLI entry points) can get per-file overrides with a documented reason.
 
 ## Installation
 
@@ -19,31 +20,48 @@ dotnet tool install -g CoverageRatchet
 
 ## Usage
 
-### Check coverage (CI)
+### Ratchet (default)
 
-Run from the directory containing your `coverage.cobertura.xml`:
+Just run `coverageratchet` with no arguments to ratchet thresholds upward:
+
+```bash
+coverageratchet
+```
+
+This recursively searches for a `coverage.cobertura.xml` file, compares each file against its threshold, and tightens thresholds where coverage has improved. Exit codes:
+
+| Exit code | Meaning |
+|-----------|---------|
+| 0 | All thresholds met, no config changes needed |
+| 1 | Config was updated (some thresholds tightened) |
+| 2 | Some files are below their threshold |
+
+You can also run it explicitly as `coverageratchet ratchet`.
+
+### Check coverage (CI)
 
 ```bash
 coverageratchet check
 ```
 
-This recursively searches for a `coverage.cobertura.xml` file, loads thresholds from `coverage-ratchet.json`, and exits with code 1 if any file is below its threshold.
+Exits with code 0 if all files meet their thresholds, 1 if any file is below.
 
-### Ratchet thresholds upward
+### Loosen thresholds
 
-After improving tests, update thresholds to lock in your gains:
+If you need `check` to pass right now (e.g., after a big refactor that dropped coverage), loosen sets every file's threshold to its current actual coverage:
 
 ```bash
-coverageratchet ratchet
+coverageratchet loosen
 ```
 
-This updates `coverage-ratchet.json` so thresholds match current coverage. If a file now meets the default (100%), its override is removed entirely.
+This always exits 0. Files that were already at 100% don't get an override. New overrides get the reason `"loosened automatically"`.
 
 ### Custom config path
 
 ```bash
-coverageratchet check --config path/to/my-config.json
-coverageratchet ratchet --config path/to/my-config.json
+coverageratchet check path/to/my-config.json
+coverageratchet ratchet path/to/my-config.json
+coverageratchet loosen path/to/my-config.json
 ```
 
 ## Configuration
@@ -92,7 +110,7 @@ Files not listed in `overrides` must have 100% line and branch coverage.
 
 1. Run your tests with coverage enabled (e.g., `dotnet test --collect:"XPlat Code Coverage"`)
 2. Run `coverageratchet check` to enforce thresholds
-3. Periodically run `coverageratchet ratchet` locally to lock in coverage improvements
+3. Run `coverageratchet` locally after improving tests to lock in coverage gains
 
 ## License
 

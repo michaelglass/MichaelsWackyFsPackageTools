@@ -1,13 +1,13 @@
 # MichaelsWackyFsPackageTools
 
 <!-- sync:intro:start -->
-A collection of three dotnet CLI tools that help maintain F# open-source projects. Each tool solves a common pain point in library maintenance:
+A collection of three dotnet CLI tools that help me maintain my F# open-source projects. They might be useful for yours too!
 
 | Tool | What it does |
 |------|-------------|
-| [CoverageRatchet](src/CoverageRatchet/) | Enforces per-file code coverage thresholds that automatically ratchet upward -- coverage can only improve, never regress |
+| [CoverageRatchet](src/CoverageRatchet/) | Enforces per-file code coverage thresholds that automatically ratchet upward -- coverage can improve but shouldn't regress |
 | [FsSemanticTagger](src/FsSemanticTagger/) | Detects API changes in your compiled DLL and determines the correct semantic version bump |
-| [SyncDocs](src/SyncDocs/) | Keeps sections of your README in sync with your docs site, so you never have stale documentation |
+| [SyncDocs](src/SyncDocs/) | Helps keep sections of your README in sync with your docs site |
 <!-- sync:intro:end -->
 
 <!-- sync:getting-started:start -->
@@ -48,21 +48,24 @@ syncdocs --help
 
 ### CoverageRatchet
 
-CoverageRatchet reads Cobertura XML coverage reports and enforces per-file thresholds. The key idea: thresholds only go **up**. When your tests improve coverage on a file, the threshold automatically ratchets to the new level so it can never drop back down.
+CoverageRatchet reads Cobertura XML coverage reports and enforces per-file thresholds. The key idea: thresholds only go **up**. When your tests improve coverage on a file, the threshold automatically ratchets to the new level so it shouldn't drop back down.
 
 ```bash
+# Ratchet thresholds upward (default command)
+coverageratchet
+
 # Check current coverage against thresholds (use in CI)
 coverageratchet check
 
-# Update thresholds to match current coverage
-coverageratchet ratchet
+# Set thresholds to current coverage (makes check pass immediately)
+coverageratchet loosen
 ```
 
 Configuration lives in a `coverage-ratchet.json` file. See the [CoverageRatchet README](src/CoverageRatchet/) for the full configuration format.
 
 ### FsSemanticTagger
 
-FsSemanticTagger inspects your compiled F# assembly to detect API changes and determine the correct version bump according to [Semantic Versioning](https://semver.org/):
+FsSemanticTagger inspects your compiled F# assembly to detect API changes and determines the correct version bump according to [Semantic Versioning](https://semver.org/):
 
 - **Removed** a public type or method? That's a **breaking change** (major bump).
 - **Added** a new public member? That's a **minor bump**.
@@ -80,7 +83,7 @@ See the [FsSemanticTagger README](src/FsSemanticTagger/) for release workflows a
 
 ### SyncDocs
 
-SyncDocs keeps documentation in sync between your README files and a `docs/` folder. Mark sections in your README with `<!-- sync:NAME:start -->` and `<!-- sync:NAME:end -->` markers, and SyncDocs copies those sections to matching targets in `docs/`.
+SyncDocs helps keep documentation in sync between your README files and a `docs/` folder. Mark sections in your README with `<!-- sync:NAME:start -->` and `<!-- sync:NAME:end -->` markers, and SyncDocs copies those sections to matching targets in `docs/`.
 
 ```bash
 # Check if docs are in sync (use in CI)
