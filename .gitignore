@@ -4,3 +4,4 @@ output/
 artifacts/
 coverage/
 .fsdocs/
+.claude/settings.local.json
