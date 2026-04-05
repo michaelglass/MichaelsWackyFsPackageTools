@@ -1,6 +1,6 @@
 # SyncDocs
 
-Keep your README and docs site in sync automatically. SyncDocs copies marked sections from your README files into your `docs/` folder so documentation never goes stale.
+Keep your README and docs site in sync. SyncDocs copies marked sections from your README files into your `docs/` folder to help prevent documentation from going stale.
 
 ## How It Works
 
