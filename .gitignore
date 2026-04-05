@@ -5,3 +5,4 @@ artifacts/
 coverage/
 .fsdocs/
 .claude/settings.local.json
+docs/plans/

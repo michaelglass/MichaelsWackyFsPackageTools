@@ -59,7 +59,7 @@ run = "dotnet fsharplint lint FSharpOssTooling.slnx"
 depends = ["build", "tool-restore"]
 
 [tasks.check]
-depends = ["format", "lint", "docs"]
+depends = ["format", "lint", "docs", "coverage-check"]
 
 [tasks.ci]
 depends = ["format-check", "lint", "docs", "coverage-check"]

@@ -337,6 +337,27 @@ let ``toJson roundtrips through parseJson`` () =
     test <@ roundtripped.ReservedVersions = set [ "1.0.0" ] @>
 
 [<Fact>]
+let ``load keeps dllPath from JSON when fsproj missing on disk`` () =
+    withTempDir (fun tmpDir ->
+        let jsonContent =
+            """
+        {
+            "packages": [
+                {
+                    "name": "Ghost",
+                    "fsproj": "src/Ghost/Ghost.fsproj",
+                    "dllPath": "custom/Ghost.dll"
+                }
+            ]
+        }
+        """
+
+        File.WriteAllText(Path.Combine(tmpDir, "semantic-tagger.json"), jsonContent)
+
+        let config = load tmpDir
+        test <@ config.Packages[0].DllPath = "custom/Ghost.dll" @>)
+
+[<Fact>]
 let ``toJson omits empty reservedVersions`` () =
     let config =
         { Packages =

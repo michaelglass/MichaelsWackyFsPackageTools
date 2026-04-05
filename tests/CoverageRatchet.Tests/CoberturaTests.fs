@@ -2,6 +2,7 @@ module CoverageRatchet.Tests.CoberturaTests
 
 open System
 open System.IO
+open System.Threading
 open Xunit
 open Swensen.Unquote
 open CoverageRatchet.Cobertura
@@ -340,3 +341,61 @@ let ``parseXml - line missing number or hits attribute is skipped`` () =
     test <@ result.Length = 1 @>
     // Only line 3 should be counted (the others are missing number or hits)
     test <@ result.[0].LinePct = 100.0 @>
+
+[<Fact>]
+let ``parseXml - branch dedup new beats existing when better coverage`` () =
+    // Two classes for the same file with the same branch line number.
+    // First class has 1/4 (25%) covered, second has 2/4 (50%).
+    // The dedup should replace with 2/4 because second has better coverage ratio.
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages>
+            <package>
+              <classes>
+                <class filename="/src/Dup.fs">
+                  <lines>
+                    <line number="10" hits="1" condition-coverage="25% (1/4)" />
+                  </lines>
+                </class>
+                <class filename="/src/Dup.fs">
+                  <lines>
+                    <line number="10" hits="1" condition-coverage="50% (2/4)" />
+                  </lines>
+                </class>
+              </classes>
+            </package>
+          </packages>
+        </coverage>"""
+
+    let result = parseXml xml
+
+    test <@ result.Length = 1 @>
+    // Should replace with the better ratio (2/4 = 50%)
+    test <@ result.[0].BranchesCovered = 2 @>
+    test <@ result.[0].BranchesTotal = 4 @>
+
+[<Fact>]
+let ``findCoverageFile - returns most recent when multiple files exist`` () =
+    let tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
+    let subDir1 = Path.Combine(tmpDir, "sub1")
+    let subDir2 = Path.Combine(tmpDir, "sub2")
+    Directory.CreateDirectory(subDir1) |> ignore
+    Directory.CreateDirectory(subDir2) |> ignore
+
+    let oldPath = Path.Combine(subDir1, "coverage.cobertura.xml")
+    File.WriteAllText(oldPath, "<coverage/>")
+
+    // Ensure the second file has a later write time
+    Thread.Sleep(50)
+
+    let newPath = Path.Combine(subDir2, "coverage.cobertura.xml")
+    File.WriteAllText(newPath, "<coverage/>")
+
+    try
+        let result = findCoverageFile tmpDir
+
+        test <@ result.IsSome @>
+        test <@ result.Value = newPath @>
+    finally
+        Directory.Delete(tmpDir, true)
