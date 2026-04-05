@@ -33,6 +33,33 @@ let ratchet (config: Config) (files: FileCoverage list) : Config =
 
     { config with Overrides = newOverrides }
 
+type RatchetStatus =
+    | NoChanges of Config
+    | Tightened of Config
+    | Failed of Config * failedFiles: string list
+
+let ratchetWithStatus (config: Config) (files: FileCoverage list) : RatchetStatus =
+    // Check for files below their thresholds
+    let failedFiles =
+        files
+        |> List.filter (fun file ->
+            let lineThreshold, branchThreshold =
+                match Map.tryFind file.FileName config.Overrides with
+                | Some ovr -> ovr.Line, ovr.Branch
+                | None -> config.DefaultLine, config.DefaultBranch
+
+            file.LinePct < lineThreshold || file.BranchPct < branchThreshold)
+        |> List.map (fun f -> f.FileName)
+
+    let newConfig = ratchet config files
+
+    if not (List.isEmpty failedFiles) then
+        Failed(newConfig, failedFiles)
+    elif newConfig.Overrides <> config.Overrides then
+        Tightened newConfig
+    else
+        NoChanges config
+
 let loosen (config: Config) (files: FileCoverage list) : Config =
     let fileMap = files |> List.map (fun f -> f.FileName, f) |> Map.ofList
 
