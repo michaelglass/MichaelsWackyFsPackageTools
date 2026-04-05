@@ -72,6 +72,14 @@ dotnet pack src/FsSemanticTagger/FsSemanticTagger.fsproj -c Release -o artifacts
 """
 depends = ["build"]
 
+[tasks.release]
+run = "dotnet run --project src/FsSemanticTagger/FsSemanticTagger.fsproj --no-build -- release"
+depends = ["build"]
+
+[tasks.release-alpha]
+run = "dotnet run --project src/FsSemanticTagger/FsSemanticTagger.fsproj --no-build -- alpha"
+depends = ["build"]
+
 [tasks.docs]
 run = "dotnet fsdocs build --output output/docs --clean"
 depends = ["build", "tool-restore"]
