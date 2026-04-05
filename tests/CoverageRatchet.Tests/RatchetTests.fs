@@ -2,21 +2,9 @@ module CoverageRatchet.Tests.RatchetTests
 
 open Xunit
 open Swensen.Unquote
-open CoverageRatchet.Cobertura
 open CoverageRatchet.Thresholds
 open CoverageRatchet.Ratchet
-
-let private makeFile name linePct branchPct branchesCovered branchesTotal =
-    { FileName = name
-      LinePct = linePct
-      BranchPct = branchPct
-      BranchesCovered = branchesCovered
-      BranchesTotal = branchesTotal }
-
-let private defaultsConfig =
-    { DefaultLine = 100.0
-      DefaultBranch = 100.0
-      Overrides = Map.empty }
+open CoverageRatchet.Tests.CoverageTestHelpers
 
 [<Fact>]
 let ``ratchet tightens override when coverage improves`` () =

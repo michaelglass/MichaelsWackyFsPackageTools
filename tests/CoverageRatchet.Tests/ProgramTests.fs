@@ -4,19 +4,12 @@ open System
 open System.IO
 open Xunit
 open Swensen.Unquote
-open CoverageRatchet.Cobertura
 open CoverageRatchet.Thresholds
 open CoverageRatchet.Program
 open Tests.Common.TestHelpers
+open CoverageRatchet.Tests.CoverageTestHelpers
 
 // --- formatFileResult tests ---
-
-let private makeFile name linePct branchPct branchesCovered branchesTotal =
-    { FileName = name
-      LinePct = linePct
-      BranchPct = branchPct
-      BranchesCovered = branchesCovered
-      BranchesTotal = branchesTotal }
 
 [<Fact>]
 let ``formatFileResult - passing file at 100 percent`` () =
