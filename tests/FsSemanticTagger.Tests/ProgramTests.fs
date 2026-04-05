@@ -147,6 +147,16 @@ let ``init does not overwrite existing config`` () =
         test <@ File.ReadAllText(jsonPath) = """{"packages":[]}""" @>)
 
 [<Fact>]
+let ``main - bogus command returns 1`` () =
+    let result = main [| "bogus" |]
+    test <@ result = 1 @>
+
+[<Fact>]
+let ``run - help flag returns Ok 0`` () =
+    let result = run [| "--help" |]
+    test <@ result = Ok 0 @>
+
+[<Fact>]
 let ``init fails when no packable projects found`` () =
     withTempDir (fun tmpDir ->
         let result = initCommand tmpDir

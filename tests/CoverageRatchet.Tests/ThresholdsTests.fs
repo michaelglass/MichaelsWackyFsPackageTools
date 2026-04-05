@@ -209,3 +209,53 @@ let ``loadConfig - overrides key with empty object returns defaults`` () =
         test <@ config.Overrides = Map.empty @>
     finally
         File.Delete(tmpFile)
+
+[<Fact>]
+let ``loadConfig - no overrides key returns defaults`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        let json = """{"version": 1}"""
+
+        File.WriteAllText(tmpFile, json)
+        let config = loadConfig tmpFile
+
+        test <@ config.DefaultLine = 100.0 @>
+        test <@ config.DefaultBranch = 100.0 @>
+        test <@ config.Overrides = Map.empty @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``loadConfig - null reason defaults to empty string`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        let json =
+            """{ "overrides": { "Foo.fs": { "line": 70, "branch": 65, "reason": null } } }"""
+
+        File.WriteAllText(tmpFile, json)
+        let config = loadConfig tmpFile
+
+        test <@ config.Overrides.["Foo.fs"].Reason = "" @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``saveConfig with empty overrides roundtrips`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        let config =
+            { DefaultLine = 100.0
+              DefaultBranch = 100.0
+              Overrides = Map.empty }
+
+        saveConfig tmpFile config
+        let loaded = loadConfig tmpFile
+
+        test <@ loaded.DefaultLine = 100.0 @>
+        test <@ loaded.DefaultBranch = 100.0 @>
+        test <@ loaded.Overrides = Map.empty @>
+    finally
+        File.Delete(tmpFile)
