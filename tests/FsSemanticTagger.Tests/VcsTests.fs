@@ -26,8 +26,7 @@ let ``hasUncommittedChanges - clean working copy returns false`` () =
 
 [<Fact>]
 let ``hasUncommittedChanges - no changes message returns false`` () =
-    let run =
-        fakeRun [ ("jj", "status", Success "The working copy has no changes.") ]
+    let run = fakeRun [ ("jj", "status", Success "The working copy has no changes.") ]
 
     test <@ hasUncommittedChanges run = false @>
 
