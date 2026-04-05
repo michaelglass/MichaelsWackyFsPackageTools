@@ -35,20 +35,22 @@ let private jsonOptions =
     opts.WriteIndented <- true
     opts
 
-let check (config: Config) (files: FileCoverage list) : CheckResult =
-    let results =
-        files
-        |> List.map (fun f ->
-            let lineThreshold, branchThreshold =
-                match Map.tryFind f.FileName config.Overrides with
-                | Some ovr -> ovr.Line, ovr.Branch
-                | None -> config.DefaultLine, config.DefaultBranch
+let buildFileResults (config: Config) (files: FileCoverage list) : FileResult list =
+    files
+    |> List.map (fun f ->
+        let lineThreshold, branchThreshold =
+            match Map.tryFind f.FileName config.Overrides with
+            | Some ovr -> ovr.Line, ovr.Branch
+            | None -> config.DefaultLine, config.DefaultBranch
 
-            { File = f
-              LineThreshold = lineThreshold
-              BranchThreshold = branchThreshold
-              LinePassed = f.LinePct >= lineThreshold
-              BranchPassed = f.BranchPct >= branchThreshold })
+        { File = f
+          LineThreshold = lineThreshold
+          BranchThreshold = branchThreshold
+          LinePassed = f.LinePct >= lineThreshold
+          BranchPassed = f.BranchPct >= branchThreshold })
+
+let check (config: Config) (files: FileCoverage list) : CheckResult =
+    let results = buildFileResults config files
 
     let failed =
         results |> List.filter (fun r -> not r.LinePassed || not r.BranchPassed)
