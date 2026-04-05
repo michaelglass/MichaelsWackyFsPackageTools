@@ -36,7 +36,7 @@ jobs:
       - name: Format check
         run: dotnet fantomas ${{ inputs.fantomas-paths }} --check
       - name: Sync docs check
-        run: dotnet tool run syncdocs check
+        run: dotnet run --project src/SyncDocs/SyncDocs.fsproj -- check
       - name: Build
         run: dotnet build --warnaserror --no-restore
       - name: Lint
@@ -79,7 +79,7 @@ jobs:
             [ -f "$config" ] || continue
             project=$(echo "$config" | sed 's/coverage-ratchet-\(.*\)\.json/\1/')
             echo "Checking $project..."
-            (cd "coverage/$project" && dotnet tool run coverageratchet check --config "../../$config")
+            (cd "coverage/$project" && dotnet run --project "../../src/CoverageRatchet/CoverageRatchet.fsproj" --no-build -- check --config "../../$config")
           done
       - name: Upload coverage report
         if: always()
