@@ -22,7 +22,7 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="CommandTree" Version="0.2.0" />
+    <PackageReference Include="CommandTree" Version="0.3.0" />
     <PackageReference Update="FSharp.Core" Version="10.1.201" />
   </ItemGroup>
   <ItemGroup>

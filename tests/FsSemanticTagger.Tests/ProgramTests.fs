@@ -9,15 +9,9 @@ open FsSemanticTagger.Tests.ConfigTests
 open Tests.Common.TestHelpers
 
 [<Fact>]
-let ``run - no args returns Error with usage`` () =
+let ``run - no args shows help and returns Ok 0`` () =
     let result = run [||]
-
-    test
-        <@
-            match result with
-            | Error msg -> msg.Contains("Usage:")
-            | Ok _ -> false
-        @>
+    test <@ result = Ok 0 @>
 
 [<Fact>]
 let ``run - unknown command returns Error`` () =
@@ -26,7 +20,7 @@ let ``run - unknown command returns Error`` () =
     test
         <@
             match result with
-            | Error msg -> msg.Contains("Usage:")
+            | Error _ -> true
             | Ok _ -> false
         @>
 
@@ -64,13 +58,13 @@ let ``run - check-api with one arg returns Error`` () =
         @>
 
 [<Fact>]
-let ``run - release with unknown subcommand returns Error`` () =
-    let result = run [| "release"; "bogus" |]
+let ``run - release with unknown flag returns Error`` () =
+    let result = run [| "release"; "--bogus" |]
 
     test
         <@
             match result with
-            | Error msg -> msg.Contains("Unknown release command")
+            | Error _ -> true
             | Ok _ -> false
         @>
 

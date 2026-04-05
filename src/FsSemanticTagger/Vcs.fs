@@ -3,7 +3,7 @@ module FsSemanticTagger.Vcs
 open FsSemanticTagger.Shell
 open FsSemanticTagger.Version
 
-let private runOrFail (run: string -> string -> CommandResult) (cmd: string) (args: string) : string =
+let internal runOrFail (run: string -> string -> CommandResult) (cmd: string) (args: string) : string =
     match run cmd args with
     | Success output -> output
     | Failure error -> failwithf "%s %s failed: %s" cmd args error
@@ -12,6 +12,11 @@ let private runSilent (run: string -> string -> CommandResult) (cmd: string) (ar
     match run cmd args with
     | Success output -> Some output
     | Failure _ -> None
+
+let private splitLines (output: string) : string array =
+    output.Split('\n')
+    |> Array.map (fun s -> s.Trim())
+    |> Array.filter (fun s -> s <> "")
 
 let hasUncommittedChanges (run: string -> string -> CommandResult) : bool =
     match run "jj" "status" with
@@ -36,9 +41,7 @@ let getLatestTag (run: string -> string -> CommandResult) (prefix: string) : str
     if output = "" then
         None
     else
-        output.Split('\n')
-        |> Array.map (fun t -> t.Trim())
-        |> Array.filter (fun t -> t <> "")
+        splitLines output
         |> Array.choose (fun tag ->
             let versionStr = tag.Substring(prefix.Length)
 
@@ -61,6 +64,31 @@ let commitAndTag (run: string -> string -> CommandResult) (prefix: string) (vers
     | Failure _ -> runOrFail run "git" (sprintf "tag -a %s -m \"%s\"" tag msg) |> ignore
 
     tag
+
+let getCurrentCommitSha (run: string -> string -> CommandResult) : string option =
+    let nonEmpty s =
+        let trimmed = (s: string).Trim()
+        if trimmed = "" then None else Some trimmed
+
+    match runSilent run "jj" "log -r @ --no-graph -T commit_id" with
+    | Some sha when sha.Trim() <> "" -> nonEmpty sha
+    | _ ->
+        match runSilent run "git" "rev-parse HEAD" with
+        | Some sha -> nonEmpty sha
+        | None -> None
+
+let isCiPassing (run: string -> string -> CommandResult) : bool =
+    match getCurrentCommitSha run with
+    | None -> false
+    | Some sha ->
+        let args =
+            sprintf "run list --commit %s --json conclusion --jq \".[].conclusion\"" sha
+
+        match run "gh" args with
+        | Success output ->
+            let conclusions = splitLines output
+            conclusions.Length > 0 && conclusions |> Array.forall (fun c -> c = "success")
+        | Failure _ -> false
 
 let pushTags (run: string -> string -> CommandResult) (tags: string list) : unit =
     runOrFail run "jj" "git export" |> ignore
