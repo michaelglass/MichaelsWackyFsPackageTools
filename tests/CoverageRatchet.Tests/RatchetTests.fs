@@ -123,3 +123,79 @@ let ``ratchet keeps override unchanged when file not in coverage data`` () =
     test <@ result.Overrides.["Missing.fs"].Line = 60.0 @>
     test <@ result.Overrides.["Missing.fs"].Branch = 50.0 @>
     test <@ result.Overrides.["Missing.fs"].Reason = "file removed or not covered" @>
+
+[<Fact>]
+let ``loosen sets thresholds to actual coverage`` () =
+    let config =
+        { defaultsConfig with
+            Overrides =
+                Map.ofList
+                    [ "Foo.fs",
+                      { Line = 90.0
+                        Branch = 85.0
+                        Reason = "legacy" } ] }
+
+    let files = [ makeFile "Foo.fs" 70.0 60.0 2 4 ]
+    let result = loosen config files
+
+    test <@ result.Overrides.["Foo.fs"].Line = 70.0 @>
+    test <@ result.Overrides.["Foo.fs"].Branch = 60.0 @>
+
+[<Fact>]
+let ``loosen preserves existing reason`` () =
+    let config =
+        { defaultsConfig with
+            Overrides =
+                Map.ofList
+                    [ "Foo.fs",
+                      { Line = 90.0
+                        Branch = 85.0
+                        Reason = "CLI entry point" } ] }
+
+    let files = [ makeFile "Foo.fs" 70.0 60.0 2 4 ]
+    let result = loosen config files
+
+    test <@ result.Overrides.["Foo.fs"].Reason = "CLI entry point" @>
+
+[<Fact>]
+let ``loosen adds override for file below 100 percent with no existing override`` () =
+    let files = [ makeFile "New.fs" 80.0 75.0 3 4 ]
+    let result = loosen defaultsConfig files
+
+    test <@ result.Overrides.ContainsKey("New.fs") @>
+    test <@ result.Overrides.["New.fs"].Line = 80.0 @>
+    test <@ result.Overrides.["New.fs"].Branch = 75.0 @>
+    test <@ result.Overrides.["New.fs"].Reason = "loosened automatically" @>
+
+[<Fact>]
+let ``loosen removes override for file at 100 percent`` () =
+    let config =
+        { defaultsConfig with
+            Overrides =
+                Map.ofList
+                    [ "Foo.fs",
+                      { Line = 90.0
+                        Branch = 85.0
+                        Reason = "was low" } ] }
+
+    let files = [ makeFile "Foo.fs" 100.0 100.0 4 4 ]
+    let result = loosen config files
+
+    test <@ result.Overrides.ContainsKey("Foo.fs") = false @>
+
+[<Fact>]
+let ``loosen keeps override for file not in coverage data`` () =
+    let config =
+        { defaultsConfig with
+            Overrides =
+                Map.ofList
+                    [ "Missing.fs",
+                      { Line = 60.0
+                        Branch = 50.0
+                        Reason = "not in report" } ] }
+
+    let files = [ makeFile "Other.fs" 100.0 100.0 4 4 ]
+    let result = loosen config files
+
+    test <@ result.Overrides.ContainsKey("Missing.fs") @>
+    test <@ result.Overrides.["Missing.fs"].Line = 60.0 @>
