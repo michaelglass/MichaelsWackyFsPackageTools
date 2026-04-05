@@ -21,7 +21,10 @@ let private splitLines (output: string) : string array =
 let hasUncommittedChanges (run: string -> string -> CommandResult) : bool =
     match run "jj" "status" with
     | Success output ->
-        not (output.Contains("The working copy is clean") || output.Contains("The working copy has no changes"))
+        not (
+            output.Contains("The working copy is clean")
+            || output.Contains("The working copy has no changes")
+        )
     | Failure _ -> true
 
 let tagExists (run: string -> string -> CommandResult) (tag: string) : bool =
