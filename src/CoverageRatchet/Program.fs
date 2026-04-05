@@ -159,8 +159,6 @@ let main argv =
         | Error(HelpRequested path) ->
             printfn "%s" (CommandTree.helpForPath tree path "coverageratchet")
             0
-        | Error(UnknownCommand _)
-        | Error(InvalidArguments _)
-        | Error(AmbiguousArgument _) ->
-            eprintfn "Error: %A" (CommandTree.parse tree argv |> Result.mapError id)
+        | Error err ->
+            eprintfn "Error: %A" err
             1
