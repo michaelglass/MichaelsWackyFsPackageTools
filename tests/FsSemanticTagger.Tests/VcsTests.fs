@@ -128,6 +128,83 @@ let ``commitAndTag - falls back to git tag when jj tag fails`` () =
 
     test <@ calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("tag -a v2.1.0")) @>
 
+// getCurrentCommitSha
+
+[<Fact>]
+let ``getCurrentCommitSha - gets sha from jj`` () =
+    let run =
+        fakeRun [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123def") ]
+
+    test <@ getCurrentCommitSha run = Some "abc123def" @>
+
+[<Fact>]
+let ``getCurrentCommitSha - falls back to git when jj fails`` () =
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Failure "not a jj repo")
+              ("git", "rev-parse HEAD", Success "def456abc") ]
+
+    test <@ getCurrentCommitSha run = Some "def456abc" @>
+
+[<Fact>]
+let ``getCurrentCommitSha - returns None when both fail`` () =
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Failure "no jj")
+              ("git", "rev-parse HEAD", Failure "no git") ]
+
+    test <@ getCurrentCommitSha run = None @>
+
+// isCiPassing
+
+let ghCiArgs sha =
+    sprintf "run list --commit %s --json conclusion --jq \".[].conclusion\"" sha
+
+[<Fact>]
+let ``isCiPassing - returns true when all runs succeed`` () =
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+              ("gh", ghCiArgs "abc123", Success "success\nsuccess") ]
+
+    test <@ isCiPassing run = true @>
+
+[<Fact>]
+let ``isCiPassing - returns false when any run fails`` () =
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+              ("gh", ghCiArgs "abc123", Success "success\nfailure") ]
+
+    test <@ isCiPassing run = false @>
+
+[<Fact>]
+let ``isCiPassing - returns false when no runs exist`` () =
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+              ("gh", ghCiArgs "abc123", Success "") ]
+
+    test <@ isCiPassing run = false @>
+
+[<Fact>]
+let ``isCiPassing - returns false when gh fails`` () =
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+              ("gh", ghCiArgs "abc123", Failure "gh not installed") ]
+
+    test <@ isCiPassing run = false @>
+
+[<Fact>]
+let ``isCiPassing - returns false when commit sha unavailable`` () =
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Failure "no jj")
+              ("git", "rev-parse HEAD", Failure "no git") ]
+
+    test <@ isCiPassing run = false @>
+
 // pushTags
 
 [<Fact>]

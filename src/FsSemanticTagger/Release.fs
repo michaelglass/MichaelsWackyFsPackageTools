@@ -3,8 +3,8 @@ module FsSemanticTagger.Release
 open FsSemanticTagger.Version
 open FsSemanticTagger.Api
 open FsSemanticTagger.Config
-open FsSemanticTagger.Vcs
 open FsSemanticTagger.Shell
+open FsSemanticTagger.Vcs
 
 type ReleaseCommand =
     | Auto
@@ -68,11 +68,6 @@ let updateFsprojVersion (fsprojPath: string) (version: Version) : unit =
 
     System.IO.File.WriteAllText(fsprojPath, newContent)
 
-let private runOrFail (run: string -> string -> CommandResult) (cmd: string) (args: string) : string =
-    match run cmd args with
-    | Success output -> output
-    | Failure error -> failwithf "%s %s failed: %s" cmd args error
-
 /// Main release orchestration
 let release
     (run: string -> string -> CommandResult)
@@ -83,6 +78,9 @@ let release
     // 1. Check for uncommitted changes
     if hasUncommittedChanges run then
         printfn "Error: uncommitted changes detected"
+        1
+    elif not (isCiPassing run) then
+        printfn "Error: CI is not passing for the current commit"
         1
     else
         // 2. Build in Release mode

@@ -1,6 +1,19 @@
 module FsSemanticTagger.Program
 
 open System.IO
+open CommandTree
+
+type ReleaseOptions = { publish: bool }
+
+type Command =
+    | [<Cmd("Initialize semantic-tagger.json config")>] Init
+    | [<Cmd("Extract public API signatures from a DLL")>] ExtractApi of dll: string
+    | [<Cmd("Compare APIs between two DLLs")>] CheckApi of oldDll: string * newDll: string
+    | [<Cmd("Auto release based on API changes")>] Release of ReleaseOptions
+    | [<Cmd("Start alpha pre-release cycle")>] Alpha of ReleaseOptions
+    | [<Cmd("Promote to beta")>] Beta of ReleaseOptions
+    | [<Cmd("Promote to release candidate")>] Rc of ReleaseOptions
+    | [<Cmd("Promote to stable release")>] Stable of ReleaseOptions
 
 let initCommand (rootDir: string) : Result<int, string> =
     let jsonPath = Path.Combine(rootDir, "semantic-tagger.json")
@@ -43,85 +56,81 @@ let initCommand (rootDir: string) : Result<int, string> =
 
             Ok 0
 
-let run (argv: string array) : Result<int, string> =
-    match argv with
-    | [| "init" |] -> initCommand (System.IO.Directory.GetCurrentDirectory())
-    | [| "extract-api"; dllPath |] ->
-        if not (System.IO.File.Exists dllPath) then
-            Error(sprintf "DLL not found: %s" dllPath)
+let private runRelease (releaseCmd: Release.ReleaseCommand) (opts: ReleaseOptions) : Result<int, string> =
+    let config = Config.load (Directory.GetCurrentDirectory())
+
+    let mode =
+        if opts.publish then
+            Release.LocalPublish
         else
-            let sigs = Api.extractFromAssembly dllPath
+            Release.GitHubActions
+
+    Ok(Release.release Shell.run config releaseCmd mode)
+
+let runCommand (cmd: Command) : Result<int, string> =
+    match cmd with
+    | Init -> initCommand (Directory.GetCurrentDirectory())
+    | ExtractApi dll ->
+        if not (File.Exists dll) then
+            Error(sprintf "DLL not found: %s" dll)
+        else
+            let sigs = Api.extractFromAssembly dll
 
             for (Api.ApiSignature s) in sigs do
                 printfn "%s" s
 
             Ok 0
-    | args when args.Length >= 1 && args.[0] = "check-api" ->
-        match args.[1..] with
-        | [| oldDll; newDll |] ->
-            let oldApi = Api.extractFromAssembly oldDll
-            let newApi = Api.extractFromAssembly newDll
-            let change = Api.compare oldApi newApi
+    | CheckApi(oldDll, newDll) ->
+        let oldApi = Api.extractFromAssembly oldDll
+        let newApi = Api.extractFromAssembly newDll
+        let change = Api.compare oldApi newApi
 
-            match change with
-            | Api.Breaking removed ->
-                printfn "BREAKING changes detected:"
+        match change with
+        | Api.Breaking removed ->
+            printfn "BREAKING changes detected:"
 
-                for (Api.ApiSignature s) in removed |> List.truncate 10 do
-                    printfn "  - %s" s
+            for (Api.ApiSignature s) in removed |> List.truncate 10 do
+                printfn "  - %s" s
 
-                Ok 2
-            | Api.Addition added ->
-                printfn "Non-breaking additions:"
+            Ok 2
+        | Api.Addition added ->
+            printfn "Non-breaking additions:"
 
-                for (Api.ApiSignature s) in added |> List.truncate 10 do
-                    printfn "  + %s" s
+            for (Api.ApiSignature s) in added |> List.truncate 10 do
+                printfn "  + %s" s
 
-                Ok 1
-            | Api.NoChange ->
-                printfn "No API changes"
-                Ok 0
-        | _ -> Error "Usage: fssemantictagger check-api <old.dll> <new.dll>"
-    | args when args.Length >= 1 && args.[0] = "release" ->
-        let cmd =
-            match args |> Array.tryItem 1 with
-            | Some "alpha" -> Some Release.StartAlpha
-            | Some "beta" -> Some Release.PromoteToBeta
-            | Some "rc" -> Some Release.PromoteToRC
-            | Some "stable" -> Some Release.PromoteToStable
-            | Some "auto"
-            | None -> Some Release.Auto
-            | Some _other -> None
+            Ok 1
+        | Api.NoChange ->
+            printfn "No API changes"
+            Ok 0
+    | Release opts -> runRelease Release.Auto opts
+    | Alpha opts -> runRelease Release.StartAlpha opts
+    | Beta opts -> runRelease Release.PromoteToBeta opts
+    | Rc opts -> runRelease Release.PromoteToRC opts
+    | Stable opts -> runRelease Release.PromoteToStable opts
 
-        match cmd with
-        | None ->
-            let unknown = args |> Array.tryItem 1 |> Option.defaultValue ""
-            Error(sprintf "Unknown release command: %s" unknown)
-        | Some cmd ->
-            let config = Config.load (System.IO.Directory.GetCurrentDirectory())
+let run (argv: string array) : Result<int, string> =
+    let tree =
+        CommandReflection.fromUnion<Command> "Semantic versioning with API change detection"
 
-            let mode =
-                if args |> Array.contains "--publish" then
-                    Release.LocalPublish
-                else
-                    Release.GitHubActions
-
-            Ok(Release.release Shell.run config cmd mode)
-    | _ ->
-        Error(
-            "Usage: fssemantictagger <init|release|check-api|extract-api> [options]\n\
-             \n\
-             Commands:\n\
-             \  init\n\
-             \  release [auto|alpha|beta|rc|stable] [--publish]\n\
-             \  check-api <old.dll> <new.dll>\n\
-             \  extract-api <dll-path>"
-        )
+    if
+        Array.isEmpty argv
+        || argv |> Array.exists (fun a -> a = "--help" || a = "-h" || a = "help")
+    then
+        printfn "%s" (CommandTree.helpFull tree "fssemantictagger")
+        Ok 0
+    else
+        match CommandTree.parse tree argv with
+        | Ok cmd -> runCommand cmd
+        | Error(HelpRequested path) ->
+            printfn "%s" (CommandTree.helpForPath tree path "fssemantictagger")
+            Ok 0
+        | Error err -> Error(sprintf "%A" err)
 
 [<EntryPoint>]
 let main argv =
     match run argv with
     | Ok code -> code
     | Error msg ->
-        printfn "%s" msg
+        eprintfn "%s" msg
         1

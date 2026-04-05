@@ -78,10 +78,28 @@ let ``release - returns 1 when uncommitted changes`` () =
     test <@ result = 1 @>
 
 [<Fact>]
+let ``release - returns 1 when CI not passing`` () =
+    let fakeRun (cmd: string) (args: string) : CommandResult =
+        match cmd, args with
+        | "jj", "status" -> Success "The working copy is clean"
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "gh", a when a.Contains("run list") -> Success "failure"
+        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+    let config =
+        { Packages = []
+          ReservedVersions = Set.empty }
+
+    let result = release fakeRun config Auto GitHubActions
+    test <@ result = 1 @>
+
+[<Fact>]
 let ``release - Auto with no previous tags returns 0 with no packages`` () =
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
         | "jj", "status" -> Success "The working copy is clean"
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "gh", a when a.Contains("run list") -> Success "success"
         | "dotnet", "build -c Release" -> Success "Build succeeded."
         | "git", arg when arg.StartsWith("tag -l") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
@@ -121,6 +139,8 @@ let ``release - StartAlpha with FirstRelease creates version`` () =
 
             match cmd, args with
             | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") -> Success "success"
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "git", arg when arg.StartsWith("tag -l") -> Success ""
             | "jj", arg when arg.StartsWith("commit -m") -> Success ""
