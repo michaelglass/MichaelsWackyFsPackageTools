@@ -216,7 +216,12 @@ let ``ratchetWithStatus returns NoChanges when all thresholds met and unchanged`
     let files = [ makeFile "Foo.fs" 80.0 70.0 3 4 ]
     let result = ratchetWithStatus config files
 
-    test <@ match result with NoChanges _ -> true | _ -> false @>
+    test
+        <@
+            match result with
+            | NoChanges _ -> true
+            | _ -> false
+        @>
 
 [<Fact>]
 let ``ratchetWithStatus returns Tightened when coverage improved`` () =
@@ -232,7 +237,12 @@ let ``ratchetWithStatus returns Tightened when coverage improved`` () =
     let files = [ makeFile "Foo.fs" 85.0 80.0 3 4 ]
     let result = ratchetWithStatus config files
 
-    test <@ match result with Tightened _ -> true | _ -> false @>
+    test
+        <@
+            match result with
+            | Tightened _ -> true
+            | _ -> false
+        @>
 
 [<Fact>]
 let ``ratchetWithStatus returns Failed when coverage dropped below threshold`` () =
@@ -248,7 +258,12 @@ let ``ratchetWithStatus returns Failed when coverage dropped below threshold`` (
     let files = [ makeFile "Foo.fs" 60.0 50.0 1 4 ]
     let result = ratchetWithStatus config files
 
-    test <@ match result with Failed _ -> true | _ -> false @>
+    test
+        <@
+            match result with
+            | Failed _ -> true
+            | _ -> false
+        @>
 
 [<Fact>]
 let ``ratchetWithStatus returns Failed even if some files improved and others dropped`` () =
@@ -268,11 +283,21 @@ let ``ratchetWithStatus returns Failed even if some files improved and others dr
     let files = [ makeFile "Foo.fs" 85.0 80.0 3 4; makeFile "Bar.fs" 60.0 50.0 1 4 ]
     let result = ratchetWithStatus config files
 
-    test <@ match result with Failed _ -> true | _ -> false @>
+    test
+        <@
+            match result with
+            | Failed _ -> true
+            | _ -> false
+        @>
 
 [<Fact>]
 let ``ratchetWithStatus - file with no override below 100 percent is Failed`` () =
     let files = [ makeFile "Foo.fs" 80.0 75.0 3 4 ]
     let result = ratchetWithStatus defaultsConfig files
 
-    test <@ match result with Failed _ -> true | _ -> false @>
+    test
+        <@
+            match result with
+            | Failed _ -> true
+            | _ -> false
+        @>
