@@ -192,6 +192,10 @@ let ``firstAlpha is 0.1.0-alpha.1`` () =
         @>
 
 [<Fact>]
+let ``parse invalid version string raises exception`` () =
+    Assert.ThrowsAny<exn>(fun () -> parse "not-a-version" |> ignore) |> ignore
+
+[<Fact>]
 let ``sortKey alpha.1 less than alpha.2`` () =
     let a = sortKey (parse "0.1.0-alpha.1")
     let b = sortKey (parse "0.1.0-alpha.2")

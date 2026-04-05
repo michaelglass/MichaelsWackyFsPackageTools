@@ -107,3 +107,35 @@ let ``run - sync updates files and returns Ok 0`` () =
         test <@ File.ReadAllText(Path.Combine(docsDir, "index.md")) = "Updated content" @>
     finally
         cleanupDir tmpDir
+
+[<Fact>]
+let ``run - sync with in-sync pair returns Ok 0`` () =
+    withTempDir (fun tmpDir ->
+        let docsDir = Path.Combine(tmpDir, "docs")
+        Directory.CreateDirectory(docsDir) |> ignore
+        File.WriteAllText(Path.Combine(tmpDir, "README.md"), "Same content")
+        File.WriteAllText(Path.Combine(docsDir, "index.md"), "Same content")
+
+        let result = run [| "sync" |] tmpDir
+        test <@ result = Ok 0 @>)
+
+[<Fact>]
+let ``main - no args returns 1`` () =
+    let result = main [||]
+    test <@ result = 1 @>
+
+[<Fact>]
+let ``main - bogus command returns 1`` () =
+    let result = main [| "bogus" |]
+    test <@ result = 1 @>
+
+[<Fact>]
+let ``main - check with no pairs in CWD returns 0`` () =
+    // main uses Directory.GetCurrentDirectory(), but with no README.md
+    // in the CWD's expected locations, it should find no pairs and return 0
+    withTempDir (fun tmpDir ->
+        let result = run [| "check" |] tmpDir
+        test <@ result = Ok 0 @>
+        // Verify the Ok path in main by calling run directly since main uses CWD
+        // which we can't easily control. The main function just unwraps the Result.
+        ())

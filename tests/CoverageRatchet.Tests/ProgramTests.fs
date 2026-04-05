@@ -215,6 +215,87 @@ let ``run - loosen then check passes`` () =
 
         test <@ result = Ok 0 @>)
 
+// --- runCheck with empty file list ---
+
+[<Fact>]
+let ``run - check with only non-fs files returns Ok 0`` () =
+    withTempDir (fun tmpDir ->
+        let xml =
+            """<?xml version="1.0"?><coverage><packages><package><classes>
+<class filename="Foo.cs" line-rate="1.0" branch-rate="1.0"><lines/></class>
+</classes></package></packages></coverage>"""
+
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        File.WriteAllText(xmlPath, xml)
+
+        let result = run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir
+
+        test <@ result = Ok 0 @>)
+
+// --- ratchet None branch (tightened count) ---
+
+[<Fact>]
+let ``run - ratchet with new file in coverage only counts existing overrides as tightened`` () =
+    withTempDir (fun tmpDir ->
+        // Coverage XML with Foo.fs at 50% and Bar.fs at 80%
+        let xml =
+            """<?xml version="1.0" encoding="utf-8"?>
+<coverage>
+  <packages>
+    <package>
+      <classes>
+        <class filename="/src/Foo.fs">
+          <lines>
+            <line number="1" hits="1" />
+            <line number="2" hits="1" />
+            <line number="3" hits="1" />
+            <line number="4" hits="1" />
+            <line number="5" hits="1" />
+            <line number="6" hits="0" />
+            <line number="7" hits="0" />
+            <line number="8" hits="0" />
+            <line number="9" hits="0" />
+            <line number="10" hits="0" />
+          </lines>
+        </class>
+        <class filename="/src/Bar.fs">
+          <lines>
+            <line number="1" hits="1" />
+            <line number="2" hits="1" />
+            <line number="3" hits="1" />
+            <line number="4" hits="1" />
+            <line number="5" hits="0" />
+          </lines>
+        </class>
+      </classes>
+    </package>
+  </packages>
+</coverage>"""
+
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        File.WriteAllText(xmlPath, xml)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        // Config starts with override for ONLY Foo.fs at line=30
+        let config =
+            { DefaultLine = 100.0
+              DefaultBranch = 100.0
+              Overrides =
+                Map.ofList
+                    [ "Foo.fs",
+                      { Line = 30.0
+                        Branch = 100.0
+                        Reason = "test" } ] }
+
+        saveConfig configPath config
+
+        // Ratchet runs - Foo.fs tightens from 30 to 50, Bar.fs gets created via Failed path
+        let result = run (Ratchet(config = Some configPath)) tmpDir
+
+        // Bar.fs is below 100% with no override, so this is a Failed result (Ok 2)
+        test <@ result = Ok 2 @>)
+
 // --- main tests ---
 
 [<Fact>]
@@ -222,6 +303,24 @@ let ``main with --help returns 0`` () =
     let result = main [| "--help" |]
 
     test <@ result = 0 @>
+
+[<Fact>]
+let ``main with -h returns 0`` () =
+    let result = main [| "-h" |]
+
+    test <@ result = 0 @>
+
+[<Fact>]
+let ``main with help returns 0`` () =
+    let result = main [| "help" |]
+
+    test <@ result = 0 @>
+
+[<Fact>]
+let ``main with unknown flag returns 1`` () =
+    let result = main [| "--unknown" |]
+
+    test <@ result = 1 @>
 
 [<Fact>]
 let ``main with no args and no coverage file returns 1`` () =

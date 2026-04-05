@@ -79,6 +79,12 @@ let ``getLatestTag - git failure returns None`` () =
     let run = fakeRun [ ("git", "tag -l \"v*\"", Failure "not a git repo") ]
     test <@ getLatestTag run "v" = None @>
 
+[<Fact>]
+let ``getLatestTag - skips unparseable tags and returns latest valid`` () =
+    let run = fakeRun [ ("git", "tag -l \"v*\"", Success "v-bad\nv1.0.0\nv2.0.0") ]
+
+    test <@ getLatestTag run "v" = Some "v2.0.0" @>
+
 // commitAndTag
 
 [<Fact>]

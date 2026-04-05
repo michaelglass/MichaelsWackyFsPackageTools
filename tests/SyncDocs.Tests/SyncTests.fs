@@ -441,3 +441,36 @@ let ``discoverWarnings - no warnings when nothing exists`` () =
         test <@ warnings.IsEmpty @>
     finally
         cleanupDir tmpDir
+
+[<Fact>]
+let ``discoverPairs - empty src directory returns no src pairs`` () =
+    withTempDir (fun tmpDir ->
+        Directory.CreateDirectory(Path.Combine(tmpDir, "src")) |> ignore
+        let pairs = discoverPairs tmpDir
+        test <@ pairs.IsEmpty @>)
+
+[<Fact>]
+let ``replaceSections - leaves target unchanged when section name not in map`` () =
+    withTempDir (fun _ ->
+        let target =
+            """<!-- sync:intro -->
+Old intro
+<!-- sync:intro:end -->
+"""
+
+        let sections = Map.ofList [ "other", "\nNew content\n" ]
+        let result = replaceSections target sections
+        test <@ result = target @>)
+
+[<Fact>]
+let ``replaceSections - handles dollar signs in replacement content`` () =
+    withTempDir (fun _ ->
+        let target =
+            """<!-- sync:intro -->
+Old content
+<!-- sync:intro:end -->
+"""
+
+        let sections = Map.ofList [ "intro", "\nPrice is $100\n" ]
+        let result = replaceSections target sections
+        test <@ result.Contains "Price is $100" @>)
