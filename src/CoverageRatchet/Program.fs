@@ -43,19 +43,7 @@ let private runCheck (configPath: string) (files: FileCoverage list) =
         printfn "No F# source files found in coverage report."
         0
     else
-        let allResults =
-            files
-            |> List.map (fun f ->
-                let lineThreshold, branchThreshold =
-                    match Map.tryFind f.FileName config.Overrides with
-                    | Some ovr -> ovr.Line, ovr.Branch
-                    | None -> config.DefaultLine, config.DefaultBranch
-
-                { File = f
-                  LineThreshold = lineThreshold
-                  BranchThreshold = branchThreshold
-                  LinePassed = f.LinePct >= lineThreshold
-                  BranchPassed = f.BranchPct >= branchThreshold })
+        let allResults = buildFileResults config files
 
         let failed =
             allResults |> List.filter (fun r -> not r.LinePassed || not r.BranchPassed)
@@ -84,8 +72,7 @@ let private runRatchet (configPath: string) (files: FileCoverage list) =
     let config = loadConfig configPath
 
     match ratchetWithStatus config files with
-    | NoChanges newConfig ->
-        saveConfig configPath newConfig
+    | NoChanges _ ->
         printfn "Ratchet complete: no changes needed"
         0
     | Tightened newConfig ->
