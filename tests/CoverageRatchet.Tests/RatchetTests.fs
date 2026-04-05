@@ -199,3 +199,5 @@ let ``loosen keeps override for file not in coverage data`` () =
 
     test <@ result.Overrides.ContainsKey("Missing.fs") @>
     test <@ result.Overrides.["Missing.fs"].Line = 60.0 @>
+    test <@ result.Overrides.["Missing.fs"].Branch = 50.0 @>
+    test <@ result.Overrides.["Missing.fs"].Reason = "not in report" @>
