@@ -17,6 +17,7 @@
     <ProjectReference Include="../Tests.Common/Tests.Common.fsproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="CoverageTestHelpers.fs" />
     <Compile Include="CoberturaTests.fs" />
     <Compile Include="ThresholdsTests.fs" />
     <Compile Include="RatchetTests.fs" />
