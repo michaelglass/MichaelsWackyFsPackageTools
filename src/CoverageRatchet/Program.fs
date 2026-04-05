@@ -1,28 +1,16 @@
 module CoverageRatchet.Program
 
+open CommandTree
 open CoverageRatchet.Cobertura
 open CoverageRatchet.Thresholds
 open CoverageRatchet.Ratchet
 
 let defaultConfigPath = "coverage-ratchet.json"
 
-let parseArgs (argv: string array) =
-    let mutable command = None
-    let mutable configPath = defaultConfigPath
-    let mutable i = 0
-
-    while i < argv.Length do
-        match argv.[i] with
-        | "check" -> command <- Some "check"
-        | "ratchet" -> command <- Some "ratchet"
-        | "--config" when i + 1 < argv.Length ->
-            configPath <- argv.[i + 1]
-            i <- i + 1
-        | _ -> ()
-
-        i <- i + 1
-
-    command, configPath
+type Command =
+    | [<Cmd("Tighten thresholds to match current coverage (default)"); CmdDefault>] Ratchet of config: string option
+    | [<Cmd("Check coverage against thresholds")>] Check of config: string option
+    | [<Cmd("Set thresholds to current coverage (makes check pass immediately)")>] Loosen of config: string option
 
 let formatFileResult (r: FileResult) =
     let branchStr =
@@ -94,43 +82,85 @@ let private runCheck (configPath: string) (files: FileCoverage list) =
 
 let private runRatchet (configPath: string) (files: FileCoverage list) =
     let config = loadConfig configPath
-    let newConfig = ratchet config files
+
+    match ratchetWithStatus config files with
+    | NoChanges newConfig ->
+        saveConfig configPath newConfig
+        printfn "Ratchet complete: no changes needed"
+        0
+    | Tightened newConfig ->
+        saveConfig configPath newConfig
+
+        let removed = config.Overrides.Count - newConfig.Overrides.Count
+
+        let tightened =
+            newConfig.Overrides
+            |> Map.toList
+            |> List.filter (fun (name, ovr) ->
+                match Map.tryFind name config.Overrides with
+                | Some old -> old.Line <> ovr.Line || old.Branch <> ovr.Branch
+                | None -> false)
+            |> List.length
+
+        printfn "Ratchet complete: %d overrides tightened, %d removed" tightened removed
+        1
+    | Failed(newConfig, failedFiles) ->
+        saveConfig configPath newConfig
+        eprintfn "Coverage below threshold for: %s" (String.concat ", " failedFiles)
+        2
+
+let private runLoosen (configPath: string) (files: FileCoverage list) =
+    let config = loadConfig configPath
+    let newConfig = loosen config files
     saveConfig configPath newConfig
-
-    let removed = config.Overrides.Count - newConfig.Overrides.Count
-
-    let tightened =
-        newConfig.Overrides
-        |> Map.toList
-        |> List.filter (fun (name, ovr) ->
-            match Map.tryFind name config.Overrides with
-            | Some old -> old.Line <> ovr.Line || old.Branch <> ovr.Branch
-            | None -> false)
-        |> List.length
-
-    printfn "Ratchet complete: %d overrides tightened, %d removed" tightened removed
+    printfn "Loosen complete: thresholds set to current coverage"
     0
 
-let run (command: string) (configPath: string) (searchDir: string) : Result<int, string> =
+let run (command: Command) (searchDir: string) : Result<int, string> =
+    let configPath =
+        match command with
+        | Ratchet(config = c)
+        | Check(config = c)
+        | Loosen(config = c) -> c |> Option.defaultValue defaultConfigPath
+
     match findCoverageFile searchDir with
     | None -> Error "No coverage.cobertura.xml found"
     | Some xmlPath ->
         let files = parseFile xmlPath
 
         match command with
-        | "check" -> Ok(runCheck configPath files)
-        | "ratchet" -> Ok(runRatchet configPath files)
-        | other -> Error(sprintf "Unknown command: %s" other)
+        | Ratchet _ -> Ok(runRatchet configPath files)
+        | Check _ -> Ok(runCheck configPath files)
+        | Loosen _ -> Ok(runLoosen configPath files)
 
 [<EntryPoint>]
 let main argv =
-    match parseArgs argv with
-    | Some cmd, configPath ->
-        match run cmd configPath "." with
+    let tree =
+        CommandReflection.fromUnion<Command> "Per-file coverage enforcement that only goes up"
+
+    // Bare invocation runs the default (ratchet) command
+    if Array.isEmpty argv then
+        match run (Ratchet None) "." with
         | Ok exitCode -> exitCode
         | Error msg ->
             eprintfn "Error: %s" msg
             1
-    | None, _ ->
-        printfn "Usage: coverageratchet <check|ratchet> [--config path]"
-        1
+    elif argv |> Array.exists (fun a -> a = "--help" || a = "-h" || a = "help") then
+        printfn "%s" (CommandTree.helpFull tree "coverageratchet")
+        0
+    else
+        match CommandTree.parse tree argv with
+        | Ok cmd ->
+            match run cmd "." with
+            | Ok exitCode -> exitCode
+            | Error msg ->
+                eprintfn "Error: %s" msg
+                1
+        | Error(HelpRequested path) ->
+            printfn "%s" (CommandTree.helpForPath tree path "coverageratchet")
+            0
+        | Error(UnknownCommand _)
+        | Error(InvalidArguments _)
+        | Error(AmbiguousArgument _) ->
+            eprintfn "Error: %A" (CommandTree.parse tree argv |> Result.mapError id)
+            1

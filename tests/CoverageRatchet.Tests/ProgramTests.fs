@@ -9,43 +9,6 @@ open CoverageRatchet.Thresholds
 open CoverageRatchet.Program
 open Tests.Common.TestHelpers
 
-// --- parseArgs tests ---
-
-[<Fact>]
-let ``parseArgs - check command`` () =
-    let cmd, configPath = parseArgs [| "check" |]
-
-    test <@ cmd = Some "check" @>
-    test <@ configPath = defaultConfigPath @>
-
-[<Fact>]
-let ``parseArgs - ratchet command`` () =
-    let cmd, configPath = parseArgs [| "ratchet" |]
-
-    test <@ cmd = Some "ratchet" @>
-    test <@ configPath = defaultConfigPath @>
-
-[<Fact>]
-let ``parseArgs - config flag`` () =
-    let cmd, configPath = parseArgs [| "check"; "--config"; "custom.json" |]
-
-    test <@ cmd = Some "check" @>
-    test <@ configPath = "custom.json" @>
-
-[<Fact>]
-let ``parseArgs - no args`` () =
-    let cmd, configPath = parseArgs [||]
-
-    test <@ cmd = None @>
-    test <@ configPath = defaultConfigPath @>
-
-[<Fact>]
-let ``parseArgs - unknown args ignored`` () =
-    let cmd, configPath = parseArgs [| "--verbose"; "check"; "--debug" |]
-
-    test <@ cmd = Some "check" @>
-    test <@ configPath = defaultConfigPath @>
-
 // --- formatFileResult tests ---
 
 let private makeFile name linePct branchPct branchesCovered branchesTotal =
@@ -129,7 +92,7 @@ let private makeCoverageXml (linePct: int) =
 [<Fact>]
 let ``run - check with no coverage file returns Error`` () =
     withTempDir (fun tmpDir ->
-        let result = run "check" (Path.Combine(tmpDir, "config.json")) tmpDir
+        let result = run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir
 
         test <@ result = Error "No coverage.cobertura.xml found" @>)
 
@@ -139,7 +102,7 @@ let ``run - check with passing coverage file returns Ok 0`` () =
         let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
         File.WriteAllText(xmlPath, makeCoverageXml 100)
 
-        let result = run "check" (Path.Combine(tmpDir, "config.json")) tmpDir
+        let result = run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir
 
         test <@ result = Ok 0 @>)
 
@@ -149,47 +112,127 @@ let ``run - check with failing coverage returns Ok 1`` () =
         let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
         File.WriteAllText(xmlPath, makeCoverageXml 50)
 
-        let result = run "check" (Path.Combine(tmpDir, "config.json")) tmpDir
+        let result = run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir
 
         test <@ result = Ok 1 @>)
 
 [<Fact>]
-let ``run - ratchet creates config and returns Ok 0`` () =
+let ``run - ratchet with no changes returns Ok 0`` () =
+    withTempDir (fun tmpDir ->
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        // 50% coverage
+        File.WriteAllText(xmlPath, makeCoverageXml 50)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        // Set up config with override matching actual coverage exactly
+        let config =
+            { DefaultLine = 100.0
+              DefaultBranch = 100.0
+              Overrides =
+                Map.ofList
+                    [ "Foo.fs",
+                      { Line = 50.0
+                        Branch = 100.0
+                        Reason = "test" } ] }
+
+        saveConfig configPath config
+
+        let result = run (Ratchet(config = Some configPath)) tmpDir
+
+        test <@ result = Ok 0 @>)
+
+[<Fact>]
+let ``run - ratchet with tightened config returns Ok 1`` () =
+    withTempDir (fun tmpDir ->
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        // 50% coverage
+        File.WriteAllText(xmlPath, makeCoverageXml 50)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        // Set up config with override lower than actual coverage (will be tightened)
+        let config =
+            { DefaultLine = 100.0
+              DefaultBranch = 100.0
+              Overrides =
+                Map.ofList
+                    [ "Foo.fs",
+                      { Line = 30.0
+                        Branch = 100.0
+                        Reason = "test" } ] }
+
+        saveConfig configPath config
+
+        let result = run (Ratchet(config = Some configPath)) tmpDir
+
+        test <@ result = Ok 1 @>)
+
+[<Fact>]
+let ``run - ratchet with failed files returns Ok 2`` () =
+    withTempDir (fun tmpDir ->
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        // 50% coverage, but default threshold is 100%
+        File.WriteAllText(xmlPath, makeCoverageXml 50)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        // No overrides, so default 100% threshold applies and 50% coverage fails
+        let result = run (Ratchet(config = Some configPath)) tmpDir
+
+        test <@ result = Ok 2 @>)
+
+[<Fact>]
+let ``run - ratchet creates config and returns Ok 2 when below threshold`` () =
     withTempDir (fun tmpDir ->
         let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
         File.WriteAllText(xmlPath, makeCoverageXml 50)
 
         let configPath = Path.Combine(tmpDir, "config.json")
-        let result = run "ratchet" configPath tmpDir
+        let result = run (Ratchet(config = Some configPath)) tmpDir
+
+        test <@ result = Ok 2 @>
+        test <@ File.Exists(configPath) @>)
+
+[<Fact>]
+let ``run - loosen creates config and returns Ok 0`` () =
+    withTempDir (fun tmpDir ->
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        File.WriteAllText(xmlPath, makeCoverageXml 50)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        let result = run (Loosen(config = Some configPath)) tmpDir
 
         test <@ result = Ok 0 @>
         test <@ File.Exists(configPath) @>)
 
 [<Fact>]
-let ``run - unknown command returns Error`` () =
+let ``run - loosen then check passes`` () =
     withTempDir (fun tmpDir ->
         let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
-        File.WriteAllText(xmlPath, makeCoverageXml 100)
+        File.WriteAllText(xmlPath, makeCoverageXml 50)
 
-        let result = run "badcmd" (Path.Combine(tmpDir, "config.json")) tmpDir
+        let configPath = Path.Combine(tmpDir, "config.json")
 
-        test
-            <@
-                match result with
-                | Error msg -> msg.Contains("Unknown command")
-                | _ -> false
-            @>)
+        // Loosen first
+        let _ = run (Loosen(config = Some configPath)) tmpDir
+
+        // Now check should pass
+        let result = run (Check(config = Some configPath)) tmpDir
+
+        test <@ result = Ok 0 @>)
 
 // --- main tests ---
 
 [<Fact>]
-let ``main with no args returns 1`` () =
-    let result = main [||]
+let ``main with --help returns 0`` () =
+    let result = main [| "--help" |]
 
-    test <@ result = 1 @>
+    test <@ result = 0 @>
 
 [<Fact>]
-let ``main with bad command returns 1`` () =
-    let result = main [| "badcmd" |]
+let ``main with no args and no coverage file returns 1`` () =
+    // With CmdDefault, bare invocation runs ratchet, which will fail to find coverage file
+    let result = main [||]
 
     test <@ result = 1 @>
