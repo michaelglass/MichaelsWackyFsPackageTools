@@ -25,6 +25,13 @@ let ``hasUncommittedChanges - clean working copy returns false`` () =
     test <@ hasUncommittedChanges run = false @>
 
 [<Fact>]
+let ``hasUncommittedChanges - no changes message returns false`` () =
+    let run =
+        fakeRun [ ("jj", "status", Success "The working copy has no changes.") ]
+
+    test <@ hasUncommittedChanges run = false @>
+
+[<Fact>]
 let ``hasUncommittedChanges - dirty working copy returns true`` () =
     let run =
         fakeRun [ ("jj", "status", Success "Working copy changes:\nM src/Foo.fs") ]
