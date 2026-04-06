@@ -85,11 +85,23 @@ let private checkCiForSha (run: string -> string -> CommandResult) (sha: string)
     let args =
         sprintf "run list --commit %s --json conclusion --jq \".[].conclusion\"" sha
 
-    match run "gh" args with
-    | Success output ->
-        let conclusions = splitLines output
-        conclusions.Length > 0 && conclusions |> Array.forall (fun c -> c = "success")
-    | Failure _ -> false
+    // gh needs GIT_DIR in jj repos since there's no .git directory
+    let gitDir = System.IO.Path.Combine(".jj", "repo", "store", "git")
+
+    if System.IO.Directory.Exists(gitDir) then
+        System.Environment.SetEnvironmentVariable("GIT_DIR", gitDir)
+
+    let result =
+        match run "gh" args with
+        | Success output ->
+            let conclusions = splitLines output
+            conclusions.Length > 0 && conclusions |> Array.forall (fun c -> c = "success")
+        | Failure _ -> false
+
+    if System.IO.Directory.Exists(gitDir) then
+        System.Environment.SetEnvironmentVariable("GIT_DIR", null)
+
+    result
 
 let isCiPassing (run: string -> string -> CommandResult) : bool =
     match getCurrentCommitSha run with
