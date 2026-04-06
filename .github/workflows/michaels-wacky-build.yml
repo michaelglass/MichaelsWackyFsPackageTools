@@ -79,6 +79,8 @@ jobs:
             [ -f "$config" ] || continue
             project=$(echo "$config" | sed 's/coverage-ratchet-\(.*\)\.json/\1/')
             echo "Checking $project..."
+            echo "Config: ${{ github.workspace }}/$config"
+            cat "${{ github.workspace }}/$config" | head -3
             (cd "coverage/$project" && dotnet run --project "${{ github.workspace }}/src/CoverageRatchet/CoverageRatchet.fsproj" -- check --config "${{ github.workspace }}/$config")
           done
       - name: Upload coverage report
