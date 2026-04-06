@@ -69,25 +69,52 @@ let ``tagExists - neither jj nor git finds tag returns false`` () =
 
 // getLatestTag
 
+let jjTagListArgs prefix =
+    sprintf "tag list \"glob:%s*\" -T \"name ++ \\\"\\n\\\"\"" prefix
+
 [<Fact>]
-let ``getLatestTag - finds latest by version sort`` () =
-    let run = fakeRun [ ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.2.0\nv1.1.0") ]
+let ``getLatestTag - jj finds latest by version sort`` () =
+    let run = fakeRun [ ("jj", jjTagListArgs "v", Success "v1.0.0\nv1.2.0\nv1.1.0") ]
+
+    test <@ getLatestTag run "v" = Some "v1.2.0" @>
+
+[<Fact>]
+let ``getLatestTag - jj whitespace-only falls back to git`` () =
+    let run =
+        fakeRun
+            [ ("jj", jjTagListArgs "v", Success "  \n  ")
+              ("git", "tag -l \"v*\"", Success "v1.0.0") ]
+
+    test <@ getLatestTag run "v" = Some "v1.0.0" @>
+
+[<Fact>]
+let ``getLatestTag - jj failure falls back to git`` () =
+    let run =
+        fakeRun
+            [ ("jj", jjTagListArgs "v", Failure "no jj")
+              ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.2.0\nv1.1.0") ]
 
     test <@ getLatestTag run "v" = Some "v1.2.0" @>
 
 [<Fact>]
 let ``getLatestTag - no tags returns None`` () =
-    let run = fakeRun [ ("git", "tag -l \"v*\"", Success "") ]
+    let run =
+        fakeRun [ ("jj", jjTagListArgs "v", Success ""); ("git", "tag -l \"v*\"", Success "") ]
+
     test <@ getLatestTag run "v" = None @>
 
 [<Fact>]
-let ``getLatestTag - git failure returns None`` () =
-    let run = fakeRun [ ("git", "tag -l \"v*\"", Failure "not a git repo") ]
+let ``getLatestTag - both fail returns None`` () =
+    let run =
+        fakeRun
+            [ ("jj", jjTagListArgs "v", Failure "no jj")
+              ("git", "tag -l \"v*\"", Failure "not a git repo") ]
+
     test <@ getLatestTag run "v" = None @>
 
 [<Fact>]
 let ``getLatestTag - skips unparseable tags and returns latest valid`` () =
-    let run = fakeRun [ ("git", "tag -l \"v*\"", Success "v-bad\nv1.0.0\nv2.0.0") ]
+    let run = fakeRun [ ("jj", jjTagListArgs "v", Success "v-bad\nv1.0.0\nv2.0.0") ]
 
     test <@ getLatestTag run "v" = Some "v2.0.0" @>
 
@@ -233,5 +260,9 @@ let ``pushTags - exports and pushes each tag`` () =
 
     pushTags run [ "v1.0.0"; "v2.0.0" ]
     test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git export") @>
-    test <@ calls |> List.exists (fun (c, a) -> c = "git" && a = "push origin v1.0.0") @>
-    test <@ calls |> List.exists (fun (c, a) -> c = "git" && a = "push origin v2.0.0") @>
+
+    test
+        <@
+            calls
+            |> List.exists (fun (c, a) -> c = "git" && a = "push origin v1.0.0 v2.0.0")
+        @>
