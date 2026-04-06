@@ -19,40 +19,21 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: Check if docs already deployed for this commit
-        id: check-deployed
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          deployed=$(gh api repos/${{ github.repository }}/deployments \
-            --jq "[.[] | select(.sha == \"${{ github.sha }}\" and .environment == \"github-pages\")] | length")
-          if [ "$deployed" -gt "0" ]; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-            echo "Docs already deployed for this commit, skipping."
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-          fi
       - uses: actions/setup-dotnet@v4
-        if: steps.check-deployed.outputs.skip != 'true'
         with:
           dotnet-version: '10.0.x'
       - name: Restore
-        if: steps.check-deployed.outputs.skip != 'true'
         run: dotnet restore && dotnet tool restore
       - name: Build docs
-        if: steps.check-deployed.outputs.skip != 'true'
         run: dotnet fsdocs build --output output/docs --clean ${{ inputs.fsdocs-parameters }}
       - name: Generate root index
-        if: steps.check-deployed.outputs.skip != 'true'
         run: cp docs/docs-index.html output/docs/index.html
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Upload pages artifact
-        if: steps.check-deployed.outputs.skip != 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: output/docs
       - name: Deploy to GitHub Pages
-        if: steps.check-deployed.outputs.skip != 'true'
         id: deployment
         uses: actions/deploy-pages@v4
