@@ -42,6 +42,9 @@ jobs:
       - name: Build docs
         if: steps.check-deployed.outputs.skip != 'true'
         run: dotnet fsdocs build --output output/docs --clean ${{ inputs.fsdocs-parameters }}
+      - name: Generate root index
+        if: steps.check-deployed.outputs.skip != 'true'
+        run: cp docs/docs-index.html output/docs/index.html
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Upload pages artifact

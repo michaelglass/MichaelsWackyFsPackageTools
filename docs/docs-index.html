@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MichaelsWackyFsPackageTools</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #24292f; background: #f6f8fa; }
+    .container { max-width: 720px; margin: 3rem auto; padding: 0 1.5rem; }
+    h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
+    .subtitle { color: #57606a; margin-bottom: 2rem; }
+    .cards { display: flex; flex-direction: column; gap: 1rem; }
+    .card { background: #fff; border: 1px solid #d0d7de; border-radius: 6px; padding: 1.25rem 1.5rem; text-decoration: none; color: inherit; transition: border-color 0.15s; }
+    .card:hover { border-color: #0969da; }
+    .card h2 { font-size: 1.15rem; color: #0969da; margin-bottom: 0.35rem; }
+    .card p { color: #57606a; font-size: 0.925rem; line-height: 1.5; }
+    code { background: #f0f3f6; padding: 0.15em 0.35em; border-radius: 3px; font-size: 0.85em; }
+    footer { margin-top: 2.5rem; text-align: center; color: #8b949e; font-size: 0.85rem; }
+    footer a { color: #0969da; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>MichaelsWackyFsPackageTools</h1>
+    <p class="subtitle">F# dotnet CLI tools for open-source project infrastructure</p>
+    <div class="cards">
+      <a class="card" href="CoverageRatchet/">
+        <h2>CoverageRatchet</h2>
+        <p>Per-file code coverage enforcement with automatic threshold ratcheting. Coverage can improve but never regress. Install: <code>dotnet tool install -g CoverageRatchet</code></p>
+      </a>
+      <a class="card" href="FsSemanticTagger/">
+        <h2>FsSemanticTagger</h2>
+        <p>Semantic versioning with API change detection. Inspects compiled F# assemblies to determine the correct version bump. Install: <code>dotnet tool install -g FsSemanticTagger</code></p>
+      </a>
+      <a class="card" href="SyncDocs/">
+        <h2>SyncDocs</h2>
+        <p>Keep README sections in sync with your docs site. Mark sections with markers, and SyncDocs copies them to matching targets. Install: <code>dotnet tool install -g SyncDocs</code></p>
+      </a>
+    </div>
+    <footer>
+      <a href="https://github.com/michaelglass/MichaelsWackyFsPackageTools">View on GitHub</a>
+    </footer>
+  </div>
+</body>
+</html>
