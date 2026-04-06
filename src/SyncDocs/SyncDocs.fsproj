@@ -18,9 +18,13 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/michaelglass/MichaelsWackyFsPackageTools</RepositoryUrl>
     <PackageTags>docs;documentation;readme;sync</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
   <ItemGroup>
     <Compile Include="Sync.fs" />
     <Compile Include="Program.fs" />

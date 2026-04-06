@@ -18,9 +18,13 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/michaelglass/MichaelsWackyFsPackageTools</RepositoryUrl>
     <PackageTags>fsharp;semver;release;nuget;api</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="FsSemanticTagger.Tests" />
   </ItemGroup>
