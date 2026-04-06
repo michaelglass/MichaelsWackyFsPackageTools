@@ -29,13 +29,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "Checking CI status for commit ${{ github.sha }}..."
-          failed=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
-            --jq '[.check_runs[] | select(.conclusion != "success" and .conclusion != "skipped" and .conclusion != null)] | length')
-          total=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs --jq '.total_count')
+          # Only check CI build runs, not Release/Deploy Docs (tag-triggered, would create circular deps)
+          ci_runs=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+            --jq '[.check_runs[] | select(.name == "build / build")]')
+          total=$(echo "$ci_runs" | jq 'length')
           if [ "$total" -eq "0" ]; then
             echo "::error::No CI checks found for this commit. Push to main first."
             exit 1
           fi
+          failed=$(echo "$ci_runs" | jq '[.[] | select(.conclusion != "success" and .conclusion != "skipped" and .conclusion != null)] | length')
           if [ "$failed" -gt "0" ]; then
             echo "::error::CI has failing checks for this commit."
             exit 1
