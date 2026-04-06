@@ -197,14 +197,17 @@ let ``getCurrentCommitSha - returns None when both fail`` () =
 // isCiPassing
 
 let ghCiArgs sha =
-    sprintf "run list --commit %s --json conclusion --jq \".[].conclusion\"" sha
+    sprintf "run list --commit %s --json status,conclusion,name,url" sha
 
 [<Fact>]
 let ``isCiPassing - returns true when all runs succeed`` () =
     let run =
         fakeRun
             [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh", ghCiArgs "abc123", Success "success\nsuccess") ]
+              ("gh",
+               ghCiArgs "abc123",
+               Success
+                   """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"},{"status":"completed","conclusion":"success","name":"Deploy","url":"https://example.com/2"}]""") ]
 
     test <@ isCiPassing run = true @>
 
@@ -213,7 +216,10 @@ let ``isCiPassing - returns false when any run fails`` () =
     let run =
         fakeRun
             [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh", ghCiArgs "abc123", Success "success\nfailure") ]
+              ("gh",
+               ghCiArgs "abc123",
+               Success
+                   """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"},{"status":"completed","conclusion":"failure","name":"Deploy","url":"https://example.com/2"}]""") ]
 
     test <@ isCiPassing run = false @>
 
@@ -222,7 +228,7 @@ let ``isCiPassing - returns false when no runs exist`` () =
     let run =
         fakeRun
             [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh", ghCiArgs "abc123", Success "") ]
+              ("gh", ghCiArgs "abc123", Success "[]") ]
 
     test <@ isCiPassing run = false @>
 
@@ -243,6 +249,165 @@ let ``isCiPassing - returns false when commit sha unavailable`` () =
               ("git", "rev-parse HEAD", Failure "no git") ]
 
     test <@ isCiPassing run = false @>
+
+// parseCiRuns
+
+[<Fact>]
+let ``parseCiRuns - parses completed success runs`` () =
+    let json =
+        """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+
+    let runs = parseCiRuns json
+    test <@ runs.Length = 1 @>
+    test <@ runs.[0].Name = "CI" @>
+    test <@ runs.[0].Status = "completed" @>
+    test <@ runs.[0].Conclusion = "success" @>
+    test <@ runs.[0].Url = "https://example.com/1" @>
+
+[<Fact>]
+let ``parseCiRuns - parses multiple runs with mixed status`` () =
+    let json =
+        """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"},{"status":"in_progress","conclusion":"","name":"Deploy","url":"https://example.com/2"}]"""
+
+    let runs = parseCiRuns json
+    test <@ runs.Length = 2 @>
+    test <@ runs.[1].Status = "in_progress" @>
+
+[<Fact>]
+let ``parseCiRuns - handles empty array`` () =
+    let runs = parseCiRuns "[]"
+    test <@ runs.Length = 0 @>
+
+[<Fact>]
+let ``parseCiRuns - handles null conclusion for in-progress`` () =
+    let json =
+        """[{"status":"in_progress","conclusion":null,"name":"CI","url":"https://example.com/1"}]"""
+
+    let runs = parseCiRuns json
+    test <@ runs.[0].Conclusion = "" @>
+
+// checkCiStatusForSha
+
+let ghCiJsonArgs sha =
+    sprintf "run list --commit %s --json status,conclusion,name,url" sha
+
+[<Fact>]
+let ``checkCiStatusForSha - all success returns Passed`` () =
+    let json =
+        """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+
+    let run = fakeRun [ ("gh", ghCiJsonArgs "abc123", Success json) ]
+    test <@ checkCiStatusForSha run "abc123" = Passed @>
+
+[<Fact>]
+let ``checkCiStatusForSha - any failure returns Failed with failed runs`` () =
+    let json =
+        """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"},{"status":"completed","conclusion":"failure","name":"Deploy","url":"https://example.com/2"}]"""
+
+    let run = fakeRun [ ("gh", ghCiJsonArgs "abc123", Success json) ]
+    let result = checkCiStatusForSha run "abc123"
+
+    test
+        <@
+            match result with
+            | Failed runs -> runs.Length = 1 && runs.[0].Name = "Deploy"
+            | _ -> false
+        @>
+
+[<Fact>]
+let ``checkCiStatusForSha - in_progress with no failures returns InProgress`` () =
+    let json =
+        """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"},{"status":"in_progress","conclusion":null,"name":"Deploy","url":"https://example.com/2"}]"""
+
+    let run = fakeRun [ ("gh", ghCiJsonArgs "abc123", Success json) ]
+    let result = checkCiStatusForSha run "abc123"
+
+    test
+        <@
+            match result with
+            | InProgress _ -> true
+            | _ -> false
+        @>
+
+[<Fact>]
+let ``checkCiStatusForSha - no runs returns NoRuns`` () =
+    let run = fakeRun [ ("gh", ghCiJsonArgs "abc123", Success "[]") ]
+    test <@ checkCiStatusForSha run "abc123" = NoRuns @>
+
+[<Fact>]
+let ``checkCiStatusForSha - gh failure returns Unknown`` () =
+    let run = fakeRun [ ("gh", ghCiJsonArgs "abc123", Failure "gh not found") ]
+    test <@ checkCiStatusForSha run "abc123" = Unknown @>
+
+[<Fact>]
+let ``checkCiStatusForSha - cancelled treated as failure`` () =
+    let json =
+        """[{"status":"completed","conclusion":"cancelled","name":"CI","url":"https://example.com/1"}]"""
+
+    let run = fakeRun [ ("gh", ghCiJsonArgs "abc123", Success json) ]
+    let result = checkCiStatusForSha run "abc123"
+
+    test
+        <@
+            match result with
+            | Failed runs -> runs.Length = 1
+            | _ -> false
+        @>
+
+// getCiStatus
+
+[<Fact>]
+let ``getCiStatus - returns status for current commit`` () =
+    let json =
+        """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+              ("gh", ghCiJsonArgs "abc123", Success json) ]
+
+    test <@ getCiStatus run = Passed @>
+
+[<Fact>]
+let ``getCiStatus - falls back to parent when working copy clean and current has no runs`` () =
+    let json =
+        """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+              ("gh", ghCiJsonArgs "abc123", Success "[]")
+              ("jj", "status", Success "The working copy is clean")
+              ("jj", "log -r @- --no-graph -T commit_id", Success "def456")
+              ("gh", ghCiJsonArgs "def456", Success json) ]
+
+    test <@ getCiStatus run = Passed @>
+
+[<Fact>]
+let ``getCiStatus - returns Unknown when no commit sha`` () =
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Failure "no jj")
+              ("git", "rev-parse HEAD", Failure "no git") ]
+
+    test <@ getCiStatus run = Unknown @>
+
+[<Fact>]
+let ``getCiStatus - returns InProgress without parent fallback`` () =
+    let json =
+        """[{"status":"in_progress","conclusion":null,"name":"CI","url":"https://example.com/1"}]"""
+
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+              ("gh", ghCiJsonArgs "abc123", Success json) ]
+
+    test
+        <@
+            match getCiStatus run with
+            | InProgress _ -> true
+            | _ -> false
+        @>
 
 // pushTags
 
