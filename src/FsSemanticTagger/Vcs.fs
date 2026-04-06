@@ -38,9 +38,12 @@ let tagExists (run: string -> string -> CommandResult) (tag: string) : bool =
 let getLatestTag (run: string -> string -> CommandResult) (prefix: string) : string option =
     // Try jj first, fall back to git
     let output =
-        match runSilent run "git" (sprintf "tag -l \"%s*\"" prefix) with
-        | Some output -> output
-        | None -> ""
+        match runSilent run "jj" (sprintf "tag list \"glob:%s*\" -T \"name ++ \\\"\\n\\\"\"" prefix) with
+        | Some output when output.Trim() <> "" -> output
+        | _ ->
+            match runSilent run "git" (sprintf "tag -l \"%s*\"" prefix) with
+            | Some output -> output
+            | None -> ""
 
     if output = "" then
         None
@@ -81,27 +84,29 @@ let getCurrentCommitSha (run: string -> string -> CommandResult) : string option
         | Some sha -> nonEmpty sha
         | None -> None
 
+let private withJjGitDir (f: unit -> 'a) : 'a =
+    let gitDir = System.IO.Path.Combine(".jj", "repo", "store", "git")
+    let needsGitDir = System.IO.Directory.Exists(gitDir)
+
+    if needsGitDir then
+        System.Environment.SetEnvironmentVariable("GIT_DIR", gitDir)
+
+    try
+        f ()
+    finally
+        if needsGitDir then
+            System.Environment.SetEnvironmentVariable("GIT_DIR", null)
+
 let private checkCiForSha (run: string -> string -> CommandResult) (sha: string) : bool =
     let args =
         sprintf "run list --commit %s --json conclusion --jq \".[].conclusion\"" sha
 
-    // gh needs GIT_DIR in jj repos since there's no .git directory
-    let gitDir = System.IO.Path.Combine(".jj", "repo", "store", "git")
-
-    if System.IO.Directory.Exists(gitDir) then
-        System.Environment.SetEnvironmentVariable("GIT_DIR", gitDir)
-
-    let result =
+    withJjGitDir (fun () ->
         match run "gh" args with
         | Success output ->
             let conclusions = splitLines output
             conclusions.Length > 0 && conclusions |> Array.forall (fun c -> c = "success")
-        | Failure _ -> false
-
-    if System.IO.Directory.Exists(gitDir) then
-        System.Environment.SetEnvironmentVariable("GIT_DIR", null)
-
-    result
+        | Failure _ -> false)
 
 let isCiPassing (run: string -> string -> CommandResult) : bool =
     match getCurrentCommitSha run with
@@ -120,5 +125,6 @@ let isCiPassing (run: string -> string -> CommandResult) : bool =
 let pushTags (run: string -> string -> CommandResult) (tags: string list) : unit =
     runOrFail run "jj" "git export" |> ignore
 
-    for tag in tags do
-        runOrFail run "git" (sprintf "push origin %s" tag) |> ignore
+    withJjGitDir (fun () ->
+        let tagArgs = tags |> List.map (sprintf "%s") |> String.concat " "
+        runOrFail run "git" (sprintf "push origin %s" tagArgs) |> ignore)
