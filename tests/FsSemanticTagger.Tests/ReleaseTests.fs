@@ -7,6 +7,7 @@ open FsSemanticTagger.Shell
 open FsSemanticTagger.Config
 open FsSemanticTagger.Version
 open FsSemanticTagger.Release
+open FsSemanticTagger.Vcs
 
 [<Fact>]
 let ``updateFsprojVersion - updates Version element in fsproj`` () =
@@ -83,7 +84,8 @@ let ``release - returns 1 when CI not passing`` () =
         match cmd, args with
         | "jj", "status" -> Success "The working copy is clean"
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
-        | "gh", a when a.Contains("run list") -> Success "failure"
+        | "gh", a when a.Contains("run list") ->
+            Success """[{"status":"completed","conclusion":"failure","name":"CI","url":"https://example.com/1"}]"""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
 
     let config =
@@ -99,7 +101,8 @@ let ``release - Auto with no previous tags returns 0 with no packages`` () =
         match cmd, args with
         | "jj", "status" -> Success "The working copy is clean"
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
-        | "gh", a when a.Contains("run list") -> Success "success"
+        | "gh", a when a.Contains("run list") ->
+            Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
         | "dotnet", "build -c Release" -> Success "Build succeeded."
         | "git", arg when arg.StartsWith("tag -l") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
@@ -140,7 +143,8 @@ let ``release - StartAlpha with FirstRelease creates version`` () =
             match cmd, args with
             | "jj", "status" -> Success "The working copy is clean"
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
-            | "gh", a when a.Contains("run list") -> Success "success"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "git", arg when arg.StartsWith("tag -l") -> Success ""
             | "jj", arg when arg.StartsWith("commit -m") -> Success ""
@@ -191,7 +195,8 @@ let private passingCiRun (extraResponses: (string * string * CommandResult) list
             match cmd, args with
             | "jj", "status" -> Success "The working copy is clean"
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
-            | "gh", a when a.Contains("run list") -> Success "success"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "git", arg when arg.StartsWith("tag -l") -> Success ""
             | "jj", arg when arg.StartsWith("commit -m") -> Success ""
@@ -367,3 +372,65 @@ let ``release - PromoteToBeta with FirstRelease returns 0 no packages`` () =
 
     let result = release fakeRun config PromoteToBeta GitHubActions
     test <@ result = 0 @>
+
+[<Fact>]
+let ``waitForCi - polls until CI passes`` () =
+    let mutable ghCallCount = 0
+
+    let run (cmd: string) (args: string) : CommandResult =
+        match cmd, args with
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "gh", a when a.Contains("run list") ->
+            ghCallCount <- ghCallCount + 1
+
+            if ghCallCount <= 2 then
+                Success """[{"status":"in_progress","conclusion":null,"name":"CI","url":"https://example.com/1"}]"""
+            else
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+        | _ -> Failure(sprintf "unexpected: %s %s" cmd args)
+
+    let result = waitForCi run 0 10 // 0ms poll interval for tests
+    test <@ result = Passed @>
+    test <@ ghCallCount = 3 @>
+
+[<Fact>]
+let ``waitForCi - times out when CI stays in progress`` () =
+    let run (cmd: string) (args: string) : CommandResult =
+        match cmd, args with
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "gh", a when a.Contains("run list") ->
+            Success """[{"status":"in_progress","conclusion":null,"name":"CI","url":"https://example.com/1"}]"""
+        | _ -> Failure(sprintf "unexpected: %s %s" cmd args)
+
+    let result = waitForCi run 0 3 // max 3 attempts
+
+    test
+        <@
+            match result with
+            | InProgress _ -> true
+            | _ -> false
+        @>
+
+[<Fact>]
+let ``waitForCi - returns Failed immediately without polling`` () =
+    let mutable ghCallCount = 0
+
+    let run (cmd: string) (args: string) : CommandResult =
+        match cmd, args with
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "gh", a when a.Contains("run list") ->
+            ghCallCount <- ghCallCount + 1
+
+            Success """[{"status":"completed","conclusion":"failure","name":"CI","url":"https://example.com/1"}]"""
+        | _ -> Failure(sprintf "unexpected: %s %s" cmd args)
+
+    let result = waitForCi run 0 10
+
+    test
+        <@
+            match result with
+            | Failed _ -> true
+            | _ -> false
+        @>
+
+    test <@ ghCallCount = 1 @>
