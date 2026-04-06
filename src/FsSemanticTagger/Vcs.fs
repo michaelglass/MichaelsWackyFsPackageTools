@@ -97,30 +97,81 @@ let private withJjGitDir (f: unit -> 'a) : 'a =
         if needsGitDir then
             System.Environment.SetEnvironmentVariable("GIT_DIR", null)
 
-let private checkCiForSha (run: string -> string -> CommandResult) (sha: string) : bool =
-    let args =
-        sprintf "run list --commit %s --json conclusion --jq \".[].conclusion\"" sha
+type CiRunInfo =
+    { Name: string
+      Url: string
+      Status: string
+      Conclusion: string }
+
+type CiStatus =
+    | Passed
+    | Failed of CiRunInfo list
+    | InProgress of CiRunInfo list
+    | NoRuns
+    | Unknown
+
+let parseCiRuns (json: string) : CiRunInfo list =
+    let doc = System.Text.Json.JsonDocument.Parse(json)
+
+    [ for elem in doc.RootElement.EnumerateArray() do
+          { Name = elem.GetProperty("name").GetString()
+            Url = elem.GetProperty("url").GetString()
+            Status = elem.GetProperty("status").GetString()
+            Conclusion =
+              let prop = elem.GetProperty("conclusion")
+
+              if prop.ValueKind = System.Text.Json.JsonValueKind.Null then
+                  ""
+              else
+                  prop.GetString() } ]
+
+let checkCiStatusForSha (run: string -> string -> CommandResult) (sha: string) : CiStatus =
+    let args = sprintf "run list --commit %s --json status,conclusion,name,url" sha
 
     withJjGitDir (fun () ->
         match run "gh" args with
         | Success output ->
-            let conclusions = splitLines output
-            conclusions.Length > 0 && conclusions |> Array.forall (fun c -> c = "success")
-        | Failure _ -> false)
+            let runs = parseCiRuns output
 
-let isCiPassing (run: string -> string -> CommandResult) : bool =
+            if runs.IsEmpty then
+                NoRuns
+            else
+                let failed =
+                    runs
+                    |> List.filter (fun r -> r.Conclusion = "failure" || r.Conclusion = "cancelled")
+
+                if failed.Length > 0 then
+                    Failed failed
+                elif
+                    runs
+                    |> List.forall (fun r -> r.Status = "completed" && r.Conclusion = "success")
+                then
+                    Passed
+                else
+                    InProgress runs
+        | Failure _ -> Unknown)
+
+let private checkCiForSha (run: string -> string -> CommandResult) (sha: string) : bool =
+    match checkCiStatusForSha run sha with
+    | Passed -> true
+    | _ -> false
+
+let getCiStatus (run: string -> string -> CommandResult) : CiStatus =
     match getCurrentCommitSha run with
-    | None -> false
+    | None -> Unknown
     | Some sha ->
-        if checkCiForSha run sha then
-            true
-        elif not (hasUncommittedChanges run) then
+        match checkCiStatusForSha run sha with
+        | NoRuns when not (hasUncommittedChanges run) ->
             // In jj, @ is always a new commit. Check parent if working copy is clean.
             match runSilent run "jj" "log -r @- --no-graph -T commit_id" with
-            | Some parentSha when parentSha.Trim() <> "" -> checkCiForSha run (parentSha.Trim())
-            | _ -> false
-        else
-            false
+            | Some parentSha when parentSha.Trim() <> "" -> checkCiStatusForSha run (parentSha.Trim())
+            | _ -> NoRuns
+        | status -> status
+
+let isCiPassing (run: string -> string -> CommandResult) : bool =
+    match getCiStatus run with
+    | Passed -> true
+    | _ -> false
 
 let pushTags (run: string -> string -> CommandResult) (tags: string list) : unit =
     runOrFail run "jj" "git export" |> ignore
