@@ -30,7 +30,7 @@ for config in coverage-ratchet-*.json; do
   [ -f "$config" ] || continue
   project=$(echo "$config" | sed 's/coverage-ratchet-\\(.*\\)\\.json/\\1/')
   echo "Checking $project..."
-  (cd "coverage/$project" && dotnet run --project "../../src/CoverageRatchet/CoverageRatchet.fsproj" --no-build -- check "../../$config")
+  (cd "coverage/$project" && dotnet tool run coverageratchet check "../../$config")
 done
 """
 depends = ["test"]
@@ -41,7 +41,7 @@ for config in coverage-ratchet-*.json; do
   [ -f "$config" ] || continue
   project=$(echo "$config" | sed 's/coverage-ratchet-\\(.*\\)\\.json/\\1/')
   echo "Ratcheting $project..."
-  (cd "coverage/$project" && dotnet run --project "../../src/CoverageRatchet/CoverageRatchet.fsproj" --no-build -- ratchet "../../$config")
+  (cd "coverage/$project" && dotnet tool run coverageratchet ratchet "../../$config")
 done
 """
 depends = ["test"]
@@ -73,11 +73,11 @@ dotnet pack src/FsSemanticTagger/FsSemanticTagger.fsproj -c Release -o artifacts
 depends = ["build"]
 
 [tasks.release]
-run = "dotnet run --project src/FsSemanticTagger/FsSemanticTagger.fsproj --no-build -- release"
+run = "dotnet tool run fssemantictagger release"
 depends = ["build"]
 
 [tasks.release-alpha]
-run = "dotnet run --project src/FsSemanticTagger/FsSemanticTagger.fsproj --no-build -- alpha"
+run = "dotnet tool run fssemantictagger alpha"
 depends = ["build"]
 
 [tasks.docs]
