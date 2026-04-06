@@ -81,18 +81,29 @@ let getCurrentCommitSha (run: string -> string -> CommandResult) : string option
         | Some sha -> nonEmpty sha
         | None -> None
 
+let private checkCiForSha (run: string -> string -> CommandResult) (sha: string) : bool =
+    let args =
+        sprintf "run list --commit %s --json conclusion --jq \".[].conclusion\"" sha
+
+    match run "gh" args with
+    | Success output ->
+        let conclusions = splitLines output
+        conclusions.Length > 0 && conclusions |> Array.forall (fun c -> c = "success")
+    | Failure _ -> false
+
 let isCiPassing (run: string -> string -> CommandResult) : bool =
     match getCurrentCommitSha run with
     | None -> false
     | Some sha ->
-        let args =
-            sprintf "run list --commit %s --json conclusion --jq \".[].conclusion\"" sha
-
-        match run "gh" args with
-        | Success output ->
-            let conclusions = splitLines output
-            conclusions.Length > 0 && conclusions |> Array.forall (fun c -> c = "success")
-        | Failure _ -> false
+        if checkCiForSha run sha then
+            true
+        elif not (hasUncommittedChanges run) then
+            // In jj, @ is always a new commit. Check parent if working copy is clean.
+            match runSilent run "jj" "log -r @- --no-graph -T commit_id" with
+            | Some parentSha when parentSha.Trim() <> "" -> checkCiForSha run (parentSha.Trim())
+            | _ -> false
+        else
+            false
 
 let pushTags (run: string -> string -> CommandResult) (tags: string list) : unit =
     runOrFail run "jj" "git export" |> ignore
