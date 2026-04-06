@@ -20,8 +20,9 @@ let private branchRegex = Regex(@"\((\d+)/(\d+)\)", RegexOptions.Compiled)
 
 let private isIncluded (fileName: string) =
     let hasValidExt = includedExtensions |> Array.exists fileName.EndsWith
+    let baseName = Path.GetFileName(fileName)
 
-    let isExcluded = excludedPatterns |> Array.exists fileName.Contains
+    let isExcluded = excludedPatterns |> Array.exists baseName.Contains
 
     hasValidExt && not isExcluded
 
