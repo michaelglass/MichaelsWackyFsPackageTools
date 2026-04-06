@@ -154,6 +154,30 @@ let ``parseXml - exclude Test AssemblyInfo AssemblyAttributes`` () =
     test <@ result.[0].FileName = "Real.fs" @>
 
 [<Fact>]
+let ``parseXml - excludes by filename not directory path`` () =
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages>
+            <package>
+              <classes>
+                <class filename="/src/TestPrune/Analyzer.fs">
+                  <lines><line number="1" hits="1" /></lines>
+                </class>
+                <class filename="/src/TestPrune/Tests/MyTest.fs">
+                  <lines><line number="1" hits="1" /></lines>
+                </class>
+              </classes>
+            </package>
+          </packages>
+        </coverage>"""
+
+    let result = parseXml xml
+
+    test <@ result.Length = 1 @>
+    test <@ result.[0].FileName = "Analyzer.fs" @>
+
+[<Fact>]
 let ``parseXml - no branches means 100 percent branch coverage`` () =
     let xml =
         """<?xml version="1.0" encoding="utf-8"?>
