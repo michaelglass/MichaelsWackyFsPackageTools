@@ -79,7 +79,7 @@ jobs:
             [ -f "$config" ] || continue
             project=$(echo "$config" | sed 's/coverage-ratchet-\(.*\)\.json/\1/')
             echo "Checking $project..."
-            (cd "coverage/$project" && dotnet run --project "../../src/CoverageRatchet/CoverageRatchet.fsproj" --no-build -- check --config "../../$config")
+            (cd "coverage/$project" && dotnet run --project "../../src/CoverageRatchet/CoverageRatchet.fsproj" -- check --config "../../$config")
           done
       - name: Upload coverage report
         if: always()
