@@ -68,6 +68,25 @@ let updateFsprojVersion (fsprojPath: string) (version: Version) : unit =
 
     System.IO.File.WriteAllText(fsprojPath, newContent)
 
+let internal waitForCi (run: string -> string -> CommandResult) (pollIntervalMs: int) (maxAttempts: int) : CiStatus =
+    let rec poll attempt =
+        let status = getCiStatus run
+
+        match status with
+        | InProgress runs ->
+            if attempt >= maxAttempts then
+                printfn "Timed out waiting for CI after %d attempts" maxAttempts
+                status
+            else
+                let completed = runs |> List.filter (fun r -> r.Status = "completed") |> List.length
+
+                printfn "Waiting for CI... (%d/%d runs complete)" completed runs.Length
+                System.Threading.Thread.Sleep(pollIntervalMs)
+                poll (attempt + 1)
+        | other -> other
+
+    poll 0
+
 /// Main release orchestration
 let release
     (run: string -> string -> CommandResult)
@@ -79,86 +98,103 @@ let release
     if hasUncommittedChanges run then
         printfn "Error: uncommitted changes detected"
         1
-    elif not (isCiPassing run) then
-        printfn "Error: CI is not passing for the current commit"
-        1
     else
-        // 2. Build in Release mode
-        printfn "Building in Release mode..."
-        runOrFail run "dotnet" "build -c Release" |> ignore
+        let ciStatus = waitForCi run 15000 40
 
-        // 3. For each package: determine release state and version bump
-        let bumps =
-            config.Packages
-            |> List.choose (fun pkg ->
-                let state =
-                    match getLatestTag run pkg.TagPrefix with
-                    | Some tag ->
-                        let versionStr = tag.Substring(pkg.TagPrefix.Length)
-                        HasPreviousRelease(tag, parse versionStr)
-                    | None -> FirstRelease
+        match ciStatus with
+        | Failed runs ->
+            printfn "Error: CI failed"
 
-                match cmd with
-                | Auto ->
-                    match state with
-                    | FirstRelease -> None // Need explicit command for first release
-                    | HasPreviousRelease(_tag, currentVersion) ->
-                        // Compare API
-                        let currentApi = extractFromAssembly pkg.DllPath
-                        // For now, just bump patch (full API comparison from tag needs VCS workspace)
-                        let _currentApi = currentApi
-                        let change = NoChange
-                        let newVersion = determineBump currentVersion change
+            for r in runs do
+                printfn "  FAILED: %s — %s" r.Name r.Url
 
-                        if config.ReservedVersions.Contains(format newVersion) then
-                            let newVersion = bumpPatch newVersion
-                            Some(pkg, newVersion)
-                        else
-                            Some(pkg, newVersion)
-                | _ ->
-                    match forCommand state cmd with
-                    | Some v ->
-                        if config.ReservedVersions.Contains(format v) then
-                            printfn "Warning: version %s is reserved, skipping" (format v)
-                            None
-                        else
-                            Some(pkg, v)
-                    | None ->
-                        printfn "Cannot %A from current state for %s" cmd pkg.Name
-                        None)
+            1
+        | InProgress _ ->
+            printfn "Error: CI still running after timeout"
+            1
+        | NoRuns ->
+            printfn "Error: no CI runs found for the current commit"
+            1
+        | Unknown ->
+            printfn "Error: could not determine CI status"
+            1
+        | Passed ->
+            // 2. Build in Release mode
+            printfn "Building in Release mode..."
+            runOrFail run "dotnet" "build -c Release" |> ignore
 
-        if bumps.IsEmpty then
-            printfn "No packages to release"
-            0
-        else
-            // 4. Show summary
-            printfn "\nRelease plan:"
+            // 3. For each package: determine release state and version bump
+            let bumps =
+                config.Packages
+                |> List.choose (fun pkg ->
+                    let state =
+                        match getLatestTag run pkg.TagPrefix with
+                        | Some tag ->
+                            let versionStr = tag.Substring(pkg.TagPrefix.Length)
+                            HasPreviousRelease(tag, parse versionStr)
+                        | None -> FirstRelease
 
-            for (pkg, version) in bumps do
-                printfn "  %s -> %s (tag: %s)" pkg.Name (format version) (toTag pkg.TagPrefix version)
+                    match cmd with
+                    | Auto ->
+                        match state with
+                        | FirstRelease -> None // Need explicit command for first release
+                        | HasPreviousRelease(_tag, currentVersion) ->
+                            // Compare API
+                            let currentApi = extractFromAssembly pkg.DllPath
+                            // For now, just bump patch (full API comparison from tag needs VCS workspace)
+                            let _currentApi = currentApi
+                            let change = NoChange
+                            let newVersion = determineBump currentVersion change
 
-            // 5. Update fsproj versions
-            for (pkg, version) in bumps do
-                updateFsprojVersion pkg.Fsproj version
+                            if config.ReservedVersions.Contains(format newVersion) then
+                                let newVersion = bumpPatch newVersion
+                                Some(pkg, newVersion)
+                            else
+                                Some(pkg, newVersion)
+                    | _ ->
+                        match forCommand state cmd with
+                        | Some v ->
+                            if config.ReservedVersions.Contains(format v) then
+                                printfn "Warning: version %s is reserved, skipping" (format v)
+                                None
+                            else
+                                Some(pkg, v)
+                        | None ->
+                            printfn "Cannot %A from current state for %s" cmd pkg.Name
+                            None)
 
-                for extra in pkg.FsProjsSharingSameTag do
-                    updateFsprojVersion extra version
+            if bumps.IsEmpty then
+                printfn "No packages to release"
+                0
+            else
+                // 4. Show summary
+                printfn "\nRelease plan:"
 
-            // 6. Commit and tag
-            let tags =
-                bumps |> List.map (fun (pkg, version) -> commitAndTag run pkg.TagPrefix version)
+                for (pkg, version) in bumps do
+                    printfn "  %s -> %s (tag: %s)" pkg.Name (format version) (toTag pkg.TagPrefix version)
 
-            // 7. Publish or push tags
-            match mode with
-            | GitHubActions ->
-                pushTags run tags
-                printfn "Tags pushed. GitHub Actions will handle the release."
-            | LocalPublish ->
-                for (pkg, _version) in bumps do
-                    runOrFail run "dotnet" (sprintf "pack %s -c Release -o artifacts/" pkg.Fsproj)
-                    |> ignore
+                // 5. Update fsproj versions
+                for (pkg, version) in bumps do
+                    updateFsprojVersion pkg.Fsproj version
 
-                    printfn "Packed: %s" pkg.Name
-            // NuGet push would go here
+                    for extra in pkg.FsProjsSharingSameTag do
+                        updateFsprojVersion extra version
 
-            0
+                // 6. Commit and tag
+                let tags =
+                    bumps |> List.map (fun (pkg, version) -> commitAndTag run pkg.TagPrefix version)
+
+                // 7. Publish or push tags
+                match mode with
+                | GitHubActions ->
+                    pushTags run tags
+                    printfn "Tags pushed. GitHub Actions will handle the release."
+                | LocalPublish ->
+                    for (pkg, _version) in bumps do
+                        runOrFail run "dotnet" (sprintf "pack %s -c Release -o artifacts/" pkg.Fsproj)
+                        |> ignore
+
+                        printfn "Packed: %s" pkg.Name
+                // NuGet push would go here
+
+                0
