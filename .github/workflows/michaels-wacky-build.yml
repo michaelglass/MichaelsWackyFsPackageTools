@@ -17,6 +17,12 @@ on:
       example-path:
         type: string
         default: 'examples/'
+      syncdocs-cmd:
+        type: string
+        default: 'dotnet tool run syncdocs'
+      coverageratchet-cmd:
+        type: string
+        default: 'dotnet tool run coverageratchet'
 
 permissions:
   contents: read
@@ -36,7 +42,7 @@ jobs:
       - name: Format check
         run: dotnet fantomas ${{ inputs.fantomas-paths }} --check
       - name: Sync docs check
-        run: dotnet tool run syncdocs check
+        run: ${{ inputs.syncdocs-cmd }} check
       - name: Build
         run: dotnet build --warnaserror --no-restore
       - name: Lint
@@ -79,7 +85,7 @@ jobs:
             [ -f "$config" ] || continue
             project=$(echo "$config" | sed 's/coverage-ratchet-\(.*\)\.json/\1/')
             echo "Checking $project..."
-            (cd "coverage/$project" && dotnet tool run coverageratchet check "${{ github.workspace }}/$config")
+            (cd "coverage/$project" && ${{ inputs.coverageratchet-cmd }} check "${{ github.workspace }}/$config")
           done
       - name: Upload coverage report
         if: always()
