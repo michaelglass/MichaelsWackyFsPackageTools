@@ -16,6 +16,8 @@ jobs:
     with:
       solution: FSharpOssTooling.slnx
       fantomas-paths: "src/ tests/"
+      syncdocs-cmd: "dotnet run --project src/SyncDocs/SyncDocs.fsproj --"
+      coverageratchet-cmd: "dotnet run --project src/CoverageRatchet/CoverageRatchet.fsproj --"
     permissions:
       contents: read
       checks: write
