@@ -11,12 +11,10 @@ on:
       fantomas-paths:
         type: string
         default: 'src/ tests/'
-      has-examples:
-        type: boolean
-        default: false
-      example-path:
+      example-projects:
+        description: 'Space-separated paths to example .fsproj/.csproj files to build. Leave empty to auto-discover from examples/ directory, or set to "none" to skip.'
         type: string
-        default: 'examples/'
+        default: ''
       check-docs:
         type: boolean
         default: true
@@ -105,5 +103,24 @@ jobs:
           name: coverage-report
           path: coverage/report
       - name: Build examples
-        if: inputs.has-examples
-        run: dotnet build ${{ inputs.example-path }} --warnaserror
+        run: |
+          if [ "${{ inputs.example-projects }}" = "none" ]; then
+            echo "Skipping examples (explicitly disabled)"
+            exit 0
+          fi
+
+          if [ -n "${{ inputs.example-projects }}" ]; then
+            projects="${{ inputs.example-projects }}"
+          else
+            projects=$(find examples -name '*.fsproj' -o -name '*.csproj' 2>/dev/null | sort)
+          fi
+
+          if [ -z "$projects" ]; then
+            echo "No example projects found"
+            exit 0
+          fi
+
+          for proj in $projects; do
+            echo "Building example: $proj"
+            dotnet build "$proj" --warnaserror
+          done
