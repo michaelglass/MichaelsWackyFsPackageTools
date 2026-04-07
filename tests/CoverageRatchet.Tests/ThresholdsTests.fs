@@ -352,6 +352,122 @@ let ``loadConfig - platform-specific override wins over all-platform`` () =
         File.Delete(tmpFile)
 
 [<Fact>]
+let ``saveRawConfig roundtrips platform overrides`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        let raw: RawConfig =
+            { DefaultLine = 100.0
+              DefaultBranch = 100.0
+              RawOverrides =
+                Map.ofList
+                    [ "Foo.fs",
+                      [ { Line = 84.0
+                          Branch = 55.0
+                          Reason = "native"
+                          Platform = Some "macos" }
+                        { Line = 0.0
+                          Branch = 0.0
+                          Reason = "not here"
+                          Platform = Some "linux" }
+                        { Line = 50.0
+                          Branch = 50.0
+                          Reason = "fallback"
+                          Platform = None } ] ] }
+
+        saveRawConfig tmpFile raw
+        let loaded = loadRawConfig tmpFile
+
+        test <@ loaded.RawOverrides.["Foo.fs"].Length = 3 @>
+
+        let macos =
+            loaded.RawOverrides.["Foo.fs"]
+            |> List.find (fun o -> o.Platform = Some "macos")
+
+        test <@ macos.Line = 84.0 @>
+        test <@ macos.Branch = 55.0 @>
+        test <@ macos.Reason = "native" @>
+
+        let linux =
+            loaded.RawOverrides.["Foo.fs"]
+            |> List.find (fun o -> o.Platform = Some "linux")
+
+        test <@ linux.Line = 0.0 @>
+        test <@ linux.Reason = "not here" @>
+
+        let fallback =
+            loaded.RawOverrides.["Foo.fs"]
+            |> List.find (fun o -> o.Platform = None)
+
+        test <@ fallback.Line = 50.0 @>
+        test <@ fallback.Reason = "fallback" @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``saveRawConfig writes single all-platform override as object`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        let raw: RawConfig =
+            { DefaultLine = 100.0
+              DefaultBranch = 100.0
+              RawOverrides =
+                Map.ofList
+                    [ "Foo.fs",
+                      [ { Line = 70.0
+                          Branch = 65.0
+                          Reason = "legacy"
+                          Platform = None } ] ] }
+
+        saveRawConfig tmpFile raw
+        let json = File.ReadAllText(tmpFile)
+
+        let valueKind, lineVal =
+            use doc = System.Text.Json.JsonDocument.Parse(json)
+            let fooEl = doc.RootElement.GetProperty("overrides").GetProperty("Foo.fs")
+            fooEl.ValueKind, fooEl.GetProperty("line").GetDouble()
+
+        test <@ valueKind = System.Text.Json.JsonValueKind.Object @>
+        test <@ lineVal = 70.0 @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``saveConfig still roundtrips`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        let config =
+            { DefaultLine = 100.0
+              DefaultBranch = 100.0
+              Overrides =
+                Map.ofList
+                    [ "Foo.fs",
+                      { Line = 70.0
+                        Branch = 65.0
+                        Reason = "legacy code"
+                        Platform = None }
+                      "Bar.fs",
+                      { Line = 80.0
+                        Branch = 50.0
+                        Reason = "new module"
+                        Platform = None } ] }
+
+        saveConfig tmpFile config
+        let loaded = loadConfig tmpFile
+
+        test <@ loaded.Overrides.Count = 2 @>
+        test <@ loaded.Overrides.["Foo.fs"].Line = 70.0 @>
+        test <@ loaded.Overrides.["Foo.fs"].Branch = 65.0 @>
+        test <@ loaded.Overrides.["Foo.fs"].Reason = "legacy code" @>
+        test <@ loaded.Overrides.["Bar.fs"].Line = 80.0 @>
+        test <@ loaded.Overrides.["Bar.fs"].Branch = 50.0 @>
+        test <@ loaded.Overrides.["Bar.fs"].Reason = "new module" @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
 let ``loadRawConfig preserves all platform entries`` () =
     let tmpFile = Path.GetTempFileName()
 
