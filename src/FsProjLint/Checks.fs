@@ -16,7 +16,7 @@ let private fileExists (dir: string) (relativePath: string) : bool =
     File.Exists(Path.Combine(dir, relativePath))
 
 /// Check repo-level requirements.
-let checkRepo (dir: string) (hasPackableProjects: bool) : CheckResult list =
+let checkRepo (dir: string) (hasPackableProjects: bool) (packageNames: string list) : CheckResult list =
     let licenseExists = fileExists dir "LICENSE" || fileExists dir "LICENSE.md"
 
     let readmeExists = fileExists dir "README.md"
@@ -44,10 +44,32 @@ let checkRepo (dir: string) (hasPackableProjects: bool) : CheckResult list =
     if hasPackableProjects then
         let docsIndexExists = fileExists dir "docs/index.md"
 
-        baseChecks
-        @ [ { Name = "docs/index.md exists"
-              Passed = docsIndexExists
-              Detail = if docsIndexExists then "Found" else "Missing docs/index.md" } ]
+        let docsIndexCheck =
+            [ { Name = "docs/index.md exists"
+                Passed = docsIndexExists
+                Detail = if docsIndexExists then "Found" else "Missing docs/index.md" } ]
+
+        let docsIndexHtmlPath = Path.Combine(dir, "docs", "docs-index.html")
+
+        let docsIndexHtmlChecks =
+            if File.Exists(docsIndexHtmlPath) then
+                let content = File.ReadAllText(docsIndexHtmlPath)
+
+                packageNames
+                |> List.map (fun name ->
+                    let found = content.Contains(sprintf "href=\"%s/" name)
+
+                    { Name = sprintf "docs-index.html links to %s" name
+                      Passed = found
+                      Detail =
+                        if found then
+                            sprintf "%s linked" name
+                        else
+                            sprintf "%s missing from docs-index.html" name })
+            else
+                []
+
+        baseChecks @ docsIndexCheck @ docsIndexHtmlChecks
     else
         baseChecks
 
@@ -155,9 +177,14 @@ let runLint (dir: string) : LintResult =
         projectDocs
         |> List.map (fun (p, doc) -> (p, checkProject (Path.GetFileName(p)) doc))
 
-    let hasPackable = projectDocs |> List.exists (fun (_, doc) -> isPackable doc)
+    let packableDocs = projectDocs |> List.filter (fun (_, doc) -> isPackable doc)
+    let hasPackable = not (List.isEmpty packableDocs)
 
-    let repoChecks = checkRepo dir hasPackable
+    let packageNames =
+        packableDocs
+        |> List.choose (fun (_, doc) -> getProperty doc "PackageId")
+
+    let repoChecks = checkRepo dir hasPackable packageNames
 
     { RepoChecks = repoChecks
       ProjectChecks = projectChecks }
