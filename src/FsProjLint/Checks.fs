@@ -105,9 +105,7 @@ let private checkPropertyPresent (doc: XDocument) (propName: string) (checkName:
           Detail = sprintf "%s missing or empty" propName }
 
 /// Check a single fsproj file.
-let checkProject (fsprojPath: string) : CheckResult list =
-    let doc = XDocument.Load(fsprojPath)
-
+let checkProject (_fileName: string) (doc: XDocument) : CheckResult list =
     let allProjectChecks =
         [ checkPropertyEquals doc "TreatWarningsAsErrors" "true" "TreatWarningsAsErrors is true" ]
 
@@ -151,13 +149,13 @@ let discoverProjects (dir: string) : string list =
 let runLint (dir: string) : LintResult =
     let projects = discoverProjects dir
 
-    let projectChecks = projects |> List.map (fun p -> (p, checkProject p))
+    let projectDocs = projects |> List.map (fun p -> (p, XDocument.Load(p)))
 
-    let hasPackable =
-        projects
-        |> List.exists (fun p ->
-            let doc = XDocument.Load(p)
-            isPackable doc)
+    let projectChecks =
+        projectDocs
+        |> List.map (fun (p, doc) -> (p, checkProject (Path.GetFileName(p)) doc))
+
+    let hasPackable = projectDocs |> List.exists (fun (_, doc) -> isPackable doc)
 
     let repoChecks = checkRepo dir hasPackable
 
