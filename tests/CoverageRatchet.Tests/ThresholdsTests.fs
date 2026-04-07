@@ -36,7 +36,8 @@ let ``check - file with override uses override thresholds`` () =
                     [ "Foo.fs",
                       { Line = 70.0
                         Branch = 65.0
-                        Reason = "legacy code" } ] }
+                        Reason = "legacy code"
+                        Platform = None } ] }
 
     let files = [ makeFile "Foo.fs" 75.0 70.0 3 4 ]
     let result = check config files
@@ -111,11 +112,13 @@ let ``saveConfig roundtrips with loadConfig`` () =
                     [ "Foo.fs",
                       { Line = 70.0
                         Branch = 65.0
-                        Reason = "legacy code" }
+                        Reason = "legacy code"
+                        Platform = None }
                       "Bar.fs",
                       { Line = 80.0
                         Branch = 50.0
-                        Reason = "new module" } ] }
+                        Reason = "new module"
+                        Platform = None } ] }
 
         saveConfig tmpFile config
         let loaded = loadConfig tmpFile
@@ -259,3 +262,8 @@ let ``saveConfig with empty overrides roundtrips`` () =
         test <@ loaded.Overrides = Map.empty @>
     finally
         File.Delete(tmpFile)
+
+[<Fact>]
+let ``currentPlatform returns a known platform string`` () =
+    let platform = CoverageRatchet.Thresholds.currentPlatform
+    test <@ platform = "macos" || platform = "linux" || platform = "windows" @>
