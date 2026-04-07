@@ -43,7 +43,7 @@ jobs:
           # (jj/fssemantictagger creates an empty version-bump commit for the tag)
           check_ci() {
             local sha=$1
-            echo "Checking CI status for commit $sha..."
+            echo "Checking CI status for commit $sha..." >&2
             gh api "repos/${{ github.repository }}/commits/$sha/check-runs" \
               --jq '[.check_runs[] | select(.name == "build / build")]'
           }
@@ -52,7 +52,7 @@ jobs:
           if [ "$total" -eq "0" ]; then
             parent=$(git rev-parse "${{ github.sha }}^" 2>/dev/null || true)
             if [ -n "$parent" ]; then
-              echo "No CI on tagged commit, checking parent $parent..."
+              echo "No CI on tagged commit, checking parent $parent..." >&2
               ci_runs=$(check_ci "$parent")
               total=$(echo "$ci_runs" | jq 'length')
             fi
