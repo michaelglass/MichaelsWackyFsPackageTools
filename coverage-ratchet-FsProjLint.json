@@ -1,0 +1,20 @@
+{
+  "overrides": {
+    "Checks.fs": [
+      {
+        "line": 95.14563106796116,
+        "branch": 93.75,
+        "reason": "loosened automatically",
+        "platform": "macos"
+      }
+    ],
+    "Program.fs": [
+      {
+        "line": 0,
+        "branch": 0,
+        "reason": "loosened automatically",
+        "platform": "macos"
+      }
+    ]
+  }
+}
