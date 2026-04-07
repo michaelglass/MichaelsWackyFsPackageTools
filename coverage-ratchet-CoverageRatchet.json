@@ -11,9 +11,9 @@
       "reason": "CLI entry point with private functions and CWD-dependent file discovery"
     },
     "Thresholds.fs": {
-      "line": 98.59154929577466,
-      "branch": 80,
-      "reason": "F# compiler generates extra branches for pattern matching"
+      "line": 91,
+      "branch": 73,
+      "reason": "F# compiler generates extra branches for pattern matching; platform detection branches unreachable on non-native OS"
     }
   }
 }

@@ -1,13 +1,25 @@
 module CoverageRatchet.Thresholds
 
 open System.IO
+open System.Runtime.InteropServices
 open System.Text.Json
 open CoverageRatchet.Cobertura
 
 type Override =
     { Line: float
       Branch: float
-      Reason: string }
+      Reason: string
+      Platform: string option }
+
+let currentPlatform =
+    if RuntimeInformation.IsOSPlatform(OSPlatform.OSX) then
+        "macos"
+    elif RuntimeInformation.IsOSPlatform(OSPlatform.Linux) then
+        "linux"
+    elif RuntimeInformation.IsOSPlatform(OSPlatform.Windows) then
+        "windows"
+    else
+        "unknown"
 
 type Config =
     { DefaultLine: float
@@ -94,10 +106,18 @@ let loadConfig (path: string) : Config =
                             | true, r -> r.GetString()
                             | false, _ -> ""
 
+                        let platform =
+                            match el.TryGetProperty("platform") with
+                            | true, p ->
+                                let s = p.GetString()
+                                if isNull s then None else Some s
+                            | false, _ -> None
+
                         prop.Name,
                         { Line = line
                           Branch = branch
-                          Reason = if isNull reason then "" else reason })
+                          Reason = if isNull reason then "" else reason
+                          Platform = platform })
                     |> Map.ofSeq
 
                 if Map.isEmpty overrides then
@@ -116,6 +136,11 @@ let saveConfig (path: string) (config: Config) : unit =
         entry.["line"] <- kv.Value.Line
         entry.["branch"] <- kv.Value.Branch
         entry.["reason"] <- kv.Value.Reason
+
+        match kv.Value.Platform with
+        | Some p -> entry.["platform"] <- p
+        | None -> ()
+
         overridesDict.[kv.Key] <- entry
 
     dict.["overrides"] <- overridesDict

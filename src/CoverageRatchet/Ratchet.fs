@@ -83,7 +83,8 @@ let loosen (config: Config) (files: FileCoverage list) : Config =
                         file.FileName
                         { Line = file.LinePct
                           Branch = file.BranchPct
-                          Reason = "loosened automatically" }
+                          Reason = "loosened automatically"
+                          Platform = None }
                         acc)
             updatedOverrides
 

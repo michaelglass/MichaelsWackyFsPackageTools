@@ -15,7 +15,8 @@ let ``ratchet tightens override when coverage improves`` () =
                     [ "Foo.fs",
                       { Line = 70.0
                         Branch = 65.0
-                        Reason = "legacy" } ] }
+                        Reason = "legacy"
+                        Platform = None } ] }
 
     let files = [ makeFile "Foo.fs" 80.0 75.0 3 4 ]
     let result = ratchet config files
@@ -32,7 +33,8 @@ let ``ratchet removes override when file reaches defaults`` () =
                     [ "Foo.fs",
                       { Line = 90.0
                         Branch = 95.0
-                        Reason = "almost there" } ] }
+                        Reason = "almost there"
+                        Platform = None } ] }
 
     let files = [ makeFile "Foo.fs" 100.0 100.0 4 4 ]
     let result = ratchet config files
@@ -48,7 +50,8 @@ let ``ratchet never lowers thresholds`` () =
                     [ "Foo.fs",
                       { Line = 80.0
                         Branch = 70.0
-                        Reason = "legacy" } ] }
+                        Reason = "legacy"
+                        Platform = None } ] }
 
     let files = [ makeFile "Foo.fs" 60.0 50.0 1 4 ]
     let result = ratchet config files
@@ -65,7 +68,8 @@ let ``ratchet preserves reason text`` () =
                     [ "Foo.fs",
                       { Line = 70.0
                         Branch = 65.0
-                        Reason = "complex legacy module" } ] }
+                        Reason = "complex legacy module"
+                        Platform = None } ] }
 
     let files = [ makeFile "Foo.fs" 85.0 80.0 3 4 ]
     let result = ratchet config files
@@ -81,7 +85,8 @@ let ``ratchet handles files not in overrides`` () =
                     [ "Foo.fs",
                       { Line = 70.0
                         Branch = 65.0
-                        Reason = "legacy" } ] }
+                        Reason = "legacy"
+                        Platform = None } ] }
 
     let files = [ makeFile "Foo.fs" 75.0 70.0 3 4; makeFile "Bar.fs" 90.0 85.0 2 3 ]
 
@@ -101,7 +106,8 @@ let ``ratchet keeps override unchanged when file not in coverage data`` () =
                     [ "Missing.fs",
                       { Line = 60.0
                         Branch = 50.0
-                        Reason = "file removed or not covered" } ] }
+                        Reason = "file removed or not covered"
+                        Platform = None } ] }
 
     // Coverage data has no entry for Missing.fs
     let files = [ makeFile "Other.fs" 100.0 100.0 4 4 ]
@@ -121,7 +127,8 @@ let ``loosen sets thresholds to actual coverage`` () =
                     [ "Foo.fs",
                       { Line = 90.0
                         Branch = 85.0
-                        Reason = "legacy" } ] }
+                        Reason = "legacy"
+                        Platform = None } ] }
 
     let files = [ makeFile "Foo.fs" 70.0 60.0 2 4 ]
     let result = loosen config files
@@ -138,7 +145,8 @@ let ``loosen preserves existing reason`` () =
                     [ "Foo.fs",
                       { Line = 90.0
                         Branch = 85.0
-                        Reason = "CLI entry point" } ] }
+                        Reason = "CLI entry point"
+                        Platform = None } ] }
 
     let files = [ makeFile "Foo.fs" 70.0 60.0 2 4 ]
     let result = loosen config files
@@ -164,7 +172,8 @@ let ``loosen removes override for file at 100 percent`` () =
                     [ "Foo.fs",
                       { Line = 90.0
                         Branch = 85.0
-                        Reason = "was low" } ] }
+                        Reason = "was low"
+                        Platform = None } ] }
 
     let files = [ makeFile "Foo.fs" 100.0 100.0 4 4 ]
     let result = loosen config files
@@ -180,7 +189,8 @@ let ``loosen keeps override for file not in coverage data`` () =
                     [ "Missing.fs",
                       { Line = 60.0
                         Branch = 50.0
-                        Reason = "not in report" } ] }
+                        Reason = "not in report"
+                        Platform = None } ] }
 
     let files = [ makeFile "Other.fs" 100.0 100.0 4 4 ]
     let result = loosen config files
@@ -199,7 +209,8 @@ let ``ratchetWithStatus returns NoChanges when all thresholds met and unchanged`
                     [ "Foo.fs",
                       { Line = 80.0
                         Branch = 70.0
-                        Reason = "legacy" } ] }
+                        Reason = "legacy"
+                        Platform = None } ] }
 
     let files = [ makeFile "Foo.fs" 80.0 70.0 3 4 ]
     let result = ratchetWithStatus config files
@@ -220,7 +231,8 @@ let ``ratchetWithStatus returns Tightened when coverage improved`` () =
                     [ "Foo.fs",
                       { Line = 70.0
                         Branch = 65.0
-                        Reason = "legacy" } ] }
+                        Reason = "legacy"
+                        Platform = None } ] }
 
     let files = [ makeFile "Foo.fs" 85.0 80.0 3 4 ]
     let result = ratchetWithStatus config files
@@ -241,7 +253,8 @@ let ``ratchetWithStatus returns Failed when coverage dropped below threshold`` (
                     [ "Foo.fs",
                       { Line = 80.0
                         Branch = 70.0
-                        Reason = "legacy" } ] }
+                        Reason = "legacy"
+                        Platform = None } ] }
 
     let files = [ makeFile "Foo.fs" 60.0 50.0 1 4 ]
     let result = ratchetWithStatus config files
@@ -262,11 +275,13 @@ let ``ratchetWithStatus returns Failed even if some files improved and others dr
                     [ "Foo.fs",
                       { Line = 70.0
                         Branch = 65.0
-                        Reason = "legacy" }
+                        Reason = "legacy"
+                        Platform = None }
                       "Bar.fs",
                       { Line = 80.0
                         Branch = 70.0
-                        Reason = "also legacy" } ] }
+                        Reason = "also legacy"
+                        Platform = None } ] }
 
     let files = [ makeFile "Foo.fs" 85.0 80.0 3 4; makeFile "Bar.fs" 60.0 50.0 1 4 ]
     let result = ratchetWithStatus config files
