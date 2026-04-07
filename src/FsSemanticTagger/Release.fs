@@ -119,11 +119,19 @@ let release
             printfn "Error: could not determine CI status"
             1
         | Passed ->
-            // 2. Build in Release mode
+            // 2. Run pre-build commands (e.g. paket restore)
+            for preBuildCmd in config.PreBuildCmds do
+                printfn "Running: %s" preBuildCmd
+                let parts = preBuildCmd.Split(' ', 2)
+                let cmd = parts[0]
+                let args = if parts.Length > 1 then parts[1] else ""
+                runOrFail run cmd args |> ignore
+
+            // 3. Build in Release mode
             printfn "Building in Release mode..."
             runOrFail run "dotnet" "build -c Release" |> ignore
 
-            // 3. For each package: determine release state and version bump
+            // 4. For each package: determine release state and version bump
             let bumps =
                 config.Packages
                 |> List.choose (fun pkg ->
@@ -167,24 +175,24 @@ let release
                 printfn "No packages to release"
                 0
             else
-                // 4. Show summary
+                // 5. Show summary
                 printfn "\nRelease plan:"
 
                 for (pkg, version) in bumps do
                     printfn "  %s -> %s (tag: %s)" pkg.Name (format version) (toTag pkg.TagPrefix version)
 
-                // 5. Update fsproj versions
+                // 6. Update fsproj versions
                 for (pkg, version) in bumps do
                     updateFsprojVersion pkg.Fsproj version
 
                     for extra in pkg.FsProjsSharingSameTag do
                         updateFsprojVersion extra version
 
-                // 6. Commit and tag
+                // 7. Commit and tag
                 let tags =
                     bumps |> List.map (fun (pkg, version) -> commitAndTag run pkg.TagPrefix version)
 
-                // 7. Publish or push tags
+                // 8. Publish or push tags
                 match mode with
                 | GitHubActions ->
                     pushTags run tags

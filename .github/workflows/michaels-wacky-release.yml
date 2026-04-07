@@ -14,6 +14,10 @@ on:
       extra-fsproj-paths:
         type: string
         default: ''
+      paket-restore:
+        description: 'Run paket restore after tool restore (for projects using Paket git dependencies)'
+        type: boolean
+        default: false
     outputs:
       version:
         description: 'The version extracted from the git tag'
@@ -56,6 +60,10 @@ jobs:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.fsproj', '**/*.csproj', '.config/dotnet-tools.json') }}
           restore-keys: nuget-${{ runner.os }}-
+      - run: dotnet tool restore
+      - name: Paket restore
+        if: inputs.paket-restore
+        run: dotnet tool run paket restore
       - run: dotnet restore
       - run: dotnet build -c Release --no-restore
       - name: Pack main package

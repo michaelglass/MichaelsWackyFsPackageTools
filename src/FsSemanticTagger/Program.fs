@@ -46,7 +46,8 @@ let initCommand (rootDir: string) : Result<int, string> =
 
             let config: Config.ToolConfig =
                 { Packages = packages
-                  ReservedVersions = Set.empty }
+                  ReservedVersions = Set.empty
+                  PreBuildCmds = [] }
 
             File.WriteAllText(jsonPath, Config.toJson config)
             printfn "Created semantic-tagger.json with %d package(s):" projects.Length
