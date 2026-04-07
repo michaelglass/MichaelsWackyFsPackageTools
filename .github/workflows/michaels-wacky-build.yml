@@ -24,6 +24,14 @@ on:
       coverageratchet-cmd:
         type: string
         default: 'dotnet tool run coverageratchet'
+      paket-restore:
+        description: 'Run paket restore after tool restore (for projects using Paket git dependencies)'
+        type: boolean
+        default: false
+      pre-build-cmd:
+        description: 'Command to run after restore/tool-restore but before build (e.g. code generation)'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -46,6 +54,12 @@ jobs:
           restore-keys: nuget-${{ runner.os }}-
       - run: dotnet restore
       - run: dotnet tool restore
+      - name: Paket restore
+        if: inputs.paket-restore
+        run: dotnet tool run paket restore
+      - name: Pre-build
+        if: inputs.pre-build-cmd != ''
+        run: ${{ inputs.pre-build-cmd }}
       - name: Format check
         run: dotnet fantomas ${{ inputs.fantomas-paths }} --check
       - name: Sync docs check
