@@ -153,7 +153,7 @@ let ``parseXml - exclude Test AssemblyInfo AssemblyAttributes`` () =
     test <@ result.[0].FileName = "Real.fs" @>
 
 [<Fact>]
-let ``parseXml - excludes vendor paths (paket-files, node_modules, .fable)`` () =
+let ``parseXml - excludes vendor paths (paket-files, vendor, node_modules, .fable)`` () =
     let xml =
         """<?xml version="1.0" encoding="utf-8"?>
         <coverage>
@@ -164,6 +164,12 @@ let ``parseXml - excludes vendor paths (paket-files, node_modules, .fable)`` () 
                   <lines><line number="1" hits="1" /></lines>
                 </class>
                 <class filename="/src/vendor/ThirdParty.fs">
+                  <lines><line number="1" hits="1" /></lines>
+                </class>
+                <class filename="/src/node_modules/somelib/Util.fs">
+                  <lines><line number="1" hits="1" /></lines>
+                </class>
+                <class filename="/src/.fable/Fable.Core/Interop.fs">
                   <lines><line number="1" hits="1" /></lines>
                 </class>
                 <class filename="/src/MyCode.fs">
