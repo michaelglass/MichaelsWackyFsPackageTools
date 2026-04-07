@@ -74,7 +74,7 @@ dotnet pack src/FsProjLint/FsProjLint.fsproj -c Release -o artifacts/
 depends = ["build"]
 
 [tasks.lint-project]
-run = "dotnet run --project src/FsProjLint/FsProjLint.fsproj --no-build -- check"
+run = "dotnet run --project src/FsProjLint/FsProjLint.fsproj --no-build"
 depends = ["build"]
 
 [tasks.release]
