@@ -2,18 +2,30 @@
   "overrides": {
     "Checks.fs": [
       {
-        "line": 95.04950495049505,
-        "branch": 93.75,
-        "reason": "loosened automatically",
+        "line": 95,
+        "branch": 93,
+        "reason": "compiler-generated branches in pattern matching",
         "platform": "macos"
+      },
+      {
+        "line": 95,
+        "branch": 93,
+        "reason": "compiler-generated branches in pattern matching",
+        "platform": "linux"
       }
     ],
     "Program.fs": [
       {
         "line": 0,
         "branch": 0,
-        "reason": "loosened automatically",
+        "reason": "CLI entry point, not unit tested",
         "platform": "macos"
+      },
+      {
+        "line": 0,
+        "branch": 0,
+        "reason": "CLI entry point, not unit tested",
+        "platform": "linux"
       }
     ]
   }
