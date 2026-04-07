@@ -1,0 +1,22 @@
+name: Lint Project
+on:
+  workflow_call:
+    inputs:
+      dotnet-version:
+        type: string
+        default: '10.0.x'
+
+permissions:
+  contents: read
+
+jobs:
+  lint-project:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+      - run: dotnet tool restore
+      - name: Lint project
+        run: dotnet tool run fsprojlint check

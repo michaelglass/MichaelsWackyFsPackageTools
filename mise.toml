@@ -69,7 +69,12 @@ run = """
 dotnet pack src/CoverageRatchet/CoverageRatchet.fsproj -c Release -o artifacts/
 dotnet pack src/SyncDocs/SyncDocs.fsproj -c Release -o artifacts/
 dotnet pack src/FsSemanticTagger/FsSemanticTagger.fsproj -c Release -o artifacts/
+dotnet pack src/FsProjLint/FsProjLint.fsproj -c Release -o artifacts/
 """
+depends = ["build"]
+
+[tasks.lint-project]
+run = "dotnet run --project src/FsProjLint/FsProjLint.fsproj --no-build -- check"
 depends = ["build"]
 
 [tasks.release]
