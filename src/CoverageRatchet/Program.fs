@@ -73,10 +73,10 @@ let private runRatchet (configPath: string) (files: FileCoverage list) =
     let config = resolveConfig raw
 
     match ratchetRawWithStatus raw files with
-    | RawNoChanges _ ->
+    | NoChanges _ ->
         printfn "Ratchet complete: no changes needed"
         0
-    | RawTightened newRaw ->
+    | Tightened newRaw ->
         saveRawConfig configPath newRaw
         let newConfig = resolveConfig newRaw
 
@@ -93,7 +93,7 @@ let private runRatchet (configPath: string) (files: FileCoverage list) =
 
         printfn "Ratchet complete: %d overrides tightened, %d removed" tightened removed
         1
-    | RawFailed(newRaw, failedFiles) ->
+    | Failed(newRaw, failedFiles) ->
         saveRawConfig configPath newRaw
         eprintfn "Coverage below threshold for: %s" (String.concat ", " failedFiles)
         2

@@ -30,11 +30,16 @@ let ratchet (config: Config) (files: FileCoverage list) : Config =
     { config with Overrides = newOverrides }
 
 type RatchetStatus =
-    | NoChanges of Config
-    | Tightened of Config
-    | Failed of Config * failedFiles: string list
+    | NoChanges of RawConfig
+    | Tightened of RawConfig
+    | Failed of RawConfig * failedFiles: string list
 
 let ratchetWithStatus (config: Config) (files: FileCoverage list) : RatchetStatus =
+    let raw =
+        { DefaultLine = config.DefaultLine
+          DefaultBranch = config.DefaultBranch
+          RawOverrides = config.Overrides |> Map.map (fun _ ovr -> [ ovr ]) }
+
     let failedFiles =
         buildFileResults config files
         |> List.filter (fun r -> not r.LinePassed || not r.BranchPassed)
@@ -42,12 +47,17 @@ let ratchetWithStatus (config: Config) (files: FileCoverage list) : RatchetStatu
 
     let newConfig = ratchet config files
 
+    let newRaw =
+        { DefaultLine = newConfig.DefaultLine
+          DefaultBranch = newConfig.DefaultBranch
+          RawOverrides = newConfig.Overrides |> Map.map (fun _ ovr -> [ ovr ]) }
+
     if not (List.isEmpty failedFiles) then
-        Failed(newConfig, failedFiles)
+        Failed(newRaw, failedFiles)
     elif newConfig.Overrides <> config.Overrides then
-        Tightened newConfig
+        Tightened newRaw
     else
-        NoChanges config
+        NoChanges raw
 
 let private mergeRawOverrides
     (raw: RawConfig)
@@ -55,30 +65,25 @@ let private mergeRawOverrides
     (resolvedAfter: Config)
     (newEntryPlatform: string option)
     : RawConfig =
-    // Start with original raw overrides
     let mutable result = raw.RawOverrides
 
-    // Handle files that were in the resolved config before
     for kv in resolvedBefore.Overrides do
         let name = kv.Key
         let existingEntries = Map.tryFind name raw.RawOverrides |> Option.defaultValue []
 
+        let hasPlatformSpecific =
+            existingEntries |> List.exists (fun e -> e.Platform = Some currentPlatform)
+
+        let isResolvingEntry (entry: Override) =
+            entry.Platform = Some currentPlatform
+            || (entry.Platform = None && not hasPlatformSpecific)
+
         match Map.tryFind name resolvedAfter.Overrides with
         | Some newOverride ->
-            // File still has an override after processing - update the matching entry
             let updated =
                 existingEntries
                 |> List.map (fun entry ->
-                    if entry.Platform = Some currentPlatform then
-                        { entry with
-                            Line = newOverride.Line
-                            Branch = newOverride.Branch }
-                    elif
-                        entry.Platform = None
-                        && not (existingEntries |> List.exists (fun e -> e.Platform = Some currentPlatform))
-                    then
-                        // This was the all-platform entry that resolved for us; update it in place
-                        // only if there's no platform-specific entry
+                    if isResolvingEntry entry then
                         { entry with
                             Line = newOverride.Line
                             Branch = newOverride.Branch }
@@ -87,27 +92,14 @@ let private mergeRawOverrides
 
             result <- Map.add name updated result
         | None ->
-            // File's override was removed (reached defaults) - remove only the current-platform entry
             let remaining =
-                existingEntries
-                |> List.filter (fun entry ->
-                    if entry.Platform = Some currentPlatform then
-                        false
-                    elif
-                        entry.Platform = None
-                        && not (existingEntries |> List.exists (fun e -> e.Platform = Some currentPlatform))
-                    then
-                        // This was the all-platform entry that resolved for us; remove it
-                        false
-                    else
-                        true)
+                existingEntries |> List.filter (fun entry -> not (isResolvingEntry entry))
 
             if List.isEmpty remaining then
                 result <- Map.remove name result
             else
                 result <- Map.add name remaining result
 
-    // Handle files newly added by the resolved-after config (not in resolved-before)
     for kv in resolvedAfter.Overrides do
         if not (Map.containsKey kv.Key resolvedBefore.Overrides) then
             let existingEntries = Map.tryFind kv.Key raw.RawOverrides |> Option.defaultValue []
@@ -127,12 +119,7 @@ let ratchetRaw (raw: RawConfig) (files: FileCoverage list) : RawConfig =
     let ratcheted = ratchet resolved files
     mergeRawOverrides raw resolved ratcheted None
 
-type RawRatchetStatus =
-    | RawNoChanges of RawConfig
-    | RawTightened of RawConfig
-    | RawFailed of RawConfig * failedFiles: string list
-
-let ratchetRawWithStatus (raw: RawConfig) (files: FileCoverage list) : RawRatchetStatus =
+let ratchetRawWithStatus (raw: RawConfig) (files: FileCoverage list) : RatchetStatus =
     let resolved = resolveConfig raw
 
     let failedFiles =
@@ -140,14 +127,15 @@ let ratchetRawWithStatus (raw: RawConfig) (files: FileCoverage list) : RawRatche
         |> List.filter (fun r -> not r.LinePassed || not r.BranchPassed)
         |> List.map (fun r -> r.File.FileName)
 
-    let newRaw = ratchetRaw raw files
+    let ratcheted = ratchet resolved files
+    let newRaw = mergeRawOverrides raw resolved ratcheted None
 
     if not (List.isEmpty failedFiles) then
-        RawFailed(newRaw, failedFiles)
+        Failed(newRaw, failedFiles)
     elif newRaw.RawOverrides <> raw.RawOverrides then
-        RawTightened newRaw
+        Tightened newRaw
     else
-        RawNoChanges raw
+        NoChanges raw
 
 let loosen (config: Config) (files: FileCoverage list) : Config =
     let fileMap = files |> List.map (fun f -> f.FileName, f) |> Map.ofList

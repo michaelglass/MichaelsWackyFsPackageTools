@@ -31,6 +31,9 @@ type RawConfig =
       DefaultBranch: float
       RawOverrides: Map<string, Override list> }
 
+let private defaultLineThreshold = 100.0
+let private defaultBranchThreshold = 100.0
+
 type FileResult =
     { File: FileCoverage
       LineThreshold: float
@@ -43,8 +46,8 @@ type CheckResult =
     | SomeFailed of FileResult list
 
 let private defaultConfig =
-    { DefaultLine = 100.0
-      DefaultBranch = 100.0
+    { DefaultLine = defaultLineThreshold
+      DefaultBranch = defaultBranchThreshold
       Overrides = Map.empty }
 
 let private jsonOptions =
@@ -75,8 +78,8 @@ let check (config: Config) (files: FileCoverage list) : CheckResult =
     if List.isEmpty failed then AllPassed else SomeFailed failed
 
 let private defaultRawConfig =
-    { DefaultLine = 100.0
-      DefaultBranch = 100.0
+    { DefaultLine = defaultLineThreshold
+      DefaultBranch = defaultBranchThreshold
       RawOverrides = Map.empty }
 
 let private parseOverrideElement (el: JsonElement) : Override =
@@ -84,13 +87,13 @@ let private parseOverrideElement (el: JsonElement) : Override =
         if el.TryGetProperty("line") |> fst then
             el.GetProperty("line").GetDouble()
         else
-            100.0
+            defaultLineThreshold
 
     let branch =
         if el.TryGetProperty("branch") |> fst then
             el.GetProperty("branch").GetDouble()
         else
-            100.0
+            defaultBranchThreshold
 
     let reason =
         match el.TryGetProperty("reason") with
