@@ -6,19 +6,24 @@
       "reason": "Assembly path resolution depends on runtime environment; reflection branches from compiler"
     },
     "Config.fs": {
-      "line": 100,
-      "branch": 88.37209302325581,
+      "line": 97.03703703703704,
+      "branch": 84.90566037735849,
       "reason": "F# compiler generates extra branches for TryGetProperty patterns; toJson serializer branches"
     },
     "Program.fs": {
-      "line": 71.7948717948718,
+      "line": 72.15189873417721,
       "branch": 59.09090909090909,
       "reason": "CLI entry point using exit and CWD; initCommand prints to stdout"
     },
     "Release.fs": {
-      "line": 93.63636363636364,
-      "branch": 100,
+      "line": 93.96551724137932,
+      "branch": 97.22222222222221,
       "reason": "release() orchestration calls VCS/Shell externals; determineBump/forCommand/updateFsprojVersion are tested"
+    },
+    "Sync.fs": {
+      "line": 100,
+      "branch": 93.75,
+      "reason": "loosened automatically"
     },
     "Vcs.fs": {
       "line": 92.98245614035088,

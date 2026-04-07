@@ -123,7 +123,7 @@ let ``parseJson defaults preBuildCmds to empty`` () =
         """
 
     let config = parseJson json
-    test <@ config.PreBuildCmds = [] @>
+    test <@ List.isEmpty config.PreBuildCmds @>
 
 [<Fact>]
 let ``discover with one packable fsproj`` () =
