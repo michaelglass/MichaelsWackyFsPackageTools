@@ -163,24 +163,41 @@ let resolveConfig (raw: RawConfig) : Config =
 
 let loadConfig (path: string) : Config = loadRawConfig path |> resolveConfig
 
-let saveConfig (path: string) (config: Config) : unit =
+let private overrideToDict (ovr: Override) =
+    let entry = System.Collections.Generic.Dictionary<string, obj>()
+    entry.["line"] <- ovr.Line
+    entry.["branch"] <- ovr.Branch
+    entry.["reason"] <- ovr.Reason
+
+    match ovr.Platform with
+    | Some p -> entry.["platform"] <- p
+    | None -> ()
+
+    entry
+
+let saveRawConfig (path: string) (config: RawConfig) : unit =
     let dict = System.Collections.Generic.Dictionary<string, obj>()
 
     let overridesDict = System.Collections.Generic.Dictionary<string, obj>()
 
-    for kv in config.Overrides do
-        let entry = System.Collections.Generic.Dictionary<string, obj>()
-        entry.["line"] <- kv.Value.Line
-        entry.["branch"] <- kv.Value.Branch
-        entry.["reason"] <- kv.Value.Reason
+    for kv in config.RawOverrides do
+        match kv.Value with
+        | [ single ] when single.Platform = None -> overridesDict.[kv.Key] <- overrideToDict single
+        | entries ->
+            let arr =
+                entries |> List.map overrideToDict |> List.toArray
 
-        match kv.Value.Platform with
-        | Some p -> entry.["platform"] <- p
-        | None -> ()
-
-        overridesDict.[kv.Key] <- entry
+            overridesDict.[kv.Key] <- arr
 
     dict.["overrides"] <- overridesDict
 
     let json = JsonSerializer.Serialize(dict, jsonOptions)
     File.WriteAllText(path, json)
+
+let saveConfig (path: string) (config: Config) : unit =
+    let raw =
+        { DefaultLine = config.DefaultLine
+          DefaultBranch = config.DefaultBranch
+          RawOverrides = config.Overrides |> Map.map (fun _ ovr -> [ ovr ]) }
+
+    saveRawConfig path raw
