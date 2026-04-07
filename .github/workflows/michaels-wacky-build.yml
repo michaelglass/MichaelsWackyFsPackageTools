@@ -52,11 +52,11 @@ jobs:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.fsproj', '**/*.csproj', '.config/dotnet-tools.json') }}
           restore-keys: nuget-${{ runner.os }}-
-      - run: dotnet restore
       - run: dotnet tool restore
       - name: Paket restore
         if: inputs.paket-restore
         run: dotnet tool run paket restore
+      - run: dotnet restore
       - name: Pre-build
         if: inputs.pre-build-cmd != ''
         run: ${{ inputs.pre-build-cmd }}
