@@ -129,9 +129,7 @@ let loadRawConfig (path: string) : RawConfig =
                     |> Seq.map (fun prop ->
                         let entries =
                             if prop.Value.ValueKind = JsonValueKind.Array then
-                                prop.Value.EnumerateArray()
-                                |> Seq.map parseOverrideElement
-                                |> Seq.toList
+                                prop.Value.EnumerateArray() |> Seq.map parseOverrideElement |> Seq.toList
                             else
                                 [ parseOverrideElement prop.Value ]
 
@@ -184,8 +182,7 @@ let saveRawConfig (path: string) (config: RawConfig) : unit =
         match kv.Value with
         | [ single ] when single.Platform = None -> overridesDict.[kv.Key] <- overrideToDict single
         | entries ->
-            let arr =
-                entries |> List.map overrideToDict |> List.toArray
+            let arr = entries |> List.map overrideToDict |> List.toArray
 
             overridesDict.[kv.Key] <- arr
 

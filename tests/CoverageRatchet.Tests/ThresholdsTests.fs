@@ -381,23 +381,20 @@ let ``saveRawConfig roundtrips platform overrides`` () =
         test <@ loaded.RawOverrides.["Foo.fs"].Length = 3 @>
 
         let macos =
-            loaded.RawOverrides.["Foo.fs"]
-            |> List.find (fun o -> o.Platform = Some "macos")
+            loaded.RawOverrides.["Foo.fs"] |> List.find (fun o -> o.Platform = Some "macos")
 
         test <@ macos.Line = 84.0 @>
         test <@ macos.Branch = 55.0 @>
         test <@ macos.Reason = "native" @>
 
         let linux =
-            loaded.RawOverrides.["Foo.fs"]
-            |> List.find (fun o -> o.Platform = Some "linux")
+            loaded.RawOverrides.["Foo.fs"] |> List.find (fun o -> o.Platform = Some "linux")
 
         test <@ linux.Line = 0.0 @>
         test <@ linux.Reason = "not here" @>
 
         let fallback =
-            loaded.RawOverrides.["Foo.fs"]
-            |> List.find (fun o -> o.Platform = None)
+            loaded.RawOverrides.["Foo.fs"] |> List.find (fun o -> o.Platform = None)
 
         test <@ fallback.Line = 50.0 @>
         test <@ fallback.Reason = "fallback" @>
