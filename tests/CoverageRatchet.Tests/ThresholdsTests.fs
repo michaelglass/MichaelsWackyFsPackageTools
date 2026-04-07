@@ -267,3 +267,107 @@ let ``saveConfig with empty overrides roundtrips`` () =
 let ``currentPlatform returns a known platform string`` () =
     let platform = CoverageRatchet.Thresholds.currentPlatform
     test <@ platform = "macos" || platform = "linux" || platform = "windows" @>
+
+[<Fact>]
+let ``loadConfig - array override with platform filters to current platform`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        let json =
+            sprintf
+                """{ "overrides": { "Foo.fs": [
+                    { "line": 84, "branch": 55, "reason": "native", "platform": "%s" },
+                    { "line": 0, "branch": 0, "reason": "not here", "platform": "nonexistent" }
+                ] } }"""
+                currentPlatform
+
+        File.WriteAllText(tmpFile, json)
+        let config = loadConfig tmpFile
+
+        test <@ config.Overrides.Count = 1 @>
+        test <@ config.Overrides.["Foo.fs"].Line = 84.0 @>
+        test <@ config.Overrides.["Foo.fs"].Branch = 55.0 @>
+        test <@ config.Overrides.["Foo.fs"].Reason = "native" @>
+        test <@ config.Overrides.["Foo.fs"].Platform = Some currentPlatform @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``loadConfig - array override with no matching platform uses defaults`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        let json =
+            """{ "overrides": { "Foo.fs": [
+                { "line": 0, "branch": 0, "reason": "not here", "platform": "nonexistent" }
+            ] } }"""
+
+        File.WriteAllText(tmpFile, json)
+        let config = loadConfig tmpFile
+
+        test <@ config.Overrides.ContainsKey("Foo.fs") = false @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``loadConfig - single object override still works backward compatible`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        let json =
+            """{ "overrides": { "Foo.fs": { "line": 70, "branch": 65, "reason": "legacy" } } }"""
+
+        File.WriteAllText(tmpFile, json)
+        let config = loadConfig tmpFile
+
+        test <@ config.Overrides.Count = 1 @>
+        test <@ config.Overrides.["Foo.fs"].Line = 70.0 @>
+        test <@ config.Overrides.["Foo.fs"].Branch = 65.0 @>
+        test <@ config.Overrides.["Foo.fs"].Reason = "legacy" @>
+        test <@ config.Overrides.["Foo.fs"].Platform = None @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``loadConfig - platform-specific override wins over all-platform`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        let json =
+            sprintf
+                """{ "overrides": { "Foo.fs": [
+                    { "line": 50, "branch": 50, "reason": "fallback" },
+                    { "line": 84, "branch": 55, "reason": "specific", "platform": "%s" }
+                ] } }"""
+                currentPlatform
+
+        File.WriteAllText(tmpFile, json)
+        let config = loadConfig tmpFile
+
+        test <@ config.Overrides.["Foo.fs"].Line = 84.0 @>
+        test <@ config.Overrides.["Foo.fs"].Branch = 55.0 @>
+        test <@ config.Overrides.["Foo.fs"].Reason = "specific" @>
+        test <@ config.Overrides.["Foo.fs"].Platform = Some currentPlatform @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``loadRawConfig preserves all platform entries`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        let json =
+            sprintf
+                """{ "overrides": { "Foo.fs": [
+                    { "line": 84, "branch": 55, "reason": "native", "platform": "%s" },
+                    { "line": 0, "branch": 0, "reason": "not here", "platform": "nonexistent" },
+                    { "line": 50, "branch": 50, "reason": "fallback" }
+                ] } }"""
+                currentPlatform
+
+        File.WriteAllText(tmpFile, json)
+        let raw = loadRawConfig tmpFile
+
+        test <@ raw.RawOverrides.["Foo.fs"].Length = 3 @>
+    finally
+        File.Delete(tmpFile)
