@@ -58,6 +58,10 @@ depends = ["tool-restore"]
 run = "dotnet fsharplint lint FSharpOssTooling.slnx"
 depends = ["build", "tool-restore"]
 
+[tasks.check-gitignore]
+description = "Check for gitignored files tracked in jj history"
+run = "dotnet fsi scripts/check-gitignore-leaks.fsx"
+
 [tasks.check-docs-index]
 description = "Verify all packable projects are linked in docs/docs-index.html"
 run = "dotnet fsi scripts/check-docs-index.fsx"
