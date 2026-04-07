@@ -56,11 +56,7 @@ jobs:
         run: dotnet build --warnaserror --no-restore
       - name: Lint
         timeout-minutes: 15
-        run: |
-          for proj in $(find src tests -name '*.fsproj' 2>/dev/null | sort); do
-            echo "Linting $proj..."
-            dotnet fsharplint lint "$proj"
-          done
+        run: dotnet fsharplint lint ${{ inputs.solution }}
       - name: Generate docs
         if: inputs.check-docs
         run: dotnet fsdocs build --output output/docs --clean
