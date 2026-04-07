@@ -20,7 +20,7 @@ let ``checkRepo passes with all required files`` () =
         createFile dir ".editorconfig"
         createFile dir "docs/index.md"
 
-        let results = checkRepo dir true []
+        let results = checkRepo dir true
 
         test <@ results |> List.forall (fun r -> r.Passed) @>)
 
@@ -31,7 +31,7 @@ let ``checkRepo fails when LICENSE missing`` () =
         createFile dir ".editorconfig"
         createFile dir "docs/index.md"
 
-        let results = checkRepo dir true []
+        let results = checkRepo dir true
         let licenseCheck = results |> List.find (fun r -> r.Name = "LICENSE exists")
 
         test <@ not licenseCheck.Passed @>)
@@ -44,7 +44,7 @@ let ``checkRepo passes with LICENSE.md instead of LICENSE`` () =
         createFile dir ".editorconfig"
         createFile dir "docs/index.md"
 
-        let results = checkRepo dir true []
+        let results = checkRepo dir true
         let licenseCheck = results |> List.find (fun r -> r.Name = "LICENSE exists")
 
         test <@ licenseCheck.Passed @>)
@@ -55,7 +55,7 @@ let ``checkRepo fails when README missing`` () =
         createFile dir "LICENSE"
         createFile dir ".editorconfig"
 
-        let results = checkRepo dir false []
+        let results = checkRepo dir false
         let readmeCheck = results |> List.find (fun r -> r.Name = "README.md exists")
 
         test <@ not readmeCheck.Passed @>)
@@ -66,7 +66,7 @@ let ``checkRepo fails when editorconfig missing`` () =
         createFile dir "LICENSE"
         createFile dir "README.md"
 
-        let results = checkRepo dir false []
+        let results = checkRepo dir false
 
         let editorconfigCheck =
             results |> List.find (fun r -> r.Name = ".editorconfig exists")
@@ -80,44 +80,11 @@ let ``checkRepo skips docs/index.md when no packable projects`` () =
         createFile dir "README.md"
         createFile dir ".editorconfig"
 
-        let results = checkRepo dir false []
+        let results = checkRepo dir false
 
         let docsCheck = results |> List.tryFind (fun r -> r.Name = "docs/index.md exists")
 
         test <@ docsCheck.IsNone @>)
-
-[<Fact>]
-let ``checkRepo checks docs-index.html links for packable projects`` () =
-    withTempDir (fun dir ->
-        createFile dir "LICENSE"
-        createFile dir "README.md"
-        createFile dir ".editorconfig"
-        createFile dir "docs/index.md"
-
-        File.WriteAllText(
-            Path.Combine(dir, "docs", "docs-index.html"),
-            """<a href="MyLib/">MyLib</a>"""
-        )
-
-        let results = checkRepo dir true [ "MyLib"; "MissingLib" ]
-        let myLibCheck = results |> List.find (fun r -> r.Name = "docs-index.html links to MyLib")
-        let missingCheck = results |> List.find (fun r -> r.Name = "docs-index.html links to MissingLib")
-
-        test <@ myLibCheck.Passed @>
-        test <@ not missingCheck.Passed @>)
-
-[<Fact>]
-let ``checkRepo skips docs-index.html checks when file missing`` () =
-    withTempDir (fun dir ->
-        createFile dir "LICENSE"
-        createFile dir "README.md"
-        createFile dir ".editorconfig"
-        createFile dir "docs/index.md"
-
-        let results = checkRepo dir true [ "MyLib" ]
-        let indexHtmlChecks = results |> List.filter (fun r -> r.Name.Contains("docs-index.html"))
-
-        test <@ indexHtmlChecks |> List.isEmpty @>)
 
 [<Fact>]
 let ``checkRepo fails when docs/index.md missing but has packable projects`` () =
@@ -126,7 +93,7 @@ let ``checkRepo fails when docs/index.md missing but has packable projects`` () 
         createFile dir "README.md"
         createFile dir ".editorconfig"
 
-        let results = checkRepo dir true []
+        let results = checkRepo dir true
 
         let docsCheck = results |> List.find (fun r -> r.Name = "docs/index.md exists")
 

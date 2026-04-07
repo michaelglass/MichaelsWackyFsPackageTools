@@ -58,11 +58,15 @@ depends = ["tool-restore"]
 run = "dotnet fsharplint lint FSharpOssTooling.slnx"
 depends = ["build", "tool-restore"]
 
+[tasks.check-docs-index]
+description = "Verify all packable projects are linked in docs/docs-index.html"
+run = "dotnet fsi scripts/check-docs-index.fsx"
+
 [tasks.check]
-depends = ["format", "lint", "docs", "coverage-check"]
+depends = ["format", "lint", "docs", "coverage-check", "check-docs-index"]
 
 [tasks.ci]
-depends = ["format-check", "lint", "docs", "coverage-check"]
+depends = ["format-check", "lint", "docs", "coverage-check", "check-docs-index"]
 
 [tasks.pack]
 run = """
