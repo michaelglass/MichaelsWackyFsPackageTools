@@ -14,7 +14,8 @@ type PackageConfig =
 
 type ToolConfig =
     { Packages: PackageConfig list
-      ReservedVersions: Set<string> }
+      ReservedVersions: Set<string>
+      PreBuildCmds: string list }
 
 let private assemblyNameRegex =
     Regex(@"<AssemblyName>([^<]+)</AssemblyName>", RegexOptions.Compiled)
@@ -72,7 +73,8 @@ let discover (rootDir: string) : ToolConfig =
                 DllPath = Path.GetRelativePath(rootDir, deriveDllPath fsproj)
                 TagPrefix = "v"
                 FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty }
+          ReservedVersions = Set.empty
+          PreBuildCmds = [] }
     | n ->
         failwithf "Found %d packable .fsproj files; create a semantic-tagger.json to configure multi-package release" n
 
@@ -129,8 +131,17 @@ let parseJson (json: string) : ToolConfig =
                     TagPrefix = tagPrefix
                     FsProjsSharingSameTag = fsProjsSharingSameTag } ]
 
+    let preBuildCmds =
+        root
+        |> tryGet "preBuildCmds"
+        |> Option.map (fun prop ->
+            [ for item in prop.EnumerateArray() do
+                  yield item.GetString() ])
+        |> Option.defaultValue []
+
     { Packages = packages
-      ReservedVersions = reservedVersions }
+      ReservedVersions = reservedVersions
+      PreBuildCmds = preBuildCmds }
 
 /// Serialize a ToolConfig to JSON string
 let toJson (config: ToolConfig) : string =
@@ -162,6 +173,14 @@ let toJson (config: ToolConfig) : string =
 
         for v in config.ReservedVersions do
             writer.WriteStringValue(v)
+
+        writer.WriteEndArray()
+
+    if not config.PreBuildCmds.IsEmpty then
+        writer.WriteStartArray("preBuildCmds")
+
+        for cmd in config.PreBuildCmds do
+            writer.WriteStringValue(cmd)
 
         writer.WriteEndArray()
 

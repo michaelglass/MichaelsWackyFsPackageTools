@@ -91,6 +91,41 @@ let ``parseJson with reservedVersions`` () =
     test <@ config.ReservedVersions = set [ "0.1.0-alpha.1"; "0.1.0-alpha.2" ] @>
 
 [<Fact>]
+let ``parseJson with preBuildCmds`` () =
+    let json =
+        """
+        {
+            "packages": [
+                {
+                    "name": "MyLib",
+                    "fsproj": "src/MyLib/MyLib.fsproj"
+                }
+            ],
+            "preBuildCmds": ["dotnet tool restore", "dotnet tool run paket restore"]
+        }
+        """
+
+    let config = parseJson json
+    test <@ config.PreBuildCmds = [ "dotnet tool restore"; "dotnet tool run paket restore" ] @>
+
+[<Fact>]
+let ``parseJson defaults preBuildCmds to empty`` () =
+    let json =
+        """
+        {
+            "packages": [
+                {
+                    "name": "MyLib",
+                    "fsproj": "src/MyLib/MyLib.fsproj"
+                }
+            ]
+        }
+        """
+
+    let config = parseJson json
+    test <@ config.PreBuildCmds = [] @>
+
+[<Fact>]
 let ``discover with one packable fsproj`` () =
     withTempDir (fun tmpDir ->
         let srcDir = Path.Combine(tmpDir, "src", "MyLib")
@@ -325,7 +360,8 @@ let ``toJson roundtrips through parseJson`` () =
                 DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
                 TagPrefix = "mylib-v"
                 FsProjsSharingSameTag = [ "src/Shared/Shared.fsproj" ] } ]
-          ReservedVersions = set [ "1.0.0" ] }
+          ReservedVersions = set [ "1.0.0" ]
+          PreBuildCmds = [] }
 
     let json = toJson config
     let roundtripped = parseJson json
@@ -366,7 +402,8 @@ let ``toJson omits empty reservedVersions`` () =
                 DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
                 TagPrefix = "v"
                 FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty }
+          ReservedVersions = Set.empty
+          PreBuildCmds = [] }
 
     let json = toJson config
     test <@ not (json.Contains "reservedVersions") @>

@@ -73,7 +73,8 @@ let ``release - returns 1 when uncommitted changes`` () =
 
     let config =
         { Packages = []
-          ReservedVersions = Set.empty }
+          ReservedVersions = Set.empty
+          PreBuildCmds = [] }
 
     let result = release fakeRun config Auto GitHubActions
     test <@ result = 1 @>
@@ -90,7 +91,8 @@ let ``release - returns 1 when CI not passing`` () =
 
     let config =
         { Packages = []
-          ReservedVersions = Set.empty }
+          ReservedVersions = Set.empty
+          PreBuildCmds = [] }
 
     let result = release fakeRun config Auto GitHubActions
     test <@ result = 1 @>
@@ -114,7 +116,8 @@ let ``release - Auto with no previous tags returns 0 with no packages`` () =
                 DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
                 TagPrefix = "v"
                 FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty }
+          ReservedVersions = Set.empty
+          PreBuildCmds = [] }
 
     let result = release fakeRun config Auto GitHubActions
     test <@ result = 0 @>
@@ -160,7 +163,8 @@ let ``release - StartAlpha with FirstRelease creates version`` () =
                     DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty }
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
 
         let result = release fakeRun config StartAlpha GitHubActions
         test <@ result = 0 @>
@@ -232,7 +236,8 @@ let ``release - StartAlpha with LocalPublish calls dotnet pack`` () =
                     DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty }
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
 
         let result = release fakeRun config StartAlpha LocalPublish
         let calls = getCalls ()
@@ -272,7 +277,8 @@ let ``release - FsProjsSharingSameTag updates both fsproj files`` () =
                     DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [ tmpFile2 ] } ]
-              ReservedVersions = Set.empty }
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
 
         let result = release fakeRun config StartAlpha GitHubActions
         test <@ result = 0 @>
@@ -314,7 +320,8 @@ let ``release - Auto with reserved version bumps past it`` () =
                     DllPath = realDll
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.ofList [ "1.0.1" ] }
+              ReservedVersions = Set.ofList [ "1.0.1" ]
+              PreBuildCmds = [] }
 
         let result = release fakeRun config Auto GitHubActions
         test <@ result = 0 @>
@@ -347,7 +354,8 @@ let ``release - non-Auto with reserved version skips package`` () =
                     DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.ofList [ "0.1.0-alpha.1" ] }
+              ReservedVersions = Set.ofList [ "0.1.0-alpha.1" ]
+              PreBuildCmds = [] }
 
         let result = release fakeRun config StartAlpha GitHubActions
         test <@ result = 0 @>
@@ -368,10 +376,75 @@ let ``release - PromoteToBeta with FirstRelease returns 0 no packages`` () =
                 DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
                 TagPrefix = "v"
                 FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty }
+          ReservedVersions = Set.empty
+          PreBuildCmds = [] }
 
     let result = release fakeRun config PromoteToBeta GitHubActions
     test <@ result = 0 @>
+
+[<Fact>]
+let ``release - runs preBuildCmds before build`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        let fsprojContent =
+            """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Version>0.0.0</Version>
+    <PackageId>MyLib</PackageId>
+  </PropertyGroup>
+</Project>"""
+
+        File.WriteAllText(tmpFile, fsprojContent)
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "tool restore" -> Success "Restored."
+            | "dotnet", "tool run paket restore" -> Success "Paket restored."
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            | "jj", arg when arg.StartsWith("commit -m") -> Success ""
+            | "jj", arg when arg.StartsWith("tag set") -> Success ""
+            | "jj", "git export" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [ "dotnet tool restore"; "dotnet tool run paket restore" ] }
+
+        let result = release fakeRun config StartAlpha GitHubActions
+        test <@ result = 0 @>
+
+        // Verify pre-build commands ran before build
+        let toolRestoreIdx =
+            calls |> List.findIndex (fun (c, a) -> c = "dotnet" && a = "tool restore")
+
+        let paketRestoreIdx =
+            calls
+            |> List.findIndex (fun (c, a) -> c = "dotnet" && a = "tool run paket restore")
+
+        let buildIdx =
+            calls |> List.findIndex (fun (c, a) -> c = "dotnet" && a = "build -c Release")
+
+        test <@ toolRestoreIdx < paketRestoreIdx @>
+        test <@ paketRestoreIdx < buildIdx @>
+    finally
+        File.Delete(tmpFile)
 
 [<Fact>]
 let ``waitForCi - polls until CI passes`` () =
