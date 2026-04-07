@@ -26,8 +26,7 @@ let private isIncluded (fileName: string) =
     let hasValidExt = includedExtensions |> Array.exists fileName.EndsWith
     let baseName = Path.GetFileName(fileName)
 
-    let isFileExcluded =
-        excludedFileNamePatterns |> Array.exists baseName.Contains
+    let isFileExcluded = excludedFileNamePatterns |> Array.exists baseName.Contains
 
     let segments =
         fileName.Split([| '/'; '\\' |], System.StringSplitOptions.RemoveEmptyEntries)
