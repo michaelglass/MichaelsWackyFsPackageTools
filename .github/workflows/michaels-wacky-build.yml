@@ -120,6 +120,7 @@ jobs:
             exit 0
           fi
 
+          # Word-splitting is intentional: project paths are F# .fsproj/.csproj paths without spaces
           for proj in $projects; do
             echo "Building example: $proj"
             dotnet build "$proj" --warnaserror
