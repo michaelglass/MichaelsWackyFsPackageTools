@@ -1,8 +1,8 @@
 {
   "overrides": {
     "Api.fs": {
-      "line": 92.38095238095238,
-      "branch": 73.33333333333333,
+      "line": 91.24087591240875,
+      "branch": 73.52941176470588,
       "reason": "Assembly path resolution depends on runtime environment; reflection branches from compiler"
     },
     "Config.fs": {

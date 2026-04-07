@@ -71,7 +71,47 @@ let getAssemblySearchPaths (dllPath: string) : string list =
         else
             []
 
-    [ dllDir; runtimeDir ] @ sdkDirs @ sharedFrameworkDirs @ nugetDirs
+    // Resolve transitive NuGet dependencies from .deps.json
+    let depsJsonDirs =
+        let assemblyName = Path.GetFileNameWithoutExtension(dllPath)
+        let depsJsonPath = Path.Combine(dllDir, assemblyName + ".deps.json")
+
+        if File.Exists(depsJsonPath) then
+            let nugetRoot =
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages")
+
+            try
+                use doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(depsJsonPath))
+                let root = doc.RootElement
+
+                match root.TryGetProperty("libraries") with
+                | true, libs ->
+                    libs.EnumerateObject()
+                    |> Seq.toList
+                    |> List.choose (fun lib ->
+                        match lib.Value.TryGetProperty("type"), lib.Value.TryGetProperty("path") with
+                        | (true, t), (true, p) when t.GetString() = "package" ->
+                            let pkgDir = Path.Combine(nugetRoot, p.GetString())
+
+                            if Directory.Exists(pkgDir) then
+                                // Search common lib TFM directories
+                                [ "net10.0"; "net9.0"; "net8.0"; "netstandard2.1"; "netstandard2.0" ]
+                                |> List.map (fun tfm -> Path.Combine(pkgDir, "lib", tfm))
+                                |> List.tryFind Directory.Exists
+                            else
+                                None
+                        | _ -> None)
+                | false, _ -> []
+            with _ ->
+                []
+        else
+            []
+
+    [ dllDir; runtimeDir ]
+    @ sdkDirs
+    @ sharedFrameworkDirs
+    @ nugetDirs
+    @ depsJsonDirs
 
 /// Create MetadataAssemblyResolver using search paths
 let createResolver (dllPath: string) : MetadataAssemblyResolver =
