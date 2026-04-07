@@ -69,14 +69,16 @@ let private runCheck (configPath: string) (files: FileCoverage list) =
         if List.isEmpty failed then 0 else 1
 
 let private runRatchet (configPath: string) (files: FileCoverage list) =
-    let config = loadConfig configPath
+    let raw = loadRawConfig configPath
+    let config = resolveConfig raw
 
-    match ratchetWithStatus config files with
-    | NoChanges _ ->
+    match ratchetRawWithStatus raw files with
+    | RawNoChanges _ ->
         printfn "Ratchet complete: no changes needed"
         0
-    | Tightened newConfig ->
-        saveConfig configPath newConfig
+    | RawTightened newRaw ->
+        saveRawConfig configPath newRaw
+        let newConfig = resolveConfig newRaw
 
         let removed = config.Overrides.Count - newConfig.Overrides.Count
 
@@ -91,15 +93,15 @@ let private runRatchet (configPath: string) (files: FileCoverage list) =
 
         printfn "Ratchet complete: %d overrides tightened, %d removed" tightened removed
         1
-    | Failed(newConfig, failedFiles) ->
-        saveConfig configPath newConfig
+    | RawFailed(newRaw, failedFiles) ->
+        saveRawConfig configPath newRaw
         eprintfn "Coverage below threshold for: %s" (String.concat ", " failedFiles)
         2
 
 let private runLoosen (configPath: string) (files: FileCoverage list) =
-    let config = loadConfig configPath
-    let newConfig = loosen config files
-    saveConfig configPath newConfig
+    let raw = loadRawConfig configPath
+    let newRaw = loosenRaw raw files
+    saveRawConfig configPath newRaw
     printfn "Loosen complete: thresholds set to current coverage"
     0
 

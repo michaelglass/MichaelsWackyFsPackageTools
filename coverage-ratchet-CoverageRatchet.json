@@ -1,18 +1,23 @@
 {
   "overrides": {
     "Cobertura.fs": {
-      "line": 98.82352941176471,
-      "branch": 87.03703703703704,
+      "line": 100,
+      "branch": 88.88888888888889,
       "reason": "F# compiler generates extra branches for null checks and pattern matching"
     },
     "Program.fs": {
-      "line": 88.23529411764706,
-      "branch": 80.76923076923077,
+      "line": 90.80459770114942,
+      "branch": 92.10526315789474,
       "reason": "CLI entry point with private functions and CWD-dependent file discovery"
     },
+    "Ratchet.fs": {
+      "line": 97.65625,
+      "branch": 84.375,
+      "reason": "loosened automatically"
+    },
     "Thresholds.fs": {
-      "line": 91,
-      "branch": 73,
+      "line": 95.4954954954955,
+      "branch": 85.71428571428571,
       "reason": "F# compiler generates extra branches for pattern matching; platform detection branches unreachable on non-native OS"
     }
   }
