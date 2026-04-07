@@ -25,8 +25,18 @@ let private branchRegex = Regex(@"\((\d+)/(\d+)\)", RegexOptions.Compiled)
 let private isIncluded (fileName: string) =
     let hasValidExt = includedExtensions |> Array.exists fileName.EndsWith
     let baseName = Path.GetFileName(fileName)
-    let isFileExcluded = excludedFileNamePatterns |> Array.exists baseName.Contains
-    let isPathExcluded = excludedPathPatterns |> Array.exists fileName.Contains
+
+    let isFileExcluded =
+        excludedFileNamePatterns |> Array.exists baseName.Contains
+
+    let segments =
+        fileName.Split([| '/'; '\\' |], System.StringSplitOptions.RemoveEmptyEntries)
+
+    let isPathExcluded =
+        segments
+        |> Array.exists (fun seg ->
+            excludedPathPatterns
+            |> Array.exists (fun p -> seg.Equals(p, System.StringComparison.OrdinalIgnoreCase)))
 
     hasValidExt && not isFileExcluded && not isPathExcluded
 
