@@ -17,6 +17,9 @@ on:
       example-path:
         type: string
         default: 'examples/'
+      check-docs:
+        type: boolean
+        default: true
       syncdocs-cmd:
         type: string
         default: 'dotnet tool run syncdocs'
@@ -37,6 +40,12 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.fsproj', '**/*.csproj', '.config/dotnet-tools.json') }}
+          restore-keys: nuget-${{ runner.os }}-
       - run: dotnet restore
       - run: dotnet tool restore
       - name: Format check
@@ -48,6 +57,7 @@ jobs:
       - name: Lint
         run: dotnet fsharplint lint ${{ inputs.solution }}
       - name: Generate docs
+        if: inputs.check-docs
         run: dotnet fsdocs build --output output/docs --clean
       - name: Test with coverage
         run: |
