@@ -26,6 +26,11 @@ type Config =
       DefaultBranch: float
       Overrides: Map<string, Override> }
 
+type RawConfig =
+    { DefaultLine: float
+      DefaultBranch: float
+      RawOverrides: Map<string, Override list> }
+
 type FileResult =
     { File: FileCoverage
       LineThreshold: float
@@ -69,62 +74,94 @@ let check (config: Config) (files: FileCoverage list) : CheckResult =
 
     if List.isEmpty failed then AllPassed else SomeFailed failed
 
-let loadConfig (path: string) : Config =
+let private defaultRawConfig =
+    { DefaultLine = 100.0
+      DefaultBranch = 100.0
+      RawOverrides = Map.empty }
+
+let private parseOverrideElement (el: JsonElement) : Override =
+    let line =
+        if el.TryGetProperty("line") |> fst then
+            el.GetProperty("line").GetDouble()
+        else
+            100.0
+
+    let branch =
+        if el.TryGetProperty("branch") |> fst then
+            el.GetProperty("branch").GetDouble()
+        else
+            100.0
+
+    let reason =
+        match el.TryGetProperty("reason") with
+        | true, r -> r.GetString()
+        | false, _ -> ""
+
+    let platform =
+        match el.TryGetProperty("platform") with
+        | true, p ->
+            let s = p.GetString()
+            if isNull s then None else Some s
+        | false, _ -> None
+
+    { Line = line
+      Branch = branch
+      Reason = if isNull reason then "" else reason
+      Platform = platform }
+
+let loadRawConfig (path: string) : RawConfig =
     if not (File.Exists(path)) then
-        defaultConfig
+        defaultRawConfig
     else
         let json = File.ReadAllText(path).Trim()
 
         if json = "{}" || System.String.IsNullOrWhiteSpace(json) then
-            defaultConfig
+            defaultRawConfig
         else
             use doc = JsonDocument.Parse(json)
             let root = doc.RootElement
 
             match root.TryGetProperty("overrides") with
-            | false, _ -> defaultConfig
+            | false, _ -> defaultRawConfig
             | true, overridesEl ->
                 let overrides =
                     overridesEl.EnumerateObject()
                     |> Seq.map (fun prop ->
-                        let el = prop.Value
-
-                        let line =
-                            if el.TryGetProperty("line") |> fst then
-                                el.GetProperty("line").GetDouble()
+                        let entries =
+                            if prop.Value.ValueKind = JsonValueKind.Array then
+                                prop.Value.EnumerateArray()
+                                |> Seq.map parseOverrideElement
+                                |> Seq.toList
                             else
-                                100.0
+                                [ parseOverrideElement prop.Value ]
 
-                        let branch =
-                            if el.TryGetProperty("branch") |> fst then
-                                el.GetProperty("branch").GetDouble()
-                            else
-                                100.0
-
-                        let reason =
-                            match el.TryGetProperty("reason") with
-                            | true, r -> r.GetString()
-                            | false, _ -> ""
-
-                        let platform =
-                            match el.TryGetProperty("platform") with
-                            | true, p ->
-                                let s = p.GetString()
-                                if isNull s then None else Some s
-                            | false, _ -> None
-
-                        prop.Name,
-                        { Line = line
-                          Branch = branch
-                          Reason = if isNull reason then "" else reason
-                          Platform = platform })
+                        prop.Name, entries)
                     |> Map.ofSeq
 
-                if Map.isEmpty overrides then
-                    defaultConfig
-                else
-                    { defaultConfig with
-                        Overrides = overrides }
+                { defaultRawConfig with
+                    RawOverrides = overrides }
+
+let resolveConfig (raw: RawConfig) : Config =
+    let resolved =
+        raw.RawOverrides
+        |> Map.toList
+        |> List.choose (fun (name, overrides) ->
+            let platformMatch =
+                overrides |> List.tryFind (fun o -> o.Platform = Some currentPlatform)
+
+            let allMatch = overrides |> List.tryFind (fun o -> o.Platform = None)
+
+            match platformMatch, allMatch with
+            | Some m, _ -> Some(name, m)
+            | None, Some m -> Some(name, m)
+            | None, None -> None)
+        |> Map.ofList
+
+    { DefaultLine = raw.DefaultLine
+      DefaultBranch = raw.DefaultBranch
+      Overrides = resolved }
+
+let loadConfig (path: string) : Config = loadRawConfig path |> resolveConfig
 
 let saveConfig (path: string) (config: Config) : unit =
     let dict = System.Collections.Generic.Dictionary<string, obj>()
