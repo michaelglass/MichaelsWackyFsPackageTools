@@ -2,7 +2,6 @@ module CoverageRatchet.Tests.CoberturaTests
 
 open System
 open System.IO
-open System.Threading
 open Xunit
 open Swensen.Unquote
 open CoverageRatchet.Cobertura
@@ -410,11 +409,11 @@ let ``findCoverageFile - returns most recent when multiple files exist`` () =
     let oldPath = Path.Combine(subDir1, "coverage.cobertura.xml")
     File.WriteAllText(oldPath, "<coverage/>")
 
-    // Ensure the second file has a later write time
-    Thread.Sleep(50)
-
     let newPath = Path.Combine(subDir2, "coverage.cobertura.xml")
     File.WriteAllText(newPath, "<coverage/>")
+
+    // Ensure the first file has an older write time
+    File.SetLastWriteTimeUtc(oldPath, DateTime.UtcNow.AddSeconds(-10.0))
 
     try
         let result = findCoverageFile tmpDir
