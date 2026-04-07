@@ -88,13 +88,13 @@ jobs:
       - run: dotnet restore
       - run: dotnet build -c Release --no-restore
       - name: Pack main package
-        run: dotnet pack ${{ inputs.fsproj-path }} -c Release ${{ inputs.no-build-pack && '--no-build' || '' }} -o ./artifacts
+        run: dotnet pack ${{ inputs.fsproj-path }} -c Release ${{ inputs.no-build-pack == true && '--no-build' || '' }} -o ./artifacts
       - name: Pack extra packages
         if: inputs.extra-fsproj-paths != ''
         run: |
           IFS=',' read -ra PATHS <<< "${{ inputs.extra-fsproj-paths }}"
           for path in "${PATHS[@]}"; do
-            dotnet pack "$path" -c Release ${{ inputs.no-build-pack && '--no-build' || '' }} -o ./artifacts
+            dotnet pack "$path" -c Release ${{ inputs.no-build-pack == true && '--no-build' || '' }} -o ./artifacts
           done
       - name: Get version from tag
         id: version
