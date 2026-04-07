@@ -127,7 +127,8 @@ let ``run - ratchet with no changes returns Ok 0`` () =
                     [ "Foo.fs",
                       { Line = 50.0
                         Branch = 100.0
-                        Reason = "test" } ] }
+                        Reason = "test"
+                        Platform = None } ] }
 
         saveConfig configPath config
 
@@ -153,7 +154,8 @@ let ``run - ratchet with tightened config returns Ok 1`` () =
                     [ "Foo.fs",
                       { Line = 30.0
                         Branch = 100.0
-                        Reason = "test" } ] }
+                        Reason = "test"
+                        Platform = None } ] }
 
         saveConfig configPath config
 
@@ -286,7 +288,8 @@ let ``run - ratchet with new file in coverage only counts existing overrides as 
                     [ "Foo.fs",
                       { Line = 30.0
                         Branch = 100.0
-                        Reason = "test" } ] }
+                        Reason = "test"
+                        Platform = None } ] }
 
         saveConfig configPath config
 
