@@ -55,6 +55,7 @@ jobs:
       - name: Build
         run: dotnet build --warnaserror --no-restore
       - name: Lint
+        timeout-minutes: 15
         run: dotnet fsharplint lint ${{ inputs.solution }}
       - name: Generate docs
         if: inputs.check-docs
