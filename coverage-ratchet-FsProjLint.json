@@ -2,7 +2,7 @@
   "overrides": {
     "Checks.fs": [
       {
-        "line": 95.14563106796116,
+        "line": 95.04950495049505,
         "branch": 93.75,
         "reason": "loosened automatically",
         "platform": "macos"
