@@ -304,3 +304,94 @@ let ``ratchetWithStatus - file with no override below 100 percent is Failed`` ()
             | Failed _ -> true
             | _ -> false
         @>
+
+[<Fact>]
+let ``ratchetRaw preserves entries for other platforms`` () =
+    let raw: RawConfig =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides =
+            Map.ofList
+                [ "Foo.fs",
+                  [ { Line = 70.0
+                      Branch = 60.0
+                      Reason = "this platform"
+                      Platform = Some currentPlatform }
+                    { Line = 0.0
+                      Branch = 0.0
+                      Reason = "other"
+                      Platform = Some "nonexistent" } ] ] }
+
+    let files = [ makeFile "Foo.fs" 80.0 75.0 3 4 ]
+    let result = ratchetRaw raw files
+    let entries = result.RawOverrides.["Foo.fs"]
+    let mine = entries |> List.find (fun o -> o.Platform = Some currentPlatform)
+    let other = entries |> List.find (fun o -> o.Platform = Some "nonexistent")
+    test <@ mine.Line = 80.0 @>
+    test <@ mine.Branch = 75.0 @>
+    test <@ other.Line = 0.0 @>
+    test <@ other.Branch = 0.0 @>
+
+[<Fact>]
+let ``ratchetRaw removes current-platform entry when it reaches defaults`` () =
+    let raw: RawConfig =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides =
+            Map.ofList
+                [ "Foo.fs",
+                  [ { Line = 90.0
+                      Branch = 95.0
+                      Reason = "almost"
+                      Platform = Some currentPlatform }
+                    { Line = 0.0
+                      Branch = 0.0
+                      Reason = "other"
+                      Platform = Some "nonexistent" } ] ] }
+
+    let files = [ makeFile "Foo.fs" 100.0 100.0 4 4 ]
+    let result = ratchetRaw raw files
+    let entries = result.RawOverrides.["Foo.fs"]
+    // Current platform entry removed, other kept
+    test <@ entries.Length = 1 @>
+    test <@ entries.[0].Platform = Some "nonexistent" @>
+
+[<Fact>]
+let ``loosenRaw preserves entries for other platforms`` () =
+    let raw: RawConfig =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides =
+            Map.ofList
+                [ "Foo.fs",
+                  [ { Line = 90.0
+                      Branch = 85.0
+                      Reason = "this platform"
+                      Platform = Some currentPlatform }
+                    { Line = 0.0
+                      Branch = 0.0
+                      Reason = "other"
+                      Platform = Some "nonexistent" } ] ] }
+
+    let files = [ makeFile "Foo.fs" 70.0 60.0 2 4 ]
+    let result = loosenRaw raw files
+    let entries = result.RawOverrides.["Foo.fs"]
+    let mine = entries |> List.find (fun o -> o.Platform = Some currentPlatform)
+    let other = entries |> List.find (fun o -> o.Platform = Some "nonexistent")
+    test <@ mine.Line = 70.0 @>
+    test <@ other.Line = 0.0 @>
+
+[<Fact>]
+let ``loosenRaw adds platform-specific entry for new file`` () =
+    let raw: RawConfig =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides = Map.empty }
+
+    let files = [ makeFile "New.fs" 80.0 75.0 3 4 ]
+    let result = loosenRaw raw files
+    test <@ result.RawOverrides.ContainsKey("New.fs") @>
+    let entries = result.RawOverrides.["New.fs"]
+    test <@ entries.Length = 1 @>
+    test <@ entries.[0].Platform = Some currentPlatform @>
+    test <@ entries.[0].Line = 80.0 @>
