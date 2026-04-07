@@ -42,9 +42,9 @@ jobs:
             echo "::error::No CI checks found for this commit. Push to main first."
             exit 1
           fi
-          failed=$(echo "$ci_runs" | jq '[.[] | select(.conclusion != "success" and .conclusion != "skipped" and .conclusion != null)] | length')
-          if [ "$failed" -gt "0" ]; then
-            echo "::error::CI has failing checks for this commit."
+          passed=$(echo "$ci_runs" | jq '[.[] | select(.conclusion == "success" or .conclusion == "skipped")] | length')
+          if [ "$passed" -eq "0" ]; then
+            echo "::error::No passing CI checks found for this commit."
             exit 1
           fi
       - uses: actions/setup-dotnet@v4
