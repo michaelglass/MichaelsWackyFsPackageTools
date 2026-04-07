@@ -14,17 +14,21 @@ type FileCoverage =
 
 let private includedExtensions = [| ".fs" |]
 
-let private excludedPatterns = [| "Test"; "AssemblyInfo"; "AssemblyAttributes" |]
+let private excludedFileNamePatterns =
+    [| "Test"; "AssemblyInfo"; "AssemblyAttributes" |]
+
+let private excludedPathPatterns =
+    [| "paket-files"; "vendor"; "node_modules"; ".fable" |]
 
 let private branchRegex = Regex(@"\((\d+)/(\d+)\)", RegexOptions.Compiled)
 
 let private isIncluded (fileName: string) =
     let hasValidExt = includedExtensions |> Array.exists fileName.EndsWith
     let baseName = Path.GetFileName(fileName)
+    let isFileExcluded = excludedFileNamePatterns |> Array.exists baseName.Contains
+    let isPathExcluded = excludedPathPatterns |> Array.exists fileName.Contains
 
-    let isExcluded = excludedPatterns |> Array.exists baseName.Contains
-
-    hasValidExt && not isExcluded
+    hasValidExt && not isFileExcluded && not isPathExcluded
 
 /// Parse Cobertura XML content string into FileCoverage list.
 let parseXml (xmlContent: string) : FileCoverage list =
