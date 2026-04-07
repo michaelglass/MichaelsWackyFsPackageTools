@@ -19,4 +19,4 @@ jobs:
           dotnet-version: ${{ inputs.dotnet-version }}
       - run: dotnet tool restore
       - name: Lint project
-        run: dotnet tool run fsprojlint check
+        run: dotnet tool run fsprojlint

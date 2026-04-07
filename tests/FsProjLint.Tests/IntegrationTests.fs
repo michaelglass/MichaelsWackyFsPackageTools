@@ -4,41 +4,14 @@ open System.IO
 open Xunit
 open Swensen.Unquote
 open FsProjLint.Checks
-
-let private withTempDir (f: string -> unit) =
-    let dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName())
-    Directory.CreateDirectory(dir) |> ignore
-
-    try
-        f dir
-    finally
-        Directory.Delete(dir, true)
+open Tests.Common.TestHelpers
+open FsProjLint.Tests.TestFixtures
 
 let private createFile (dir: string) (relativePath: string) (content: string) =
     let fullPath = Path.Combine(dir, relativePath)
     let parent = Path.GetDirectoryName(fullPath)
     Directory.CreateDirectory(parent) |> ignore
     File.WriteAllText(fullPath, content)
-
-let private validFsproj =
-    """<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <PackageId>MyPackage</PackageId>
-    <Version>1.0.0</Version>
-    <Description>A test package</Description>
-    <Authors>testauthor</Authors>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/test/test</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-  </PropertyGroup>
-  <ItemGroup>
-    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
-  </ItemGroup>
-</Project>"""
 
 [<Fact>]
 let ``complete valid repo passes all checks`` () =
@@ -47,7 +20,7 @@ let ``complete valid repo passes all checks`` () =
         createFile dir "README.md" ""
         createFile dir ".editorconfig" ""
         createFile dir "docs/index.md" ""
-        createFile dir "src/MyProject/MyProject.fsproj" validFsproj
+        createFile dir "src/MyProject/MyProject.fsproj" packableFsproj
 
         let result = runLint dir
         let allChecks = result.RepoChecks @ (result.ProjectChecks |> List.collect snd)

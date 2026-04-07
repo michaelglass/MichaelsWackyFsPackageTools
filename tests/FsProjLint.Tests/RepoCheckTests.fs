@@ -4,15 +4,7 @@ open System.IO
 open Xunit
 open Swensen.Unquote
 open FsProjLint.Checks
-
-let private withTempDir (f: string -> unit) =
-    let dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName())
-    Directory.CreateDirectory(dir) |> ignore
-
-    try
-        f dir
-    finally
-        Directory.Delete(dir, true)
+open Tests.Common.TestHelpers
 
 let private createFile (dir: string) (relativePath: string) =
     let fullPath = Path.Combine(dir, relativePath)
