@@ -56,6 +56,27 @@ coverageratchet loosen
 
 This always exits 0. Files that were already at 100% don't get an override. New overrides get the reason `"loosened automatically"`.
 
+### Export coverage as JSON (for CI)
+
+```bash
+coverageratchet check-json [config-path] [output-path]
+```
+
+Writes machine-readable coverage results. Exit code matches `check` (non-zero if any file fails). Used by CI workflows to upload coverage data as an artifact.
+
+### Sync thresholds from CI
+
+```bash
+coverageratchet loosen-from-ci [config-path]
+```
+
+Pushes current code, polls CI, and if coverage fails:
+1. Downloads the `coverage-thresholds` artifact
+2. Merges CI platform thresholds into local config (splitting non-platform entries if needed)
+3. Commits, pushes, and re-polls CI
+
+Requires `gh` CLI and `jj` (or `git`).
+
 ### Custom config path
 
 ```bash

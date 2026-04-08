@@ -2,6 +2,7 @@ module CoverageRatchet.Tests.ProgramTests
 
 open System
 open System.IO
+open System.Text.Json
 open Xunit
 open Swensen.Unquote
 open CoverageRatchet.Thresholds
@@ -301,6 +302,74 @@ let ``run - ratchet with new file in coverage only counts existing overrides as 
         // Bar.fs is below 100% with no override, so this is a Failed result (Ok 2)
         test <@ result = Ok 2 @>)
 
+// --- check-json tests ---
+
+[<Fact>]
+let ``run - check-json writes platform and file results to output file`` () =
+    withTempDir (fun tmpDir ->
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        File.WriteAllText(xmlPath, makeCoverageXml 50)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        let outputPath = Path.Combine(tmpDir, "output.json")
+
+        let result =
+            run (CheckJson(config = Some configPath, output = Some outputPath)) tmpDir
+
+        test <@ result = Ok 1 @>
+        test <@ File.Exists(outputPath) @>
+
+        let json = File.ReadAllText(outputPath)
+        let doc = JsonDocument.Parse(json)
+        let root = doc.RootElement
+
+        let platform = root.GetProperty("platform").GetString()
+        test <@ platform = currentPlatform @>
+
+        let results = root.GetProperty("results")
+        let hasFoo = results.TryGetProperty("Foo.fs") |> fst
+        test <@ hasFoo @>
+
+        let fooLine = results.GetProperty("Foo.fs").GetProperty("line").GetInt32()
+        let fooBranch = results.GetProperty("Foo.fs").GetProperty("branch").GetInt32()
+        test <@ fooLine = 50 @>
+        test <@ fooBranch = 100 @>)
+
+[<Fact>]
+let ``run - check-json with passing coverage returns Ok 0`` () =
+    withTempDir (fun tmpDir ->
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        File.WriteAllText(xmlPath, makeCoverageXml 100)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        let outputPath = Path.Combine(tmpDir, "output.json")
+
+        let result =
+            run (CheckJson(config = Some configPath, output = Some outputPath)) tmpDir
+
+        test <@ result = Ok 0 @>
+        test <@ File.Exists(outputPath) @>
+
+        let json = File.ReadAllText(outputPath)
+        let doc = JsonDocument.Parse(json)
+        let root = doc.RootElement
+        let platform = root.GetProperty("platform").GetString()
+        test <@ platform = currentPlatform @>)
+
+[<Fact>]
+let ``run - check-json with failing coverage returns Ok 1`` () =
+    withTempDir (fun tmpDir ->
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        File.WriteAllText(xmlPath, makeCoverageXml 50)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        let outputPath = Path.Combine(tmpDir, "output.json")
+
+        let result =
+            run (CheckJson(config = Some configPath, output = Some outputPath)) tmpDir
+
+        test <@ result = Ok 1 @>)
+
 // --- main tests ---
 
 [<Fact>]
@@ -326,6 +395,12 @@ let ``main with unknown flag returns 1`` () =
     let result = main [| "--unknown" |]
 
     test <@ result = 1 @>
+
+[<Fact>]
+let ``main with loosen-from-ci --help returns 0`` () =
+    let result = main [| "loosen-from-ci"; "--help" |]
+
+    test <@ result = 0 @>
 
 [<Fact>]
 let ``main with no args and no coverage file returns 1`` () =

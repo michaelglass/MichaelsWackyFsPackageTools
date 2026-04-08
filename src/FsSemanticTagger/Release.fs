@@ -101,26 +101,36 @@ let release
         printfn "Error: uncommitted changes detected"
         1
     else
-        let ciStatus = waitForCi run 15000 40
+        let ciOk =
+            if hasCoverageRatchet run then
+                printfn "Using coverageratchet loosen-from-ci for CI check..."
 
-        match ciStatus with
-        | Failed runs ->
-            printfn "Error: CI failed"
+                match run "dotnet" "tool run coverageratchet loosen-from-ci" with
+                | Success _ -> true
+                | Failure _ -> false
+            else
+                match waitForCi run 15000 40 with
+                | Passed -> true
+                | Failed runs ->
+                    printfn "Error: CI failed"
 
-            for r in runs do
-                printfn "  FAILED: %s — %s" r.Name r.Url
+                    for r in runs do
+                        printfn "  FAILED: %s — %s" r.Name r.Url
 
+                    false
+                | InProgress _ ->
+                    printfn "Error: CI still running after timeout"
+                    false
+                | NoRuns ->
+                    printfn "Error: no CI runs found for the current commit"
+                    false
+                | Unknown ->
+                    printfn "Error: could not determine CI status"
+                    false
+
+        if not ciOk then
             1
-        | InProgress _ ->
-            printfn "Error: CI still running after timeout"
-            1
-        | NoRuns ->
-            printfn "Error: no CI runs found for the current commit"
-            1
-        | Unknown ->
-            printfn "Error: could not determine CI status"
-            1
-        | Passed ->
+        else
             // 2. Run pre-build commands (e.g. paket restore)
             for preBuildCmd in config.PreBuildCmds do
                 printfn "Running: %s" preBuildCmd

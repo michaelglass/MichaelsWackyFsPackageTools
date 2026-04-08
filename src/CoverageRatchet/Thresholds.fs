@@ -50,7 +50,7 @@ let private defaultConfig =
       DefaultBranch = defaultBranchThreshold
       Overrides = Map.empty }
 
-let private jsonOptions =
+let internal jsonOptions =
     let opts = JsonSerializerOptions()
     opts.WriteIndented <- true
     opts

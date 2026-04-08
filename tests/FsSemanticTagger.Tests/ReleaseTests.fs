@@ -625,3 +625,30 @@ let ``release - Auto falls back to NoChange when extractPreviousApi returns None
         test <@ content.Contains("<Version>1.0.1</Version>") @>
     finally
         File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - uses coverageratchet loosen-from-ci when available`` () =
+    let mutable calls = []
+
+    let fakeRun (cmd: string) (args: string) : CommandResult =
+        calls <- calls @ [ (cmd, args) ]
+
+        match cmd, args with
+        | "jj", "status" -> Success "The working copy is clean"
+        | "dotnet", "tool list" -> Success "coverageratchet    0.8.0-alpha.4    coverageratchet"
+        | "dotnet", a when a.StartsWith("tool run coverageratchet loosen-from-ci") -> Success ""
+        | "dotnet", "build -c Release" -> Success "Build succeeded."
+        | "git", arg when arg.StartsWith("tag -l") -> Success ""
+        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+    let config =
+        { Packages = []
+          ReservedVersions = Set.empty
+          PreBuildCmds = [] }
+
+    let result = release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi
+    test <@ result = 0 @>
+
+    // Should have called coverageratchet instead of gh run list
+    test <@ calls |> List.exists (fun (c, a) -> c = "dotnet" && a.Contains("coverageratchet loosen-from-ci")) @>
+    test <@ not (calls |> List.exists (fun (c, _) -> c = "gh")) @>
