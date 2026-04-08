@@ -193,6 +193,40 @@ let extractFromAssembly (dllPath: string) : ApiSignature list =
               yield ApiSignature(sprintf "  %s::.ctor(%s)" t.Name ps) ]
     |> List.sort
 
+/// Try to extract API signatures from a previously published NuGet package.
+/// Looks in the local NuGet cache at ~/.nuget/packages/<id>/<version>/lib/<tfm>/.
+let extractFromNuGetCache (packageId: string) (version: string) : ApiSignature list option =
+    let home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+
+    let pkgDir =
+        Path.Combine(home, ".nuget", "packages", packageId.ToLowerInvariant(), version)
+
+    if not (Directory.Exists(pkgDir)) then
+        None
+    else
+        let dllName = packageId + ".dll"
+
+        // Search lib/<tfm>/ (libraries) and tools/<tfm>/any/ (dotnet tools)
+        let searchDirs =
+            [ Path.Combine(pkgDir, "lib"); Path.Combine(pkgDir, "tools") ]
+            |> List.filter Directory.Exists
+            |> List.collect (fun dir ->
+                Directory.GetDirectories(dir)
+                |> Array.toList
+                |> List.collect (fun tfmDir ->
+                    // lib/<tfm>/ has DLLs directly; tools/<tfm>/any/ has them nested
+                    [ tfmDir; Path.Combine(tfmDir, "any") ] |> List.filter Directory.Exists))
+            |> List.sortDescending
+
+        searchDirs
+        |> List.tryPick (fun dir ->
+            let dllPath = Path.Combine(dir, dllName)
+
+            if File.Exists(dllPath) then
+                Some(extractFromAssembly dllPath)
+            else
+                None)
+
 /// Compare two API surfaces
 let compare (baseline: ApiSignature list) (current: ApiSignature list) : ApiChange =
     let baseSet = Set.ofList baseline

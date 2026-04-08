@@ -66,7 +66,9 @@ let private runRelease (releaseCmd: Release.ReleaseCommand) (opts: ReleaseOption
         else
             Release.GitHubActions
 
-    Ok(Release.release Shell.run config releaseCmd mode)
+    let extractPreviousApi = Api.extractFromNuGetCache
+    let extractCurrentApi = Api.extractFromAssembly
+    Ok(Release.release Shell.run config releaseCmd mode extractPreviousApi extractCurrentApi)
 
 let runCommand (cmd: Command) : Result<int, string> =
     match cmd with

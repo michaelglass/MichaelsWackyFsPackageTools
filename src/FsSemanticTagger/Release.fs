@@ -93,6 +93,8 @@ let release
     (config: ToolConfig)
     (cmd: ReleaseCommand)
     (mode: PublishMode)
+    (extractPreviousApi: string -> string -> ApiSignature list option)
+    (extractCurrentApi: string -> ApiSignature list)
     : int =
     // 1. Check for uncommitted changes
     if hasUncommittedChanges run then
@@ -156,8 +158,14 @@ let release
                             match state with
                             | FirstRelease -> None // Need explicit command for first release
                             | HasPreviousRelease(_tag, currentVersion) ->
-                                // TODO: compare API surface against previous tag's DLL
-                                let newVersion = determineBump currentVersion NoChange
+                                let change =
+                                    match extractPreviousApi pkg.Name (format currentVersion) with
+                                    | Some oldApi ->
+                                        let currentApi = extractCurrentApi pkg.DllPath
+                                        compare oldApi currentApi
+                                    | None -> NoChange
+
+                                let newVersion = determineBump currentVersion change
 
                                 if config.ReservedVersions.Contains(format newVersion) then
                                     let newVersion = bumpPatch newVersion
