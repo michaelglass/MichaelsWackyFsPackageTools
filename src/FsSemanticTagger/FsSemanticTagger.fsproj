@@ -12,7 +12,7 @@
   </PropertyGroup>
   <PropertyGroup>
     <PackageId>FsSemanticTagger</PackageId>
-    <Version>0.8.0-alpha.2</Version>
+    <Version>0.8.0-alpha.3</Version>
     <Authors>michaelglass</Authors>
     <Description>Semantic versioning with API change detection for F# NuGet packages</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
