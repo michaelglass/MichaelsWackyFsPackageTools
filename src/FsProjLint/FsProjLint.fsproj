@@ -12,7 +12,7 @@
   </PropertyGroup>
   <PropertyGroup>
     <PackageId>FsProjLint</PackageId>
-    <Version>0.1.0-alpha.1</Version>
+    <Version>0.2.0-alpha.1</Version>
     <Authors>michaelglass</Authors>
     <Description>Opinionated F# project and repo validator for OSS readiness</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
