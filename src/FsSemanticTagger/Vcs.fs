@@ -201,9 +201,5 @@ let isCiPassing (run: string -> string -> CommandResult) : bool =
     | Passed -> true
     | _ -> false
 
-let pushTags (run: string -> string -> CommandResult) (tags: string list) : unit =
-    runOrFail run "jj" "git export" |> ignore
-
-    withJjGitDir (fun () ->
-        let tagArgs = tags |> List.map (sprintf "%s") |> String.concat " "
-        runOrFail run "git" (sprintf "push origin %s" tagArgs) |> ignore)
+let pushTags (run: string -> string -> CommandResult) (_tags: string list) : unit =
+    runOrFail run "jj" "git push" |> ignore
