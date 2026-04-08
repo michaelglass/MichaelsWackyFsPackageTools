@@ -164,13 +164,7 @@ let ``release - StartAlpha with FirstRelease tags immutable commit`` () =
         @>
 
     // Verify no jj commit was called
-    test
-        <@
-            not (
-                calls
-                |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("commit"))
-            )
-        @>
+    test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("commit"))) @>
 
 /// Helper: standard fakeRun responses for a passing CI + clean working copy
 let private passingCiRun (extraResponses: (string * string * CommandResult) list) =
@@ -222,8 +216,7 @@ let ``release - StartAlpha with LocalPublish calls dotnet pack`` () =
     test
         <@
             calls
-            |> List.exists (fun (c, a) ->
-                c = "dotnet" && a.StartsWith("pack") && a.Contains("src/MyLib/MyLib.fsproj"))
+            |> List.exists (fun (c, a) -> c = "dotnet" && a.StartsWith("pack") && a.Contains("src/MyLib/MyLib.fsproj"))
         @>
 
 [<Fact>]
@@ -413,13 +406,10 @@ let ``release - skips packages with no changes since last tag`` () =
             Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
         | "dotnet", "build -c Release" -> Success "Build succeeded."
         // LibA has a previous tag and changes
-        | "jj", a when a.Contains("tag list") && a.Contains("liba-v") ->
-            Success "liba-v0.1.0-alpha.1"
-        | "jj", a when a.Contains("liba-v0.1.0-alpha.1::@") && a.Contains("src/LibA") ->
-            Success "1 file changed"
+        | "jj", a when a.Contains("tag list") && a.Contains("liba-v") -> Success "liba-v0.1.0-alpha.1"
+        | "jj", a when a.Contains("liba-v0.1.0-alpha.1::@") && a.Contains("src/LibA") -> Success "1 file changed"
         // LibB has a previous tag but NO changes
-        | "jj", a when a.Contains("tag list") && a.Contains("libb-v") ->
-            Success "libb-v0.1.0-alpha.1"
+        | "jj", a when a.Contains("tag list") && a.Contains("libb-v") -> Success "libb-v0.1.0-alpha.1"
         | "jj", a when a.Contains("libb-v0.1.0-alpha.1::@") && a.Contains("src/LibB") -> Success ""
         // tagLastCommit responses
         | "jj", a when a.Contains("~empty()") -> Success "def456"
@@ -448,20 +438,10 @@ let ``release - skips packages with no changes since last tag`` () =
     test <@ result = 0 @>
 
     // LibA should be tagged
-    test
-        <@
-            calls
-            |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set liba-v"))
-        @>
+    test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set liba-v")) @>
 
     // LibB should NOT be tagged
-    test
-        <@
-            not (
-                calls
-                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set libb-v"))
-            )
-        @>
+    test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set libb-v"))) @>
 
 [<Fact>]
 let ``release - returns 1 when commit is not immutable`` () =

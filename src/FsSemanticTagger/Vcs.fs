@@ -70,8 +70,8 @@ let tagLastCommit
 
     // Find the last non-empty commit on the current branch
     match runSilent run "jj" "log -r \"ancestors(@) & ~empty()\" --limit 1 --no-graph -T commit_id" with
-    | None | Some "" ->
-        Error "Could not find a non-empty commit to tag"
+    | None
+    | Some "" -> Error "Could not find a non-empty commit to tag"
     | Some commitId ->
         let commitId = commitId.Trim()
 
@@ -82,10 +82,11 @@ let tagLastCommit
             match run "jj" (sprintf "tag set %s -r %s" tag commitId) with
             | Success _ -> Ok tag
             | Failure _ ->
-                runOrFail run "git" (sprintf "tag -a %s -m \"%s\" %s" tag msg commitId) |> ignore
+                runOrFail run "git" (sprintf "tag -a %s -m \"%s\" %s" tag msg commitId)
+                |> ignore
+
                 Ok tag
-        | _ ->
-            Error(sprintf "Commit %s is not immutable — push to origin before releasing" commitId)
+        | _ -> Error(sprintf "Commit %s is not immutable — push to origin before releasing" commitId)
 
 let hasChangesSinceTag (run: string -> string -> CommandResult) (tag: string) (path: string) : bool =
     let args =
