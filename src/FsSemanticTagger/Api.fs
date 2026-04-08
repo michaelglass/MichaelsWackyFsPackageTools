@@ -12,7 +12,9 @@ type ApiChange =
     | Addition of ApiSignature list
     | NoChange
 
-/// Build list of paths to search for assembly dependencies
+let private supportedTfms =
+    [ "net10.0"; "net9.0"; "net8.0"; "netstandard2.1"; "netstandard2.0" ]
+
 let private getDotnetRoot (runtimeDir: string) =
     let envRoot = Environment.GetEnvironmentVariable("DOTNET_ROOT")
 
@@ -60,7 +62,7 @@ let getAssemblySearchPaths (dllPath: string) : string list =
             Directory.GetDirectories(nugetBase)
             |> Array.toList
             |> List.collect (fun versionDir ->
-                let tfms = [ "net10.0"; "net9.0"; "net8.0"; "netstandard2.1"; "netstandard2.0" ]
+                let tfms = supportedTfms
 
                 tfms
                 |> List.map (fun tfm -> Path.Combine(versionDir, "lib", tfm))
@@ -92,7 +94,7 @@ let getAssemblySearchPaths (dllPath: string) : string list =
 
                             if Directory.Exists(pkgDir) then
                                 // Search common lib TFM directories
-                                [ "net10.0"; "net9.0"; "net8.0"; "netstandard2.1"; "netstandard2.0" ]
+                                supportedTfms
                                 |> List.map (fun tfm -> Path.Combine(pkgDir, "lib", tfm))
                                 |> List.tryFind Directory.Exists
                             else
@@ -110,7 +112,6 @@ let getAssemblySearchPaths (dllPath: string) : string list =
     @ nugetDirs
     @ depsJsonDirs
 
-/// Create MetadataAssemblyResolver using search paths
 let createResolver (dllPath: string) : MetadataAssemblyResolver =
     let searchPaths = getAssemblySearchPaths dllPath
 
@@ -147,7 +148,6 @@ let rec formatTypeName (t: Type) : string =
     else
         t.Name
 
-/// Extract all public API signatures from a compiled DLL
 let extractFromAssembly (dllPath: string) : ApiSignature list =
     let resolver = createResolver dllPath
     use context = new MetadataLoadContext(resolver)

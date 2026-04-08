@@ -460,7 +460,7 @@ let ``release - skips packages with no changes since last tag`` () =
             // LibB has a previous tag but NO changes
             | "jj", a when a.Contains("tag list") && a.Contains("libb-v") -> Success "libb-v0.1.0-alpha.1"
             | "jj", a when a.Contains("--from libb-v0.1.0-alpha.1") -> Success ""
-            // tagLastCommit responses
+            // tagging and push responses
 
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", a when a.StartsWith("commit") -> Success ""

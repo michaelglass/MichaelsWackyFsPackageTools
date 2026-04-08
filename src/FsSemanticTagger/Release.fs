@@ -167,11 +167,13 @@ let release
 
                                 let newVersion = determineBump currentVersion change
 
-                                if config.ReservedVersions.Contains(format newVersion) then
-                                    let newVersion = bumpPatch newVersion
-                                    Some(pkg, newVersion)
-                                else
-                                    Some(pkg, newVersion)
+                                let newVersion =
+                                    if config.ReservedVersions.Contains(format newVersion) then
+                                        bumpPatch newVersion
+                                    else
+                                        newVersion
+
+                                Some(pkg, newVersion)
                         | _ ->
                             match forCommand state cmd with
                             | Some v ->
