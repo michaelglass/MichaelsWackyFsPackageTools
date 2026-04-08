@@ -142,6 +142,15 @@ let release
                             HasPreviousRelease(tag, parse versionStr)
                         | None -> FirstRelease
 
+                    // Skip packages with no changes since last tag
+                    let srcDir = System.IO.Path.GetDirectoryName(pkg.Fsproj)
+
+                    match state with
+                    | HasPreviousRelease(tag, _) when not (hasChangesSinceTag run tag srcDir) ->
+                        printfn "Skipping %s: no changes since %s" pkg.Name tag
+                        None
+                    | _ ->
+
                     match cmd with
                     | Auto ->
                         match state with
@@ -181,28 +190,36 @@ let release
                 for (pkg, version) in bumps do
                     printfn "  %s -> %s (tag: %s)" pkg.Name (format version) (toTag pkg.TagPrefix version)
 
-                // 6. Update fsproj versions
-                for (pkg, version) in bumps do
-                    updateFsprojVersion pkg.Fsproj version
+                // 6. Tag the last non-empty immutable commit
+                let tagResults =
+                    bumps |> List.map (fun (pkg, version) -> (pkg, tagLastCommit run pkg.TagPrefix version))
 
-                    for extra in pkg.FsProjsSharingSameTag do
-                        updateFsprojVersion extra version
+                let errors =
+                    tagResults
+                    |> List.choose (fun (pkg, result) ->
+                        match result with
+                        | Error msg -> Some(pkg.Name, msg)
+                        | Ok _ -> None)
 
-                // 7. Commit and tag
-                let tags =
-                    bumps |> List.map (fun (pkg, version) -> commitAndTag run pkg.TagPrefix version)
+                if not errors.IsEmpty then
+                    for (name, msg) in errors do
+                        printfn "Error tagging %s: %s" name msg
 
-                // 8. Publish or push tags
-                match mode with
-                | GitHubActions ->
-                    pushTags run tags
-                    printfn "Tags pushed. GitHub Actions will handle the release."
-                | LocalPublish ->
-                    for (pkg, _version) in bumps do
-                        runOrFail run "dotnet" (sprintf "pack %s -c Release -o artifacts/" pkg.Fsproj)
-                        |> ignore
+                    1
+                else
+                    let tags = tagResults |> List.choose (fun (_, r) -> r |> Result.toOption)
 
-                        printfn "Packed: %s" pkg.Name
-                // NuGet push would go here
+                    // 7. Publish or push tags
+                    match mode with
+                    | GitHubActions ->
+                        pushTags run tags
+                        printfn "Tags pushed. GitHub Actions will handle the release."
+                    | LocalPublish ->
+                        for (pkg, _version) in bumps do
+                            runOrFail run "dotnet" (sprintf "pack %s -c Release -o artifacts/" pkg.Fsproj)
+                            |> ignore
 
-                0
+                            printfn "Packed: %s" pkg.Name
+                    // NuGet push would go here
+
+                    0
