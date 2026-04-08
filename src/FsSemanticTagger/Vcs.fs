@@ -60,34 +60,6 @@ let getLatestTag (run: string -> string -> CommandResult) (prefix: string) : str
         |> Array.tryHead
         |> Option.map fst
 
-let tagLastCommit
-    (run: string -> string -> CommandResult)
-    (prefix: string)
-    (version: Version)
-    : Result<string, string> =
-    let tag = toTag prefix version
-    let msg = sprintf "Release %s" (format version)
-
-    // Find the last non-empty commit on the current branch
-    match runSilent run "jj" "log -r \"ancestors(@) & ~empty()\" --limit 1 --no-graph -T commit_id" with
-    | None
-    | Some "" -> Error "Could not find a non-empty commit to tag"
-    | Some commitId ->
-        let commitId = commitId.Trim()
-
-        // Verify it's immutable (pushed to origin / on main)
-        match runSilent run "jj" (sprintf "log -r \"%s & immutable()\" --no-graph -T \"true\"" commitId) with
-        | Some s when s.Trim() = "true" ->
-            // Tag the commit
-            match run "jj" (sprintf "tag set %s -r %s" tag commitId) with
-            | Success _ -> Ok tag
-            | Failure _ ->
-                runOrFail run "git" (sprintf "tag -a %s -m \"%s\" %s" tag msg commitId)
-                |> ignore
-
-                Ok tag
-        | _ -> Error(sprintf "Commit %s is not immutable — push to origin before releasing" commitId)
-
 let tagRevision (run: string -> string -> CommandResult) (tag: string) (revision: string) : unit =
     match run "jj" (sprintf "tag set %s -r %s" tag revision) with
     | Success _ -> ()
