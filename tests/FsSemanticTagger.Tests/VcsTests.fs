@@ -535,7 +535,7 @@ let ``getCiStatus - returns InProgress without parent fallback`` () =
 // pushTags
 
 [<Fact>]
-let ``pushTags - exports and pushes main + tags in single git push`` () =
+let ``pushTags - exports, pushes main, then pushes each tag separately`` () =
     let mutable calls: (string * string) list = []
 
     let run (cmd: string) (args: string) =
@@ -548,9 +548,6 @@ let ``pushTags - exports and pushes main + tags in single git push`` () =
 
     pushTags run [ "v1.0.0"; "v2.0.0" ]
     test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git export") @>
-
-    test
-        <@
-            calls
-            |> List.exists (fun (c, a) -> c = "git" && a = "push origin main v1.0.0 v2.0.0")
-        @>
+    test <@ calls |> List.exists (fun (c, a) -> c = "git" && a = "push origin main") @>
+    test <@ calls |> List.exists (fun (c, a) -> c = "git" && a = "push origin v1.0.0") @>
+    test <@ calls |> List.exists (fun (c, a) -> c = "git" && a = "push origin v2.0.0") @>

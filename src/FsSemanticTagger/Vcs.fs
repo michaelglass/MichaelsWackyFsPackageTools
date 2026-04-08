@@ -211,8 +211,10 @@ let pushTags (run: string -> string -> CommandResult) (tags: string list) : unit
     // Export jj tags to the underlying git repo
     runOrFail run "jj" "git export" |> ignore
 
-    // Push main + tags together in a single git push so GitHub sees
-    // the tag creation atomically with the commit it points to.
+    // Push main first (so the tagged commit exists on origin),
+    // then push tags separately so each gets its own GitHub Actions push event.
     withJjGitDir (fun () ->
-        let refs = "main" :: tags |> String.concat " "
-        runOrFail run "git" (sprintf "push origin %s" refs) |> ignore)
+        runOrFail run "git" "push origin main" |> ignore
+
+        for tag in tags do
+            runOrFail run "git" (sprintf "push origin %s" tag) |> ignore)
