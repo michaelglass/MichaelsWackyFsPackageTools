@@ -213,6 +213,37 @@ let ``tagLastCommit - falls back to git tag when jj tag fails`` () =
 
     test <@ calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("tag -a v2.1.0")) @>
 
+// tagRevision
+
+[<Fact>]
+let ``tagRevision - sets tag on specified revision via jj`` () =
+    let mutable calls: (string * string) list = []
+
+    let run (cmd: string) (args: string) =
+        calls <- calls @ [ (cmd, args) ]
+
+        match cmd, args with
+        | "jj", a when a.StartsWith("tag set") -> Success ""
+        | _ -> Failure(sprintf "unexpected: %s %s" cmd args)
+
+    tagRevision run "v1.0.0" "main"
+    test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "tag set v1.0.0 -r main") @>
+
+[<Fact>]
+let ``tagRevision - falls back to git tag when jj fails`` () =
+    let mutable calls: (string * string) list = []
+
+    let run (cmd: string) (args: string) =
+        calls <- calls @ [ (cmd, args) ]
+
+        match cmd, args with
+        | "jj", a when a.StartsWith("tag set") -> Failure "jj tag not supported"
+        | "git", a when a.StartsWith("tag") -> Success ""
+        | _ -> Failure(sprintf "unexpected: %s %s" cmd args)
+
+    tagRevision run "v1.0.0" "main"
+    test <@ calls |> List.exists (fun (c, a) -> c = "git" && a.Contains("tag -a v1.0.0")) @>
+
 // commitAndAdvanceMain
 
 [<Fact>]

@@ -186,52 +186,40 @@ let release
                 for (pkg, version) in bumps do
                     printfn "  %s -> %s (tag: %s)" pkg.Name (format version) (toTag pkg.TagPrefix version)
 
-                // 6. Tag the last non-empty immutable commit
-                let tagResults =
+                // 6. Update fsproj versions
+                for (pkg, version) in bumps do
+                    updateFsprojVersion pkg.Fsproj version
+
+                    for extra in pkg.FsProjsSharingSameTag do
+                        updateFsprojVersion extra version
+
+                // 7. Commit version bump and advance main bookmark
+                let versionSummary =
                     bumps
-                    |> List.map (fun (pkg, version) -> (pkg, tagLastCommit run pkg.TagPrefix version))
+                    |> List.map (fun (pkg, version) -> sprintf "%s %s" pkg.Name (format version))
+                    |> String.concat ", "
 
-                let errors =
-                    tagResults
-                    |> List.choose (fun (pkg, result) ->
-                        match result with
-                        | Error msg -> Some(pkg.Name, msg)
-                        | Ok _ -> None)
+                commitAndAdvanceMain run (sprintf "Bump versions: %s" versionSummary)
 
-                if not errors.IsEmpty then
-                    for (name, msg) in errors do
-                        printfn "Error tagging %s: %s" name msg
+                // 8. Tag main (the version bump commit) for each package
+                let tags =
+                    bumps
+                    |> List.map (fun (pkg, version) ->
+                        let tag = toTag pkg.TagPrefix version
+                        tagRevision run tag "main"
+                        tag)
 
-                    1
-                else
-                    let tags = tagResults |> List.choose (fun (_, r) -> r |> Result.toOption)
+                // 9. Publish or push tags + main
+                match mode with
+                | GitHubActions ->
+                    pushTags run tags
+                    printfn "Tags pushed. GitHub Actions will handle the release."
+                | LocalPublish ->
+                    for (pkg, _version) in bumps do
+                        runOrFail run "dotnet" (sprintf "pack %s -c Release -o artifacts/" pkg.Fsproj)
+                        |> ignore
 
-                    // 7. Update fsproj versions
-                    for (pkg, version) in bumps do
-                        updateFsprojVersion pkg.Fsproj version
+                        printfn "Packed: %s" pkg.Name
+                // NuGet push would go here
 
-                        for extra in pkg.FsProjsSharingSameTag do
-                            updateFsprojVersion extra version
-
-                    // 8. Commit version bump and advance main bookmark
-                    let versionSummary =
-                        bumps
-                        |> List.map (fun (pkg, version) -> sprintf "%s %s" pkg.Name (format version))
-                        |> String.concat ", "
-
-                    commitAndAdvanceMain run (sprintf "Bump versions: %s" versionSummary)
-
-                    // 9. Publish or push tags + main
-                    match mode with
-                    | GitHubActions ->
-                        pushTags run tags
-                        printfn "Tags pushed. GitHub Actions will handle the release."
-                    | LocalPublish ->
-                        for (pkg, _version) in bumps do
-                            runOrFail run "dotnet" (sprintf "pack %s -c Release -o artifacts/" pkg.Fsproj)
-                            |> ignore
-
-                            printfn "Packed: %s" pkg.Name
-                    // NuGet push would go here
-
-                    0
+                0
