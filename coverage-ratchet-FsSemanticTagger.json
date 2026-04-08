@@ -34,8 +34,8 @@
     "Release.fs": [
       {
         "line": 93,
-        "branch": 95,
-        "reason": "release() orchestration calls VCS/Shell externals; tag/push paths tested at unit level in VcsTests",
+        "branch": 93,
+        "reason": "InProgress CI timeout branch requires Thread.Sleep in waitForCi; tested at unit level in waitForCi tests",
         "platform": "macos"
       },
       {

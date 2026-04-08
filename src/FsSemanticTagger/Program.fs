@@ -68,7 +68,7 @@ let private runRelease (releaseCmd: Release.ReleaseCommand) (opts: ReleaseOption
 
     let extractPreviousApi = Api.extractFromNuGetCache
     let extractCurrentApi = Api.extractFromAssembly
-    Ok(Release.release Shell.run config releaseCmd mode extractPreviousApi extractCurrentApi)
+    Ok(Release.release Shell.run config releaseCmd mode extractPreviousApi extractCurrentApi 15000 40)
 
 let runCommand (cmd: Command) : Result<int, string> =
     match cmd with
