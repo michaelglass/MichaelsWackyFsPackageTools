@@ -151,7 +151,9 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", a when a.StartsWith("commit") -> Success ""
             | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git export" -> Success ""
             | "jj", "git push" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
 
         let config =
@@ -209,7 +211,9 @@ let private passingCiRun (extraResponses: (string * string * CommandResult) list
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", a when a.StartsWith("commit") -> Success ""
             | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git export" -> Success ""
             | "jj", "git push" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
             | "dotnet", arg when arg.StartsWith("pack") -> Success "Successfully created package"
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
 
@@ -342,7 +346,9 @@ let ``release - runs preBuildCmds before build`` () =
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", a when a.StartsWith("commit") -> Success ""
             | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git export" -> Success ""
             | "jj", "git push" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
 
         let config =
@@ -465,7 +471,9 @@ let ``release - skips packages with no changes since last tag`` () =
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", a when a.StartsWith("commit") -> Success ""
             | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git export" -> Success ""
             | "jj", "git push" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
 
         let config =

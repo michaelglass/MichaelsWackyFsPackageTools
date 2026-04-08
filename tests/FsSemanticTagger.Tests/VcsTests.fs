@@ -513,16 +513,24 @@ let ``getCiStatus - returns InProgress without parent fallback`` () =
 // pushTags
 
 [<Fact>]
-let ``pushTags - pushes main bookmark and tags via jj`` () =
+let ``pushTags - exports tags, pushes main bookmark, and pushes tags`` () =
     let mutable calls: (string * string) list = []
 
     let run (cmd: string) (args: string) =
         calls <- calls @ [ (cmd, args) ]
 
         match cmd, args with
-        | "jj", a when a.StartsWith("git push") -> Success ""
+        | "jj", "git export" -> Success ""
+        | "jj", "git push" -> Success ""
+        | "git", a when a.StartsWith("push origin") -> Success ""
         | _ -> Failure "unexpected"
 
     pushTags run [ "v1.0.0"; "v2.0.0" ]
-
+    test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git export") @>
     test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push") @>
+
+    test
+        <@
+            calls
+            |> List.exists (fun (c, a) -> c = "git" && a = "push origin v1.0.0 v2.0.0")
+        @>
