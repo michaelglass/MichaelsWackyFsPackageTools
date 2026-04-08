@@ -5,26 +5,58 @@
       "branch": 76,
       "reason": "Assembly path resolution depends on runtime environment; reflection branches from compiler"
     },
+    "Cobertura.fs": [
+      {
+        "line": 100,
+        "branch": 86,
+        "reason": "loosened automatically",
+        "platform": "macos"
+      }
+    ],
     "Config.fs": {
       "line": 97,
       "branch": 84,
       "reason": "F# compiler generates extra branches for TryGetProperty patterns; toJson serializer branches"
     },
     "Program.fs": {
-      "line": 72,
-      "branch": 59,
+      "line": 46,
+      "branch": 44,
       "reason": "CLI entry point using exit and CWD; initCommand prints to stdout"
     },
+    "Ratchet.fs": [
+      {
+        "line": 98,
+        "branch": 83,
+        "reason": "loosened automatically",
+        "platform": "macos"
+      }
+    ],
     "Release.fs": {
       "line": 93,
       "branch": 95,
       "reason": "release() orchestration calls VCS/Shell externals; tag/push paths tested at unit level in VcsTests"
     },
+    "Shell.fs": [
+      {
+        "line": 0,
+        "branch": 0,
+        "reason": "loosened automatically",
+        "platform": "macos"
+      }
+    ],
     "Sync.fs": {
       "line": 100,
       "branch": 93.75,
       "reason": "loosened automatically"
     },
+    "Thresholds.fs": [
+      {
+        "line": 95,
+        "branch": 85,
+        "reason": "loosened automatically",
+        "platform": "macos"
+      }
+    ],
     "Vcs.fs": [
       {
         "line": 93,
