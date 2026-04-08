@@ -179,14 +179,13 @@ let isCiPassing (run: string -> string -> CommandResult) : bool =
     | Passed -> true
     | _ -> false
 
+let pushMain (run: string -> string -> CommandResult) : unit = runOrFail run "jj" "git push" |> ignore
+
 let pushTags (run: string -> string -> CommandResult) (tags: string list) : unit =
     // Export jj tags to the underlying git repo
     runOrFail run "jj" "git export" |> ignore
 
-    // Push main first (so the tagged commit exists on origin),
-    // then push tags separately so each gets its own GitHub Actions push event.
+    // Push each tag separately so each gets its own GitHub Actions push event
     withJjGitDir (fun () ->
-        runOrFail run "git" "push origin main" |> ignore
-
         for tag in tags do
             runOrFail run "git" (sprintf "push origin %s" tag) |> ignore)

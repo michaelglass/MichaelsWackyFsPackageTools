@@ -222,8 +222,17 @@ let release
                 // 9. Publish or push tags + main
                 match mode with
                 | GitHubActions ->
-                    pushTags run tags
-                    printfn "Tags pushed. GitHub Actions will handle the release."
+                    pushMain run
+                    printfn "Waiting for CI on version bump commit..."
+                    let ciStatus = waitForCi run 15000 40
+
+                    match ciStatus with
+                    | Passed ->
+                        pushTags run tags
+                        printfn "Tags pushed. GitHub Actions will handle the release."
+                    | _ ->
+                        printfn "Warning: CI did not pass on version bump commit. Pushing tags anyway."
+                        pushTags run tags
                 | LocalPublish ->
                     for (pkg, _version) in bumps do
                         runOrFail run "dotnet" (sprintf "pack %s -c Release -o artifacts/" pkg.Fsproj)
