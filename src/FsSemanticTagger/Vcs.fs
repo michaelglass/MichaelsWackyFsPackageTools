@@ -201,5 +201,13 @@ let isCiPassing (run: string -> string -> CommandResult) : bool =
     | Passed -> true
     | _ -> false
 
-let pushTags (run: string -> string -> CommandResult) (_tags: string list) : unit =
+let pushTags (run: string -> string -> CommandResult) (tags: string list) : unit =
+    // Export jj tags to the underlying git repo
+    runOrFail run "jj" "git export" |> ignore
+    // Push main bookmark (includes the version bump commit)
     runOrFail run "jj" "git push" |> ignore
+
+    // Push tags via git (jj git push only handles bookmarks, not tags)
+    withJjGitDir (fun () ->
+        let tagArgs = tags |> String.concat " "
+        runOrFail run "git" (sprintf "push origin %s" tagArgs) |> ignore)
