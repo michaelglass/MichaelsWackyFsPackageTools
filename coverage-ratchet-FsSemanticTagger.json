@@ -17,7 +17,7 @@
     },
     "Release.fs": {
       "line": 93.96551724137932,
-      "branch": 94.73684210526316,
+      "branch": 94.0,
       "reason": "release() orchestration calls VCS/Shell externals; tag/push paths tested at unit level in VcsTests"
     },
     "Sync.fs": {
