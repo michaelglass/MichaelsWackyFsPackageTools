@@ -415,7 +415,9 @@ let ``loosenRaw adds platform-specific entry for new file`` () =
     test <@ entries.[0].Line = 80.0 @>
 
 [<Fact>]
-let ``mergeFromCi - adds linux entry splitting existing non-platform override`` () =
+let ``mergeFromCi - adds ci-platform entry splitting existing non-platform override`` () =
+    let ciPlatform = if currentPlatform = "macos" then "linux" else "other"
+
     let raw: RawConfig =
         { DefaultLine = 100.0
           DefaultBranch = 100.0
@@ -428,15 +430,15 @@ let ``mergeFromCi - adds linux entry splitting existing non-platform override`` 
                       Platform = None } ] ] }
 
     let ciResults = Map.ofList [ "Program.fs", (59.0, 23.0) ]
-    let result = mergeFromCi raw "linux" ciResults
+    let result = mergeFromCi raw ciPlatform ciResults
     let entries = result.RawOverrides.["Program.fs"]
     test <@ entries.Length = 2 @>
-    let macosEntry = entries |> List.find (fun o -> o.Platform = Some "macos")
-    let linuxEntry = entries |> List.find (fun o -> o.Platform = Some "linux")
-    test <@ macosEntry.Line = 49.0 @>
-    test <@ macosEntry.Branch = 31.0 @>
-    test <@ linuxEntry.Line = 59.0 @>
-    test <@ linuxEntry.Branch = 23.0 @>
+    let localEntry = entries |> List.find (fun o -> o.Platform = Some currentPlatform)
+    let ciEntry = entries |> List.find (fun o -> o.Platform = Some ciPlatform)
+    test <@ localEntry.Line = 49.0 @>
+    test <@ localEntry.Branch = 31.0 @>
+    test <@ ciEntry.Line = 59.0 @>
+    test <@ ciEntry.Branch = 23.0 @>
 
 [<Fact>]
 let ``mergeFromCi - updates existing linux platform entry`` () =
