@@ -1,23 +1,23 @@
 {
   "overrides": {
     "Api.fs": {
-      "line": 91.24087591240875,
-      "branch": 73.52941176470588,
+      "line": 93,
+      "branch": 76,
       "reason": "Assembly path resolution depends on runtime environment; reflection branches from compiler"
     },
     "Config.fs": {
-      "line": 97.03703703703704,
-      "branch": 84.90566037735849,
+      "line": 97,
+      "branch": 84,
       "reason": "F# compiler generates extra branches for TryGetProperty patterns; toJson serializer branches"
     },
     "Program.fs": {
-      "line": 72.15189873417721,
-      "branch": 59.09090909090909,
+      "line": 72,
+      "branch": 59,
       "reason": "CLI entry point using exit and CWD; initCommand prints to stdout"
     },
     "Release.fs": {
-      "line": 93.96551724137932,
-      "branch": 94.0,
+      "line": 93,
+      "branch": 94,
       "reason": "release() orchestration calls VCS/Shell externals; tag/push paths tested at unit level in VcsTests"
     },
     "Sync.fs": {
@@ -26,12 +26,12 @@
       "reason": "loosened automatically"
     },
     "Vcs.fs": {
-      "line": 92.98245614035088,
-      "branch": 81.48148148148148,
+      "line": 93,
+      "branch": 84,
       "reason": "All functions call jj/git processes"
     },
     "Version.fs": {
-      "line": 98.24561403508771,
+      "line": 98,
       "branch": 100,
       "reason": "Uncovered lines are unreachable match cases"
     }

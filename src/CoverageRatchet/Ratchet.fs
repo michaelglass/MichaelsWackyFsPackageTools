@@ -3,6 +3,8 @@ module CoverageRatchet.Ratchet
 open CoverageRatchet.Cobertura
 open CoverageRatchet.Thresholds
 
+let private toThreshold (pct: float) = floor pct
+
 let ratchet (config: Config) (files: FileCoverage list) : Config =
     let fileMap = files |> List.map (fun f -> f.FileName, f) |> Map.ofList
 
@@ -13,8 +15,8 @@ let ratchet (config: Config) (files: FileCoverage list) : Config =
             match Map.tryFind name fileMap with
             | None -> Some(name, ovr)
             | Some file ->
-                let newLine = max ovr.Line file.LinePct
-                let newBranch = max ovr.Branch file.BranchPct
+                let newLine = max ovr.Line (toThreshold file.LinePct)
+                let newBranch = max ovr.Branch (toThreshold file.BranchPct)
 
                 if newLine >= config.DefaultLine && newBranch >= config.DefaultBranch then
                     None
@@ -153,8 +155,8 @@ let loosen (config: Config) (files: FileCoverage list) : Config =
                     Some(
                         name,
                         { ovr with
-                            Line = file.LinePct
-                            Branch = file.BranchPct }
+                            Line = toThreshold file.LinePct
+                            Branch = toThreshold file.BranchPct }
                     ))
         |> Map.ofList
 
@@ -169,8 +171,8 @@ let loosen (config: Config) (files: FileCoverage list) : Config =
                 else
                     Map.add
                         file.FileName
-                        { Line = file.LinePct
-                          Branch = file.BranchPct
+                        { Line = toThreshold file.LinePct
+                          Branch = toThreshold file.BranchPct
                           Reason = "loosened automatically"
                           Platform = None }
                         acc)
