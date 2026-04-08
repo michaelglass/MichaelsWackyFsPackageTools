@@ -17,8 +17,8 @@
     },
     "Release.fs": {
       "line": 93.96551724137932,
-      "branch": 97.22222222222221,
-      "reason": "release() orchestration calls VCS/Shell externals; determineBump/forCommand/updateFsprojVersion are tested"
+      "branch": 95.0,
+      "reason": "release() orchestration calls VCS/Shell externals; tagLastCommit error paths tested at unit level in VcsTests"
     },
     "Sync.fs": {
       "line": 100,
