@@ -27,11 +27,11 @@ let ``formatFileResult - passing file at 100 percent`` () =
     test <@ not (result.Contains("[min:")) @>
 
 [<Fact>]
-let ``formatFileResult - failing file with thresholds`` () =
+let ``formatFileResult - failing file with thresholds shows one decimal`` () =
     let r =
-        { File = makeFile "Bar.fs" 60.0 50.0 1 4
-          LineThreshold = 80.0
-          BranchThreshold = 70.0
+        { File = makeFile "Bar.fs" 60.5 50.3 1 4
+          LineThreshold = 80.2
+          BranchThreshold = 70.9
           LinePassed = false
           BranchPassed = false }
 
@@ -39,7 +39,9 @@ let ``formatFileResult - failing file with thresholds`` () =
 
     test <@ result.Contains("FAIL") @>
     test <@ result.Contains("Bar.fs") @>
-    test <@ result.Contains("[min: line=80% branch=70%]") @>
+    test <@ result.Contains("line=60.5%") @>
+    test <@ result.Contains("branch=50.3%") @>
+    test <@ result.Contains("[min: line=80.2% branch=70.9%]") @>
 
 [<Fact>]
 let ``formatFileResult - file with no branches`` () =

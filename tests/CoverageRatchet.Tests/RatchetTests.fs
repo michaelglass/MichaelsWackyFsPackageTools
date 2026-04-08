@@ -25,6 +25,24 @@ let ``ratchet tightens override when coverage improves`` () =
     test <@ result.Overrides.["Foo.fs"].Branch = 75.0 @>
 
 [<Fact>]
+let ``ratchet floors fractional coverage to integer thresholds`` () =
+    let config =
+        { defaultsConfig with
+            Overrides =
+                Map.ofList
+                    [ "Foo.fs",
+                      { Line = 70.0
+                        Branch = 65.0
+                        Reason = "legacy"
+                        Platform = None } ] }
+
+    let files = [ makeFile "Foo.fs" 80.3 75.7 3 4 ]
+    let result = ratchet config files
+
+    test <@ result.Overrides.["Foo.fs"].Line = 80.0 @>
+    test <@ result.Overrides.["Foo.fs"].Branch = 75.0 @>
+
+[<Fact>]
 let ``ratchet removes override when file reaches defaults`` () =
     let config =
         { defaultsConfig with

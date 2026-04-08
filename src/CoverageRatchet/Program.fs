@@ -23,12 +23,12 @@ let formatFileResult (r: FileResult) =
 
     let thresholdStr =
         if r.LineThreshold < 100.0 || r.BranchThreshold < 100.0 then
-            sprintf " [min: line=%.0f%% branch=%.0f%%]" r.LineThreshold r.BranchThreshold
+            sprintf " [min: line=%.1f%% branch=%.1f%%]" r.LineThreshold r.BranchThreshold
         else
             ""
 
     sprintf
-        "  %s %s: line=%.0f%% branch=%.0f%%%s%s"
+        "  %s %s: line=%.1f%% branch=%.1f%%%s%s"
         status
         r.File.FileName
         r.File.LinePct
