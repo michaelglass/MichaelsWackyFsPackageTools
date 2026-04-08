@@ -25,11 +25,20 @@
       "branch": 93.75,
       "reason": "loosened automatically"
     },
-    "Vcs.fs": {
-      "line": 93,
-      "branch": 84,
-      "reason": "All functions call jj/git processes"
-    },
+    "Vcs.fs": [
+      {
+        "line": 93,
+        "branch": 84,
+        "platform": "macos",
+        "reason": "All functions call jj/git processes"
+      },
+      {
+        "line": 93,
+        "branch": 83,
+        "platform": "linux",
+        "reason": "All functions call jj/git processes; fewer branches on Linux"
+      }
+    ],
     "Version.fs": {
       "line": 98,
       "branch": 100,
