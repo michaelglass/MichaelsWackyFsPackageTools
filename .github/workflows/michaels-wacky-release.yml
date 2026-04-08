@@ -37,34 +37,17 @@ jobs:
       version: ${{ steps.version.outputs.VERSION }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 5
       - name: Verify CI passed for this commit
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Check CI on the tagged commit and its ancestors (up to 5).
-          # fssemantictagger may create version-bump commits between the
-          # CI-tested commit and the tag, so we walk back to find CI.
-          check_ci() {
-            gh api "repos/${{ github.repository }}/commits/$1/check-runs" \
-              --jq '[.check_runs[] | select(.name == "build / build")]'
-          }
           sha="${{ github.sha }}"
-          ci_runs="[]"
-          for i in $(seq 0 4); do
-            echo "Checking CI for $sha..."
-            ci_runs=$(check_ci "$sha")
-            total=$(echo "$ci_runs" | jq 'length')
-            if [ "$total" -gt "0" ]; then
-              break
-            fi
-            sha=$(git rev-parse "$sha^" 2>/dev/null || true)
-            if [ -z "$sha" ]; then break; fi
-          done
+          echo "Checking CI for $sha..."
+          ci_runs=$(gh api "repos/${{ github.repository }}/commits/$sha/check-runs" \
+            --jq '[.check_runs[] | select(.name == "build / build")]')
           total=$(echo "$ci_runs" | jq 'length')
           if [ "$total" -eq "0" ]; then
-            echo "::error::No CI checks found for this commit or its ancestors. Push to main first."
+            echo "::error::No CI checks found for this commit. Push to main first."
             exit 1
           fi
           passed=$(echo "$ci_runs" | jq '[.[] | select(.conclusion == "success" or .conclusion == "skipped")] | length')

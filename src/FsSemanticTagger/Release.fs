@@ -95,6 +95,8 @@ let release
     (mode: PublishMode)
     (extractPreviousApi: string -> string -> ApiSignature list option)
     (extractCurrentApi: string -> ApiSignature list)
+    (ciPollIntervalMs: int)
+    (ciMaxAttempts: int)
     : int =
     // 1. Check for uncommitted changes
     if hasUncommittedChanges run then
@@ -109,7 +111,7 @@ let release
                 | Success _ -> true
                 | Failure _ -> false
             else
-                match waitForCi run 15000 40 with
+                match waitForCi run ciPollIntervalMs ciMaxAttempts with
                 | Passed -> true
                 | Failed runs ->
                     printfn "Error: CI failed"
@@ -234,15 +236,27 @@ let release
                 | GitHubActions ->
                     pushMain run
                     printfn "Waiting for CI on version bump commit..."
-                    let ciStatus = waitForCi run 15000 40
+                    let ciStatus = waitForCi run ciPollIntervalMs ciMaxAttempts
 
                     match ciStatus with
                     | Passed ->
                         pushTags run tags
                         printfn "Tags pushed. GitHub Actions will handle the release."
+                    | Failed runs ->
+                        printfn "Error: CI failed on version bump commit. Not pushing tags."
+
+                        for r in runs do
+                            printfn "  FAILED: %s — %s" r.Name r.Url
+
+                        () // exit code 0 since version bump is already pushed
+                    | InProgress _ ->
+                        printfn "Error: CI still running after timeout. Not pushing tags."
+                        printfn "Run 'jj git push' to push tags manually after CI passes."
+                        ()
                     | _ ->
-                        printfn "Warning: CI did not pass on version bump commit. Pushing tags anyway."
-                        pushTags run tags
+                        printfn "Error: could not determine CI status. Not pushing tags."
+                        printfn "Run 'jj git push' to push tags manually after CI passes."
+                        ()
                 | LocalPublish ->
                     for (pkg, _version) in bumps do
                         runOrFail run "dotnet" (sprintf "pack %s -c Release -o artifacts/" pkg.Fsproj)

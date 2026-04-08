@@ -80,7 +80,9 @@ let ``release - returns 1 when uncommitted changes`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = [] }
 
-    let result = release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi
+    let result =
+        release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+
     test <@ result = 1 @>
 
 [<Fact>]
@@ -98,7 +100,9 @@ let ``release - returns 1 when CI not passing`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = [] }
 
-    let result = release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi
+    let result =
+        release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+
     test <@ result = 1 @>
 
 [<Fact>]
@@ -123,7 +127,9 @@ let ``release - Auto with no previous tags returns 0 with no packages`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = [] }
 
-    let result = release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi
+    let result =
+        release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+
     test <@ result = 0 @>
 
 [<Fact>]
@@ -170,7 +176,7 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
               PreBuildCmds = [] }
 
         let result =
-            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi
+            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
 
@@ -242,7 +248,7 @@ let ``release - StartAlpha with LocalPublish calls dotnet pack`` () =
               PreBuildCmds = [] }
 
         let result =
-            release fakeRun config StartAlpha LocalPublish noPreviousApi noCurrentApi
+            release fakeRun config StartAlpha LocalPublish noPreviousApi noCurrentApi 0 10
 
         let calls = getCalls ()
         test <@ result = 0 @>
@@ -286,7 +292,9 @@ let ``release - Auto with reserved version bumps past it`` () =
               ReservedVersions = Set.ofList [ "1.0.1" ]
               PreBuildCmds = [] }
 
-        let result = release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi
+        let result =
+            release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
         test <@ content.Contains("<Version>1.0.2</Version>") @>
@@ -308,7 +316,7 @@ let ``release - non-Auto with reserved version skips package`` () =
           PreBuildCmds = [] }
 
     let result =
-        release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi
+        release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
     test <@ result = 0 @>
 
@@ -327,7 +335,7 @@ let ``release - PromoteToBeta with FirstRelease returns 0 no packages`` () =
           PreBuildCmds = [] }
 
     let result =
-        release fakeRun config PromoteToBeta GitHubActions noPreviousApi noCurrentApi
+        release fakeRun config PromoteToBeta GitHubActions noPreviousApi noCurrentApi 0 10
 
     test <@ result = 0 @>
 
@@ -354,7 +362,7 @@ let ``release - runs preBuildCmds before build`` () =
               PreBuildCmds = [ "dotnet tool restore"; "dotnet tool run paket restore" ] }
 
         let result =
-            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi
+            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
         let calls = getCalls ()
         test <@ result = 0 @>
@@ -486,7 +494,7 @@ let ``release - skips packages with no changes since last tag`` () =
               PreBuildCmds = [] }
 
         let result =
-            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi
+            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
 
@@ -532,7 +540,7 @@ let ``release - Auto detects breaking API change and bumps major`` () =
               PreBuildCmds = [] }
 
         let result =
-            release fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi)
+            release fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi) 0 10
 
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
@@ -576,7 +584,7 @@ let ``release - Auto detects addition and bumps minor`` () =
               PreBuildCmds = [] }
 
         let result =
-            release fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi)
+            release fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi) 0 10
 
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
@@ -617,12 +625,169 @@ let ``release - Auto falls back to NoChange when extractPreviousApi returns None
               PreBuildCmds = [] }
 
         let result =
-            release fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi)
+            release fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi) 0 10
 
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
         // Falls back to NoChange => patch bump => 1.0.1
         test <@ content.Contains("<Version>1.0.1</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - does not push tags when post-push CI fails`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        let mutable ghCallCount = 0
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                ghCallCount <- ghCallCount + 1
+
+                if ghCallCount <= 1 then
+                    // First CI check (pre-release): passing
+                    Success
+                        """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+                else
+                    // Second CI check (post-push): failed
+                    Success
+                        """[{"status":"completed","conclusion":"failure","name":"CI","url":"https://example.com/2"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", a when a.StartsWith("commit") -> Success ""
+            | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git push" -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
+
+        let result =
+            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+
+        test <@ result = 0 @>
+
+        // Should NOT have pushed tags
+        test <@ not (calls |> List.exists (fun (c, _) -> c = "jj" && snd (c, "") = "git export")) @>
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - does not push tags when post-push CI times out`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        let mutable ghCallCount = 0
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                ghCallCount <- ghCallCount + 1
+
+                if ghCallCount <= 1 then
+                    Success
+                        """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+                else
+                    Success """[{"status":"in_progress","conclusion":null,"name":"CI","url":"https://example.com/2"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", a when a.StartsWith("commit") -> Success ""
+            | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git push" -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
+
+        let result =
+            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 3
+
+        test <@ result = 0 @>
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - does not push tags when post-push CI has no runs`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        let mutable ghCallCount = 0
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                ghCallCount <- ghCallCount + 1
+
+                if ghCallCount <= 1 then
+                    Success
+                        """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+                else
+                    // Post-push: no runs found
+                    Success "[]"
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", a when a.StartsWith("commit") -> Success ""
+            | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git push" -> Success ""
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "def456"
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
+
+        let result =
+            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+
+        test <@ result = 0 @>
+
+        // Should NOT have pushed tags
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
     finally
         File.Delete(tmpFile)
 
@@ -646,7 +811,9 @@ let ``release - uses coverageratchet loosen-from-ci when available`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = [] }
 
-    let result = release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi
+    let result =
+        release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+
     test <@ result = 0 @>
 
     // Should have called coverageratchet instead of gh run list
