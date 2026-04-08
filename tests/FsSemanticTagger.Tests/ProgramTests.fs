@@ -58,6 +58,17 @@ let ``run - check-api with one arg returns Error`` () =
         @>
 
 [<Fact>]
+let ``run - release with unknown flag returns Error`` () =
+    let result = run [| "release"; "--bogus" |]
+
+    test
+        <@
+            match result with
+            | Error _ -> true
+            | Ok _ -> false
+        @>
+
+[<Fact>]
 let ``run - extract-api with real dll returns Ok 0`` () =
     let dll = System.Reflection.Assembly.GetExecutingAssembly().Location
 

@@ -3,15 +3,17 @@ module FsSemanticTagger.Program
 open System.IO
 open CommandTree
 
+type ReleaseOptions = { publish: bool }
+
 type Command =
     | [<Cmd("Initialize semantic-tagger.json config")>] Init
     | [<Cmd("Extract public API signatures from a DLL")>] ExtractApi of dll: string
     | [<Cmd("Compare APIs between two DLLs")>] CheckApi of oldDll: string * newDll: string
-    | [<Cmd("Auto release based on API changes")>] Release
-    | [<Cmd("Start alpha pre-release cycle")>] Alpha
-    | [<Cmd("Promote to beta")>] Beta
-    | [<Cmd("Promote to release candidate")>] Rc
-    | [<Cmd("Promote to stable release")>] Stable
+    | [<Cmd("Auto release based on API changes")>] Release of ReleaseOptions
+    | [<Cmd("Start alpha pre-release cycle")>] Alpha of ReleaseOptions
+    | [<Cmd("Promote to beta")>] Beta of ReleaseOptions
+    | [<Cmd("Promote to release candidate")>] Rc of ReleaseOptions
+    | [<Cmd("Promote to stable release")>] Stable of ReleaseOptions
 
 let initCommand (rootDir: string) : Result<int, string> =
     let jsonPath = Path.Combine(rootDir, "semantic-tagger.json")
@@ -55,11 +57,18 @@ let initCommand (rootDir: string) : Result<int, string> =
 
             Ok 0
 
-let private runRelease (releaseCmd: Release.ReleaseCommand) : Result<int, string> =
+let private runRelease (releaseCmd: Release.ReleaseCommand) (opts: ReleaseOptions) : Result<int, string> =
     let config = Config.load (Directory.GetCurrentDirectory())
+
+    let mode =
+        if opts.publish then
+            Release.LocalPublish
+        else
+            Release.GitHubActions
+
     let extractPreviousApi = Api.extractFromNuGetCache
     let extractCurrentApi = Api.extractFromAssembly
-    Ok(Release.release Shell.run config releaseCmd Release.GitHubActions extractPreviousApi extractCurrentApi)
+    Ok(Release.release Shell.run config releaseCmd mode extractPreviousApi extractCurrentApi)
 
 let runCommand (cmd: Command) : Result<int, string> =
     match cmd with
@@ -97,11 +106,11 @@ let runCommand (cmd: Command) : Result<int, string> =
         | Api.NoChange ->
             printfn "No API changes"
             Ok 0
-    | Release -> runRelease Release.Auto
-    | Alpha -> runRelease Release.StartAlpha
-    | Beta -> runRelease Release.PromoteToBeta
-    | Rc -> runRelease Release.PromoteToRC
-    | Stable -> runRelease Release.PromoteToStable
+    | Release opts -> runRelease Release.Auto opts
+    | Alpha opts -> runRelease Release.StartAlpha opts
+    | Beta opts -> runRelease Release.PromoteToBeta opts
+    | Rc opts -> runRelease Release.PromoteToRC opts
+    | Stable opts -> runRelease Release.PromoteToStable opts
 
 let run (argv: string array) : Result<int, string> =
     let tree =
