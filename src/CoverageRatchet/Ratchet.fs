@@ -203,7 +203,9 @@ let mergeFromCi (raw: RawConfig) (ciPlatform: string) (ciResults: Map<string, fl
                   Platform = Some ciPlatform }
 
             let hasPlatformEntries = existingEntries |> List.exists (fun e -> e.Platform.IsSome)
-            let hasNonPlatformEntry = existingEntries |> List.exists (fun e -> e.Platform.IsNone)
+
+            let hasNonPlatformEntry =
+                existingEntries |> List.exists (fun e -> e.Platform.IsNone)
 
             let newEntries =
                 if List.isEmpty existingEntries then
@@ -226,7 +228,9 @@ let mergeFromCi (raw: RawConfig) (ciPlatform: string) (ciResults: Map<string, fl
                 elif hasNonPlatformEntry then
                     let localEntries =
                         existingEntries
-                        |> List.map (fun e -> { e with Platform = Some currentPlatform })
+                        |> List.map (fun e ->
+                            { e with
+                                Platform = Some currentPlatform })
 
                     localEntries @ [ ciEntry ]
                 else
