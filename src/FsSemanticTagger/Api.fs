@@ -203,6 +203,29 @@ let compare (baseline: ApiSignature list) (current: ApiSignature list) : ApiChan
     let removed = baseSet - currSet |> Set.toList
     let added = currSet - baseSet |> Set.toList
 
+    // Detect new DU cases: if a new nested type (Parent+Child) is added
+    // where the parent type already existed in the baseline, that's a
+    // breaking change — consumers with exhaustive pattern matches will break.
+    let hasNewDuCase =
+        let baseTypeNames =
+            baseSet
+            |> Set.filter (fun (ApiSignature s) -> s.StartsWith("type "))
+            |> Set.map (fun (ApiSignature s) -> s.Substring(5))
+
+        added
+        |> List.exists (fun (ApiSignature s) ->
+            if s.StartsWith("type ") then
+                let typeName = s.Substring(5)
+
+                match typeName.LastIndexOf('+') with
+                | -1 -> false
+                | i ->
+                    let parent = typeName.Substring(0, i)
+                    baseTypeNames.Contains(parent)
+            else
+                false)
+
     if not removed.IsEmpty then Breaking removed
+    elif hasNewDuCase then Breaking added
     elif not added.IsEmpty then Addition added
     else NoChange
