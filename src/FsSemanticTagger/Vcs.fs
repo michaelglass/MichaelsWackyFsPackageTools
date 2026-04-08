@@ -88,6 +88,10 @@ let tagLastCommit
                 Ok tag
         | _ -> Error(sprintf "Commit %s is not immutable — push to origin before releasing" commitId)
 
+let commitAndAdvanceMain (run: string -> string -> CommandResult) (message: string) : unit =
+    runOrFail run "jj" (sprintf "commit -m \"%s\"" message) |> ignore
+    runOrFail run "jj" "bookmark set main -r @-" |> ignore
+
 let hasChangesSinceTag (run: string -> string -> CommandResult) (tag: string) (path: string) : bool =
     let args =
         sprintf "log -r \"%s::@ & ~empty()\" --no-graph -T \"\" --stat \"glob:%s/**\"" tag path

@@ -210,7 +210,22 @@ let release
                 else
                     let tags = tagResults |> List.choose (fun (_, r) -> r |> Result.toOption)
 
-                    // 7. Publish or push tags
+                    // 7. Update fsproj versions
+                    for (pkg, version) in bumps do
+                        updateFsprojVersion pkg.Fsproj version
+
+                        for extra in pkg.FsProjsSharingSameTag do
+                            updateFsprojVersion extra version
+
+                    // 8. Commit version bump and advance main bookmark
+                    let versionSummary =
+                        bumps
+                        |> List.map (fun (pkg, version) -> sprintf "%s %s" pkg.Name (format version))
+                        |> String.concat ", "
+
+                    commitAndAdvanceMain run (sprintf "Bump versions: %s" versionSummary)
+
+                    // 9. Publish or push tags + main
                     match mode with
                     | GitHubActions ->
                         pushTags run tags

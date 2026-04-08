@@ -123,48 +123,68 @@ let ``release - Auto with no previous tags returns 0 with no packages`` () =
     test <@ result = 0 @>
 
 [<Fact>]
-let ``release - StartAlpha with FirstRelease tags immutable commit`` () =
-    let mutable calls = []
+let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
+    let tmpFile = Path.GetTempFileName()
 
-    let fakeRun (cmd: string) (args: string) : CommandResult =
-        calls <- calls @ [ (cmd, args) ]
+    try
+        File.WriteAllText(
+            tmpFile,
+            """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Version>0.0.0</Version></PropertyGroup>
+</Project>"""
+        )
 
-        match cmd, args with
-        | "jj", "status" -> Success "The working copy is clean"
-        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
-        | "gh", a when a.Contains("run list") ->
-            Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
-        | "dotnet", "build -c Release" -> Success "Build succeeded."
-        | "git", arg when arg.StartsWith("tag -l") -> Success ""
-        | "jj", a when a.Contains("~empty()") -> Success "def456"
-        | "jj", a when a.Contains("immutable()") -> Success "true"
-        | "jj", a when a.StartsWith("tag set") -> Success ""
-        | "jj", "git export" -> Success ""
-        | "git", arg when arg.StartsWith("push origin") -> Success ""
-        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+        let mutable calls = []
 
-    let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = "src/MyLib/MyLib.fsproj"
-                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
 
-    let result = release fakeRun config StartAlpha GitHubActions
-    test <@ result = 0 @>
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            | "jj", a when a.Contains("~empty()") -> Success "def456"
+            | "jj", a when a.Contains("immutable()") -> Success "true"
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", a when a.StartsWith("commit") -> Success ""
+            | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git export" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
 
-    // Verify tag was set (not commit)
-    test
-        <@
-            calls
-            |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set v0.1.0-alpha.1"))
-        @>
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
 
-    // Verify no jj commit was called
-    test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("commit"))) @>
+        let result = release fakeRun config StartAlpha GitHubActions
+        test <@ result = 0 @>
+
+        // Verify tag was set on immutable commit
+        test
+            <@
+                calls
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set v0.1.0-alpha.1"))
+            @>
+
+        // Verify fsproj was updated
+        let content = File.ReadAllText(tmpFile)
+        test <@ content.Contains("<Version>0.1.0-alpha.1</Version>") @>
+
+        // Verify commit + bookmark advance happened after tagging
+        test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("commit")) @>
+
+        test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("bookmark set main")) @>
+    finally
+        File.Delete(tmpFile)
 
 /// Helper: standard fakeRun responses for a passing CI + clean working copy
 let private passingCiRun (extraResponses: (string * string * CommandResult) list) =
@@ -188,6 +208,8 @@ let private passingCiRun (extraResponses: (string * string * CommandResult) list
             | "jj", a when a.Contains("~empty()") -> Success "def456"
             | "jj", a when a.Contains("immutable()") -> Success "true"
             | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", a when a.StartsWith("commit") -> Success ""
+            | "jj", a when a.StartsWith("bookmark set") -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
             | "dotnet", arg when arg.StartsWith("pack") -> Success "Successfully created package"
@@ -197,54 +219,71 @@ let private passingCiRun (extraResponses: (string * string * CommandResult) list
 
 [<Fact>]
 let ``release - StartAlpha with LocalPublish calls dotnet pack`` () =
-    let (fakeRun, getCalls) = passingCiRun []
+    let tmpFile = Path.GetTempFileName()
 
-    let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = "src/MyLib/MyLib.fsproj"
-                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        let (fakeRun, getCalls) = passingCiRun []
 
-    let result = release fakeRun config StartAlpha LocalPublish
-    let calls = getCalls ()
-    test <@ result = 0 @>
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
 
-    test
-        <@
-            calls
-            |> List.exists (fun (c, a) -> c = "dotnet" && a.StartsWith("pack") && a.Contains("src/MyLib/MyLib.fsproj"))
-        @>
+        let result = release fakeRun config StartAlpha LocalPublish
+        let calls = getCalls ()
+        test <@ result = 0 @>
+
+        test
+            <@
+                calls
+                |> List.exists (fun (c, a) -> c = "dotnet" && a.StartsWith("pack") && a.Contains(tmpFile))
+            @>
+    finally
+        File.Delete(tmpFile)
 
 [<Fact>]
 let ``release - Auto with reserved version bumps past it`` () =
-    // Auto with prior tag v1.0.0 => patch bump => 1.0.1, but that's reserved => 1.0.2
-    let (fakeRun, _getCalls) =
-        passingCiRun
-            [ ("git", "tag -l \"v*\"", Success "v1.0.0")
-              // hasChangesSinceTag: report changes
-              ("jj",
-               "log -r \"v1.0.0::@ & ~empty()\" --no-graph -T \"\" --stat \"glob:src/MyLib/**\"",
-               Success "1 file changed") ]
+    let tmpFile = Path.GetTempFileName()
 
-    // Use the test assembly itself as a real DLL so extractFromAssembly works
-    let realDll = System.Reflection.Assembly.GetExecutingAssembly().Location
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
 
-    let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = "src/MyLib/MyLib.fsproj"
-                DllPath = realDll
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.ofList [ "1.0.1" ]
-          PreBuildCmds = [] }
+        // Auto with prior tag v1.0.0 => patch bump => 1.0.1, but that's reserved => 1.0.2
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
+                  // hasChangesSinceTag: report changes
+                  ("jj",
+                   "log -r \"v1.0.0::@ & ~empty()\" --no-graph -T \"\" --stat \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
+                   Success "1 file changed") ]
 
-    let result = release fakeRun config Auto GitHubActions
-    test <@ result = 0 @>
+        // Use the test assembly itself as a real DLL so extractFromAssembly works
+        let realDll = System.Reflection.Assembly.GetExecutingAssembly().Location
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = realDll
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.ofList [ "1.0.1" ]
+              PreBuildCmds = [] }
+
+        let result = release fakeRun config Auto GitHubActions
+        test <@ result = 0 @>
+        let content = File.ReadAllText(tmpFile)
+        test <@ content.Contains("<Version>1.0.2</Version>") @>
+    finally
+        File.Delete(tmpFile)
 
 [<Fact>]
 let ``release - non-Auto with reserved version skips package`` () =
@@ -282,53 +321,61 @@ let ``release - PromoteToBeta with FirstRelease returns 0 no packages`` () =
 
 [<Fact>]
 let ``release - runs preBuildCmds before build`` () =
-    let mutable calls = []
+    let tmpFile = Path.GetTempFileName()
 
-    let fakeRun (cmd: string) (args: string) : CommandResult =
-        calls <- calls @ [ (cmd, args) ]
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        let mutable calls = []
 
-        match cmd, args with
-        | "jj", "status" -> Success "The working copy is clean"
-        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
-        | "gh", a when a.Contains("run list") ->
-            Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
-        | "dotnet", "tool restore" -> Success "Restored."
-        | "dotnet", "tool run paket restore" -> Success "Paket restored."
-        | "dotnet", "build -c Release" -> Success "Build succeeded."
-        | "git", arg when arg.StartsWith("tag -l") -> Success ""
-        | "jj", a when a.Contains("~empty()") -> Success "def456"
-        | "jj", a when a.Contains("immutable()") -> Success "true"
-        | "jj", a when a.StartsWith("tag set") -> Success ""
-        | "jj", "git export" -> Success ""
-        | "git", arg when arg.StartsWith("push origin") -> Success ""
-        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
 
-    let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = "src/MyLib/MyLib.fsproj"
-                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = [ "dotnet tool restore"; "dotnet tool run paket restore" ] }
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "tool restore" -> Success "Restored."
+            | "dotnet", "tool run paket restore" -> Success "Paket restored."
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            | "jj", a when a.Contains("~empty()") -> Success "def456"
+            | "jj", a when a.Contains("immutable()") -> Success "true"
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", a when a.StartsWith("commit") -> Success ""
+            | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git export" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
 
-    let result = release fakeRun config StartAlpha GitHubActions
-    test <@ result = 0 @>
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [ "dotnet tool restore"; "dotnet tool run paket restore" ] }
 
-    // Verify pre-build commands ran before build
-    let toolRestoreIdx =
-        calls |> List.findIndex (fun (c, a) -> c = "dotnet" && a = "tool restore")
+        let result = release fakeRun config StartAlpha GitHubActions
+        test <@ result = 0 @>
 
-    let paketRestoreIdx =
-        calls
-        |> List.findIndex (fun (c, a) -> c = "dotnet" && a = "tool run paket restore")
+        // Verify pre-build commands ran before build
+        let toolRestoreIdx =
+            calls |> List.findIndex (fun (c, a) -> c = "dotnet" && a = "tool restore")
 
-    let buildIdx =
-        calls |> List.findIndex (fun (c, a) -> c = "dotnet" && a = "build -c Release")
+        let paketRestoreIdx =
+            calls
+            |> List.findIndex (fun (c, a) -> c = "dotnet" && a = "tool run paket restore")
 
-    test <@ toolRestoreIdx < paketRestoreIdx @>
-    test <@ paketRestoreIdx < buildIdx @>
+        let buildIdx =
+            calls |> List.findIndex (fun (c, a) -> c = "dotnet" && a = "build -c Release")
+
+        test <@ toolRestoreIdx < paketRestoreIdx @>
+        test <@ paketRestoreIdx < buildIdx @>
+    finally
+        File.Delete(tmpFile)
 
 [<Fact>]
 let ``waitForCi - polls until CI passes`` () =
@@ -394,54 +441,62 @@ let ``waitForCi - returns Failed immediately without polling`` () =
 
 [<Fact>]
 let ``release - skips packages with no changes since last tag`` () =
-    let mutable calls = []
+    let tmpFileA = Path.GetTempFileName()
 
-    let fakeRun (cmd: string) (args: string) : CommandResult =
-        calls <- calls @ [ (cmd, args) ]
+    try
+        File.WriteAllText(tmpFileA, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        let mutable calls = []
 
-        match cmd, args with
-        | "jj", "status" -> Success "The working copy is clean"
-        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
-        | "gh", a when a.Contains("run list") ->
-            Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
-        | "dotnet", "build -c Release" -> Success "Build succeeded."
-        // LibA has a previous tag and changes
-        | "jj", a when a.Contains("tag list") && a.Contains("liba-v") -> Success "liba-v0.1.0-alpha.1"
-        | "jj", a when a.Contains("liba-v0.1.0-alpha.1::@") && a.Contains("src/LibA") -> Success "1 file changed"
-        // LibB has a previous tag but NO changes
-        | "jj", a when a.Contains("tag list") && a.Contains("libb-v") -> Success "libb-v0.1.0-alpha.1"
-        | "jj", a when a.Contains("libb-v0.1.0-alpha.1::@") && a.Contains("src/LibB") -> Success ""
-        // tagLastCommit responses
-        | "jj", a when a.Contains("~empty()") -> Success "def456"
-        | "jj", a when a.Contains("immutable()") -> Success "true"
-        | "jj", a when a.StartsWith("tag set") -> Success ""
-        | "jj", "git export" -> Success ""
-        | "git", arg when arg.StartsWith("push origin") -> Success ""
-        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
 
-    let config =
-        { Packages =
-            [ { Name = "LibA"
-                Fsproj = "src/LibA/LibA.fsproj"
-                DllPath = "src/LibA/bin/Release/net10.0/LibA.dll"
-                TagPrefix = "liba-v"
-                FsProjsSharingSameTag = [] }
-              { Name = "LibB"
-                Fsproj = "src/LibB/LibB.fsproj"
-                DllPath = "src/LibB/bin/Release/net10.0/LibB.dll"
-                TagPrefix = "libb-v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            // LibA has a previous tag and changes
+            | "jj", a when a.Contains("tag list") && a.Contains("liba-v") -> Success "liba-v0.1.0-alpha.1"
+            | "jj", a when a.Contains("liba-v0.1.0-alpha.1::@") -> Success "1 file changed"
+            // LibB has a previous tag but NO changes
+            | "jj", a when a.Contains("tag list") && a.Contains("libb-v") -> Success "libb-v0.1.0-alpha.1"
+            | "jj", a when a.Contains("libb-v0.1.0-alpha.1::@") -> Success ""
+            // tagLastCommit responses
+            | "jj", a when a.Contains("~empty()") -> Success "def456"
+            | "jj", a when a.Contains("immutable()") -> Success "true"
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", a when a.StartsWith("commit") -> Success ""
+            | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git export" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
 
-    let result = release fakeRun config StartAlpha GitHubActions
-    test <@ result = 0 @>
+        let config =
+            { Packages =
+                [ { Name = "LibA"
+                    Fsproj = tmpFileA
+                    DllPath = "src/LibA/bin/Release/net10.0/LibA.dll"
+                    TagPrefix = "liba-v"
+                    FsProjsSharingSameTag = [] }
+                  { Name = "LibB"
+                    Fsproj = "src/LibB/LibB.fsproj"
+                    DllPath = "src/LibB/bin/Release/net10.0/LibB.dll"
+                    TagPrefix = "libb-v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
 
-    // LibA should be tagged
-    test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set liba-v")) @>
+        let result = release fakeRun config StartAlpha GitHubActions
+        test <@ result = 0 @>
 
-    // LibB should NOT be tagged
-    test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set libb-v"))) @>
+        // LibA should be tagged
+        test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set liba-v")) @>
+
+        // LibB should NOT be tagged
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set libb-v"))) @>
+    finally
+        File.Delete(tmpFileA)
 
 [<Fact>]
 let ``release - returns 1 when commit is not immutable`` () =
