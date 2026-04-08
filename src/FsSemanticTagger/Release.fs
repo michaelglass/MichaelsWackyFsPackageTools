@@ -151,34 +151,34 @@ let release
                         None
                     | _ ->
 
-                    match cmd with
-                    | Auto ->
-                        match state with
-                        | FirstRelease -> None // Need explicit command for first release
-                        | HasPreviousRelease(_tag, currentVersion) ->
-                            // Compare API
-                            let currentApi = extractFromAssembly pkg.DllPath
-                            // For now, just bump patch (full API comparison from tag needs VCS workspace)
-                            let _currentApi = currentApi
-                            let change = NoChange
-                            let newVersion = determineBump currentVersion change
+                        match cmd with
+                        | Auto ->
+                            match state with
+                            | FirstRelease -> None // Need explicit command for first release
+                            | HasPreviousRelease(_tag, currentVersion) ->
+                                // Compare API
+                                let currentApi = extractFromAssembly pkg.DllPath
+                                // For now, just bump patch (full API comparison from tag needs VCS workspace)
+                                let _currentApi = currentApi
+                                let change = NoChange
+                                let newVersion = determineBump currentVersion change
 
-                            if config.ReservedVersions.Contains(format newVersion) then
-                                let newVersion = bumpPatch newVersion
-                                Some(pkg, newVersion)
-                            else
-                                Some(pkg, newVersion)
-                    | _ ->
-                        match forCommand state cmd with
-                        | Some v ->
-                            if config.ReservedVersions.Contains(format v) then
-                                printfn "Warning: version %s is reserved, skipping" (format v)
-                                None
-                            else
-                                Some(pkg, v)
-                        | None ->
-                            printfn "Cannot %A from current state for %s" cmd pkg.Name
-                            None)
+                                if config.ReservedVersions.Contains(format newVersion) then
+                                    let newVersion = bumpPatch newVersion
+                                    Some(pkg, newVersion)
+                                else
+                                    Some(pkg, newVersion)
+                        | _ ->
+                            match forCommand state cmd with
+                            | Some v ->
+                                if config.ReservedVersions.Contains(format v) then
+                                    printfn "Warning: version %s is reserved, skipping" (format v)
+                                    None
+                                else
+                                    Some(pkg, v)
+                            | None ->
+                                printfn "Cannot %A from current state for %s" cmd pkg.Name
+                                None)
 
             if bumps.IsEmpty then
                 printfn "No packages to release"
@@ -192,7 +192,8 @@ let release
 
                 // 6. Tag the last non-empty immutable commit
                 let tagResults =
-                    bumps |> List.map (fun (pkg, version) -> (pkg, tagLastCommit run pkg.TagPrefix version))
+                    bumps
+                    |> List.map (fun (pkg, version) -> (pkg, tagLastCommit run pkg.TagPrefix version))
 
                 let errors =
                     tagResults

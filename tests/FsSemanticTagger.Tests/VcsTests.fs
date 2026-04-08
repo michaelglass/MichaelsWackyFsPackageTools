@@ -229,9 +229,7 @@ let ``hasChangesSinceTag - returns true when files changed in path`` () =
 let ``hasChangesSinceTag - returns false when no files changed in path`` () =
     let run =
         fakeRun
-            [ ("jj",
-               "log -r \"v1.0.0::@ & ~empty()\" --no-graph -T \"\" --stat \"glob:src/MyLib/**\"",
-               Success "") ]
+            [ ("jj", "log -r \"v1.0.0::@ & ~empty()\" --no-graph -T \"\" --stat \"glob:src/MyLib/**\"", Success "") ]
 
     test <@ hasChangesSinceTag run "v1.0.0" "src/MyLib" = false @>
 
