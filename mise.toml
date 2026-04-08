@@ -67,10 +67,10 @@ description = "Verify all packable projects are linked in docs/docs-index.html"
 run = "dotnet fsi scripts/check-docs-index.fsx"
 
 [tasks.check]
-depends = ["format", "lint", "docs", "coverage-check", "check-docs-index"]
+depends = ["format", "lint", "lint-project", "docs", "coverage-check", "check-docs-index"]
 
 [tasks.ci]
-depends = ["format-check", "lint", "docs", "coverage-check", "check-docs-index"]
+depends = ["format-check", "lint", "lint-project", "docs", "coverage-check", "check-docs-index"]
 
 [tasks.pack]
 run = """
