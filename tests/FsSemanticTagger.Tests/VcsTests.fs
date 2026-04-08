@@ -213,6 +213,30 @@ let ``tagLastCommit - falls back to git tag when jj tag fails`` () =
 
     test <@ calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("tag -a v2.1.0")) @>
 
+// commitAndAdvanceMain
+
+[<Fact>]
+let ``commitAndAdvanceMain - commits and moves main bookmark`` () =
+    let mutable calls: (string * string) list = []
+
+    let run (cmd: string) (args: string) =
+        calls <- calls @ [ (cmd, args) ]
+
+        match cmd, args with
+        | "jj", a when a.StartsWith("commit") -> Success ""
+        | "jj", a when a.StartsWith("bookmark set") -> Success ""
+        | _ -> Failure(sprintf "unexpected: %s %s" cmd args)
+
+    commitAndAdvanceMain run "Bump versions"
+
+    test
+        <@
+            calls
+            |> List.exists (fun (c, a) -> c = "jj" && a.Contains("commit") && a.Contains("Bump versions"))
+        @>
+
+    test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("bookmark set main")) @>
+
 // hasChangesSinceTag
 
 [<Fact>]
