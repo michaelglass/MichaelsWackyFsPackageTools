@@ -34,7 +34,7 @@
       },
       {
         "line": 93,
-        "branch": 83,
+        "branch": 82,
         "reason": "All functions call jj/git processes; fewer branches on Linux",
         "platform": "linux"
       }
