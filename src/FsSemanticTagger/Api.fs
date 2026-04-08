@@ -13,22 +13,23 @@ type ApiChange =
     | NoChange
 
 /// Build list of paths to search for assembly dependencies
+let private getDotnetRoot (runtimeDir: string) =
+    let envRoot = Environment.GetEnvironmentVariable("DOTNET_ROOT")
+
+    if not (String.IsNullOrEmpty(envRoot)) then
+        envRoot
+    else
+        let runtimeParent = Path.GetDirectoryName(runtimeDir)
+        // runtime dir is like <dotnet>/shared/Microsoft.NETCore.App/10.0.0/
+        // go up 3 levels to dotnet root
+        Path.GetDirectoryName(Path.GetDirectoryName(runtimeParent))
+
 let getAssemblySearchPaths (dllPath: string) : string list =
     let dllDir = Path.GetDirectoryName(Path.GetFullPath(dllPath))
     let runtimeDir = RuntimeEnvironment.GetRuntimeDirectory()
+    let dotnetRoot = getDotnetRoot runtimeDir
 
     let sdkDirs =
-        let dotnetRoot =
-            let envRoot = Environment.GetEnvironmentVariable("DOTNET_ROOT")
-
-            if not (String.IsNullOrEmpty(envRoot)) then
-                envRoot
-            else
-                let runtimeParent = Path.GetDirectoryName(runtimeDir)
-                // runtime dir is like <dotnet>/shared/Microsoft.NETCore.App/10.0.0/
-                // go up 3 levels to dotnet root
-                Path.GetDirectoryName(Path.GetDirectoryName(runtimeParent))
-
         let sdkBase = Path.Combine(dotnetRoot, "sdk")
 
         if Directory.Exists(sdkBase) then
@@ -41,10 +42,6 @@ let getAssemblySearchPaths (dllPath: string) : string list =
             []
 
     let sharedFrameworkDirs =
-        let dotnetRoot =
-            let runtimeParent = Path.GetDirectoryName(runtimeDir)
-            Path.GetDirectoryName(Path.GetDirectoryName(runtimeParent))
-
         let sharedBase = Path.Combine(dotnetRoot, "shared")
 
         if Directory.Exists(sharedBase) then

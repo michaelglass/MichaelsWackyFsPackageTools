@@ -156,12 +156,8 @@ let release
                             match state with
                             | FirstRelease -> None // Need explicit command for first release
                             | HasPreviousRelease(_tag, currentVersion) ->
-                                // Compare API
-                                let currentApi = extractFromAssembly pkg.DllPath
-                                // For now, just bump patch (full API comparison from tag needs VCS workspace)
-                                let _currentApi = currentApi
-                                let change = NoChange
-                                let newVersion = determineBump currentVersion change
+                                // TODO: compare API surface against previous tag's DLL
+                                let newVersion = determineBump currentVersion NoChange
 
                                 if config.ReservedVersions.Contains(format newVersion) then
                                     let newVersion = bumpPatch newVersion
