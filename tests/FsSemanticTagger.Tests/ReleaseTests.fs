@@ -650,5 +650,10 @@ let ``release - uses coverageratchet loosen-from-ci when available`` () =
     test <@ result = 0 @>
 
     // Should have called coverageratchet instead of gh run list
-    test <@ calls |> List.exists (fun (c, a) -> c = "dotnet" && a.Contains("coverageratchet loosen-from-ci")) @>
+    test
+        <@
+            calls
+            |> List.exists (fun (c, a) -> c = "dotnet" && a.Contains("coverageratchet loosen-from-ci"))
+        @>
+
     test <@ not (calls |> List.exists (fun (c, _) -> c = "gh")) @>
