@@ -31,11 +31,20 @@
         "platform": "macos"
       }
     ],
-    "Release.fs": {
-      "line": 93,
-      "branch": 95,
-      "reason": "release() orchestration calls VCS/Shell externals; tag/push paths tested at unit level in VcsTests"
-    },
+    "Release.fs": [
+      {
+        "line": 93,
+        "branch": 95,
+        "reason": "release() orchestration calls VCS/Shell externals; tag/push paths tested at unit level in VcsTests",
+        "platform": "macos"
+      },
+      {
+        "line": 93,
+        "branch": 93,
+        "reason": "hasCoverageRatchet branches",
+        "platform": "linux"
+      }
+    ],
     "Shell.fs": [
       {
         "line": 0,
