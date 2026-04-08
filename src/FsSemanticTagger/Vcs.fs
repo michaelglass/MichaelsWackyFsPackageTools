@@ -60,17 +60,40 @@ let getLatestTag (run: string -> string -> CommandResult) (prefix: string) : str
         |> Array.tryHead
         |> Option.map fst
 
-let commitAndTag (run: string -> string -> CommandResult) (prefix: string) (version: Version) : string =
+let tagLastCommit
+    (run: string -> string -> CommandResult)
+    (prefix: string)
+    (version: Version)
+    : Result<string, string> =
     let tag = toTag prefix version
     let msg = sprintf "Release %s" (format version)
-    runOrFail run "jj" (sprintf "commit -m \"%s\"" msg) |> ignore
 
-    // Try jj tag first, fall back to git tag
-    match run "jj" (sprintf "tag set %s" tag) with
-    | Success _ -> ()
-    | Failure _ -> runOrFail run "git" (sprintf "tag -a %s -m \"%s\"" tag msg) |> ignore
+    // Find the last non-empty commit on the current branch
+    match runSilent run "jj" "log -r \"ancestors(@) & ~empty()\" --limit 1 --no-graph -T commit_id" with
+    | None | Some "" ->
+        Error "Could not find a non-empty commit to tag"
+    | Some commitId ->
+        let commitId = commitId.Trim()
 
-    tag
+        // Verify it's immutable (pushed to origin / on main)
+        match runSilent run "jj" (sprintf "log -r \"%s & immutable()\" --no-graph -T \"true\"" commitId) with
+        | Some s when s.Trim() = "true" ->
+            // Tag the commit
+            match run "jj" (sprintf "tag set %s -r %s" tag commitId) with
+            | Success _ -> Ok tag
+            | Failure _ ->
+                runOrFail run "git" (sprintf "tag -a %s -m \"%s\" %s" tag msg commitId) |> ignore
+                Ok tag
+        | _ ->
+            Error(sprintf "Commit %s is not immutable — push to origin before releasing" commitId)
+
+let hasChangesSinceTag (run: string -> string -> CommandResult) (tag: string) (path: string) : bool =
+    let args =
+        sprintf "log -r \"%s::@ & ~empty()\" --no-graph -T \"\" --stat \"glob:%s/**\"" tag path
+
+    match run "jj" args with
+    | Success output -> output.Trim() <> ""
+    | Failure _ -> true
 
 let getCurrentCommitSha (run: string -> string -> CommandResult) : string option =
     let nonEmpty s =

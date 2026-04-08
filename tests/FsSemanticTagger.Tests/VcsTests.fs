@@ -118,19 +118,20 @@ let ``getLatestTag - skips unparseable tags and returns latest valid`` () =
 
     test <@ getLatestTag run "v" = Some "v2.0.0" @>
 
-// commitAndTag
+// tagLastCommit
 
 [<Fact>]
-let ``commitAndTag - uses jj tag when available`` () =
+let ``tagLastCommit - tags last non-empty immutable commit`` () =
     let mutable calls: (string * string) list = []
 
     let run (cmd: string) (args: string) =
         calls <- calls @ [ (cmd, args) ]
 
         match cmd, args with
-        | "jj", a when a.StartsWith("commit") -> Success ""
+        | "jj", a when a.Contains("~empty()") -> Success "abc123def"
+        | "jj", a when a.Contains("immutable()") -> Success "true"
         | "jj", a when a.StartsWith("tag set") -> Success ""
-        | _ -> Failure "unexpected"
+        | _ -> Failure(sprintf "unexpected: %s %s" cmd args)
 
     let version =
         { Major = 1
@@ -138,23 +139,68 @@ let ``commitAndTag - uses jj tag when available`` () =
           Patch = 0
           Stage = Stable }
 
-    let tag = commitAndTag run "v" version
-    test <@ tag = "v1.0.0" @>
-    test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "tag set v1.0.0") @>
-    test <@ not (calls |> List.exists (fun (c, _) -> c = "git")) @>
+    let result = tagLastCommit run "v" version
+    test <@ result = Ok "v1.0.0" @>
+    test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set v1.0.0")) @>
 
 [<Fact>]
-let ``commitAndTag - falls back to git tag when jj tag fails`` () =
+let ``tagLastCommit - fails when last non-empty commit is not immutable`` () =
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", a when a.Contains("~empty()") -> Success "abc123def"
+        | "jj", a when a.Contains("immutable()") -> Success ""
+        | _ -> Failure(sprintf "unexpected: %s %s" cmd args)
+
+    let version =
+        { Major = 1
+          Minor = 0
+          Patch = 0
+          Stage = Stable }
+
+    let result = tagLastCommit run "v" version
+
+    test
+        <@
+            match result with
+            | Error msg -> msg.Contains("not immutable")
+            | _ -> false
+        @>
+
+[<Fact>]
+let ``tagLastCommit - fails when no non-empty commit found`` () =
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", a when a.Contains("~empty()") -> Failure "no matching commit"
+        | _ -> Failure(sprintf "unexpected: %s %s" cmd args)
+
+    let version =
+        { Major = 1
+          Minor = 0
+          Patch = 0
+          Stage = Stable }
+
+    let result = tagLastCommit run "v" version
+
+    test
+        <@
+            match result with
+            | Error _ -> true
+            | _ -> false
+        @>
+
+[<Fact>]
+let ``tagLastCommit - falls back to git tag when jj tag fails`` () =
     let mutable calls: (string * string) list = []
 
     let run (cmd: string) (args: string) =
         calls <- calls @ [ (cmd, args) ]
 
         match cmd, args with
-        | "jj", a when a.StartsWith("commit") -> Success ""
+        | "jj", a when a.Contains("~empty()") -> Success "abc123def"
+        | "jj", a when a.Contains("immutable()") -> Success "true"
         | "jj", a when a.StartsWith("tag set") -> Failure "jj tag not supported"
         | "git", a when a.StartsWith("tag") -> Success ""
-        | _ -> Failure "unexpected"
+        | _ -> Failure(sprintf "unexpected: %s %s" cmd args)
 
     let version =
         { Major = 2
@@ -162,10 +208,43 @@ let ``commitAndTag - falls back to git tag when jj tag fails`` () =
           Patch = 0
           Stage = Stable }
 
-    let tag = commitAndTag run "v" version
-    test <@ tag = "v2.1.0" @>
+    let result = tagLastCommit run "v" version
+    test <@ result = Ok "v2.1.0" @>
 
     test <@ calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("tag -a v2.1.0")) @>
+
+// hasChangesSinceTag
+
+[<Fact>]
+let ``hasChangesSinceTag - returns true when files changed in path`` () =
+    let run =
+        fakeRun
+            [ ("jj",
+               "log -r \"v1.0.0::@ & ~empty()\" --no-graph -T \"\" --stat \"glob:src/MyLib/**\"",
+               Success "1 file changed, 5 insertions(+)") ]
+
+    test <@ hasChangesSinceTag run "v1.0.0" "src/MyLib" = true @>
+
+[<Fact>]
+let ``hasChangesSinceTag - returns false when no files changed in path`` () =
+    let run =
+        fakeRun
+            [ ("jj",
+               "log -r \"v1.0.0::@ & ~empty()\" --no-graph -T \"\" --stat \"glob:src/MyLib/**\"",
+               Success "") ]
+
+    test <@ hasChangesSinceTag run "v1.0.0" "src/MyLib" = false @>
+
+[<Fact>]
+let ``hasChangesSinceTag - returns true when jj command fails`` () =
+    let run =
+        fakeRun
+            [ ("jj",
+               "log -r \"v1.0.0::@ & ~empty()\" --no-graph -T \"\" --stat \"glob:src/MyLib/**\"",
+               Failure "unknown tag") ]
+
+    // Conservative: if we can't tell, assume changes
+    test <@ hasChangesSinceTag run "v1.0.0" "src/MyLib" = true @>
 
 // getCurrentCommitSha
 
