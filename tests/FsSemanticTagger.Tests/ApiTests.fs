@@ -189,3 +189,16 @@ let ``compare does not flag new nested type as breaking when parent is new`` () 
     match compare baseline current with
     | Addition _ -> ()
     | other -> failwithf "Expected Addition for entirely new type, got %A" other
+
+[<Fact>]
+let ``extractFromNuGetCache returns None for nonexistent package`` () =
+    test <@ extractFromNuGetCache "ThisPackageDoesNotExist12345" "1.0.0" = None @>
+
+[<Fact>]
+let ``extractFromNuGetCache returns signatures for cached tool package`` () =
+    // CoverageRatchet is a dotnet tool in the local NuGet cache (tools/<tfm>/any/)
+    let result = extractFromNuGetCache "CoverageRatchet" "0.3.0-alpha.1"
+
+    match result with
+    | Some sigs -> test <@ sigs.Length > 0 @>
+    | None -> failwith "Expected Some signatures for CoverageRatchet in NuGet cache"

@@ -7,7 +7,11 @@ open FsSemanticTagger.Shell
 open FsSemanticTagger.Config
 open FsSemanticTagger.Version
 open FsSemanticTagger.Release
+open FsSemanticTagger.Api
 open FsSemanticTagger.Vcs
+
+let private noPreviousApi (_tag: string) (_dll: string) : ApiSignature list option = None
+let private noCurrentApi (_dll: string) : ApiSignature list = []
 
 [<Fact>]
 let ``updateFsprojVersion - updates Version element in fsproj`` () =
@@ -76,7 +80,7 @@ let ``release - returns 1 when uncommitted changes`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = [] }
 
-    let result = release fakeRun config Auto GitHubActions
+    let result = release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi
     test <@ result = 1 @>
 
 [<Fact>]
@@ -94,7 +98,7 @@ let ``release - returns 1 when CI not passing`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = [] }
 
-    let result = release fakeRun config Auto GitHubActions
+    let result = release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi
     test <@ result = 1 @>
 
 [<Fact>]
@@ -119,7 +123,7 @@ let ``release - Auto with no previous tags returns 0 with no packages`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = [] }
 
-    let result = release fakeRun config Auto GitHubActions
+    let result = release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi
     test <@ result = 0 @>
 
 [<Fact>]
@@ -165,7 +169,9 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = [] }
 
-        let result = release fakeRun config StartAlpha GitHubActions
+        let result =
+            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi
+
         test <@ result = 0 @>
 
         // Verify tag was set on immutable commit
@@ -235,7 +241,9 @@ let ``release - StartAlpha with LocalPublish calls dotnet pack`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = [] }
 
-        let result = release fakeRun config StartAlpha LocalPublish
+        let result =
+            release fakeRun config StartAlpha LocalPublish noPreviousApi noCurrentApi
+
         let calls = getCalls ()
         test <@ result = 0 @>
 
@@ -278,7 +286,7 @@ let ``release - Auto with reserved version bumps past it`` () =
               ReservedVersions = Set.ofList [ "1.0.1" ]
               PreBuildCmds = [] }
 
-        let result = release fakeRun config Auto GitHubActions
+        let result = release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
         test <@ content.Contains("<Version>1.0.2</Version>") @>
@@ -299,7 +307,9 @@ let ``release - non-Auto with reserved version skips package`` () =
           ReservedVersions = Set.ofList [ "0.1.0-alpha.1" ]
           PreBuildCmds = [] }
 
-    let result = release fakeRun config StartAlpha GitHubActions
+    let result =
+        release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi
+
     test <@ result = 0 @>
 
 [<Fact>]
@@ -316,7 +326,9 @@ let ``release - PromoteToBeta with FirstRelease returns 0 no packages`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = [] }
 
-    let result = release fakeRun config PromoteToBeta GitHubActions
+    let result =
+        release fakeRun config PromoteToBeta GitHubActions noPreviousApi noCurrentApi
+
     test <@ result = 0 @>
 
 [<Fact>]
@@ -341,7 +353,9 @@ let ``release - runs preBuildCmds before build`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = [ "dotnet tool restore"; "dotnet tool run paket restore" ] }
 
-        let result = release fakeRun config StartAlpha GitHubActions
+        let result =
+            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi
+
         let calls = getCalls ()
         test <@ result = 0 @>
 
@@ -471,7 +485,9 @@ let ``release - skips packages with no changes since last tag`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = [] }
 
-        let result = release fakeRun config StartAlpha GitHubActions
+        let result =
+            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi
+
         test <@ result = 0 @>
 
         // LibA should be tagged
@@ -481,3 +497,131 @@ let ``release - skips packages with no changes since last tag`` () =
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set libb-v"))) @>
     finally
         File.Delete(tmpFileA)
+
+[<Fact>]
+let ``release - Auto detects breaking API change and bumps major`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
+                  ("jj",
+                   "diff --from v1.0.0 --to @ --stat \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
+                   Success "1 file changed") ]
+
+        let oldApi = [ ApiSignature "type Foo"; ApiSignature "  Foo::Bar(): String" ]
+
+        // Current API removed Bar (breaking)
+        let currentApi = [ ApiSignature "type Foo" ]
+
+        let extractPreviousApi (_tag: string) (_dllPath: string) = Some oldApi
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "fake.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
+
+        let result =
+            release fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi)
+
+        test <@ result = 0 @>
+        let content = File.ReadAllText(tmpFile)
+        // Breaking change on v1+ => major bump => 2.0.0
+        test <@ content.Contains("<Version>2.0.0</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - Auto detects addition and bumps minor`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
+                  ("jj",
+                   "diff --from v1.0.0 --to @ --stat \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
+                   Success "1 file changed") ]
+
+        let oldApi = [ ApiSignature "type Foo" ]
+
+        // Current API added a method (addition)
+        let currentApi =
+            [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+
+        let extractPreviousApi (_tag: string) (_dllPath: string) = Some oldApi
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "fake.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
+
+        let result =
+            release fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi)
+
+        test <@ result = 0 @>
+        let content = File.ReadAllText(tmpFile)
+        // Addition on v1+ => minor bump => 1.1.0
+        test <@ content.Contains("<Version>1.1.0</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - Auto falls back to NoChange when extractPreviousApi returns None`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
+                  ("jj",
+                   "diff --from v1.0.0 --to @ --stat \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
+                   Success "1 file changed") ]
+
+        let extractPreviousApi (_tag: string) (_dllPath: string) = None
+
+        let currentApi =
+            [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "fake.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
+
+        let result =
+            release fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi)
+
+        test <@ result = 0 @>
+        let content = File.ReadAllText(tmpFile)
+        // Falls back to NoChange => patch bump => 1.0.1
+        test <@ content.Contains("<Version>1.0.1</Version>") @>
+    finally
+        File.Delete(tmpFile)
