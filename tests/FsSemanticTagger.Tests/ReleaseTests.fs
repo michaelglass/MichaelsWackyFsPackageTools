@@ -262,7 +262,7 @@ let ``release - Auto with reserved version bumps past it`` () =
                 [ ("git", "tag -l \"v*\"", Success "v1.0.0")
                   // hasChangesSinceTag: report changes
                   ("jj",
-                   "log -r \"v1.0.0::@ & ~empty()\" --no-graph -T \"\" --stat \"glob:"
+                   "diff --from v1.0.0 --to @ --stat \"glob:"
                    + Path.GetDirectoryName(tmpFile)
                    + "/**\"",
                    Success "1 file changed") ]
@@ -444,10 +444,10 @@ let ``release - skips packages with no changes since last tag`` () =
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             // LibA has a previous tag and changes
             | "jj", a when a.Contains("tag list") && a.Contains("liba-v") -> Success "liba-v0.1.0-alpha.1"
-            | "jj", a when a.Contains("liba-v0.1.0-alpha.1::@") -> Success "1 file changed"
+            | "jj", a when a.Contains("--from liba-v0.1.0-alpha.1") -> Success "1 file changed"
             // LibB has a previous tag but NO changes
             | "jj", a when a.Contains("tag list") && a.Contains("libb-v") -> Success "libb-v0.1.0-alpha.1"
-            | "jj", a when a.Contains("libb-v0.1.0-alpha.1::@") -> Success ""
+            | "jj", a when a.Contains("--from libb-v0.1.0-alpha.1") -> Success ""
             // tagLastCommit responses
             | "jj", a when a.Contains("~empty()") -> Success "def456"
             | "jj", a when a.Contains("immutable()") -> Success "true"
