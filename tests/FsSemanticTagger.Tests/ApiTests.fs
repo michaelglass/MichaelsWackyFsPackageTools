@@ -148,3 +148,44 @@ let ``compare with only removals returns Breaking`` () =
     match compare baseline current with
     | Breaking removed -> test <@ removed.Length = 2 @>
     | other -> failwithf "Expected Breaking, got %A" other
+
+[<Fact>]
+let ``compare detects new DU case as breaking change`` () =
+    // Adding a case to a discriminated union breaks exhaustive pattern matches.
+    // F# compiles DU cases as nested types: ParentType+CaseName
+    let baseline =
+        [ ApiSignature "type MyModule.MyUnion"
+          ApiSignature "type MyModule.MyUnion+CaseA"
+          ApiSignature "type MyModule.MyUnion+CaseB"
+          ApiSignature "  MyUnion::get_Tag(): Int32"
+          ApiSignature "  MyUnion+CaseA::.ctor(): Void"
+          ApiSignature "  MyUnion+CaseB::.ctor(String): Void" ]
+
+    let current =
+        [ ApiSignature "type MyModule.MyUnion"
+          ApiSignature "type MyModule.MyUnion+CaseA"
+          ApiSignature "type MyModule.MyUnion+CaseB"
+          ApiSignature "type MyModule.MyUnion+CaseC"
+          ApiSignature "  MyUnion::get_Tag(): Int32"
+          ApiSignature "  MyUnion+CaseA::.ctor(): Void"
+          ApiSignature "  MyUnion+CaseB::.ctor(String): Void"
+          ApiSignature "  MyUnion+CaseC::.ctor(Int32): Void" ]
+
+    match compare baseline current with
+    | Breaking _ -> ()
+    | other -> failwithf "Expected Breaking for new DU case, got %A" other
+
+[<Fact>]
+let ``compare does not flag new nested type as breaking when parent is new`` () =
+    // A brand new type with nested cases is just an addition, not breaking
+    let baseline = [ ApiSignature "type MyModule.OtherType" ]
+
+    let current =
+        [ ApiSignature "type MyModule.OtherType"
+          ApiSignature "type MyModule.NewUnion"
+          ApiSignature "type MyModule.NewUnion+CaseA"
+          ApiSignature "type MyModule.NewUnion+CaseB" ]
+
+    match compare baseline current with
+    | Addition _ -> ()
+    | other -> failwithf "Expected Addition for entirely new type, got %A" other
