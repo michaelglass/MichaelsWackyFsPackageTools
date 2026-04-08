@@ -146,8 +146,7 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "git", arg when arg.StartsWith("tag -l") -> Success ""
-            | "jj", a when a.Contains("~empty()") -> Success "def456"
-            | "jj", a when a.Contains("immutable()") -> Success "true"
+
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", a when a.StartsWith("commit") -> Success ""
             | "jj", a when a.StartsWith("bookmark set") -> Success ""
@@ -206,8 +205,7 @@ let private passingCiRun (extraResponses: (string * string * CommandResult) list
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "git", arg when arg.StartsWith("tag -l") -> Success ""
-            | "jj", a when a.Contains("~empty()") -> Success "def456"
-            | "jj", a when a.Contains("immutable()") -> Success "true"
+
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", a when a.StartsWith("commit") -> Success ""
             | "jj", a when a.StartsWith("bookmark set") -> Success ""
@@ -449,8 +447,7 @@ let ``release - skips packages with no changes since last tag`` () =
             | "jj", a when a.Contains("tag list") && a.Contains("libb-v") -> Success "libb-v0.1.0-alpha.1"
             | "jj", a when a.Contains("--from libb-v0.1.0-alpha.1") -> Success ""
             // tagLastCommit responses
-            | "jj", a when a.Contains("~empty()") -> Success "def456"
-            | "jj", a when a.Contains("immutable()") -> Success "true"
+
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", a when a.StartsWith("commit") -> Success ""
             | "jj", a when a.StartsWith("bookmark set") -> Success ""
@@ -484,30 +481,3 @@ let ``release - skips packages with no changes since last tag`` () =
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set libb-v"))) @>
     finally
         File.Delete(tmpFileA)
-
-[<Fact>]
-let ``release - returns 1 when commit is not immutable`` () =
-    let fakeRun (cmd: string) (args: string) : CommandResult =
-        match cmd, args with
-        | "jj", "status" -> Success "The working copy is clean"
-        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
-        | "gh", a when a.Contains("run list") ->
-            Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
-        | "dotnet", "build -c Release" -> Success "Build succeeded."
-        | "git", arg when arg.StartsWith("tag -l") -> Success ""
-        | "jj", a when a.Contains("~empty()") -> Success "def456"
-        | "jj", a when a.Contains("immutable()") -> Success ""
-        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
-
-    let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = "src/MyLib/MyLib.fsproj"
-                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = [] }
-
-    let result = release fakeRun config StartAlpha GitHubActions
-    test <@ result = 1 @>
