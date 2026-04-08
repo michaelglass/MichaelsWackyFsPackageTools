@@ -327,29 +327,11 @@ let ``release - runs preBuildCmds before build`` () =
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
-        let mutable calls = []
 
-        let fakeRun (cmd: string) (args: string) : CommandResult =
-            calls <- calls @ [ (cmd, args) ]
-
-            match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
-            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
-            | "gh", a when a.Contains("run list") ->
-                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
-            | "dotnet", "tool restore" -> Success "Restored."
-            | "dotnet", "tool run paket restore" -> Success "Paket restored."
-            | "dotnet", "build -c Release" -> Success "Build succeeded."
-            | "git", arg when arg.StartsWith("tag -l") -> Success ""
-            | "jj", a when a.Contains("~empty()") -> Success "def456"
-            | "jj", a when a.Contains("immutable()") -> Success "true"
-            | "jj", a when a.StartsWith("tag set") -> Success ""
-            | "jj", a when a.StartsWith("commit") -> Success ""
-            | "jj", a when a.StartsWith("bookmark set") -> Success ""
-            | "jj", "git export" -> Success ""
-            | "jj", "git push" -> Success ""
-            | "git", arg when arg.StartsWith("push origin") -> Success ""
-            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+        let (fakeRun, getCalls) =
+            passingCiRun
+                [ ("dotnet", "tool restore", Success "Restored.")
+                  ("dotnet", "tool run paket restore", Success "Paket restored.") ]
 
         let config =
             { Packages =
@@ -362,6 +344,7 @@ let ``release - runs preBuildCmds before build`` () =
               PreBuildCmds = [ "dotnet tool restore"; "dotnet tool run paket restore" ] }
 
         let result = release fakeRun config StartAlpha GitHubActions
+        let calls = getCalls ()
         test <@ result = 0 @>
 
         // Verify pre-build commands ran before build
