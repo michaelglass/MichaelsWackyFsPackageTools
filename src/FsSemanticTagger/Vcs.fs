@@ -179,6 +179,11 @@ let isCiPassing (run: string -> string -> CommandResult) : bool =
     | Passed -> true
     | _ -> false
 
+let hasCoverageRatchet (run: string -> string -> CommandResult) : bool =
+    match run "dotnet" "tool list" with
+    | Success output -> output.Contains("coverageratchet")
+    | Failure _ -> false
+
 let pushMain (run: string -> string -> CommandResult) : unit = runOrFail run "jj" "git push" |> ignore
 
 let pushTags (run: string -> string -> CommandResult) (tags: string list) : unit =

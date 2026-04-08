@@ -35,6 +35,7 @@
     <Compile Include="Cobertura.fs" />
     <Compile Include="Thresholds.fs" />
     <Compile Include="Ratchet.fs" />
+    <Compile Include="Shell.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 </Project>

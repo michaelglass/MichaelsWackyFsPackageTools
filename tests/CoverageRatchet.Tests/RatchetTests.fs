@@ -413,3 +413,93 @@ let ``loosenRaw adds platform-specific entry for new file`` () =
     test <@ entries.Length = 1 @>
     test <@ entries.[0].Platform = Some currentPlatform @>
     test <@ entries.[0].Line = 80.0 @>
+
+[<Fact>]
+let ``mergeFromCi - adds linux entry splitting existing non-platform override`` () =
+    let raw: RawConfig =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides =
+            Map.ofList
+                [ "Program.fs",
+                  [ { Line = 49.0
+                      Branch = 31.0
+                      Reason = "legacy"
+                      Platform = None } ] ] }
+
+    let ciResults = Map.ofList [ "Program.fs", (59.0, 23.0) ]
+    let result = mergeFromCi raw "linux" ciResults
+    let entries = result.RawOverrides.["Program.fs"]
+    test <@ entries.Length = 2 @>
+    let macosEntry = entries |> List.find (fun o -> o.Platform = Some "macos")
+    let linuxEntry = entries |> List.find (fun o -> o.Platform = Some "linux")
+    test <@ macosEntry.Line = 49.0 @>
+    test <@ macosEntry.Branch = 31.0 @>
+    test <@ linuxEntry.Line = 59.0 @>
+    test <@ linuxEntry.Branch = 23.0 @>
+
+[<Fact>]
+let ``mergeFromCi - updates existing linux platform entry`` () =
+    let raw: RawConfig =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides =
+            Map.ofList
+                [ "Program.fs",
+                  [ { Line = 49.0
+                      Branch = 31.0
+                      Reason = "legacy"
+                      Platform = Some "macos" }
+                    { Line = 55.0
+                      Branch = 20.0
+                      Reason = "ci"
+                      Platform = Some "linux" } ] ] }
+
+    let ciResults = Map.ofList [ "Program.fs", (59.0, 23.0) ]
+    let result = mergeFromCi raw "linux" ciResults
+    let entries = result.RawOverrides.["Program.fs"]
+    test <@ entries.Length = 2 @>
+    let macosEntry = entries |> List.find (fun o -> o.Platform = Some "macos")
+    let linuxEntry = entries |> List.find (fun o -> o.Platform = Some "linux")
+    test <@ macosEntry.Line = 49.0 @>
+    test <@ macosEntry.Branch = 31.0 @>
+    test <@ linuxEntry.Line = 59.0 @>
+    test <@ linuxEntry.Branch = 23.0 @>
+
+[<Fact>]
+let ``mergeFromCi - adds new file override when CI has file below defaults`` () =
+    let raw: RawConfig =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides = Map.empty }
+
+    let ciResults = Map.ofList [ "NewFile.fs", (80.0, 60.0) ]
+    let result = mergeFromCi raw "linux" ciResults
+    test <@ result.RawOverrides.ContainsKey("NewFile.fs") @>
+    let entries = result.RawOverrides.["NewFile.fs"]
+    test <@ entries.Length = 1 @>
+    test <@ entries.[0].Platform = Some "linux" @>
+    test <@ entries.[0].Line = 80.0 @>
+    test <@ entries.[0].Branch = 60.0 @>
+
+[<Fact>]
+let ``mergeFromCi - skips files at or above defaults`` () =
+    let raw: RawConfig =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides = Map.empty }
+
+    let ciResults = Map.ofList [ "Perfect.fs", (100.0, 100.0) ]
+    let result = mergeFromCi raw "linux" ciResults
+    test <@ result.RawOverrides.ContainsKey("Perfect.fs") = false @>
+
+[<Fact>]
+let ``parseCiThresholds - parses minimal JSON format`` () =
+    let json =
+        """{"platform":"linux","results":{"Foo.fs":{"line":59,"branch":23},"Bar.fs":{"line":81,"branch":66}}}"""
+
+    let platform, results = parseCiThresholds json
+    test <@ platform = "linux" @>
+    test <@ results.Count = 2 @>
+    test <@ results.["Foo.fs"] = (59.0, 23.0) @>
+    test <@ results.["Bar.fs"] = (81.0, 66.0) @>

@@ -1,5 +1,6 @@
 module CoverageRatchet.Ratchet
 
+open System.Text.Json
 open CoverageRatchet.Cobertura
 open CoverageRatchet.Thresholds
 
@@ -184,3 +185,69 @@ let loosenRaw (raw: RawConfig) (files: FileCoverage list) : RawConfig =
     let resolved = resolveConfig raw
     let loosened = loosen resolved files
     mergeRawOverrides raw resolved loosened (Some currentPlatform)
+
+let mergeFromCi (raw: RawConfig) (ciPlatform: string) (ciResults: Map<string, float * float>) : RawConfig =
+    let mutable result = raw.RawOverrides
+
+    for kv in ciResults do
+        let fileName = kv.Key
+        let ciLine, ciBranch = kv.Value
+
+        if ciLine < raw.DefaultLine || ciBranch < raw.DefaultBranch then
+            let existingEntries = Map.tryFind fileName result |> Option.defaultValue []
+
+            let ciEntry =
+                { Line = ciLine
+                  Branch = ciBranch
+                  Reason = ""
+                  Platform = Some ciPlatform }
+
+            let hasPlatformEntries = existingEntries |> List.exists (fun e -> e.Platform.IsSome)
+            let hasNonPlatformEntry = existingEntries |> List.exists (fun e -> e.Platform.IsNone)
+
+            let newEntries =
+                if List.isEmpty existingEntries then
+                    [ ciEntry ]
+                elif hasPlatformEntries then
+                    let existsForCi =
+                        existingEntries |> List.exists (fun e -> e.Platform = Some ciPlatform)
+
+                    if existsForCi then
+                        existingEntries
+                        |> List.map (fun e ->
+                            if e.Platform = Some ciPlatform then
+                                { e with
+                                    Line = ciLine
+                                    Branch = ciBranch }
+                            else
+                                e)
+                    else
+                        existingEntries @ [ ciEntry ]
+                elif hasNonPlatformEntry then
+                    let localEntries =
+                        existingEntries
+                        |> List.map (fun e -> { e with Platform = Some currentPlatform })
+
+                    localEntries @ [ ciEntry ]
+                else
+                    existingEntries @ [ ciEntry ]
+
+            result <- Map.add fileName newEntries result
+
+    { raw with RawOverrides = result }
+
+let parseCiThresholds (json: string) : string * Map<string, float * float> =
+    use doc = JsonDocument.Parse(json)
+    let root = doc.RootElement
+    let platform = root.GetProperty("platform").GetString()
+    let resultsEl = root.GetProperty("results")
+
+    let results =
+        resultsEl.EnumerateObject()
+        |> Seq.map (fun prop ->
+            let line = prop.Value.GetProperty("line").GetDouble()
+            let branch = prop.Value.GetProperty("branch").GetDouble()
+            prop.Name, (line, branch))
+        |> Map.ofSeq
+
+    platform, results
