@@ -2,8 +2,8 @@
   "overrides": {
     "Checks.fs": [
       {
-        "line": 95,
-        "branch": 93,
+        "line": 98,
+        "branch": 100,
         "reason": "compiler-generated branches in pattern matching",
         "platform": "macos"
       },
@@ -15,12 +15,6 @@
       }
     ],
     "Program.fs": [
-      {
-        "line": 0,
-        "branch": 0,
-        "reason": "CLI entry point, not unit tested",
-        "platform": "macos"
-      },
       {
         "line": 0,
         "branch": 0,

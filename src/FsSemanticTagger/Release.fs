@@ -79,7 +79,8 @@ let internal waitForCi (run: string -> string -> CommandResult) (pollIntervalMs:
                 printfn "Timed out waiting for CI after %d attempts" maxAttempts
                 status
             else
-                let completed = runs |> List.filter (fun r -> r.Status = Vcs.Completed) |> List.length
+                let completed =
+                    runs |> List.filter (fun r -> r.Status = Vcs.Completed) |> List.length
 
                 printfn "Waiting for CI... (%d/%d runs complete)" completed runs.Length
                 System.Threading.Thread.Sleep(pollIntervalMs)
@@ -161,8 +162,9 @@ let release
                     let srcDir = System.IO.Path.GetDirectoryName(pkg.Fsproj)
 
                     match state with
-                    | HasPreviousRelease currentVersion
-                        when not (hasChangesSinceTag run (toTag pkg.TagPrefix currentVersion) srcDir) ->
+                    | HasPreviousRelease currentVersion when
+                        not (hasChangesSinceTag run (toTag pkg.TagPrefix currentVersion) srcDir)
+                        ->
                         printfn "Skipping %s: no changes since %s" pkg.Name (toTag pkg.TagPrefix currentVersion)
                         None
                     | _ ->

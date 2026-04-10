@@ -84,21 +84,27 @@ let syncPair (mode: SyncMode) (sourcePath: string) (targetPath: string) : Result
 
 /// Enumerate all conventional candidate pairs.
 let private candidatePairs (rootDir: string) : (string * SyncPair) list =
-    [ yield
-          "your project",
+    let root =
+        [ "your project",
           { Source = Path.Combine(rootDir, "README.md")
-            Target = Path.Combine(rootDir, "docs", "index.md") }
+            Target = Path.Combine(rootDir, "docs", "index.md") } ]
 
-      let srcDir = Path.Combine(rootDir, "src")
+    let srcDir = Path.Combine(rootDir, "src")
 
-      if Directory.Exists srcDir then
-          for dir in Directory.GetDirectories(srcDir) do
-              let dirName = Path.GetFileName dir
+    let srcPairs =
+        if Directory.Exists srcDir then
+            Directory.GetDirectories(srcDir)
+            |> Array.toList
+            |> List.map (fun dir ->
+                let dirName = Path.GetFileName dir
 
-              yield
-                  dirName,
-                  { Source = Path.Combine(dir, "README.md")
-                    Target = Path.Combine(rootDir, "docs", dirName, "index.md") } ]
+                dirName,
+                { Source = Path.Combine(dir, "README.md")
+                  Target = Path.Combine(rootDir, "docs", dirName, "index.md") })
+        else
+            []
+
+    root @ srcPairs
 
 /// Discover sync pairs and warnings in a single pass over candidates.
 /// README.md -> docs/index.md, src/*/README.md -> docs/*/index.md

@@ -416,8 +416,7 @@ let ``loosenRaw adds platform-specific entry for new file`` () =
 
 [<Fact>]
 let ``mergeFromCi - adds ci-platform entry splitting existing non-platform override`` () =
-    let ciPlatform =
-        if Platform.current = MacOS then Linux else Windows
+    let ciPlatform = if Platform.current = MacOS then Linux else Windows
 
     let raw: RawConfig =
         { DefaultLine = 100.0
@@ -599,8 +598,7 @@ let ``mergeFromCi - adds new platform entry to existing platform entries`` () =
 
 [<Fact>]
 let ``parseCiThresholds - macos platform`` () =
-    let json =
-        """{"platform":"macos","results":{"Foo.fs":{"line":90,"branch":80}}}"""
+    let json = """{"platform":"macos","results":{"Foo.fs":{"line":90,"branch":80}}}"""
 
     let platform, results = parseCiThresholds json
     test <@ platform = MacOS @>
@@ -608,16 +606,14 @@ let ``parseCiThresholds - macos platform`` () =
 
 [<Fact>]
 let ``parseCiThresholds - windows platform`` () =
-    let json =
-        """{"platform":"windows","results":{"Foo.fs":{"line":90,"branch":80}}}"""
+    let json = """{"platform":"windows","results":{"Foo.fs":{"line":90,"branch":80}}}"""
 
     let platform, results = parseCiThresholds json
     test <@ platform = Windows @>
 
 [<Fact>]
 let ``parseCiThresholds - unknown platform defaults to current`` () =
-    let json =
-        """{"platform":"unknown","results":{"Foo.fs":{"line":90,"branch":80}}}"""
+    let json = """{"platform":"unknown","results":{"Foo.fs":{"line":90,"branch":80}}}"""
 
     let platform, _results = parseCiThresholds json
     test <@ platform = Platform.current @>
@@ -820,7 +816,9 @@ let ``ratchetRaw updates non-platform entry when platform-specific exists for cu
     let result = ratchetRaw raw files
     let entries = result.RawOverrides.["Foo.fs"]
     // The platform-specific entry should be updated, the non-platform one unchanged
-    let currentEntry = entries |> List.find (fun o -> o.Platform = Some Platform.current)
+    let currentEntry =
+        entries |> List.find (fun o -> o.Platform = Some Platform.current)
+
     let allEntry = entries |> List.find (fun o -> o.Platform = None)
     test <@ currentEntry.Line = 80.0 @>
     test <@ currentEntry.Branch = 70.0 @>
@@ -870,8 +868,7 @@ let ``loosen updates existing and adds new overrides`` () =
                         Platform = None } ] }
 
     let files =
-        [ makeFile "Existing.fs" 70.0 60.0 2 4
-          makeFile "New.fs" 80.0 75.0 3 4 ]
+        [ makeFile "Existing.fs" 70.0 60.0 2 4; makeFile "New.fs" 80.0 75.0 3 4 ]
 
     let result = loosen config files
 
