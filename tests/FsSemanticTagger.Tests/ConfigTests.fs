@@ -510,9 +510,9 @@ let ``parseJson with all optional fields absent`` () =
 
     let config = parseJson json
     test <@ config.Packages[0].TagPrefix = "v" @>
-    test <@ config.Packages[0].FsProjsSharingSameTag = [] @>
+    test <@ List.isEmpty config.Packages[0].FsProjsSharingSameTag @>
     test <@ config.ReservedVersions = Set.empty @>
-    test <@ config.PreBuildCmds = [] @>
+    test <@ List.isEmpty config.PreBuildCmds @>
 
 [<Fact>]
 let ``load returns Error when discover fails with no packable`` () =
@@ -665,7 +665,7 @@ let ``parseJson with empty preBuildCmds array`` () =
         """
 
     let config = parseJson json
-    test <@ config.PreBuildCmds = [] @>
+    test <@ List.isEmpty config.PreBuildCmds @>
 
 [<Fact>]
 let ``parseJson with empty fsProjsSharingSameTag array`` () =
@@ -683,7 +683,7 @@ let ``parseJson with empty fsProjsSharingSameTag array`` () =
         """
 
     let config = parseJson json
-    test <@ config.Packages[0].FsProjsSharingSameTag = [] @>
+    test <@ List.isEmpty config.Packages[0].FsProjsSharingSameTag @>
 
 [<Fact>]
 let ``toJson roundtrips with preBuildCmds`` () =
@@ -717,8 +717,8 @@ let ``toJson roundtrips with empty collections`` () =
     let roundtripped = parseJson json
     test <@ roundtripped.Packages.Length = 1 @>
     test <@ roundtripped.ReservedVersions = Set.empty @>
-    test <@ roundtripped.PreBuildCmds = [] @>
-    test <@ roundtripped.Packages[0].FsProjsSharingSameTag = [] @>
+    test <@ List.isEmpty roundtripped.PreBuildCmds @>
+    test <@ List.isEmpty roundtripped.Packages[0].FsProjsSharingSameTag @>
 
 [<Fact>]
 let ``findPackableProjects ignores fsproj without PackageId`` () =

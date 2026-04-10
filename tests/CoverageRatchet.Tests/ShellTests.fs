@@ -66,5 +66,4 @@ let ``runOrFail - successful command returns output`` () =
     test <@ result = "world" @>
 
 [<Fact>]
-let ``runOrFail - failing command throws`` () =
-    raises<exn> <@ runOrFail "false" "" @>
+let ``runOrFail - failing command throws`` () = raises<exn> <@ runOrFail "false" "" @>

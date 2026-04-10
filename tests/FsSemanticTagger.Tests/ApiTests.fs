@@ -208,13 +208,14 @@ let ``ApiChange.toList Addition returns all items`` () =
 
 [<Fact>]
 let ``ApiChange.toList NoChange returns empty`` () =
-    test <@ ApiChange.toList NoChange = [] @>
+    test <@ List.isEmpty (ApiChange.toList NoChange) @>
 
 [<Fact>]
 let ``ApiChange.toList single item Breaking`` () =
     let change = Breaking(ApiSignature "a", [])
     test <@ ApiChange.toList change = [ ApiSignature "a" ] @>
 
+[<Fact>]
 let ``extractFromNuGetCache returns signatures for cached tool package`` () =
     // CoverageRatchet is a dotnet tool in the local NuGet cache (tools/<tfm>/any/)
     let result = extractFromNuGetCache "CoverageRatchet" "0.3.0-alpha.1"
@@ -417,3 +418,140 @@ let ``compare adding non-nested type with plus sign in module name is Addition``
     match compare baseline current with
     | Addition _ -> ()
     | other -> failwithf "Expected Addition since parent BrandNew.Namespace is not in baseline, got %A" other
+
+[<Fact>]
+let ``getAssemblySearchPaths falls back to runtimeDir path computation when DOTNET_ROOT is unset`` () =
+    let original = System.Environment.GetEnvironmentVariable("DOTNET_ROOT")
+
+    try
+        System.Environment.SetEnvironmentVariable("DOTNET_ROOT", null)
+        let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
+
+        let dllPath =
+            System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+
+        let paths = getAssemblySearchPaths dllPath
+        // dllDir and runtimeDir should always be present regardless of DOTNET_ROOT
+        test <@ paths.Length >= 2 @>
+    finally
+        System.Environment.SetEnvironmentVariable("DOTNET_ROOT", original)
+
+[<Fact>]
+let ``getAssemblySearchPaths returns no sdk or shared dirs when DOTNET_ROOT points to empty dir`` () =
+    let original = System.Environment.GetEnvironmentVariable("DOTNET_ROOT")
+
+    let tmpDir =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName())
+
+    System.IO.Directory.CreateDirectory(tmpDir) |> ignore
+
+    try
+        System.Environment.SetEnvironmentVariable("DOTNET_ROOT", tmpDir)
+        let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
+
+        let dllPath =
+            System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+
+        let paths = getAssemblySearchPaths dllPath
+        // No paths should come from the fake empty dotnet root
+        let fromFakeRoot = paths |> List.filter (fun p -> p.StartsWith(tmpDir))
+        test <@ List.isEmpty fromFakeRoot @>
+    finally
+        System.Environment.SetEnvironmentVariable("DOTNET_ROOT", original)
+
+        try
+            System.IO.Directory.Delete(tmpDir, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``getAssemblySearchPaths returns dllDir when dll has no deps.json`` () =
+    let tmpDir =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName())
+
+    System.IO.Directory.CreateDirectory(tmpDir) |> ignore
+
+    try
+        let fakeDll = System.IO.Path.Combine(tmpDir, "Fake.dll")
+        System.IO.File.WriteAllText(fakeDll, "")
+        let paths = getAssemblySearchPaths fakeDll
+        test <@ paths |> List.contains tmpDir @>
+    finally
+        try
+            System.IO.Directory.Delete(tmpDir, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``getAssemblySearchPaths handles deps.json with no libraries key`` () =
+    let tmpDir =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName())
+
+    System.IO.Directory.CreateDirectory(tmpDir) |> ignore
+
+    try
+        let fakeDll = System.IO.Path.Combine(tmpDir, "Fake.dll")
+        System.IO.File.WriteAllText(fakeDll, "")
+
+        System.IO.File.WriteAllText(
+            System.IO.Path.Combine(tmpDir, "Fake.deps.json"),
+            """{"runtimeTarget": {"name": ".NETCoreApp,Version=v10.0"}}"""
+        )
+
+        let paths = getAssemblySearchPaths fakeDll
+        test <@ paths |> List.contains tmpDir @>
+    finally
+        try
+            System.IO.Directory.Delete(tmpDir, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``getAssemblySearchPaths handles malformed deps.json gracefully`` () =
+    let tmpDir =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName())
+
+    System.IO.Directory.CreateDirectory(tmpDir) |> ignore
+
+    try
+        let fakeDll = System.IO.Path.Combine(tmpDir, "Fake.dll")
+        System.IO.File.WriteAllText(fakeDll, "")
+        System.IO.File.WriteAllText(System.IO.Path.Combine(tmpDir, "Fake.deps.json"), "{ not valid json }")
+        let paths = getAssemblySearchPaths fakeDll
+        test <@ paths |> List.contains tmpDir @>
+    finally
+        try
+            System.IO.Directory.Delete(tmpDir, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``getAssemblySearchPaths skips deps.json entries whose packages are not in local cache`` () =
+    let tmpDir =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName())
+
+    System.IO.Directory.CreateDirectory(tmpDir) |> ignore
+
+    try
+        let fakeDll = System.IO.Path.Combine(tmpDir, "Fake.dll")
+        System.IO.File.WriteAllText(fakeDll, "")
+
+        let depsJson =
+            """{
+  "libraries": {
+    "SomePackage/1.0.0": {
+      "type": "package",
+      "path": "completely/nonexistent/package/path"
+    }
+  }
+}"""
+
+        System.IO.File.WriteAllText(System.IO.Path.Combine(tmpDir, "Fake.deps.json"), depsJson)
+        let paths = getAssemblySearchPaths fakeDll
+        // Package path doesn't exist so it's skipped; dllDir still present
+        test <@ paths |> List.contains tmpDir @>
+    finally
+        try
+            System.IO.Directory.Delete(tmpDir, true)
+        with _ ->
+            ()

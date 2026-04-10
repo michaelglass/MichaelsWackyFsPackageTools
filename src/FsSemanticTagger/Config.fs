@@ -76,9 +76,7 @@ let discover (rootDir: string) : Result<ToolConfig, string> =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = [] }
-    | n ->
-        Error
-            $"Found {n} packable .fsproj files; create a semantic-tagger.json to configure multi-package release"
+    | n -> Error $"Found {n} packable .fsproj files; create a semantic-tagger.json to configure multi-package release"
 
 let private tryGet (name: string) (el: JsonElement) =
     match el.TryGetProperty(name) with

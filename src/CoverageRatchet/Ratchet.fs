@@ -241,9 +241,7 @@ let parseCiThresholds (json: string) : Platform * Map<string, CiFileResult> =
     let root = doc.RootElement
     let platformStr = root.GetProperty("platform").GetString()
 
-    let platform =
-        Platform.ofString platformStr
-        |> Option.defaultValue Platform.current
+    let platform = Platform.ofString platformStr |> Option.defaultValue Platform.current
 
     let resultsEl = root.GetProperty("results")
 

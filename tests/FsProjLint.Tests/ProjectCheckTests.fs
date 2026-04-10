@@ -231,16 +231,13 @@ let ``isPackable returns true with PackageId and no IsPackable property`` () =
 [<Fact>]
 let ``getProperty returns Some for present property`` () =
     let doc =
-        XDocument.Parse(
-            """<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>"""
-        )
+        XDocument.Parse("""<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>""")
 
     test <@ getProperty doc "Version" = Some "1.0.0" @>
 
 [<Fact>]
 let ``getProperty returns None for missing property`` () =
-    let doc =
-        XDocument.Parse("""<Project><PropertyGroup></PropertyGroup></Project>""")
+    let doc = XDocument.Parse("""<Project><PropertyGroup></PropertyGroup></Project>""")
 
     test <@ getProperty doc "Version" = None @>
 
@@ -274,8 +271,7 @@ let ``hasPackageRef returns false for missing reference`` () =
 
 [<Fact>]
 let ``hasPackageRef returns false when no PackageReference elements`` () =
-    let doc =
-        XDocument.Parse("""<Project><ItemGroup></ItemGroup></Project>""")
+    let doc = XDocument.Parse("""<Project><ItemGroup></ItemGroup></Project>""")
 
     test <@ not (hasPackageRef doc "SomePackage") @>
 
@@ -326,11 +322,7 @@ let private fullItemGroup =
 let private removeProperty (propName: string) (props: string) =
     props
     |> fun s ->
-        System.Text.RegularExpressions.Regex.Replace(
-            s,
-            sprintf """<\s*%s\s*>[^<]*</\s*%s\s*>""" propName propName,
-            ""
-        )
+        System.Text.RegularExpressions.Regex.Replace(s, sprintf """<\s*%s\s*>[^<]*</\s*%s\s*>""" propName propName, "")
 
 [<Theory>]
 [<InlineData("Version", "Version present")>]
@@ -405,12 +397,10 @@ let ``checkPropertyEquals reports wrong value differently from missing`` () =
     let missingResults = checkXml missingFsproj
 
     let wrongCheck =
-        wrongResults
-        |> List.find (fun r -> r.Name = "TreatWarningsAsErrors is true")
+        wrongResults |> List.find (fun r -> r.Name = "TreatWarningsAsErrors is true")
 
     let missingCheck =
-        missingResults
-        |> List.find (fun r -> r.Name = "TreatWarningsAsErrors is true")
+        missingResults |> List.find (fun r -> r.Name = "TreatWarningsAsErrors is true")
 
     test
         <@

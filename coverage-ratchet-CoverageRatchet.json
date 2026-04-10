@@ -7,8 +7,8 @@
     },
     "Program.fs": [
       {
-        "line": 46,
-        "branch": 44,
+        "line": 77,
+        "branch": 75,
         "reason": "CLI entry point with untestable shell-dependent code",
         "platform": "macos"
       },
@@ -21,8 +21,8 @@
     ],
     "Ratchet.fs": [
       {
-        "line": 98,
-        "branch": 83,
+        "line": 99,
+        "branch": 84,
         "reason": "new mergeFromCi branches",
         "platform": "macos"
       },
@@ -38,18 +38,12 @@
         "line": 0,
         "branch": 0,
         "reason": "process execution, not unit-testable",
-        "platform": "macos"
-      },
-      {
-        "line": 0,
-        "branch": 0,
-        "reason": "process execution, not unit-testable",
         "platform": "linux"
       }
     ],
     "Thresholds.fs": {
-      "line": 95,
-      "branch": 85,
+      "line": 96,
+      "branch": 93,
       "reason": "F# compiler generates extra branches for pattern matching; platform detection branches unreachable on non-native OS"
     }
   }

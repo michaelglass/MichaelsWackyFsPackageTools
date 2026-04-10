@@ -603,6 +603,7 @@ let ``saveConfig - Reason None omits reason key`` () =
 
         let hasReason =
             use doc = System.Text.Json.JsonDocument.Parse(json)
+
             doc.RootElement.GetProperty("overrides").GetProperty("Foo.fs").TryGetProperty("reason")
             |> fst
 
@@ -669,7 +670,7 @@ let ``loadConfig roundtrip through saveRawConfig and loadRawConfig`` () =
 [<Fact>]
 let ``buildFileResults - empty file list`` () =
     let results = buildFileResults defaultsConfig []
-    test <@ results = [] @>
+    test <@ List.isEmpty results @>
 
 // --- resolveConfig tests ---
 
@@ -975,9 +976,7 @@ let ``buildFileResults uses override thresholds when available`` () =
                     Reason = Some "legacy"
                     Platform = None } ] }
 
-    let files =
-        [ makeFile "Foo.fs" 80.0 75.0 3 4
-          makeFile "Bar.fs" 95.0 90.0 2 3 ]
+    let files = [ makeFile "Foo.fs" 80.0 75.0 3 4; makeFile "Bar.fs" 95.0 90.0 2 3 ]
 
     let results = buildFileResults config files
 

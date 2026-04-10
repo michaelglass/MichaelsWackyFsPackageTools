@@ -30,7 +30,7 @@ let ``discoverProjects returns empty list when no src directory`` () =
     withTempDir (fun dir ->
         let results = discoverProjects dir
 
-        test <@ results = [] @>)
+        test <@ List.isEmpty results @>)
 
 [<Fact>]
 let ``discoverProjects finds nested projects`` () =
@@ -105,7 +105,7 @@ let ``runLint with no projects found`` () =
 
         let result = runLint dir
 
-        test <@ result.ProjectChecks = [] @>
+        test <@ List.isEmpty result.ProjectChecks @>
         test <@ result.RepoChecks.Length = 3 @>)
 
 [<Fact>]

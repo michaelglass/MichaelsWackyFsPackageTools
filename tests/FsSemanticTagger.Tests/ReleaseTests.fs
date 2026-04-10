@@ -982,10 +982,7 @@ let ``release - PromoteToBeta with HasPreviousRelease succeeds`` () =
     let tmpFile = Path.GetTempFileName()
 
     try
-        File.WriteAllText(
-            tmpFile,
-            "<Project><PropertyGroup><Version>0.1.0-alpha.3</Version></PropertyGroup></Project>"
-        )
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.1.0-alpha.3</Version></PropertyGroup></Project>")
 
         let (fakeRun, _getCalls) =
             passingCiRun
@@ -1061,15 +1058,9 @@ let ``release - updates fsProjsSharingSameTag versions too`` () =
     let tmpFileShared = Path.GetTempFileName()
 
     try
-        File.WriteAllText(
-            tmpFileMain,
-            "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>"
-        )
+        File.WriteAllText(tmpFileMain, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
 
-        File.WriteAllText(
-            tmpFileShared,
-            "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>"
-        )
+        File.WriteAllText(tmpFileShared, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
 
         let (fakeRun, _getCalls) = passingCiRun []
 
