@@ -32,6 +32,10 @@ on:
         description: 'Command to run after restore/tool-restore but before build (e.g. code generation)'
         type: string
         default: ''
+      test-extra-args:
+        description: 'Extra arguments appended to dotnet test (e.g. --ignore-exit-code 7)'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -81,7 +85,8 @@ jobs:
             dotnet test --project "$proj" \
               --coverage \
               --coverage-output-format cobertura \
-              --coverage-output "${{ github.workspace }}/coverage/$project_name/coverage.cobertura.xml"
+              --coverage-output "${{ github.workspace }}/coverage/$project_name/coverage.cobertura.xml" \
+              ${{ inputs.test-extra-args }}
           done
       - name: Coverage report
         uses: danielpalme/ReportGenerator-GitHub-Action@5
