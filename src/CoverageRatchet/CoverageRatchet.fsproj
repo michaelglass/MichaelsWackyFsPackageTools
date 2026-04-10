@@ -10,6 +10,9 @@
     <WarnOn>3390;1104;0020;0044;0025;3391;0067;0021;1182</WarnOn>
     <NoWarn>$(NoWarn);NU1605;MSB3277;NETSDK1188</NoWarn>
   </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="CoverageRatchet.Tests" />
+  </ItemGroup>
   <PropertyGroup>
     <PackageId>CoverageRatchet</PackageId>
     <Version>0.10.0-alpha.1</Version>

@@ -20,32 +20,39 @@ type Version =
 let private versionRegex =
     Regex(@"^(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta|rc)\.(\d+))?$", RegexOptions.Compiled)
 
-let parse (s: string) : Version =
+let tryParse (s: string) : Result<Version, string> =
     let m = versionRegex.Match(s)
 
     if not m.Success then
-        failwithf "Invalid version string: %s" s
+        Error $"Invalid version string: {s}"
+    else
+        let major = int m.Groups[1].Value
+        let minor = int m.Groups[2].Value
+        let patch = int m.Groups[3].Value
 
-    let major = int m.Groups[1].Value
-    let minor = int m.Groups[2].Value
-    let patch = int m.Groups[3].Value
+        let stage =
+            if m.Groups[4].Success then
+                let n = int m.Groups[5].Value
 
-    let stage =
-        if m.Groups[4].Success then
-            let n = int m.Groups[5].Value
+                match m.Groups[4].Value with
+                | "alpha" -> Ok(PreRelease(Alpha n))
+                | "beta" -> Ok(PreRelease(Beta n))
+                | "rc" -> Ok(PreRelease(RC n))
+                | other -> Error $"Unknown pre-release stage: {other}"
+            else
+                Ok Stable
 
-            match m.Groups[4].Value with
-            | "alpha" -> PreRelease(Alpha n)
-            | "beta" -> PreRelease(Beta n)
-            | "rc" -> PreRelease(RC n)
-            | other -> failwithf "Unknown pre-release stage: %s" other
-        else
-            Stable
+        stage
+        |> Result.map (fun s ->
+            { Major = major
+              Minor = minor
+              Patch = patch
+              Stage = s })
 
-    { Major = major
-      Minor = minor
-      Patch = patch
-      Stage = stage }
+let parse (s: string) : Version =
+    match tryParse s with
+    | Ok v -> v
+    | Error msg -> failwith msg
 
 let format (v: Version) : string =
     let base_ = $"{v.Major}.{v.Minor}.{v.Patch}"

@@ -19,7 +19,7 @@ type PublishMode =
 
 type ReleaseState =
     | FirstRelease
-    | HasPreviousRelease of tag: string * currentVersion: Version
+    | HasPreviousRelease of currentVersion: Version
 
 /// Determine new version from current version + API change
 let determineBump (current: Version) (change: ApiChange) : Version =
@@ -48,14 +48,15 @@ let determineBump (current: Version) (change: ApiChange) : Version =
         | NoChange -> bumpPatch current
 
 /// Determine version for a specific command (non-Auto)
-let forCommand (state: ReleaseState) (cmd: ReleaseCommand) : Version option =
+let forCommand (state: ReleaseState) (cmd: ReleaseCommand) : Result<Version, string> =
     match cmd, state with
-    | StartAlpha, FirstRelease -> Some firstAlpha
-    | StartAlpha, HasPreviousRelease(_, v) -> Some(nextAlphaCycle v)
-    | PromoteToBeta, HasPreviousRelease(_, v) -> Some(toBeta v)
-    | PromoteToRC, HasPreviousRelease(_, v) -> Some(toRC v)
-    | PromoteToStable, HasPreviousRelease(_, v) -> Some(toStable v)
-    | _ -> None
+    | StartAlpha, FirstRelease -> Ok firstAlpha
+    | StartAlpha, HasPreviousRelease v -> Ok(nextAlphaCycle v)
+    | PromoteToBeta, HasPreviousRelease v -> Ok(toBeta v)
+    | PromoteToRC, HasPreviousRelease v -> Ok(toRC v)
+    | PromoteToStable, HasPreviousRelease v -> Ok(toStable v)
+    | Auto, _ -> Error "Auto is handled separately"
+    | cmd, FirstRelease -> Error $"Cannot {cmd} without a previous release"
 
 /// Update <Version> in an fsproj file
 let updateFsprojVersion (fsprojPath: string) (version: Version) : unit =
@@ -78,7 +79,7 @@ let internal waitForCi (run: string -> string -> CommandResult) (pollIntervalMs:
                 printfn "Timed out waiting for CI after %d attempts" maxAttempts
                 status
             else
-                let completed = runs |> List.filter (fun r -> r.Status = "completed") |> List.length
+                let completed = runs |> List.filter (fun r -> r.Status = Vcs.Completed) |> List.length
 
                 printfn "Waiting for CI... (%d/%d runs complete)" completed runs.Length
                 System.Threading.Thread.Sleep(pollIntervalMs)
@@ -153,15 +154,16 @@ let release
                         match getLatestTag run pkg.TagPrefix with
                         | Some tag ->
                             let versionStr = tag.Substring(pkg.TagPrefix.Length)
-                            HasPreviousRelease(tag, parse versionStr)
+                            HasPreviousRelease(parse versionStr)
                         | None -> FirstRelease
 
                     // Skip packages with no changes since last tag
                     let srcDir = System.IO.Path.GetDirectoryName(pkg.Fsproj)
 
                     match state with
-                    | HasPreviousRelease(tag, _) when not (hasChangesSinceTag run tag srcDir) ->
-                        printfn "Skipping %s: no changes since %s" pkg.Name tag
+                    | HasPreviousRelease currentVersion
+                        when not (hasChangesSinceTag run (toTag pkg.TagPrefix currentVersion) srcDir) ->
+                        printfn "Skipping %s: no changes since %s" pkg.Name (toTag pkg.TagPrefix currentVersion)
                         None
                     | _ ->
 
@@ -169,7 +171,7 @@ let release
                         | Auto ->
                             match state with
                             | FirstRelease -> None // Need explicit command for first release
-                            | HasPreviousRelease(_tag, currentVersion) ->
+                            | HasPreviousRelease currentVersion ->
                                 let change =
                                     match extractPreviousApi pkg.Name (format currentVersion) with
                                     | Some oldApi ->
@@ -188,14 +190,14 @@ let release
                                 Some(pkg, newVersion)
                         | _ ->
                             match forCommand state cmd with
-                            | Some v ->
+                            | Ok v ->
                                 if config.ReservedVersions.Contains(format v) then
                                     printfn "Warning: version %s is reserved, skipping" (format v)
                                     None
                                 else
                                     Some(pkg, v)
-                            | None ->
-                                printfn "Cannot %A from current state for %s" cmd pkg.Name
+                            | Error msg ->
+                                printfn "%s for %s" msg pkg.Name
                                 None)
 
             if bumps.IsEmpty then

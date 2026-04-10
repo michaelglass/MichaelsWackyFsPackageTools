@@ -824,3 +824,273 @@ let ``release - uses coverageratchet loosen-from-ci when available`` () =
         @>
 
     test <@ not (calls |> List.exists (fun (c, _) -> c = "gh")) @>
+
+[<Fact>]
+let ``release - returns 1 when coverageratchet loosen-from-ci fails`` () =
+    let mutable calls = []
+
+    let fakeRun (cmd: string) (args: string) : CommandResult =
+        calls <- calls @ [ (cmd, args) ]
+
+        match cmd, args with
+        | "jj", "status" -> Success "The working copy is clean"
+        | "dotnet", "tool list" -> Success "coverageratchet    0.8.0-alpha.4    coverageratchet"
+        | "dotnet", a when a.StartsWith("tool run coverageratchet loosen-from-ci") -> Failure "CI not green"
+        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+    let config =
+        { Packages = []
+          ReservedVersions = Set.empty
+          PreBuildCmds = [] }
+
+    let result =
+        release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+
+    test <@ result = 1 @>
+
+[<Fact>]
+let ``release - returns 1 when CI has no runs`` () =
+    let fakeRun (cmd: string) (args: string) : CommandResult =
+        match cmd, args with
+        | "jj", "status" -> Success "The working copy is clean"
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "gh", a when a.Contains("run list") -> Success "[]"
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "def456"
+        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+    let config =
+        { Packages = []
+          ReservedVersions = Set.empty
+          PreBuildCmds = [] }
+
+    let result =
+        release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+
+    test <@ result = 1 @>
+
+[<Fact>]
+let ``release - returns 1 when CI status is Unknown`` () =
+    let fakeRun (cmd: string) (args: string) : CommandResult =
+        match cmd, args with
+        | "jj", "status" -> Success "The working copy is clean"
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "gh", a when a.Contains("run list") -> Failure "gh not installed"
+        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+    let config =
+        { Packages = []
+          ReservedVersions = Set.empty
+          PreBuildCmds = [] }
+
+    let result =
+        release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+
+    test <@ result = 1 @>
+
+[<Fact>]
+let ``release - returns 1 when CI times out still in progress`` () =
+    let fakeRun (cmd: string) (args: string) : CommandResult =
+        match cmd, args with
+        | "jj", "status" -> Success "The working copy is clean"
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "gh", a when a.Contains("run list") ->
+            Success """[{"status":"in_progress","conclusion":null,"name":"CI","url":"https://example.com/1"}]"""
+        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+    let config =
+        { Packages = []
+          ReservedVersions = Set.empty
+          PreBuildCmds = [] }
+
+    let result =
+        release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 2
+
+    test <@ result = 1 @>
+
+[<Fact>]
+let ``release - PromoteToRC with HasPreviousRelease succeeds`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0-beta.3</Version></PropertyGroup></Project>")
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0-beta.3")
+                  ("jj",
+                   "diff --from v1.0.0-beta.3 --to @ --stat \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
+                   Success "1 file changed") ]
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
+
+        let result =
+            release fakeRun config PromoteToRC GitHubActions noPreviousApi noCurrentApi 0 10
+
+        test <@ result = 0 @>
+        let content = File.ReadAllText(tmpFile)
+        test <@ content.Contains("<Version>1.0.0-rc.1</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - PromoteToStable with HasPreviousRelease succeeds`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0-rc.1</Version></PropertyGroup></Project>")
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0-rc.1")
+                  ("jj",
+                   "diff --from v1.0.0-rc.1 --to @ --stat \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
+                   Success "1 file changed") ]
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
+
+        let result =
+            release fakeRun config PromoteToStable GitHubActions noPreviousApi noCurrentApi 0 10
+
+        test <@ result = 0 @>
+        let content = File.ReadAllText(tmpFile)
+        test <@ content.Contains("<Version>1.0.0</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - PromoteToBeta with HasPreviousRelease succeeds`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(
+            tmpFile,
+            "<Project><PropertyGroup><Version>0.1.0-alpha.3</Version></PropertyGroup></Project>"
+        )
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v0.1.0-alpha.3")
+                  ("jj",
+                   "diff --from v0.1.0-alpha.3 --to @ --stat \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
+                   Success "1 file changed") ]
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
+
+        let result =
+            release fakeRun config PromoteToBeta GitHubActions noPreviousApi noCurrentApi 0 10
+
+        test <@ result = 0 @>
+        let content = File.ReadAllText(tmpFile)
+        test <@ content.Contains("<Version>0.1.0-beta.1</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``waitForCi - returns Passed immediately when CI passes`` () =
+    let mutable ghCallCount = 0
+
+    let run (cmd: string) (args: string) : CommandResult =
+        match cmd, args with
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "gh", a when a.Contains("run list") ->
+            ghCallCount <- ghCallCount + 1
+
+            Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+        | _ -> Failure(sprintf "unexpected: %s %s" cmd args)
+
+    let result = waitForCi run 0 10
+    test <@ result = Passed @>
+    test <@ ghCallCount = 1 @>
+
+[<Fact>]
+let ``waitForCi - returns NoRuns immediately`` () =
+    let run (cmd: string) (args: string) : CommandResult =
+        match cmd, args with
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "gh", a when a.Contains("run list") -> Success "[]"
+        | "jj", "status" -> Success "Working copy changes:\nM src/Foo.fs"
+        | _ -> Failure(sprintf "unexpected: %s %s" cmd args)
+
+    let result = waitForCi run 0 10
+    test <@ result = NoRuns @>
+
+[<Fact>]
+let ``waitForCi - returns Unknown immediately`` () =
+    let run (cmd: string) (args: string) : CommandResult =
+        match cmd, args with
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "gh", a when a.Contains("run list") -> Failure "gh not found"
+        | _ -> Failure(sprintf "unexpected: %s %s" cmd args)
+
+    let result = waitForCi run 0 10
+    test <@ result = Unknown @>
+
+[<Fact>]
+let ``release - updates fsProjsSharingSameTag versions too`` () =
+    let tmpFileMain = Path.GetTempFileName()
+    let tmpFileShared = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(
+            tmpFileMain,
+            "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>"
+        )
+
+        File.WriteAllText(
+            tmpFileShared,
+            "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>"
+        )
+
+        let (fakeRun, _getCalls) = passingCiRun []
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFileMain
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [ tmpFileShared ] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
+
+        let result =
+            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+
+        test <@ result = 0 @>
+        let mainContent = File.ReadAllText(tmpFileMain)
+        let sharedContent = File.ReadAllText(tmpFileShared)
+        test <@ mainContent.Contains("<Version>0.1.0-alpha.1</Version>") @>
+        test <@ sharedContent.Contains("<Version>0.1.0-alpha.1</Version>") @>
+    finally
+        File.Delete(tmpFileMain)
+        File.Delete(tmpFileShared)

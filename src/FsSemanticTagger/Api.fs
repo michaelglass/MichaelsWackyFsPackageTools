@@ -8,9 +8,16 @@ open System.Runtime.InteropServices
 type ApiSignature = ApiSignature of string
 
 type ApiChange =
-    | Breaking of ApiSignature list
-    | Addition of ApiSignature list
+    | Breaking of head: ApiSignature * rest: ApiSignature list
+    | Addition of head: ApiSignature * rest: ApiSignature list
     | NoChange
+
+module ApiChange =
+    let toList =
+        function
+        | Breaking(h, t)
+        | Addition(h, t) -> h :: t
+        | NoChange -> []
 
 let private supportedTfms =
     [ "net10.0"; "net9.0"; "net8.0"; "netstandard2.1"; "netstandard2.0" ]
@@ -256,7 +263,11 @@ let compare (baseline: ApiSignature list) (current: ApiSignature list) : ApiChan
             else
                 false)
 
-    if not removed.IsEmpty then Breaking removed
-    elif hasNewDuCase then Breaking added
-    elif not added.IsEmpty then Addition added
-    else NoChange
+    match removed, added with
+    | h :: t, _ -> Breaking(h, t)
+    | [], _ when hasNewDuCase ->
+        match added with
+        | h :: t -> Breaking(h, t)
+        | [] -> NoChange
+    | [], h :: t -> Addition(h, t)
+    | [], [] -> NoChange

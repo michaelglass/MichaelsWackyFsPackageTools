@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-No changes.
+- refactor: type-driven design — add `SyncMode` DU (replacing `check: bool`), `SyncOutcome`/`SyncError` split (fixing silent exit 0 on missing files), `SyncPair` record, `DiscoveryWarning` DU, `DiscoveryResult` record
 
 ## 0.10.0-alpha.1
 

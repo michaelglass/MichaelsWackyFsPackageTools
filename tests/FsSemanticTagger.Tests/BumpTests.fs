@@ -16,7 +16,7 @@ let ``stable >=1.0 + Breaking bumps major`` () =
           Patch = 3
           Stage = Stable }
 
-    test <@ determineBump v (Breaking [ ApiSignature "removed" ]) = bumpMajor v @>
+    test <@ determineBump v (Breaking(ApiSignature "removed", [])) = bumpMajor v @>
 
 [<Fact>]
 let ``stable >=1.0 + Addition bumps minor`` () =
@@ -26,7 +26,7 @@ let ``stable >=1.0 + Addition bumps minor`` () =
           Patch = 3
           Stage = Stable }
 
-    test <@ determineBump v (Addition [ ApiSignature "added" ]) = bumpMinor v @>
+    test <@ determineBump v (Addition(ApiSignature "added", [])) = bumpMinor v @>
 
 [<Fact>]
 let ``stable >=1.0 + NoChange bumps patch`` () =
@@ -48,7 +48,7 @@ let ``pre-1.0 stable + Breaking bumps minor`` () =
           Patch = 3
           Stage = Stable }
 
-    test <@ determineBump v (Breaking [ ApiSignature "removed" ]) = bumpMinor v @>
+    test <@ determineBump v (Breaking(ApiSignature "removed", [])) = bumpMinor v @>
 
 [<Fact>]
 let ``pre-1.0 stable + Addition bumps patch`` () =
@@ -58,7 +58,7 @@ let ``pre-1.0 stable + Addition bumps patch`` () =
           Patch = 3
           Stage = Stable }
 
-    test <@ determineBump v (Addition [ ApiSignature "added" ]) = bumpPatch v @>
+    test <@ determineBump v (Addition(ApiSignature "added", [])) = bumpPatch v @>
 
 // determineBump: Alpha
 
@@ -70,7 +70,7 @@ let ``alpha + Breaking increments alpha number`` () =
           Patch = 0
           Stage = PreRelease(Alpha 1) }
 
-    test <@ determineBump v (Breaking [ ApiSignature "removed" ]) = { v with Stage = PreRelease(Alpha 2) } @>
+    test <@ determineBump v (Breaking(ApiSignature "removed", [])) = { v with Stage = PreRelease(Alpha 2) } @>
 
 [<Fact>]
 let ``alpha + Addition increments alpha number`` () =
@@ -80,7 +80,7 @@ let ``alpha + Addition increments alpha number`` () =
           Patch = 0
           Stage = PreRelease(Alpha 3) }
 
-    test <@ determineBump v (Addition [ ApiSignature "added" ]) = { v with Stage = PreRelease(Alpha 4) } @>
+    test <@ determineBump v (Addition(ApiSignature "added", [])) = { v with Stage = PreRelease(Alpha 4) } @>
 
 [<Fact>]
 let ``alpha + NoChange increments alpha number`` () =
@@ -102,7 +102,7 @@ let ``beta + any change increments beta number`` () =
           Patch = 0
           Stage = PreRelease(Beta 1) }
 
-    test <@ determineBump v (Breaking [ ApiSignature "removed" ]) = { v with Stage = PreRelease(Beta 2) } @>
+    test <@ determineBump v (Breaking(ApiSignature "removed", [])) = { v with Stage = PreRelease(Beta 2) } @>
 
 // determineBump: RC
 
@@ -124,7 +124,7 @@ let ``RC + API change reverts to beta`` () =
           Patch = 0
           Stage = PreRelease(RC 1) }
 
-    test <@ determineBump v (Breaking [ ApiSignature "removed" ]) = toBeta v @>
+    test <@ determineBump v (Breaking(ApiSignature "removed", [])) = toBeta v @>
 
 [<Fact>]
 let ``RC + Addition reverts to beta`` () =
@@ -134,13 +134,13 @@ let ``RC + Addition reverts to beta`` () =
           Patch = 0
           Stage = PreRelease(RC 2) }
 
-    test <@ determineBump v (Addition [ ApiSignature "added" ]) = toBeta v @>
+    test <@ determineBump v (Addition(ApiSignature "added", [])) = toBeta v @>
 
 // forCommand
 
 [<Fact>]
 let ``forCommand StartAlpha + FirstRelease returns firstAlpha`` () =
-    test <@ forCommand FirstRelease StartAlpha = Some firstAlpha @>
+    test <@ forCommand FirstRelease StartAlpha = Ok firstAlpha @>
 
 [<Fact>]
 let ``forCommand StartAlpha + HasPreviousRelease returns nextAlphaCycle`` () =
@@ -150,7 +150,7 @@ let ``forCommand StartAlpha + HasPreviousRelease returns nextAlphaCycle`` () =
           Patch = 0
           Stage = Stable }
 
-    test <@ forCommand (HasPreviousRelease("v0.1.0", v)) StartAlpha = Some(nextAlphaCycle v) @>
+    test <@ forCommand (HasPreviousRelease v) StartAlpha = Ok(nextAlphaCycle v) @>
 
 [<Fact>]
 let ``forCommand PromoteToBeta`` () =
@@ -160,7 +160,7 @@ let ``forCommand PromoteToBeta`` () =
           Patch = 0
           Stage = PreRelease(Alpha 3) }
 
-    test <@ forCommand (HasPreviousRelease("v1.0.0-alpha.3", v)) PromoteToBeta = Some(toBeta v) @>
+    test <@ forCommand (HasPreviousRelease v) PromoteToBeta = Ok(toBeta v) @>
 
 [<Fact>]
 let ``forCommand PromoteToRC`` () =
@@ -170,7 +170,7 @@ let ``forCommand PromoteToRC`` () =
           Patch = 0
           Stage = PreRelease(Beta 2) }
 
-    test <@ forCommand (HasPreviousRelease("v1.0.0-beta.2", v)) PromoteToRC = Some(toRC v) @>
+    test <@ forCommand (HasPreviousRelease v) PromoteToRC = Ok(toRC v) @>
 
 [<Fact>]
 let ``forCommand PromoteToStable`` () =
@@ -180,8 +180,55 @@ let ``forCommand PromoteToStable`` () =
           Patch = 0
           Stage = PreRelease(RC 1) }
 
-    test <@ forCommand (HasPreviousRelease("v1.0.0-rc.1", v)) PromoteToStable = Some(toStable v) @>
+    test <@ forCommand (HasPreviousRelease v) PromoteToStable = Ok(toStable v) @>
 
 [<Fact>]
-let ``forCommand PromoteToBeta + FirstRelease returns None`` () =
-    test <@ forCommand FirstRelease PromoteToBeta = None @>
+let ``forCommand PromoteToBeta + FirstRelease returns Error`` () =
+    test
+        <@
+            match forCommand FirstRelease PromoteToBeta with
+            | Error msg -> msg.Contains("Cannot")
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``forCommand PromoteToRC + FirstRelease returns Error`` () =
+    test
+        <@
+            match forCommand FirstRelease PromoteToRC with
+            | Error msg -> msg.Contains("Cannot")
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``forCommand PromoteToStable + FirstRelease returns Error`` () =
+    test
+        <@
+            match forCommand FirstRelease PromoteToStable with
+            | Error msg -> msg.Contains("Cannot")
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``forCommand Auto returns Error`` () =
+    test
+        <@
+            match forCommand FirstRelease Auto with
+            | Error msg -> msg.Contains("Auto")
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``forCommand Auto with HasPreviousRelease returns Error`` () =
+    let v =
+        { Major = 1
+          Minor = 0
+          Patch = 0
+          Stage = Stable }
+
+    test
+        <@
+            match forCommand (HasPreviousRelease v) Auto with
+            | Error msg -> msg.Contains("Auto")
+            | Ok _ -> false
+        @>

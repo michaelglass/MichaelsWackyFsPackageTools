@@ -291,8 +291,8 @@ let ``parseCiRuns - parses completed success runs`` () =
     let runs = parseCiRuns json
     test <@ runs.Length = 1 @>
     test <@ runs.[0].Name = "CI" @>
-    test <@ runs.[0].Status = "completed" @>
-    test <@ runs.[0].Conclusion = "success" @>
+    test <@ runs.[0].Status = Completed @>
+    test <@ runs.[0].Conclusion = SuccessConclusion @>
     test <@ runs.[0].Url = "https://example.com/1" @>
 
 [<Fact>]
@@ -302,7 +302,7 @@ let ``parseCiRuns - parses multiple runs with mixed status`` () =
 
     let runs = parseCiRuns json
     test <@ runs.Length = 2 @>
-    test <@ runs.[1].Status = "in_progress" @>
+    test <@ runs.[1].Status = InProgressStatus @>
 
 [<Fact>]
 let ``parseCiRuns - handles empty array`` () =
@@ -315,7 +315,7 @@ let ``parseCiRuns - handles null conclusion for in-progress`` () =
         """[{"status":"in_progress","conclusion":null,"name":"CI","url":"https://example.com/1"}]"""
 
     let runs = parseCiRuns json
-    test <@ runs.[0].Conclusion = "" @>
+    test <@ runs.[0].Conclusion = PendingConclusion @>
 
 // checkCiStatusForSha
 
@@ -453,6 +453,122 @@ let ``pushMain - pushes main bookmark via jj`` () =
     pushMain run
     test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push") @>
 
+// RunStatus.ofString
+
+[<Fact>]
+let ``RunStatus.ofString completed`` () =
+    test <@ RunStatus.ofString "completed" = Completed @>
+
+[<Fact>]
+let ``RunStatus.ofString in_progress`` () =
+    test <@ RunStatus.ofString "in_progress" = InProgressStatus @>
+
+[<Fact>]
+let ``RunStatus.ofString queued`` () =
+    test <@ RunStatus.ofString "queued" = Queued @>
+
+[<Fact>]
+let ``RunStatus.ofString unknown value`` () =
+    test <@ RunStatus.ofString "waiting" = OtherStatus "waiting" @>
+
+// RunConclusion.ofString
+
+[<Fact>]
+let ``RunConclusion.ofString success`` () =
+    test <@ RunConclusion.ofString "success" = SuccessConclusion @>
+
+[<Fact>]
+let ``RunConclusion.ofString failure`` () =
+    test <@ RunConclusion.ofString "failure" = FailureConclusion @>
+
+[<Fact>]
+let ``RunConclusion.ofString cancelled`` () =
+    test <@ RunConclusion.ofString "cancelled" = CancelledConclusion @>
+
+[<Fact>]
+let ``RunConclusion.ofString pending`` () =
+    test <@ RunConclusion.ofString "pending" = PendingConclusion @>
+
+[<Fact>]
+let ``RunConclusion.ofString empty string`` () =
+    test <@ RunConclusion.ofString "" = PendingConclusion @>
+
+[<Fact>]
+let ``RunConclusion.ofString unknown value`` () =
+    test <@ RunConclusion.ofString "skipped" = OtherConclusion "skipped" @>
+
+// hasCoverageRatchet
+
+[<Fact>]
+let ``hasCoverageRatchet - returns true when tool is listed`` () =
+    let run =
+        fakeRun [ ("dotnet", "tool list", Success "coverageratchet    0.8.0-alpha.4    coverageratchet") ]
+
+    test <@ hasCoverageRatchet run = true @>
+
+[<Fact>]
+let ``hasCoverageRatchet - returns false when tool is not listed`` () =
+    let run =
+        fakeRun [ ("dotnet", "tool list", Success "fantomas    7.0.0    fantomas") ]
+
+    test <@ hasCoverageRatchet run = false @>
+
+[<Fact>]
+let ``hasCoverageRatchet - returns false when command fails`` () =
+    let run = fakeRun [ ("dotnet", "tool list", Failure "dotnet not found") ]
+    test <@ hasCoverageRatchet run = false @>
+
+// getCiStatus - NoRuns with dirty working copy does NOT fall back to parent
+
+[<Fact>]
+let ``getCiStatus - NoRuns with dirty working copy does not fall back to parent`` () =
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+              ("gh", ghCiArgs "abc123", Success "[]")
+              ("jj", "status", Success "Working copy changes:\nM src/Foo.fs") ]
+
+    test <@ getCiStatus run = NoRuns @>
+
+// getCurrentCommitSha - jj returns empty string
+
+[<Fact>]
+let ``getCurrentCommitSha - jj returns empty string falls back to git`` () =
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Success "")
+              ("git", "rev-parse HEAD", Success "def456abc") ]
+
+    test <@ getCurrentCommitSha run = Some "def456abc" @>
+
+[<Fact>]
+let ``getCurrentCommitSha - git returns empty string returns None`` () =
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Failure "no jj")
+              ("git", "rev-parse HEAD", Success "") ]
+
+    test <@ getCurrentCommitSha run = None @>
+
+// checkCiStatusForSha with queued run
+
+[<Fact>]
+let ``checkCiStatusForSha - queued run returns InProgress`` () =
+    let json =
+        """[{"status":"queued","conclusion":null,"name":"CI","url":"https://example.com/1"}]"""
+
+    let run = fakeRun [ ("gh", ghCiArgs "abc123", Success json) ]
+    let result = checkCiStatusForSha run "abc123"
+
+    test
+        <@
+            match result with
+            | InProgress _ -> true
+            | _ -> false
+        @>
+
+// pushTags
+
 [<Fact>]
 let ``pushTags - exports and pushes each tag separately`` () =
     let mutable calls: (string * string) list = []
@@ -469,3 +585,206 @@ let ``pushTags - exports and pushes each tag separately`` () =
     test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git export") @>
     test <@ calls |> List.exists (fun (c, a) -> c = "git" && a = "push origin v1.0.0") @>
     test <@ calls |> List.exists (fun (c, a) -> c = "git" && a = "push origin v2.0.0") @>
+
+// tagExists - jj success but tag not in output
+
+[<Fact>]
+let ``tagExists - jj success but tag not in output returns false`` () =
+    let run = fakeRun [ ("jj", "tag list v1.0.0", Success "v2.0.0\nv3.0.0") ]
+    test <@ tagExists run "v1.0.0" = false @>
+
+// tagExists - both jj and git fail
+
+[<Fact>]
+let ``tagExists - both jj and git fail returns false`` () =
+    let run =
+        fakeRun
+            [ ("jj", "tag list v1.0.0", Failure "no jj")
+              ("git", "tag -l v1.0.0", Failure "no git") ]
+
+    test <@ tagExists run "v1.0.0" = false @>
+
+// getCiStatus - NoRuns with clean copy but parent sha empty
+
+[<Fact>]
+let ``getCiStatus - NoRuns clean copy but parent sha empty returns NoRuns`` () =
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+              ("gh", ghCiArgs "abc123", Success "[]")
+              ("jj", "status", Success "The working copy is clean")
+              ("jj", "log -r @- --no-graph -T commit_id", Success "") ]
+
+    test <@ getCiStatus run = NoRuns @>
+
+// getCiStatus - NoRuns clean copy but parent log fails
+
+[<Fact>]
+let ``getCiStatus - NoRuns clean copy but parent log fails returns NoRuns`` () =
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+              ("gh", ghCiArgs "abc123", Success "[]")
+              ("jj", "status", Success "The working copy is clean")
+              ("jj", "log -r @- --no-graph -T commit_id", Failure "no parent") ]
+
+    test <@ getCiStatus run = NoRuns @>
+
+// getCiStatus - non-NoRuns status returned directly without parent check
+
+[<Fact>]
+let ``getCiStatus - Failed status returned directly`` () =
+    let json =
+        """[{"status":"completed","conclusion":"failure","name":"CI","url":"https://example.com/1"}]"""
+
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+              ("gh", ghCiArgs "abc123", Success json) ]
+
+    test
+        <@
+            match getCiStatus run with
+            | Failed _ -> true
+            | _ -> false
+        @>
+
+// getCiStatus - Unknown status returned directly
+
+[<Fact>]
+let ``getCiStatus - Unknown from gh failure returned directly`` () =
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+              ("gh", ghCiArgs "abc123", Failure "gh error") ]
+
+    test <@ getCiStatus run = Unknown @>
+
+// runOrFail
+
+[<Fact>]
+let ``runOrFail - success returns output`` () =
+    let run = fakeRun [ ("echo", "hello", Success "hello world") ]
+    test <@ runOrFail run "echo" "hello" = "hello world" @>
+
+[<Fact>]
+let ``runOrFail - failure throws exception`` () =
+    let run = fakeRun [ ("bad", "cmd", Failure "it failed") ]
+    Assert.ThrowsAny<exn>(fun () -> runOrFail run "bad" "cmd" |> ignore) |> ignore
+
+// parseCiRuns - queued status
+
+[<Fact>]
+let ``parseCiRuns - parses queued status`` () =
+    let json =
+        """[{"status":"queued","conclusion":"","name":"CI","url":"https://example.com/1"}]"""
+
+    let runs = parseCiRuns json
+    test <@ runs.[0].Status = Queued @>
+    test <@ runs.[0].Conclusion = PendingConclusion @>
+
+// parseCiRuns - other/unknown status
+
+[<Fact>]
+let ``parseCiRuns - parses unknown status and conclusion`` () =
+    let json =
+        """[{"status":"waiting","conclusion":"skipped","name":"CI","url":"https://example.com/1"}]"""
+
+    let runs = parseCiRuns json
+    test <@ runs.[0].Status = OtherStatus "waiting" @>
+    test <@ runs.[0].Conclusion = OtherConclusion "skipped" @>
+
+// checkCiStatusForSha - mix of completed success and OtherStatus
+
+[<Fact>]
+let ``checkCiStatusForSha - completed success with OtherConclusion returns InProgress`` () =
+    let json =
+        """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"},{"status":"completed","conclusion":"neutral","name":"Lint","url":"https://example.com/2"}]"""
+
+    let run = fakeRun [ ("gh", ghCiArgs "abc123", Success json) ]
+    let result = checkCiStatusForSha run "abc123"
+
+    test
+        <@
+            match result with
+            | InProgress _ -> true
+            | _ -> false
+        @>
+
+// getLatestTag - prefix filtering
+
+[<Fact>]
+let ``getLatestTag - with custom prefix filters correctly`` () =
+    let run =
+        fakeRun [ ("jj", jjTagListArgs "mylib-v", Success "mylib-v1.0.0\nmylib-v2.0.0") ]
+
+    test <@ getLatestTag run "mylib-v" = Some "mylib-v2.0.0" @>
+
+[<Fact>]
+let ``getLatestTag - prerelease tags sorted correctly`` () =
+    let run =
+        fakeRun [ ("jj", jjTagListArgs "v", Success "v1.0.0-alpha.1\nv1.0.0-alpha.2\nv1.0.0-beta.1\nv1.0.0\nv0.9.0") ]
+
+    test <@ getLatestTag run "v" = Some "v1.0.0" @>
+
+// getCurrentCommitSha - jj returns whitespace-only
+
+[<Fact>]
+let ``getCurrentCommitSha - jj returns whitespace only falls back to git`` () =
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Success "   ")
+              ("git", "rev-parse HEAD", Success "abc123") ]
+
+    test <@ getCurrentCommitSha run = Some "abc123" @>
+
+// getCiStatus - NoRuns with "has no changes" message
+
+[<Fact>]
+let ``getCiStatus - NoRuns with no changes message falls back to parent`` () =
+    let json =
+        """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+              ("gh", ghCiArgs "abc123", Success "[]")
+              ("jj", "status", Success "The working copy has no changes")
+              ("jj", "log -r @- --no-graph -T commit_id", Success "def456")
+              ("gh", ghCiArgs "def456", Success json) ]
+
+    test <@ getCiStatus run = Passed @>
+
+// isCiPassing edge cases
+
+[<Fact>]
+let ``isCiPassing - returns false for InProgress`` () =
+    let json =
+        """[{"status":"in_progress","conclusion":null,"name":"CI","url":"https://example.com/1"}]"""
+
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+              ("gh", ghCiArgs "abc123", Success json) ]
+
+    test <@ isCiPassing run = false @>
+
+[<Fact>]
+let ``isCiPassing - returns false for Unknown`` () =
+    let run =
+        fakeRun
+            [ ("jj", "log -r @ --no-graph -T commit_id", Failure "no jj")
+              ("git", "rev-parse HEAD", Failure "no git") ]
+
+    test <@ isCiPassing run = false @>
+
+// tagExists - jj fails, git tag doesn't match
+
+[<Fact>]
+let ``tagExists - jj fails git returns different tag returns false`` () =
+    let run =
+        fakeRun
+            [ ("jj", "tag list v1.0.0", Failure "no jj")
+              ("git", "tag -l v1.0.0", Success "v1.0.0-beta") ]
+
+    test <@ tagExists run "v1.0.0" = false @>

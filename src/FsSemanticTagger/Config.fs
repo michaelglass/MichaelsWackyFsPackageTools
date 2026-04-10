@@ -58,25 +58,27 @@ let findPackableProjects (rootDir: string) : (string * string) list =
     |> Array.toList
 
 /// Discover a single-package config by finding the packable fsproj
-let discover (rootDir: string) : ToolConfig =
+let discover (rootDir: string) : Result<ToolConfig, string> =
     let projects = findPackableProjects rootDir
 
     match projects.Length with
-    | 0 -> failwith "No packable .fsproj found (must have <PackageId>)"
+    | 0 -> Error "No packable .fsproj found (must have <PackageId>)"
     | 1 ->
         let name, relativePath = projects[0]
         let fsproj = Path.Combine(rootDir, relativePath)
 
-        { Packages =
-            [ { Name = name
-                Fsproj = relativePath
-                DllPath = Path.GetRelativePath(rootDir, deriveDllPath fsproj)
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+        Ok
+            { Packages =
+                [ { Name = name
+                    Fsproj = relativePath
+                    DllPath = Path.GetRelativePath(rootDir, deriveDllPath fsproj)
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
     | n ->
-        failwithf "Found %d packable .fsproj files; create a semantic-tagger.json to configure multi-package release" n
+        Error
+            $"Found {n} packable .fsproj files; create a semantic-tagger.json to configure multi-package release"
 
 let private tryGet (name: string) (el: JsonElement) =
     match el.TryGetProperty(name) with
@@ -191,23 +193,24 @@ let toJson (config: ToolConfig) : string =
 /// Load config: try semantic-tagger.json first, fall back to discover.
 /// DLL paths are always re-derived from the fsproj on disk so that
 /// AssemblyName overrides are respected (parseJson can't do I/O).
-let load (rootDir: string) : ToolConfig =
+let load (rootDir: string) : Result<ToolConfig, string> =
     let jsonPath = Path.Combine(rootDir, "semantic-tagger.json")
 
     if File.Exists(jsonPath) then
         let json = File.ReadAllText(jsonPath)
         let config = parseJson json
 
-        { config with
-            Packages =
-                config.Packages
-                |> List.map (fun pkg ->
-                    let fsprojFull = Path.Combine(rootDir, pkg.Fsproj)
+        Ok
+            { config with
+                Packages =
+                    config.Packages
+                    |> List.map (fun pkg ->
+                        let fsprojFull = Path.Combine(rootDir, pkg.Fsproj)
 
-                    if File.Exists fsprojFull then
-                        { pkg with
-                            DllPath = Path.GetRelativePath(rootDir, deriveDllPath fsprojFull) }
-                    else
-                        pkg) }
+                        if File.Exists fsprojFull then
+                            { pkg with
+                                DllPath = Path.GetRelativePath(rootDir, deriveDllPath fsprojFull) }
+                        else
+                            pkg) }
     else
         discover rootDir

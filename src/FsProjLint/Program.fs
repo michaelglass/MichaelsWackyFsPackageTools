@@ -14,8 +14,9 @@ let main argv =
     | Ok Check ->
         let result = runLint (Directory.GetCurrentDirectory())
         let allChecks = result.RepoChecks @ (result.ProjectChecks |> List.collect snd)
-        let passed = allChecks |> List.filter (fun c -> c.Passed)
-        let failed = allChecks |> List.filter (fun c -> not c.Passed)
+
+        let failed, passed =
+            allChecks |> List.partition (fun c -> CheckOutcome.isFailed c.Outcome)
 
         if not (List.isEmpty failed) then
             printfn "FAILED:"

@@ -6,6 +6,16 @@ open Swensen.Unquote
 open FsProjLint.Checks
 open Tests.Common.TestHelpers
 
+let private isPassed (result: CheckResult) =
+    match result.Outcome with
+    | Passed -> true
+    | Failed _ -> false
+
+let private isFailed (result: CheckResult) =
+    match result.Outcome with
+    | Passed -> false
+    | Failed _ -> true
+
 let private createFile (dir: string) (relativePath: string) =
     let fullPath = Path.Combine(dir, relativePath)
     let parent = Path.GetDirectoryName(fullPath)
@@ -22,7 +32,7 @@ let ``checkRepo passes with all required files`` () =
 
         let results = checkRepo dir true
 
-        test <@ results |> List.forall (fun r -> r.Passed) @>)
+        test <@ results |> List.forall isPassed @>)
 
 [<Fact>]
 let ``checkRepo fails when LICENSE missing`` () =
@@ -34,7 +44,7 @@ let ``checkRepo fails when LICENSE missing`` () =
         let results = checkRepo dir true
         let licenseCheck = results |> List.find (fun r -> r.Name = "LICENSE exists")
 
-        test <@ not licenseCheck.Passed @>)
+        test <@ isFailed licenseCheck @>)
 
 [<Fact>]
 let ``checkRepo passes with LICENSE.md instead of LICENSE`` () =
@@ -47,7 +57,7 @@ let ``checkRepo passes with LICENSE.md instead of LICENSE`` () =
         let results = checkRepo dir true
         let licenseCheck = results |> List.find (fun r -> r.Name = "LICENSE exists")
 
-        test <@ licenseCheck.Passed @>)
+        test <@ isPassed licenseCheck @>)
 
 [<Fact>]
 let ``checkRepo fails when README missing`` () =
@@ -58,7 +68,7 @@ let ``checkRepo fails when README missing`` () =
         let results = checkRepo dir false
         let readmeCheck = results |> List.find (fun r -> r.Name = "README.md exists")
 
-        test <@ not readmeCheck.Passed @>)
+        test <@ isFailed readmeCheck @>)
 
 [<Fact>]
 let ``checkRepo fails when editorconfig missing`` () =
@@ -71,7 +81,7 @@ let ``checkRepo fails when editorconfig missing`` () =
         let editorconfigCheck =
             results |> List.find (fun r -> r.Name = ".editorconfig exists")
 
-        test <@ not editorconfigCheck.Passed @>)
+        test <@ isFailed editorconfigCheck @>)
 
 [<Fact>]
 let ``checkRepo skips docs/index.md when no packable projects`` () =
@@ -97,4 +107,4 @@ let ``checkRepo fails when docs/index.md missing but has packable projects`` () 
 
         let docsCheck = results |> List.find (fun r -> r.Name = "docs/index.md exists")
 
-        test <@ not docsCheck.Passed @>)
+        test <@ isFailed docsCheck @>)

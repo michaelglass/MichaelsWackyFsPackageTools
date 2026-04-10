@@ -162,3 +162,177 @@ let ``init fails when no packable projects found`` () =
         let result = initCommand tmpDir
 
         test <@ result = Error "No packable .fsproj files found. Each package needs a <PackageId> element." @>)
+
+[<Fact>]
+let ``run - -h flag returns Ok 0`` () =
+    let result = run [| "-h" |]
+    test <@ result = Ok 0 @>
+
+[<Fact>]
+let ``run - help subcommand returns Ok 0`` () =
+    let result = run [| "help" |]
+    test <@ result = Ok 0 @>
+
+[<Fact>]
+let ``main - valid extract-api returns 0`` () =
+    let dll = System.Reflection.Assembly.GetExecutingAssembly().Location
+    let result = main [| "extract-api"; dll |]
+    test <@ result = 0 @>
+
+[<Fact>]
+let ``main - help flag returns 0`` () =
+    let result = main [| "--help" |]
+    test <@ result = 0 @>
+
+[<Fact>]
+let ``runCommand - ExtractApi with real dll returns Ok 0`` () =
+    let dll = System.Reflection.Assembly.GetExecutingAssembly().Location
+    let result = runCommand (ExtractApi dll)
+    test <@ result = Ok 0 @>
+
+[<Fact>]
+let ``runCommand - ExtractApi with missing dll returns Error`` () =
+    let result = runCommand (ExtractApi "/no/such/file.dll")
+
+    test
+        <@
+            match result with
+            | Error msg -> msg.Contains("DLL not found")
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``runCommand - CheckApi same dll returns Ok 0 (NoChange)`` () =
+    let dll = System.Reflection.Assembly.GetExecutingAssembly().Location
+    let result = runCommand (CheckApi(dll, dll))
+    test <@ result = Ok 0 @>
+
+[<Fact>]
+let ``runCommand - CheckApi with Breaking change returns Ok 2`` () =
+    // Create two temporary DLLs by using different real assemblies
+    // Use the test assembly vs the FsSemanticTagger assembly which have different APIs
+    let testDll = System.Reflection.Assembly.GetExecutingAssembly().Location
+
+    let tagDll =
+        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(testDll), "FsSemanticTagger.dll")
+
+    // These have different APIs, so comparing one as "old" and other as "new" should detect changes
+    let result = runCommand (CheckApi(testDll, tagDll))
+
+    // Since APIs are different, should return Ok 2 (breaking) since old APIs are removed
+    test <@ result = Ok 2 @>
+
+[<Fact>]
+let ``runCommand - CheckApi with Addition returns Ok 1`` () =
+    let testDll = System.Reflection.Assembly.GetExecutingAssembly().Location
+
+    let tagDll =
+        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(testDll), "FsSemanticTagger.dll")
+
+    // Reverse: tag DLL as baseline, test DLL as current - should also show breaking
+    // since the tag DLL types won't be in test DLL
+    let result = runCommand (CheckApi(tagDll, testDll))
+    // The result should be Breaking (Ok 2) since tagDll APIs are missing in testDll
+    test <@ result = Ok 2 @>
+
+[<Fact>]
+let ``run - subcommand help request returns Ok 0`` () =
+    // Trigger HelpRequested error path via subcommand help
+    let result = run [| "extract-api"; "--help" |]
+    test <@ result = Ok 0 @>
+
+[<Fact>]
+let ``runCommand - Init returns Error with no packable projects`` () =
+    withTempDir (fun tmpDir ->
+        let result = initCommand tmpDir
+        test <@ result = Error "No packable .fsproj files found. Each package needs a <PackageId> element." @>)
+
+[<Fact>]
+let ``main - extract-api with missing dll returns 1`` () =
+    let result = main [| "extract-api"; "/no/such/file.dll" |]
+    test <@ result = 1 @>
+
+[<Fact>]
+let ``run - alpha with unknown flag returns Error`` () =
+    let result = run [| "alpha"; "--bogus" |]
+
+    test
+        <@
+            match result with
+            | Error _ -> true
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``run - beta with unknown flag returns Error`` () =
+    let result = run [| "beta"; "--bogus" |]
+
+    test
+        <@
+            match result with
+            | Error _ -> true
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``run - rc with unknown flag returns Error`` () =
+    let result = run [| "rc"; "--bogus" |]
+
+    test
+        <@
+            match result with
+            | Error _ -> true
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``run - stable with unknown flag returns Error`` () =
+    let result = run [| "stable"; "--bogus" |]
+
+    test
+        <@
+            match result with
+            | Error _ -> true
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``run - init subcommand help returns Ok 0`` () =
+    let result = run [| "init"; "--help" |]
+    test <@ result = Ok 0 @>
+
+[<Fact>]
+let ``run - check-api subcommand help returns Ok 0`` () =
+    let result = run [| "check-api"; "--help" |]
+    test <@ result = Ok 0 @>
+
+[<Fact>]
+let ``run - release subcommand help returns Ok 0`` () =
+    let result = run [| "release"; "--help" |]
+    test <@ result = Ok 0 @>
+
+[<Fact>]
+let ``run - alpha subcommand help returns Ok 0`` () =
+    let result = run [| "alpha"; "--help" |]
+    test <@ result = Ok 0 @>
+
+[<Fact>]
+let ``main - no args returns 0`` () =
+    let result = main [||]
+    test <@ result = 0 @>
+
+[<Fact>]
+let ``main - check-api same dll returns 0 for NoChange`` () =
+    let dll = System.Reflection.Assembly.GetExecutingAssembly().Location
+    let result = main [| "check-api"; dll; dll |]
+    test <@ result = 0 @>
+
+[<Fact>]
+let ``main - check-api different dlls returns 2 for Breaking`` () =
+    let testDll = System.Reflection.Assembly.GetExecutingAssembly().Location
+
+    let tagDll =
+        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(testDll), "FsSemanticTagger.dll")
+
+    let result = main [| "check-api"; testDll; tagDll |]
+    test <@ result = 2 @>

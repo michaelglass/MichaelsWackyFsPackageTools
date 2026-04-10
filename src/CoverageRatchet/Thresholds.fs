@@ -5,21 +5,40 @@ open System.Runtime.InteropServices
 open System.Text.Json
 open CoverageRatchet.Cobertura
 
+type Platform =
+    | MacOS
+    | Linux
+    | Windows
+
+module Platform =
+    let current =
+        if RuntimeInformation.IsOSPlatform(OSPlatform.OSX) then
+            MacOS
+        elif RuntimeInformation.IsOSPlatform(OSPlatform.Linux) then
+            Linux
+        elif RuntimeInformation.IsOSPlatform(OSPlatform.Windows) then
+            Windows
+        else
+            MacOS // default to build platform
+
+    let ofString (s: string) =
+        match s.ToLowerInvariant() with
+        | "macos" -> Some MacOS
+        | "linux" -> Some Linux
+        | "windows" -> Some Windows
+        | _ -> None
+
+    let toString =
+        function
+        | MacOS -> "macos"
+        | Linux -> "linux"
+        | Windows -> "windows"
+
 type Override =
     { Line: float
       Branch: float
-      Reason: string
-      Platform: string option }
-
-let currentPlatform =
-    if RuntimeInformation.IsOSPlatform(OSPlatform.OSX) then
-        "macos"
-    elif RuntimeInformation.IsOSPlatform(OSPlatform.Linux) then
-        "linux"
-    elif RuntimeInformation.IsOSPlatform(OSPlatform.Windows) then
-        "windows"
-    else
-        "unknown"
+      Reason: string option
+      Platform: Platform option }
 
 type Config =
     { DefaultLine: float
@@ -37,9 +56,14 @@ let private defaultBranchThreshold = 100.0
 type FileResult =
     { File: FileCoverage
       LineThreshold: float
-      BranchThreshold: float
-      LinePassed: bool
-      BranchPassed: bool }
+      BranchThreshold: float }
+
+module FileResult =
+    let linePassed (r: FileResult) = r.File.LinePct >= r.LineThreshold
+    let branchPassed (r: FileResult) = r.File.BranchPct >= r.BranchThreshold
+    let passed (r: FileResult) = linePassed r && branchPassed r
+
+type CiFileResult = { Line: float; Branch: float }
 
 type CheckResult =
     | AllPassed
@@ -65,16 +89,11 @@ let buildFileResults (config: Config) (files: FileCoverage list) : FileResult li
 
         { File = f
           LineThreshold = lineThreshold
-          BranchThreshold = branchThreshold
-          LinePassed = f.LinePct >= lineThreshold
-          BranchPassed = f.BranchPct >= branchThreshold })
+          BranchThreshold = branchThreshold })
 
 let check (config: Config) (files: FileCoverage list) : CheckResult =
     let results = buildFileResults config files
-
-    let failed =
-        results |> List.filter (fun r -> not r.LinePassed || not r.BranchPassed)
-
+    let failed = results |> List.filter (fun r -> not (FileResult.passed r))
     if List.isEmpty failed then AllPassed else SomeFailed failed
 
 let private defaultRawConfig =
@@ -97,19 +116,25 @@ let private parseOverrideElement (el: JsonElement) : Override =
 
     let reason =
         match el.TryGetProperty("reason") with
-        | true, r -> r.GetString()
-        | false, _ -> ""
+        | true, r ->
+            let s = r.GetString()
+
+            if isNull s || System.String.IsNullOrEmpty(s) then
+                None
+            else
+                Some s
+        | false, _ -> None
 
     let platform =
         match el.TryGetProperty("platform") with
         | true, p ->
             let s = p.GetString()
-            if isNull s then None else Some s
+            if isNull s then None else Platform.ofString s
         | false, _ -> None
 
     { Line = line
       Branch = branch
-      Reason = if isNull reason then "" else reason
+      Reason = reason
       Platform = platform }
 
 let loadRawConfig (path: string) : RawConfig =
@@ -148,7 +173,7 @@ let resolveConfig (raw: RawConfig) : Config =
         |> Map.toList
         |> List.choose (fun (name, overrides) ->
             let platformMatch =
-                overrides |> List.tryFind (fun o -> o.Platform = Some currentPlatform)
+                overrides |> List.tryFind (fun o -> o.Platform = Some Platform.current)
 
             let allMatch = overrides |> List.tryFind (fun o -> o.Platform = None)
 
@@ -168,10 +193,13 @@ let private overrideToDict (ovr: Override) =
     let entry = System.Collections.Generic.Dictionary<string, obj>()
     entry.["line"] <- ovr.Line
     entry.["branch"] <- ovr.Branch
-    entry.["reason"] <- ovr.Reason
+
+    match ovr.Reason with
+    | Some r -> entry.["reason"] <- r
+    | None -> ()
 
     match ovr.Platform with
-    | Some p -> entry.["platform"] <- p
+    | Some p -> entry.["platform"] <- Platform.toString p
     | None -> ()
 
     entry

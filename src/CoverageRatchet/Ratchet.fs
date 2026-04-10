@@ -33,19 +33,14 @@ let ratchet (config: Config) (files: FileCoverage list) : Config =
     { config with Overrides = newOverrides }
 
 type RatchetStatus =
-    | NoChanges of RawConfig
+    | NoChanges
     | Tightened of RawConfig
     | Failed of RawConfig * failedFiles: string list
 
 let ratchetWithStatus (config: Config) (files: FileCoverage list) : RatchetStatus =
-    let raw =
-        { DefaultLine = config.DefaultLine
-          DefaultBranch = config.DefaultBranch
-          RawOverrides = config.Overrides |> Map.map (fun _ ovr -> [ ovr ]) }
-
     let failedFiles =
         buildFileResults config files
-        |> List.filter (fun r -> not r.LinePassed || not r.BranchPassed)
+        |> List.filter (fun r -> not (FileResult.passed r))
         |> List.map (fun r -> r.File.FileName)
 
     let newConfig = ratchet config files
@@ -60,13 +55,13 @@ let ratchetWithStatus (config: Config) (files: FileCoverage list) : RatchetStatu
     elif newConfig.Overrides <> config.Overrides then
         Tightened newRaw
     else
-        NoChanges raw
+        NoChanges
 
 let private mergeRawOverrides
     (raw: RawConfig)
     (resolvedBefore: Config)
     (resolvedAfter: Config)
-    (newEntryPlatform: string option)
+    (newEntryPlatform: Platform option)
     : RawConfig =
     let mutable result = raw.RawOverrides
 
@@ -75,10 +70,10 @@ let private mergeRawOverrides
         let existingEntries = Map.tryFind name raw.RawOverrides |> Option.defaultValue []
 
         let hasPlatformSpecific =
-            existingEntries |> List.exists (fun e -> e.Platform = Some currentPlatform)
+            existingEntries |> List.exists (fun e -> e.Platform = Some Platform.current)
 
         let isResolvingEntry (entry: Override) =
-            entry.Platform = Some currentPlatform
+            entry.Platform = Some Platform.current
             || (entry.Platform = None && not hasPlatformSpecific)
 
         match Map.tryFind name resolvedAfter.Overrides with
@@ -127,7 +122,7 @@ let ratchetRawWithStatus (raw: RawConfig) (files: FileCoverage list) : RatchetSt
 
     let failedFiles =
         buildFileResults resolved files
-        |> List.filter (fun r -> not r.LinePassed || not r.BranchPassed)
+        |> List.filter (fun r -> not (FileResult.passed r))
         |> List.map (fun r -> r.File.FileName)
 
     let ratcheted = ratchet resolved files
@@ -138,7 +133,7 @@ let ratchetRawWithStatus (raw: RawConfig) (files: FileCoverage list) : RatchetSt
     elif newRaw.RawOverrides <> raw.RawOverrides then
         Tightened newRaw
     else
-        NoChanges raw
+        NoChanges
 
 let loosen (config: Config) (files: FileCoverage list) : Config =
     let fileMap = files |> List.map (fun f -> f.FileName, f) |> Map.ofList
@@ -174,7 +169,7 @@ let loosen (config: Config) (files: FileCoverage list) : Config =
                         file.FileName
                         { Line = toThreshold file.LinePct
                           Branch = toThreshold file.BranchPct
-                          Reason = "loosened automatically"
+                          Reason = Some "loosened automatically"
                           Platform = None }
                         acc)
             updatedOverrides
@@ -184,14 +179,15 @@ let loosen (config: Config) (files: FileCoverage list) : Config =
 let loosenRaw (raw: RawConfig) (files: FileCoverage list) : RawConfig =
     let resolved = resolveConfig raw
     let loosened = loosen resolved files
-    mergeRawOverrides raw resolved loosened (Some currentPlatform)
+    mergeRawOverrides raw resolved loosened (Some Platform.current)
 
-let mergeFromCi (raw: RawConfig) (ciPlatform: string) (ciResults: Map<string, float * float>) : RawConfig =
+let mergeFromCi (raw: RawConfig) (ciPlatform: Platform) (ciResults: Map<string, CiFileResult>) : RawConfig =
     let mutable result = raw.RawOverrides
 
     for kv in ciResults do
         let fileName = kv.Key
-        let ciLine, ciBranch = kv.Value
+        let ciLine = kv.Value.Line
+        let ciBranch = kv.Value.Branch
 
         if ciLine < raw.DefaultLine || ciBranch < raw.DefaultBranch then
             let existingEntries = Map.tryFind fileName result |> Option.defaultValue []
@@ -199,7 +195,7 @@ let mergeFromCi (raw: RawConfig) (ciPlatform: string) (ciResults: Map<string, fl
             let ciEntry =
                 { Line = ciLine
                   Branch = ciBranch
-                  Reason = ""
+                  Reason = None
                   Platform = Some ciPlatform }
 
             let hasPlatformEntries = existingEntries |> List.exists (fun e -> e.Platform.IsSome)
@@ -230,7 +226,7 @@ let mergeFromCi (raw: RawConfig) (ciPlatform: string) (ciResults: Map<string, fl
                         existingEntries
                         |> List.map (fun e ->
                             { e with
-                                Platform = Some currentPlatform })
+                                Platform = Some Platform.current })
 
                     localEntries @ [ ciEntry ]
                 else
@@ -240,10 +236,15 @@ let mergeFromCi (raw: RawConfig) (ciPlatform: string) (ciResults: Map<string, fl
 
     { raw with RawOverrides = result }
 
-let parseCiThresholds (json: string) : string * Map<string, float * float> =
+let parseCiThresholds (json: string) : Platform * Map<string, CiFileResult> =
     use doc = JsonDocument.Parse(json)
     let root = doc.RootElement
-    let platform = root.GetProperty("platform").GetString()
+    let platformStr = root.GetProperty("platform").GetString()
+
+    let platform =
+        Platform.ofString platformStr
+        |> Option.defaultValue Platform.current
+
     let resultsEl = root.GetProperty("results")
 
     let results =
@@ -251,7 +252,7 @@ let parseCiThresholds (json: string) : string * Map<string, float * float> =
         |> Seq.map (fun prop ->
             let line = prop.Value.GetProperty("line").GetDouble()
             let branch = prop.Value.GetProperty("branch").GetDouble()
-            prop.Name, (line, branch))
+            prop.Name, { Line = line; Branch = branch })
         |> Map.ofSeq
 
     platform, results

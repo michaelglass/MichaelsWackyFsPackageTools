@@ -3,12 +3,28 @@ module SyncDocs.Sync
 open System.IO
 open System.Text.RegularExpressions
 
-type SyncResult =
+type SyncMode =
+    | Check
+    | Apply
+
+type SyncOutcome =
     | InSync
     | OutOfSync
     | Updated
-    | SourceMissing
-    | TargetMissing
+
+type SyncError =
+    | SourceMissing of string
+    | TargetMissing of string
+
+type SyncPair = { Source: string; Target: string }
+
+type DiscoveryWarning =
+    | MissingTarget of name: string * suggestedPath: string
+    | MissingSource of name: string * suggestedPath: string
+
+type DiscoveryResult =
+    { Pairs: SyncPair list
+      Warnings: DiscoveryWarning list }
 
 /// Extract tagged sections from source (README) content.
 /// Source uses: <!-- sync:name:start -->...<!-- sync:name:end -->
@@ -34,11 +50,11 @@ let replaceSections (content: string) (sections: Map<string, string>) : string =
         content
 
 /// Sync a single source->target pair.
-let syncPair (check: bool) (sourcePath: string) (targetPath: string) : SyncResult =
+let syncPair (mode: SyncMode) (sourcePath: string) (targetPath: string) : Result<SyncOutcome, SyncError> =
     if not (File.Exists sourcePath) then
-        SourceMissing
+        Error(SourceMissing sourcePath)
     elif not (File.Exists targetPath) then
-        TargetMissing
+        Error(TargetMissing targetPath)
     else
         let sourceContent = File.ReadAllText sourcePath
         let sections = extractSections sourceContent
@@ -48,27 +64,30 @@ let syncPair (check: bool) (sourcePath: string) (targetPath: string) : SyncResul
             let targetContent = File.ReadAllText targetPath
 
             if sourceContent = targetContent then
-                InSync
-            elif check then
-                OutOfSync
+                Ok InSync
+            elif mode = Check then
+                Ok OutOfSync
             else
                 File.WriteAllText(targetPath, sourceContent)
-                Updated
+                Ok Updated
         else
             let targetContent = File.ReadAllText targetPath
             let replaced = replaceSections targetContent sections
 
             if replaced = targetContent then
-                InSync
-            elif check then
-                OutOfSync
+                Ok InSync
+            elif mode = Check then
+                Ok OutOfSync
             else
                 File.WriteAllText(targetPath, replaced)
-                Updated
+                Ok Updated
 
-/// Enumerate all conventional (name, source, target) candidates.
-let private candidatePairs (rootDir: string) : (string * string * string) list =
-    [ yield "your project", Path.Combine(rootDir, "README.md"), Path.Combine(rootDir, "docs", "index.md")
+/// Enumerate all conventional candidate pairs.
+let private candidatePairs (rootDir: string) : (string * SyncPair) list =
+    [ yield
+          "your project",
+          { Source = Path.Combine(rootDir, "README.md")
+            Target = Path.Combine(rootDir, "docs", "index.md") }
 
       let srcDir = Path.Combine(rootDir, "src")
 
@@ -76,37 +95,38 @@ let private candidatePairs (rootDir: string) : (string * string * string) list =
           for dir in Directory.GetDirectories(srcDir) do
               let dirName = Path.GetFileName dir
 
-              yield dirName, Path.Combine(dir, "README.md"), Path.Combine(rootDir, "docs", dirName, "index.md") ]
+              yield
+                  dirName,
+                  { Source = Path.Combine(dir, "README.md")
+                    Target = Path.Combine(rootDir, "docs", dirName, "index.md") } ]
 
 /// Discover sync pairs and warnings in a single pass over candidates.
 /// README.md -> docs/index.md, src/*/README.md -> docs/*/index.md
-let discoverPairsAndWarnings (rootDir: string) : (string * string) list * string list =
+let discoverPairsAndWarnings (rootDir: string) : DiscoveryResult =
     candidatePairs rootDir
     |> List.fold
-        (fun (pairs, warnings) (name, src, tgt) ->
-            let srcExists = File.Exists src
-            let tgtExists = File.Exists tgt
+        (fun (pairs, warnings) (name, pair) ->
+            let srcExists = File.Exists pair.Source
+            let tgtExists = File.Exists pair.Target
 
-            let pairs =
-                if srcExists && tgtExists then
-                    (src, tgt) :: pairs
-                else
-                    pairs
+            let pairs = if srcExists && tgtExists then pair :: pairs else pairs
 
             let warnings =
                 if srcExists && not tgtExists then
-                    sprintf "To sync docs for %s, create %s" name (Path.GetRelativePath(rootDir, tgt))
-                    :: warnings
+                    MissingTarget(name, Path.GetRelativePath(rootDir, pair.Target)) :: warnings
                 elif tgtExists && not srcExists then
-                    sprintf "To sync docs for %s, create %s" name (Path.GetRelativePath(rootDir, src))
-                    :: warnings
+                    MissingSource(name, Path.GetRelativePath(rootDir, pair.Source)) :: warnings
                 else
                     warnings
 
             pairs, warnings)
         ([], [])
-    |> fun (pairs, warnings) -> List.rev pairs, List.rev warnings
+    |> fun (pairs, warnings) ->
+        { Pairs = List.rev pairs
+          Warnings = List.rev warnings }
 
-let discoverPairs (rootDir: string) : (string * string) list = discoverPairsAndWarnings rootDir |> fst
+let discoverPairs (rootDir: string) : SyncPair list =
+    (discoverPairsAndWarnings rootDir).Pairs
 
-let discoverWarnings (rootDir: string) : string list = discoverPairsAndWarnings rootDir |> snd
+let discoverWarnings (rootDir: string) : DiscoveryWarning list =
+    (discoverPairsAndWarnings rootDir).Warnings

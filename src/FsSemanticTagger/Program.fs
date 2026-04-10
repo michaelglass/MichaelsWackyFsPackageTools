@@ -58,17 +58,18 @@ let initCommand (rootDir: string) : Result<int, string> =
             Ok 0
 
 let private runRelease (releaseCmd: Release.ReleaseCommand) (opts: ReleaseOptions) : Result<int, string> =
-    let config = Config.load (Directory.GetCurrentDirectory())
+    match Config.load (Directory.GetCurrentDirectory()) with
+    | Error msg -> Error msg
+    | Ok config ->
+        let mode =
+            if opts.publish then
+                Release.LocalPublish
+            else
+                Release.GitHubActions
 
-    let mode =
-        if opts.publish then
-            Release.LocalPublish
-        else
-            Release.GitHubActions
-
-    let extractPreviousApi = Api.extractFromNuGetCache
-    let extractCurrentApi = Api.extractFromAssembly
-    Ok(Release.release Shell.run config releaseCmd mode extractPreviousApi extractCurrentApi 15000 40)
+        let extractPreviousApi = Api.extractFromNuGetCache
+        let extractCurrentApi = Api.extractFromAssembly
+        Ok(Release.release Shell.run config releaseCmd mode extractPreviousApi extractCurrentApi 15000 40)
 
 let runCommand (cmd: Command) : Result<int, string> =
     match cmd with
@@ -89,17 +90,17 @@ let runCommand (cmd: Command) : Result<int, string> =
         let change = Api.compare oldApi newApi
 
         match change with
-        | Api.Breaking removed ->
+        | Api.Breaking _ ->
             printfn "BREAKING changes detected:"
 
-            for (Api.ApiSignature s) in removed |> List.truncate 10 do
+            for (Api.ApiSignature s) in Api.ApiChange.toList change |> List.truncate 10 do
                 printfn "  - %s" s
 
             Ok 2
-        | Api.Addition added ->
+        | Api.Addition _ ->
             printfn "Non-breaking additions:"
 
-            for (Api.ApiSignature s) in added |> List.truncate 10 do
+            for (Api.ApiSignature s) in Api.ApiChange.toList change |> List.truncate 10 do
                 printfn "  + %s" s
 
             Ok 1
