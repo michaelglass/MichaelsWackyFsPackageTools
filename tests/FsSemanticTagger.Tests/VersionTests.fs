@@ -218,3 +218,175 @@ let ``sortKey rc less than stable`` () =
     let a = sortKey (parse "0.1.0-rc.1")
     let b = sortKey (parse "0.1.0")
     test <@ a < b @>
+
+// tryParse tests
+
+[<Fact>]
+let ``tryParse valid stable version returns Ok`` () =
+    test
+        <@
+            tryParse "1.2.3" = Ok
+                { Major = 1
+                  Minor = 2
+                  Patch = 3
+                  Stage = Stable }
+        @>
+
+[<Fact>]
+let ``tryParse valid alpha returns Ok`` () =
+    test
+        <@
+            tryParse "0.1.0-alpha.1" = Ok
+                { Major = 0
+                  Minor = 1
+                  Patch = 0
+                  Stage = PreRelease(Alpha 1) }
+        @>
+
+[<Fact>]
+let ``tryParse valid beta returns Ok`` () =
+    test
+        <@
+            tryParse "1.0.0-beta.2" = Ok
+                { Major = 1
+                  Minor = 0
+                  Patch = 0
+                  Stage = PreRelease(Beta 2) }
+        @>
+
+[<Fact>]
+let ``tryParse valid rc returns Ok`` () =
+    test
+        <@
+            tryParse "2.0.0-rc.1" = Ok
+                { Major = 2
+                  Minor = 0
+                  Patch = 0
+                  Stage = PreRelease(RC 1) }
+        @>
+
+[<Fact>]
+let ``tryParse empty string returns Error`` () =
+    test
+        <@
+            match tryParse "" with
+            | Error msg -> msg.Contains("Invalid version string")
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``tryParse no dots returns Error`` () =
+    test
+        <@
+            match tryParse "123" with
+            | Error msg -> msg.Contains("Invalid version string")
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``tryParse two dots only returns Error`` () =
+    test
+        <@
+            match tryParse "1.2" with
+            | Error msg -> msg.Contains("Invalid version string")
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``tryParse extra dots returns Error`` () =
+    test
+        <@
+            match tryParse "1.2.3.4" with
+            | Error msg -> msg.Contains("Invalid version string")
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``tryParse garbage string returns Error`` () =
+    test
+        <@
+            match tryParse "not-a-version" with
+            | Error msg -> msg.Contains("Invalid version string")
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``tryParse unknown pre-release stage returns Error`` () =
+    // The regex only matches alpha|beta|rc, so "dev" won't match and the whole regex fails
+    test
+        <@
+            match tryParse "1.0.0-dev.1" with
+            | Error msg -> msg.Contains("Invalid version string")
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``tryParse pre-release without number returns Error`` () =
+    test
+        <@
+            match tryParse "1.0.0-alpha" with
+            | Error msg -> msg.Contains("Invalid version string")
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``sortKey major version ordering`` () =
+    let a = sortKey (parse "1.0.0")
+    let b = sortKey (parse "2.0.0")
+    test <@ a < b @>
+
+[<Fact>]
+let ``sortKey minor version ordering`` () =
+    let a = sortKey (parse "1.0.0")
+    let b = sortKey (parse "1.1.0")
+    test <@ a < b @>
+
+[<Fact>]
+let ``sortKey patch version ordering`` () =
+    let a = sortKey (parse "1.0.0")
+    let b = sortKey (parse "1.0.1")
+    test <@ a < b @>
+
+[<Fact>]
+let ``tryParse with trailing text returns Error`` () =
+    test
+        <@
+            match tryParse "1.2.3-alpha.1.extra" with
+            | Error _ -> true
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``tryParse with negative numbers returns Error`` () =
+    test
+        <@
+            match tryParse "-1.2.3" with
+            | Error _ -> true
+            | Ok _ -> false
+        @>
+
+[<Fact>]
+let ``parse throws on invalid version`` () =
+    Assert.ThrowsAny<exn>(fun () -> parse "invalid" |> ignore) |> ignore
+
+[<Fact>]
+let ``sortKey stable same version`` () =
+    let a = sortKey (parse "1.0.0")
+    let b = sortKey (parse "1.0.0")
+    test <@ a = b @>
+
+[<Fact>]
+let ``sortKey pre-release before stable same version`` () =
+    let a = sortKey (parse "1.0.0-rc.1")
+    let b = sortKey (parse "1.0.0")
+    test <@ a < b @>
+
+[<Fact>]
+let ``format stable with zeros`` () =
+    let v =
+        { Major = 0
+          Minor = 0
+          Patch = 0
+          Stage = Stable }
+
+    test <@ format v = "0.0.0" @>

@@ -3,10 +3,22 @@ module FsProjLint.Checks
 open System.IO
 open System.Xml.Linq
 
-type CheckResult =
-    { Name: string
-      Passed: bool
-      Detail: string }
+type CheckOutcome =
+    | Passed
+    | Failed of reason: string
+
+module CheckOutcome =
+    let isPassed =
+        function
+        | Passed -> true
+        | Failed _ -> false
+
+    let isFailed =
+        function
+        | Passed -> false
+        | Failed _ -> true
+
+type CheckResult = { Name: string; Outcome: CheckOutcome }
 
 type LintResult =
     { RepoChecks: CheckResult list
@@ -24,30 +36,30 @@ let checkRepo (dir: string) (hasPackableProjects: bool) : CheckResult list =
 
     let baseChecks =
         [ { Name = "LICENSE exists"
-            Passed = licenseExists
-            Detail =
+            Outcome =
               if licenseExists then
-                  "Found"
+                  Passed
               else
-                  "Missing LICENSE or LICENSE.md" }
+                  Failed "Missing LICENSE or LICENSE.md" }
           { Name = "README.md exists"
-            Passed = readmeExists
-            Detail = if readmeExists then "Found" else "Missing README.md" }
+            Outcome = if readmeExists then Passed else Failed "Missing README.md" }
           { Name = ".editorconfig exists"
-            Passed = editorconfigExists
-            Detail =
+            Outcome =
               if editorconfigExists then
-                  "Found"
+                  Passed
               else
-                  "Missing .editorconfig" } ]
+                  Failed "Missing .editorconfig" } ]
 
     if hasPackableProjects then
         let docsIndexExists = fileExists dir "docs/index.md"
 
         baseChecks
         @ [ { Name = "docs/index.md exists"
-              Passed = docsIndexExists
-              Detail = if docsIndexExists then "Found" else "Missing docs/index.md" } ]
+              Outcome =
+                if docsIndexExists then
+                    Passed
+                else
+                    Failed "Missing docs/index.md" } ]
     else
         baseChecks
 
@@ -80,32 +92,23 @@ let isPackable (doc: XDocument) : bool =
 
 let private checkPropertyEquals (doc: XDocument) (propName: string) (expected: string) (checkName: string) =
     match getProperty doc propName with
-    | Some v when v = expected ->
-        { Name = checkName
-          Passed = true
-          Detail = sprintf "%s is %s" propName expected }
+    | Some v when v = expected -> { Name = checkName; Outcome = Passed }
     | Some v ->
         { Name = checkName
-          Passed = false
-          Detail = sprintf "%s is '%s', expected '%s'" propName v expected }
+          Outcome = Failed(sprintf "%s is '%s', expected '%s'" propName v expected) }
     | None ->
         { Name = checkName
-          Passed = false
-          Detail = sprintf "%s not found" propName }
+          Outcome = Failed(sprintf "%s not found" propName) }
 
 let private checkPropertyPresent (doc: XDocument) (propName: string) (checkName: string) =
     match getProperty doc propName with
-    | Some v when v.Trim().Length > 0 ->
-        { Name = checkName
-          Passed = true
-          Detail = sprintf "%s present" propName }
+    | Some v when v.Trim().Length > 0 -> { Name = checkName; Outcome = Passed }
     | _ ->
         { Name = checkName
-          Passed = false
-          Detail = sprintf "%s missing or empty" propName }
+          Outcome = Failed(sprintf "%s missing or empty" propName) }
 
 /// Check a single fsproj file.
-let checkProject (_fileName: string) (doc: XDocument) : CheckResult list =
+let checkProject (doc: XDocument) : CheckResult list =
     let allProjectChecks =
         [ checkPropertyEquals doc "TreatWarningsAsErrors" "true" "TreatWarningsAsErrors is true" ]
 
@@ -123,12 +126,11 @@ let checkProject (_fileName: string) (doc: XDocument) : CheckResult list =
               (let has = hasPackageRef doc "Microsoft.SourceLink.GitHub"
 
                { Name = "Has Microsoft.SourceLink.GitHub"
-                 Passed = has
-                 Detail =
+                 Outcome =
                    if has then
-                       "Found"
+                       Passed
                    else
-                       "Missing Microsoft.SourceLink.GitHub PackageReference" }) ]
+                       Failed "Missing Microsoft.SourceLink.GitHub PackageReference" }) ]
 
         allProjectChecks @ packageChecks
     else
@@ -149,13 +151,31 @@ let discoverProjects (dir: string) : string list =
 let runLint (dir: string) : LintResult =
     let projects = discoverProjects dir
 
-    let projectDocs = projects |> List.map (fun p -> (p, XDocument.Load(p)))
+    let loadResults =
+        projects
+        |> List.map (fun p ->
+            try
+                let doc = XDocument.Load(p)
+                (p, Ok doc)
+            with ex ->
+                (p, Error ex.Message))
 
     let projectChecks =
-        projectDocs
-        |> List.map (fun (p, doc) -> (p, checkProject (Path.GetFileName(p)) doc))
+        loadResults
+        |> List.map (fun (p, result) ->
+            match result with
+            | Ok doc -> (p, checkProject doc)
+            | Error msg ->
+                (p,
+                 [ { Name = "XML parse"
+                     Outcome = Failed(sprintf "Failed to parse %s: %s" (Path.GetFileName(p)) msg) } ]))
 
-    let hasPackable = projectDocs |> List.exists (fun (_, doc) -> isPackable doc)
+    let hasPackable =
+        loadResults
+        |> List.exists (fun (_, result) ->
+            match result with
+            | Ok doc -> isPackable doc
+            | Error _ -> false)
 
     let repoChecks = checkRepo dir hasPackable
 

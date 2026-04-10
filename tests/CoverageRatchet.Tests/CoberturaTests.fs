@@ -455,3 +455,278 @@ let ``findCoverageFile - returns most recent when multiple files exist`` () =
         test <@ result.Value = newPath @>
     finally
         Directory.Delete(tmpDir, true)
+
+[<Fact>]
+let ``parseXml - condition-coverage without matching regex is ignored`` () =
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages>
+            <package>
+              <classes>
+                <class filename="/src/Odd.fs">
+                  <lines>
+                    <line number="1" hits="1" condition-coverage="unknown format" />
+                    <line number="2" hits="1" />
+                  </lines>
+                </class>
+              </classes>
+            </package>
+          </packages>
+        </coverage>"""
+
+    let result = parseXml xml
+
+    test <@ result.Length = 1 @>
+    test <@ result.[0].BranchesCovered = 0 @>
+    test <@ result.[0].BranchesTotal = 0 @>
+    test <@ result.[0].BranchPct = 100.0 @>
+
+[<Fact>]
+let ``parseXml - condition-coverage with 100 percent`` () =
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages>
+            <package>
+              <classes>
+                <class filename="/src/Full.fs">
+                  <lines>
+                    <line number="1" hits="1" condition-coverage="100% (4/4)" />
+                  </lines>
+                </class>
+              </classes>
+            </package>
+          </packages>
+        </coverage>"""
+
+    let result = parseXml xml
+
+    test <@ result.Length = 1 @>
+    test <@ result.[0].BranchesCovered = 4 @>
+    test <@ result.[0].BranchesTotal = 4 @>
+    test <@ result.[0].BranchPct = 100.0 @>
+
+[<Fact>]
+let ``parseXml - namespaced XML`` () =
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage xmlns="http://example.com/coverage">
+          <packages>
+            <package>
+              <classes>
+                <class filename="/src/Ns.fs">
+                  <lines>
+                    <line number="1" hits="1" />
+                    <line number="2" hits="0" />
+                  </lines>
+                </class>
+              </classes>
+            </package>
+          </packages>
+        </coverage>"""
+
+    let result = parseXml xml
+
+    test <@ result.Length = 1 @>
+    test <@ result.[0].FileName = "Ns.fs" @>
+    test <@ result.[0].LinePct = 50.0 @>
+
+[<Fact>]
+let ``parseXml - branch dedup keeps existing when ratios are equal`` () =
+    // Both classes have identical branch ratios (1/2). The second should NOT replace.
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages>
+            <package>
+              <classes>
+                <class filename="/src/Eq.fs">
+                  <lines>
+                    <line number="5" hits="1" condition-coverage="50% (1/2)" />
+                  </lines>
+                </class>
+                <class filename="/src/Eq.fs">
+                  <lines>
+                    <line number="5" hits="1" condition-coverage="50% (1/2)" />
+                  </lines>
+                </class>
+              </classes>
+            </package>
+          </packages>
+        </coverage>"""
+
+    let result = parseXml xml
+
+    test <@ result.Length = 1 @>
+    test <@ result.[0].BranchesCovered = 1 @>
+    test <@ result.[0].BranchesTotal = 2 @>
+
+// --- parseFile reads from disk ---
+
+[<Fact>]
+let ``parseFile - reads and parses XML from file path`` () =
+    let tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
+    Directory.CreateDirectory(tmpDir) |> ignore
+
+    let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages>
+            <package>
+              <classes>
+                <class filename="/src/Module.fs">
+                  <lines>
+                    <line number="1" hits="1" />
+                    <line number="2" hits="0" />
+                    <line number="3" hits="1" />
+                  </lines>
+                </class>
+              </classes>
+            </package>
+          </packages>
+        </coverage>"""
+
+    File.WriteAllText(xmlPath, xml)
+
+    try
+        let result = parseFile xmlPath
+
+        test <@ result.Length = 1 @>
+        test <@ result.[0].FileName = "Module.fs" @>
+        test <@ Math.Round(result.[0].LinePct, 1) = 66.7 @>
+    finally
+        Directory.Delete(tmpDir, true)
+
+// --- findCoverageFile returns None for empty directory ---
+
+[<Fact>]
+let ``findCoverageFile - empty directory returns None`` () =
+    let tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
+    Directory.CreateDirectory(tmpDir) |> ignore
+
+    try
+        let result = findCoverageFile tmpDir
+        test <@ result.IsNone @>
+    finally
+        Directory.Delete(tmpDir, true)
+
+// --- parseXml with multiple lines all hit ---
+
+[<Fact>]
+let ``parseXml - all lines hit gives 100 percent`` () =
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages>
+            <package>
+              <classes>
+                <class filename="/src/Full.fs">
+                  <lines>
+                    <line number="1" hits="3" />
+                    <line number="2" hits="1" />
+                    <line number="3" hits="10" />
+                  </lines>
+                </class>
+              </classes>
+            </package>
+          </packages>
+        </coverage>"""
+
+    let result = parseXml xml
+
+    test <@ result.Length = 1 @>
+    test <@ result.[0].LinePct = 100.0 @>
+
+// --- parseXml with multiple branches on different lines ---
+
+[<Fact>]
+let ``parseXml - multiple branch lines aggregate correctly`` () =
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages>
+            <package>
+              <classes>
+                <class filename="/src/Multi.fs">
+                  <lines>
+                    <line number="1" hits="1" condition-coverage="100% (2/2)" />
+                    <line number="2" hits="1" condition-coverage="50% (1/2)" />
+                  </lines>
+                </class>
+              </classes>
+            </package>
+          </packages>
+        </coverage>"""
+
+    let result = parseXml xml
+
+    test <@ result.Length = 1 @>
+    // 2+1 = 3 covered, 2+2 = 4 total
+    test <@ result.[0].BranchesCovered = 3 @>
+    test <@ result.[0].BranchesTotal = 4 @>
+    test <@ result.[0].BranchPct = 75.0 @>
+
+// --- parseXml excludes path-insensitive vendor dirs ---
+
+[<Fact>]
+let ``parseXml - excludes vendor path case insensitively`` () =
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages>
+            <package>
+              <classes>
+                <class filename="/src/Vendor/ThirdParty.fs">
+                  <lines><line number="1" hits="1" /></lines>
+                </class>
+                <class filename="/src/NODE_MODULES/Util.fs">
+                  <lines><line number="1" hits="1" /></lines>
+                </class>
+                <class filename="/src/Paket-Files/Lib.fs">
+                  <lines><line number="1" hits="1" /></lines>
+                </class>
+                <class filename="/src/Real.fs">
+                  <lines><line number="1" hits="1" /></lines>
+                </class>
+              </classes>
+            </package>
+          </packages>
+        </coverage>"""
+
+    let result = parseXml xml
+
+    test <@ result.Length = 1 @>
+    test <@ result.[0].FileName = "Real.fs" @>
+
+// --- parseXml line dedup: first miss then hit results in hit ---
+
+[<Fact>]
+let ``parseXml - line dedup first miss then hit counts as hit`` () =
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages>
+            <package>
+              <classes>
+                <class filename="/src/Dup.fs">
+                  <lines>
+                    <line number="1" hits="0" />
+                  </lines>
+                </class>
+                <class filename="/src/Dup.fs">
+                  <lines>
+                    <line number="1" hits="1" />
+                  </lines>
+                </class>
+              </classes>
+            </package>
+          </packages>
+        </coverage>"""
+
+    let result = parseXml xml
+
+    test <@ result.Length = 1 @>
+    test <@ result.[0].LinePct = 100.0 @>

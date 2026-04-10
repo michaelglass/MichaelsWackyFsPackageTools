@@ -51,11 +51,7 @@ let getLatestTag (run: string -> string -> CommandResult) (prefix: string) : str
         splitLines output
         |> Array.choose (fun tag ->
             let versionStr = tag.Substring(prefix.Length)
-
-            try
-                Some(tag, parse versionStr)
-            with _ ->
-                None)
+            tryParse versionStr |> Result.toOption |> Option.map (fun v -> (tag, v)))
         |> Array.sortByDescending (fun (_, v) -> sortKey v)
         |> Array.tryHead
         |> Option.map fst
@@ -90,24 +86,69 @@ let getCurrentCommitSha (run: string -> string -> CommandResult) : string option
         | Some sha -> nonEmpty sha
         | None -> None
 
-let private withJjGitDir (f: unit -> 'a) : 'a =
-    let gitDir = System.IO.Path.Combine(".jj", "repo", "store", "git")
-    let needsGitDir = System.IO.Directory.Exists(gitDir)
+let internal resolveGitDir (repoRoot: string) : string option =
+    let dotGit = System.IO.Path.Combine(repoRoot, ".git")
 
-    if needsGitDir then
-        System.Environment.SetEnvironmentVariable("GIT_DIR", gitDir)
+    if System.IO.Directory.Exists(dotGit) || System.IO.File.Exists(dotGit) then
+        None
+    else
+        let jjGitDir = System.IO.Path.Combine(repoRoot, ".jj", "repo", "store", "git")
+
+        if System.IO.Directory.Exists(jjGitDir) then
+            Some(System.IO.Path.GetFullPath(jjGitDir))
+        else
+            None
+
+let private withJjGitDir (f: unit -> 'a) : 'a =
+    let gitDir = resolveGitDir (System.IO.Directory.GetCurrentDirectory())
+
+    match gitDir with
+    | Some dir -> System.Environment.SetEnvironmentVariable("GIT_DIR", dir)
+    | None -> ()
 
     try
         f ()
     finally
-        if needsGitDir then
-            System.Environment.SetEnvironmentVariable("GIT_DIR", null)
+        match gitDir with
+        | Some _ -> System.Environment.SetEnvironmentVariable("GIT_DIR", null)
+        | None -> ()
+
+type RunStatus =
+    | Completed
+    | InProgressStatus
+    | Queued
+    | OtherStatus of string
+
+module RunStatus =
+    let ofString (s: string) : RunStatus =
+        match s with
+        | "completed" -> Completed
+        | "in_progress" -> InProgressStatus
+        | "queued" -> Queued
+        | other -> OtherStatus other
+
+type RunConclusion =
+    | SuccessConclusion
+    | FailureConclusion
+    | CancelledConclusion
+    | PendingConclusion
+    | OtherConclusion of string
+
+module RunConclusion =
+    let ofString (s: string) : RunConclusion =
+        match s with
+        | "success" -> SuccessConclusion
+        | "failure" -> FailureConclusion
+        | "cancelled" -> CancelledConclusion
+        | "pending" -> PendingConclusion
+        | "" -> PendingConclusion
+        | other -> OtherConclusion other
 
 type CiRunInfo =
     { Name: string
       Url: string
-      Status: string
-      Conclusion: string }
+      Status: RunStatus
+      Conclusion: RunConclusion }
 
 type CiStatus =
     | Passed
@@ -120,16 +161,18 @@ let parseCiRuns (json: string) : CiRunInfo list =
     let doc = System.Text.Json.JsonDocument.Parse(json)
 
     [ for elem in doc.RootElement.EnumerateArray() do
-          { Name = elem.GetProperty("name").GetString()
-            Url = elem.GetProperty("url").GetString()
-            Status = elem.GetProperty("status").GetString()
-            Conclusion =
+          let conclusionStr =
               let prop = elem.GetProperty("conclusion")
 
               if prop.ValueKind = System.Text.Json.JsonValueKind.Null then
                   ""
               else
-                  prop.GetString() } ]
+                  prop.GetString()
+
+          { Name = elem.GetProperty("name").GetString()
+            Url = elem.GetProperty("url").GetString()
+            Status = RunStatus.ofString (elem.GetProperty("status").GetString())
+            Conclusion = RunConclusion.ofString conclusionStr } ]
 
 let checkCiStatusForSha (run: string -> string -> CommandResult) (sha: string) : CiStatus =
     let args = sprintf "run list --commit %s --json status,conclusion,name,url" sha
@@ -144,13 +187,20 @@ let checkCiStatusForSha (run: string -> string -> CommandResult) (sha: string) :
             else
                 let failed =
                     runs
-                    |> List.filter (fun r -> r.Conclusion = "failure" || r.Conclusion = "cancelled")
+                    |> List.filter (fun r ->
+                        match r.Conclusion with
+                        | FailureConclusion
+                        | CancelledConclusion -> true
+                        | _ -> false)
 
                 if failed.Length > 0 then
                     Failed failed
                 elif
                     runs
-                    |> List.forall (fun r -> r.Status = "completed" && r.Conclusion = "success")
+                    |> List.forall (fun r ->
+                        match r.Status, r.Conclusion with
+                        | Completed, SuccessConclusion -> true
+                        | _ -> false)
                 then
                     Passed
                 else

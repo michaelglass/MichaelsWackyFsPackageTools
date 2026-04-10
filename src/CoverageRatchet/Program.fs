@@ -28,7 +28,7 @@ let formatFileResult (r: FileResult) =
         else
             ""
 
-    let status = if r.LinePassed && r.BranchPassed then "PASS" else "FAIL"
+    let status = if FileResult.passed r then "PASS" else "FAIL"
 
     let thresholdStr =
         if r.LineThreshold < 100.0 || r.BranchThreshold < 100.0 then
@@ -54,10 +54,8 @@ let private runCheck (configPath: string) (files: FileCoverage list) =
     else
         let allResults = buildFileResults config files
 
-        let failed =
-            allResults |> List.filter (fun r -> not r.LinePassed || not r.BranchPassed)
-
-        let passed = allResults |> List.filter (fun r -> r.LinePassed && r.BranchPassed)
+        let failed, passed =
+            allResults |> List.partition (fun r -> not (FileResult.passed r))
 
         if not (List.isEmpty failed) then
             printfn "FAILED files:"
@@ -82,7 +80,7 @@ let private runRatchet (configPath: string) (files: FileCoverage list) =
     let config = resolveConfig raw
 
     match ratchetRawWithStatus raw files with
-    | NoChanges _ ->
+    | NoChanges ->
         printfn "Ratchet complete: no changes needed"
         0
     | Tightened newRaw ->
@@ -127,15 +125,13 @@ let private runCheckJson (configPath: string) (outputPath: string) (files: FileC
         resultsDict.[r.File.FileName] <- entry
 
     let wrapper = System.Collections.Generic.Dictionary<string, obj>()
-    wrapper.["platform"] <- currentPlatform
+    wrapper.["platform"] <- Platform.toString Platform.current
     wrapper.["results"] <- resultsDict
 
     let json = JsonSerializer.Serialize(wrapper, jsonOptions)
     File.WriteAllText(outputPath, json)
 
-    let failed =
-        allResults |> List.filter (fun r -> not r.LinePassed || not r.BranchPassed)
-
+    let failed = allResults |> List.filter (fun r -> not (FileResult.passed r))
     if List.isEmpty failed then 0 else 1
 
 type CiResult =
@@ -143,20 +139,39 @@ type CiResult =
     | CiOtherFailure
     | CiCoverageFailure of artifactDir: string
 
-let private withJjGitDir (f: unit -> 'a) : 'a =
-    let gitDir = Path.Combine(".jj", "repo", "store", "git")
-    let needsGitDir = Directory.Exists(gitDir)
+let internal resolveGitDir (repoRoot: string) : string option =
+    let dotGit = Path.Combine(repoRoot, ".git")
 
-    if needsGitDir then
-        System.Environment.SetEnvironmentVariable("GIT_DIR", gitDir)
+    if Directory.Exists(dotGit) || File.Exists(dotGit) then
+        None
+    else
+        let jjGitDir = Path.Combine(repoRoot, ".jj", "repo", "store", "git")
+
+        if Directory.Exists(jjGitDir) then
+            Some(Path.GetFullPath(jjGitDir))
+        else
+            None
+
+let private withJjGitDir (f: unit -> 'a) : 'a =
+    let gitDir = resolveGitDir (Directory.GetCurrentDirectory())
+
+    match gitDir with
+    | Some dir -> System.Environment.SetEnvironmentVariable("GIT_DIR", dir)
+    | None -> ()
 
     try
         f ()
     finally
-        if needsGitDir then
-            System.Environment.SetEnvironmentVariable("GIT_DIR", null)
+        match gitDir with
+        | Some _ -> System.Environment.SetEnvironmentVariable("GIT_DIR", null)
+        | None -> ()
 
-let private pollCi (sha: string) (intervalMs: int) (maxAttempts: int) : CiResult =
+let internal pollCi
+    (run: string -> string -> CommandResult)
+    (sha: string)
+    (intervalMs: int)
+    (maxAttempts: int)
+    : CiResult =
     let rec poll attempt =
         if attempt > maxAttempts then
             eprintfn "CI polling timed out after %d attempts" maxAttempts
@@ -206,6 +221,7 @@ let private pollCi (sha: string) (intervalMs: int) (maxAttempts: int) : CiResult
                             | None -> CiPassed
                             | Some r ->
                                 let runId = r.GetProperty("databaseId").GetInt64()
+
                                 let tmpDir = Path.Combine(Path.GetTempPath(), sprintf "coverage-%d" runId)
 
                                 let dlResult =
@@ -218,7 +234,7 @@ let private pollCi (sha: string) (intervalMs: int) (maxAttempts: int) : CiResult
 
     poll 1
 
-let private getVcsSha () : string =
+let internal getVcsSha (run: string -> string -> CommandResult) : string =
     match run "jj" "log -r @- --no-graph -T commit_id" with
     | Success sha -> sha.Trim()
     | Failure _ ->
@@ -226,35 +242,36 @@ let private getVcsSha () : string =
         | Success sha -> sha.Trim()
         | Failure(msg, _) -> failwithf "Could not get commit SHA: %s" msg
 
-let private vcsPush () =
+let internal vcsPush (run: string -> string -> CommandResult) =
     match run "jj" "git push" with
     | Success _ -> ()
-    | Failure _ -> runOrFail "git" "push" |> ignore
+    | Failure _ ->
+        match run "git" "push" with
+        | Success _ -> ()
+        | Failure(msg, _) -> failwithf "git push failed: %s" msg
 
-let private vcsCommitAndPush (configPath: string) =
-    let _ =
-        match run "jj" "describe -m \"fix: update coverage thresholds from CI\"" with
-        | Success _ ->
-            runOrFail "jj" "bookmark set main -r @" |> ignore
+let internal vcsCommitAndPush (run: string -> string -> CommandResult) (configPath: string) =
+    let mustRun cmd args =
+        match run cmd args with
+        | Success _ -> ()
+        | Failure(msg, _) -> failwithf "%s %s failed: %s" cmd args msg
 
-            runOrFail "jj" "new" |> ignore
-            runOrFail "jj" "git push --bookmark main" |> ignore
-        | Failure _ ->
-            runOrFail "git" (sprintf "add %s" configPath) |> ignore
-
-            runOrFail "git" "commit -m \"fix: update coverage thresholds from CI\""
-            |> ignore
-
-            runOrFail "git" "push" |> ignore
-
-    ()
+    match run "jj" "describe -m \"fix: update coverage thresholds from CI\"" with
+    | Success _ ->
+        mustRun "jj" "bookmark set main -r @"
+        mustRun "jj" "new"
+        mustRun "jj" "git push --bookmark main"
+    | Failure _ ->
+        mustRun "git" (sprintf "add %s" configPath)
+        mustRun "git" "commit -m \"fix: update coverage thresholds from CI\""
+        mustRun "git" "push"
 
 let private runLoosenFromCi (configPath: string) : int =
-    vcsPush ()
-    let sha = getVcsSha ()
+    vcsPush run
+    let sha = getVcsSha run
     printfn "Polling CI for commit %s..." sha
 
-    match pollCi sha 30000 60 with
+    match pollCi run sha 30000 60 with
     | CiPassed ->
         printfn "CI passed, no coverage loosening needed."
         0
@@ -283,24 +300,39 @@ let private runLoosenFromCi (configPath: string) : int =
                 let raw = loadRawConfig localConfigPath
                 let merged = mergeFromCi raw ciPlatform ciResults
                 saveRawConfig localConfigPath merged
-                printfn "Updated %s with %s thresholds" localConfigPath ciPlatform
+                printfn "Updated %s with %s thresholds" localConfigPath (Platform.toString ciPlatform)
         finally
             try
                 Directory.Delete(artifactDir, true)
             with _ ->
                 ()
 
-        vcsCommitAndPush configPath
-        let newSha = getVcsSha ()
+        vcsCommitAndPush run configPath
+        let newSha = getVcsSha run
         printfn "Re-polling CI for commit %s..." newSha
 
-        match pollCi newSha 30000 60 with
+        match pollCi run newSha 30000 60 with
         | CiPassed ->
             printfn "CI passed after threshold update."
             0
         | _ ->
             eprintfn "CI still failing after threshold update."
             1
+
+type CoverageFileCommand =
+    | CfRatchet
+    | CfCheck
+    | CfLoosen
+    | CfCheckJson of output: string option
+
+let private runWithCoverageFile (cmd: CoverageFileCommand) (configPath: string) (files: FileCoverage list) =
+    match cmd with
+    | CfRatchet -> runRatchet configPath files
+    | CfCheck -> runCheck configPath files
+    | CfLoosen -> runLoosen configPath files
+    | CfCheckJson outputOpt ->
+        let outputPath = outputOpt |> Option.defaultValue "coverage-results.json"
+        runCheckJson configPath outputPath files
 
 let run (command: Command) (searchDir: string) : Result<int, string> =
     let configPath =
@@ -311,23 +343,22 @@ let run (command: Command) (searchDir: string) : Result<int, string> =
         | CheckJson(config = c)
         | LoosenFromCi(config = c) -> c |> Option.defaultValue defaultConfigPath
 
-    match command with
-    | LoosenFromCi _ -> Ok(runLoosenFromCi configPath)
-    | _ ->
+    let coverageFileCmd =
+        match command with
+        | Ratchet _ -> Some CfRatchet
+        | Check _ -> Some CfCheck
+        | Loosen _ -> Some CfLoosen
+        | CheckJson(output = outputOpt) -> Some(CfCheckJson outputOpt)
+        | LoosenFromCi _ -> None
 
+    match coverageFileCmd with
+    | None -> Ok(runLoosenFromCi configPath)
+    | Some cmd ->
         match findCoverageFile searchDir with
         | None -> Error "No coverage.cobertura.xml found"
         | Some xmlPath ->
             let files = parseFile xmlPath
-
-            match command with
-            | Ratchet _ -> Ok(runRatchet configPath files)
-            | Check _ -> Ok(runCheck configPath files)
-            | Loosen _ -> Ok(runLoosen configPath files)
-            | CheckJson(output = outputOpt) ->
-                let outputPath = outputOpt |> Option.defaultValue "coverage-results.json"
-                Ok(runCheckJson configPath outputPath files)
-            | LoosenFromCi _ -> failwith "unreachable"
+            Ok(runWithCoverageFile cmd configPath files)
 
 [<EntryPoint>]
 let main argv =

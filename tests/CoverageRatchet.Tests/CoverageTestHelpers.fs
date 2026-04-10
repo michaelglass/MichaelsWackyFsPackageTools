@@ -14,3 +14,9 @@ let defaultsConfig =
     { DefaultLine = 100.0
       DefaultBranch = 100.0
       Overrides = Map.empty }
+
+let otherPlatform =
+    match Platform.current with
+    | MacOS -> Linux
+    | Linux -> Windows
+    | Windows -> MacOS
