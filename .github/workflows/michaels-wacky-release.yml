@@ -43,7 +43,7 @@ jobs:
         run: |
           sha="${{ github.sha }}"
           echo "Checking CI for $sha..."
-          ci_runs=$(gh api "repos/${{ github.repository }}/commits/$sha/check-runs" \
+          ci_runs=$(gh api "repos/${{ github.repository }}/commits/$sha/check-runs?per_page=100" \
             --jq '[.check_runs[] | select(.name == "build / build")]')
           total=$(echo "$ci_runs" | jq 'length')
           if [ "$total" -eq "0" ]; then

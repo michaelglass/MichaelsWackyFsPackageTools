@@ -74,17 +74,20 @@ let internal waitForCi (run: string -> string -> CommandResult) (pollIntervalMs:
         let status = getCiStatus run
 
         match status with
-        | InProgress runs ->
-            if attempt >= maxAttempts then
-                printfn "Timed out waiting for CI after %d attempts" maxAttempts
-                status
-            else
-                let completed =
-                    runs |> List.filter (fun r -> r.Status = Vcs.Completed) |> List.length
+        | NoRuns when attempt < maxAttempts ->
+            printfn "Waiting for CI to start..."
+            System.Threading.Thread.Sleep(pollIntervalMs)
+            poll (attempt + 1)
+        | InProgress runs when attempt < maxAttempts ->
+            let completed =
+                runs |> List.filter (fun r -> r.Status = Vcs.Completed) |> List.length
 
-                printfn "Waiting for CI... (%d/%d runs complete)" completed runs.Length
-                System.Threading.Thread.Sleep(pollIntervalMs)
-                poll (attempt + 1)
+            printfn "Waiting for CI... (%d/%d runs complete)" completed runs.Length
+            System.Threading.Thread.Sleep(pollIntervalMs)
+            poll (attempt + 1)
+        | InProgress _ ->
+            printfn "Timed out waiting for CI after %d attempts" maxAttempts
+            status
         | other -> other
 
     poll 0
