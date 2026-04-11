@@ -704,6 +704,93 @@ let ``loosenRaw adds new file with platform-specific entry`` () =
     test <@ entries.[0].Line = 60.0 @>
     test <@ entries.[0].Branch = 50.0 @>
 
+[<Fact>]
+let ``loosenRaw preserves other-platform-only entry when adding new entry for same file`` () =
+    // File has only a linux entry. On macOS, loosen adds a macOS entry alongside it.
+    let raw: RawConfig =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides =
+            Map.ofList
+                [ "Shell.fs",
+                  [ { Line = 0.0
+                      Branch = 0.0
+                      Reason = Some "process execution"
+                      Platform = Some otherPlatform } ] ] }
+
+    let files = [ makeFile "Shell.fs" 60.0 50.0 1 4 ]
+    let result = loosenRaw raw files
+    let entries = result.RawOverrides.["Shell.fs"]
+
+    test <@ entries.Length = 2 @>
+    let other = entries |> List.find (fun o -> o.Platform = Some otherPlatform)
+    let mine = entries |> List.find (fun o -> o.Platform = Some Platform.current)
+    test <@ other.Line = 0.0 @>
+    test <@ mine.Line = 60.0 @>
+
+[<Fact>]
+let ``loosenRaw preserves other-platform-only entry when current platform meets defaults`` () =
+    // File has only a linux entry. On macOS, file is at 100% — no macOS entry needed,
+    // but the linux entry must survive.
+    let raw: RawConfig =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides =
+            Map.ofList
+                [ "Shell.fs",
+                  [ { Line = 0.0
+                      Branch = 0.0
+                      Reason = Some "process execution"
+                      Platform = Some otherPlatform } ] ] }
+
+    let files = [ makeFile "Shell.fs" 100.0 100.0 4 4 ]
+    let result = loosenRaw raw files
+    let entries = result.RawOverrides.["Shell.fs"]
+
+    test <@ entries.Length = 1 @>
+    test <@ entries.[0].Platform = Some otherPlatform @>
+    test <@ entries.[0].Line = 0.0 @>
+
+[<Fact>]
+let ``loosenRaw updates agnostic entry in place`` () =
+    let raw: RawConfig =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides =
+            Map.ofList
+                [ "Thresholds.fs",
+                  [ { Line = 90.0
+                      Branch = 85.0
+                      Reason = Some "compiler branches"
+                      Platform = None } ] ] }
+
+    let files = [ makeFile "Thresholds.fs" 95.0 92.0 3 4 ]
+    let result = loosenRaw raw files
+    let entries = result.RawOverrides.["Thresholds.fs"]
+
+    test <@ entries.Length = 1 @>
+    test <@ entries.[0].Platform = None @>
+    test <@ entries.[0].Line = 95.0 @>
+    test <@ entries.[0].Branch = 92.0 @>
+
+[<Fact>]
+let ``loosenRaw removes agnostic entry when file reaches defaults`` () =
+    let raw: RawConfig =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides =
+            Map.ofList
+                [ "Thresholds.fs",
+                  [ { Line = 90.0
+                      Branch = 85.0
+                      Reason = Some "compiler branches"
+                      Platform = None } ] ] }
+
+    let files = [ makeFile "Thresholds.fs" 100.0 100.0 4 4 ]
+    let result = loosenRaw raw files
+
+    test <@ not (result.RawOverrides.ContainsKey("Thresholds.fs")) @>
+
 // --- mergeFromCi additional branches ---
 
 [<Fact>]
