@@ -30,7 +30,7 @@
     <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="CommandTree" Version="0.3.5" />
+    <PackageReference Include="CommandTree" Version="0.4.0" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.201" PrivateAssets="All" />
     <PackageReference Update="FSharp.Core" Version="10.1.201" />
   </ItemGroup>
