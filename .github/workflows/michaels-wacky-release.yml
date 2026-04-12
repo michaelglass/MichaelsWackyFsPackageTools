@@ -43,8 +43,8 @@ jobs:
         run: |
           sha="${{ github.sha }}"
           echo "Checking CI for $sha..."
-          ci_runs=$(gh api "repos/${{ github.repository }}/commits/$sha/check-runs?per_page=100" \
-            --jq '[.check_runs[] | select(.name == "build / build")]')
+          ci_runs=$(gh api "repos/${{ github.repository }}/commits/$sha/check-runs?check_name=build+%2F+build" \
+            --jq '[.check_runs[]]')
           total=$(echo "$ci_runs" | jq 'length')
           if [ "$total" -eq "0" ]; then
             echo "::error::No CI checks found for this commit. Push to main first."
