@@ -437,6 +437,140 @@ let ``parseFiles - reads and merges multiple XML files from disk`` () =
     finally
         Directory.Delete(tmpDir, true)
 
+// --- buildBranchGaps ---
+
+[<Fact>]
+let ``buildBranchGaps - returns uncovered branches per file`` () =
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages><package><classes>
+            <class filename="/src/Branchy.fs">
+              <lines>
+                <line number="10" hits="1" condition-coverage="50% (1/2)" />
+                <line number="20" hits="1" condition-coverage="100% (2/2)" />
+                <line number="30" hits="1" condition-coverage="25% (1/4)" />
+              </lines>
+            </class>
+          </classes></package></packages>
+        </coverage>"""
+
+    let rawLines = extractRawLines xml
+    let result = buildBranchGaps rawLines
+
+    test <@ result.Length = 1 @>
+    test <@ result.[0].FileName = "Branchy.fs" @>
+    // Lines 10 (1/2) and 30 (1/4) are uncovered; line 20 (2/2) is fully covered
+    test <@ result.[0].Gaps.Length = 2 @>
+    test <@ result.[0].Gaps.[0].Line = 10 @>
+    test <@ result.[0].Gaps.[0].Covered = 1 @>
+    test <@ result.[0].Gaps.[0].Total = 2 @>
+    test <@ result.[0].Gaps.[1].Line = 30 @>
+    test <@ result.[0].Gaps.[1].Covered = 1 @>
+    test <@ result.[0].Gaps.[1].Total = 4 @>
+
+[<Fact>]
+let ``buildBranchGaps - file with no uncovered branches not included`` () =
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages><package><classes>
+            <class filename="/src/Clean.fs">
+              <lines>
+                <line number="1" hits="1" condition-coverage="100% (2/2)" />
+              </lines>
+            </class>
+          </classes></package></packages>
+        </coverage>"""
+
+    let rawLines = extractRawLines xml
+    let result = buildBranchGaps rawLines
+
+    test <@ result = [] @>
+
+[<Fact>]
+let ``buildBranchGaps - file with no branches not included`` () =
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages><package><classes>
+            <class filename="/src/Simple.fs">
+              <lines>
+                <line number="1" hits="1" />
+                <line number="2" hits="0" />
+              </lines>
+            </class>
+          </classes></package></packages>
+        </coverage>"""
+
+    let rawLines = extractRawLines xml
+    let result = buildBranchGaps rawLines
+
+    test <@ result = [] @>
+
+[<Fact>]
+let ``buildBranchGaps - merges branch data across XMLs`` () =
+    let xml1 =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages><package><classes>
+            <class filename="/src/Foo.fs">
+              <lines>
+                <line number="5" hits="1" condition-coverage="25% (1/4)" />
+              </lines>
+            </class>
+          </classes></package></packages>
+        </coverage>"""
+
+    let xml2 =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages><package><classes>
+            <class filename="/src/Foo.fs">
+              <lines>
+                <line number="5" hits="1" condition-coverage="75% (3/4)" />
+              </lines>
+            </class>
+          </classes></package></packages>
+        </coverage>"""
+
+    let rawLines = (extractRawLines xml1) @ (extractRawLines xml2)
+    let result = buildBranchGaps rawLines
+
+    test <@ result.Length = 1 @>
+    // Should use the better ratio (3/4), still a gap since 3 < 4
+    test <@ result.[0].Gaps.[0].Covered = 3 @>
+    test <@ result.[0].Gaps.[0].Total = 4 @>
+
+[<Fact>]
+let ``buildBranchGaps - sorted by gap count descending`` () =
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages><package><classes>
+            <class filename="/src/Few.fs">
+              <lines>
+                <line number="1" hits="1" condition-coverage="50% (1/2)" />
+              </lines>
+            </class>
+            <class filename="/src/Many.fs">
+              <lines>
+                <line number="1" hits="1" condition-coverage="50% (1/2)" />
+                <line number="2" hits="1" condition-coverage="50% (1/2)" />
+                <line number="3" hits="1" condition-coverage="50% (1/2)" />
+              </lines>
+            </class>
+          </classes></package></packages>
+        </coverage>"""
+
+    let rawLines = extractRawLines xml
+    let result = buildBranchGaps rawLines
+
+    test <@ result.Length = 2 @>
+    // Many.fs has 3 gaps, Few.fs has 1 — Many first
+    test <@ result.[0].FileName = "Many.fs" @>
+    test <@ result.[1].FileName = "Few.fs" @>
+
 // --- findCoverageFiles (plural) ---
 
 [<Fact>]

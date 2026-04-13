@@ -40,15 +40,15 @@ let private isIncluded (fileName: string) =
     hasValidExt && not isFileExcluded && not isPathExcluded
 
 /// Raw line data extracted from a Cobertura XML class element.
-type internal RawLine =
+type RawLine =
     { FileName: string
       LineNum: int
       WasHit: bool
       BrCovered: int
       BrTotal: int }
 
-/// Internal: extract raw per-class line data from XML content.
-let internal extractRawLines (xmlContent: string) =
+/// Extract raw per-class line data from XML content.
+let extractRawLines (xmlContent: string) =
     let doc = XDocument.Parse(xmlContent)
     let ns = doc.Root.Name.Namespace
 
@@ -104,8 +104,8 @@ let internal extractRawLines (xmlContent: string) =
             lines :> seq<_>)
     |> Seq.toList
 
-/// Internal: build FileCoverage list from raw line data.
-let internal buildCoverage (rawLines: RawLine list) : FileCoverage list =
+/// Build FileCoverage list from raw line data.
+let buildCoverage (rawLines: RawLine list) : FileCoverage list =
     rawLines
     |> List.groupBy (fun r -> r.FileName)
     |> List.map (fun (fileName, entries) ->
@@ -147,6 +147,67 @@ let internal buildCoverage (rawLines: RawLine list) : FileCoverage list =
           BranchPct = branchPct
           BranchesCovered = coveredBranches
           BranchesTotal = totalBranches })
+
+/// A single uncovered branch point on a specific line.
+type BranchGap =
+    { Line: int
+      Covered: int
+      Total: int }
+
+/// Branch coverage gaps for a file.
+type FileBranchGaps =
+    { FileName: string
+      BranchPct: float
+      TotalBranches: int
+      Gaps: BranchGap list }
+
+/// Build per-file branch gap data from raw line data.
+/// Returns only files that have at least one uncovered branch, sorted by gap count descending.
+let buildBranchGaps (rawLines: RawLine list) : FileBranchGaps list =
+    rawLines
+    |> List.filter (fun r -> r.LineNum >= 0)
+    |> List.groupBy (fun r -> r.FileName)
+    |> List.choose (fun (fileName, entries) ->
+        let branchMap = System.Collections.Generic.Dictionary<int, int * int>()
+
+        for r in entries do
+            if r.BrTotal > 0 then
+                match branchMap.TryGetValue(r.LineNum) with
+                | true, (existingC, existingT) ->
+                    if r.BrCovered * existingT > existingC * r.BrTotal then
+                        branchMap.[r.LineNum] <- (r.BrCovered, r.BrTotal)
+                | false, _ -> branchMap.[r.LineNum] <- (r.BrCovered, r.BrTotal)
+
+        let gaps =
+            branchMap
+            |> Seq.choose (fun kv ->
+                let covered, total = kv.Value
+
+                if covered < total then
+                    Some { Line = kv.Key; Covered = covered; Total = total }
+                else
+                    None)
+            |> Seq.sortBy (fun g -> g.Line)
+            |> Seq.toList
+
+        if List.isEmpty gaps then
+            None
+        else
+            let coveredBranches = branchMap.Values |> Seq.sumBy fst
+            let totalBranches = branchMap.Values |> Seq.sumBy snd
+
+            let branchPct =
+                if totalBranches > 0 then
+                    float coveredBranches / float totalBranches * 100.0
+                else
+                    100.0
+
+            Some
+                { FileName = fileName
+                  BranchPct = branchPct
+                  TotalBranches = totalBranches
+                  Gaps = gaps })
+    |> List.sortByDescending (fun f -> f.Gaps.Length)
 
 /// Parse Cobertura XML content string into FileCoverage list.
 let parseXml (xmlContent: string) : FileCoverage list =
