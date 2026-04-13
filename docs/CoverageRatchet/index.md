@@ -134,8 +134,31 @@ CoverageRatchet uses a JSON config file (default: `coverage-ratchet.json` in the
 | `overrides.<file>.line` | number | Minimum line coverage percentage (0-100) |
 | `overrides.<file>.branch` | number | Minimum branch coverage percentage (0-100) |
 | `overrides.<file>.reason` | string | Why this file has a lower threshold |
+| `overrides.<file>.platform` | string | Optional: `"macos"`, `"linux"`, or `"windows"` — restricts this override to one platform |
 
 Files not listed in `overrides` must have 100% line and branch coverage.
+
+### Platform-specific overrides
+
+When coverage differs across platforms (e.g., OS-specific code paths), a file's override can be an **array** of platform-specific entries instead of a single object:
+
+```json
+{
+  "overrides": {
+    "Program.fs": [
+      { "line": 79, "branch": 76, "reason": "CLI entry point", "platform": "macos" },
+      { "line": 46, "branch": 44, "reason": "CLI entry point", "platform": "linux" }
+    ]
+  }
+}
+```
+
+Resolution rules:
+- If an entry matches the current platform, it is used.
+- Otherwise, a platform-agnostic entry (no `platform` field) is used as fallback.
+- If no entry matches, the file defaults to 100%/100%.
+
+The `loosen` command creates **platform-agnostic** overrides for new files. Only `loosen-from-ci` introduces platform-specific entries, since it integrates coverage results from CI runners on different platforms.
 
 ## Example Output
 
