@@ -354,10 +354,12 @@ let run (command: Command) (searchDir: string) : Result<int, string> =
     match coverageFileCmd with
     | None -> Ok(runLoosenFromCi configPath)
     | Some cmd ->
-        match findCoverageFile searchDir with
-        | None -> Error "No coverage.cobertura.xml found"
-        | Some xmlPath ->
-            let files = parseFile xmlPath
+        let xmlPaths = findCoverageFiles searchDir
+
+        if List.isEmpty xmlPaths then
+            Error "No coverage.cobertura.xml found"
+        else
+            let files = parseFiles xmlPaths
             Ok(runWithCoverageFile cmd configPath files)
 
 [<EntryPoint>]

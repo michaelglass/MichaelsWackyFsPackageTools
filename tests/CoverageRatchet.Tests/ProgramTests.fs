@@ -404,6 +404,117 @@ let ``run - check-json with failing coverage returns Ok 1`` () =
 
         test <@ result = Ok 1 @>)
 
+// --- multi-XML tests ---
+
+[<Fact>]
+let ``run - check merges coverage from multiple XMLs in subdirectories`` () =
+    withTempDir (fun tmpDir ->
+        // Two test projects, each covering different lines of Foo.fs
+        let sub1 = Path.Combine(tmpDir, "TestProject1")
+        let sub2 = Path.Combine(tmpDir, "TestProject2")
+        Directory.CreateDirectory(sub1) |> ignore
+        Directory.CreateDirectory(sub2) |> ignore
+
+        // TestProject1: lines 1-5 hit, lines 6-10 miss
+        File.WriteAllText(
+            Path.Combine(sub1, "coverage.cobertura.xml"),
+            """<?xml version="1.0" encoding="utf-8"?>
+<coverage><packages><package><classes>
+  <class filename="/src/Foo.fs">
+    <lines>
+      <line number="1" hits="1" />
+      <line number="2" hits="1" />
+      <line number="3" hits="1" />
+      <line number="4" hits="1" />
+      <line number="5" hits="1" />
+      <line number="6" hits="0" />
+      <line number="7" hits="0" />
+      <line number="8" hits="0" />
+      <line number="9" hits="0" />
+      <line number="10" hits="0" />
+    </lines>
+  </class>
+</classes></package></packages></coverage>"""
+        )
+
+        // TestProject2: lines 1-5 miss, lines 6-10 hit
+        File.WriteAllText(
+            Path.Combine(sub2, "coverage.cobertura.xml"),
+            """<?xml version="1.0" encoding="utf-8"?>
+<coverage><packages><package><classes>
+  <class filename="/src/Foo.fs">
+    <lines>
+      <line number="1" hits="0" />
+      <line number="2" hits="0" />
+      <line number="3" hits="0" />
+      <line number="4" hits="0" />
+      <line number="5" hits="0" />
+      <line number="6" hits="1" />
+      <line number="7" hits="1" />
+      <line number="8" hits="1" />
+      <line number="9" hits="1" />
+      <line number="10" hits="1" />
+    </lines>
+  </class>
+</classes></package></packages></coverage>"""
+        )
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        // With merging, Foo.fs should be 100% (all lines hit across both XMLs)
+        // Without merging, only one XML is read and Foo.fs is 50%
+        let result = run (Check(config = Some configPath)) tmpDir
+
+        test <@ result = Ok 0 @>)
+
+[<Fact>]
+let ``run - ratchet merges coverage from multiple XMLs`` () =
+    withTempDir (fun tmpDir ->
+        let sub1 = Path.Combine(tmpDir, "UnitTests")
+        let sub2 = Path.Combine(tmpDir, "IntegrationTests")
+        Directory.CreateDirectory(sub1) |> ignore
+        Directory.CreateDirectory(sub2) |> ignore
+
+        // UnitTests: Foo.fs lines 1-3 hit out of 5
+        File.WriteAllText(
+            Path.Combine(sub1, "coverage.cobertura.xml"),
+            """<?xml version="1.0" encoding="utf-8"?>
+<coverage><packages><package><classes>
+  <class filename="/src/Foo.fs">
+    <lines>
+      <line number="1" hits="1" />
+      <line number="2" hits="1" />
+      <line number="3" hits="1" />
+      <line number="4" hits="0" />
+      <line number="5" hits="0" />
+    </lines>
+  </class>
+</classes></package></packages></coverage>"""
+        )
+
+        // IntegrationTests: Foo.fs lines 3-5 hit out of 5
+        File.WriteAllText(
+            Path.Combine(sub2, "coverage.cobertura.xml"),
+            """<?xml version="1.0" encoding="utf-8"?>
+<coverage><packages><package><classes>
+  <class filename="/src/Foo.fs">
+    <lines>
+      <line number="1" hits="0" />
+      <line number="2" hits="0" />
+      <line number="3" hits="1" />
+      <line number="4" hits="1" />
+      <line number="5" hits="1" />
+    </lines>
+  </class>
+</classes></package></packages></coverage>"""
+        )
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        // Merged = 100%, so ratchet should produce no changes
+        let result = run (Ratchet(config = Some configPath)) tmpDir
+
+        test <@ result = Ok 0 @>)
+
 // --- main tests ---
 
 [<Fact>]
