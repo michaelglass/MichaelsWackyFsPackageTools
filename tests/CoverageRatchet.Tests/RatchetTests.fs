@@ -400,7 +400,7 @@ let ``loosenRaw preserves entries for other platforms`` () =
     test <@ other.Line = 0.0 @>
 
 [<Fact>]
-let ``loosenRaw adds platform-specific entry for new file`` () =
+let ``loosenRaw adds platform-agnostic entry for new file`` () =
     let raw: RawConfig =
         { DefaultLine = 100.0
           DefaultBranch = 100.0
@@ -411,7 +411,7 @@ let ``loosenRaw adds platform-specific entry for new file`` () =
     test <@ result.RawOverrides.ContainsKey("New.fs") @>
     let entries = result.RawOverrides.["New.fs"]
     test <@ entries.Length = 1 @>
-    test <@ entries.[0].Platform = Some Platform.current @>
+    test <@ entries.[0].Platform = None @>
     test <@ entries.[0].Line = 80.0 @>
 
 [<Fact>]
@@ -688,7 +688,7 @@ let ``loosenRaw removes current-platform entry when file reaches defaults`` () =
     test <@ entries.[0].Platform = Some otherPlatform @>
 
 [<Fact>]
-let ``loosenRaw adds new file with platform-specific entry`` () =
+let ``loosenRaw adds new file with platform-agnostic entry`` () =
     let raw: RawConfig =
         { DefaultLine = 100.0
           DefaultBranch = 100.0
@@ -700,13 +700,13 @@ let ``loosenRaw adds new file with platform-specific entry`` () =
     test <@ result.RawOverrides.ContainsKey("Brand.fs") @>
     let entries = result.RawOverrides.["Brand.fs"]
     test <@ entries.Length = 1 @>
-    test <@ entries.[0].Platform = Some Platform.current @>
+    test <@ entries.[0].Platform = None @>
     test <@ entries.[0].Line = 60.0 @>
     test <@ entries.[0].Branch = 50.0 @>
 
 [<Fact>]
-let ``loosenRaw preserves other-platform-only entry when adding new entry for same file`` () =
-    // File has only a linux entry. On macOS, loosen adds a macOS entry alongside it.
+let ``loosenRaw preserves other-platform-only entry when adding agnostic entry for same file`` () =
+    // File has only an other-platform entry. Loosen adds a platform-agnostic entry alongside it.
     let raw: RawConfig =
         { DefaultLine = 100.0
           DefaultBranch = 100.0
@@ -724,9 +724,9 @@ let ``loosenRaw preserves other-platform-only entry when adding new entry for sa
 
     test <@ entries.Length = 2 @>
     let other = entries |> List.find (fun o -> o.Platform = Some otherPlatform)
-    let mine = entries |> List.find (fun o -> o.Platform = Some Platform.current)
+    let agnostic = entries |> List.find (fun o -> o.Platform = None)
     test <@ other.Line = 0.0 @>
-    test <@ mine.Line = 60.0 @>
+    test <@ agnostic.Line = 60.0 @>
 
 [<Fact>]
 let ``loosenRaw preserves other-platform-only entry when current platform meets defaults`` () =

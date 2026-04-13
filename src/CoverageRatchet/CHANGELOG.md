@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix: `loosen` command now creates platform-agnostic overrides for new files (only `loosen-from-ci` introduces platform-specific entries)
 - Bump CommandTree dependency from 0.3.3 to 0.3.5 (catching up to FsSemanticTagger)
 - refactor: type-driven design — add `Platform` DU (replacing raw strings), `CiFileResult` record, `FileResult` module with computed `passed`/`linePassed`/`branchPassed`, `CoverageFileCommand` DU eliminating `failwith "unreachable"`, `CheckResult` now uses `RatchetStatus.NoChanges` without payload, `Override.Reason` is `string option`
 - fix: `loosen-from-ci` now works in jujutsu (jj) repos — detects `.jj/repo/store/git` and sets `GIT_DIR` with absolute path; checks `.git` first for normal git repos
