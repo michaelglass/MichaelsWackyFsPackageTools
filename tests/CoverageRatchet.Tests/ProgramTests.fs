@@ -1301,3 +1301,35 @@ let ``vcsCommitAndPush - jj fails falls back to git workflow`` () =
 
     test <@ calls |> List.exists (fun (c, _) -> c = "git") @>
     test <@ calls |> List.exists (fun (_, a) -> a.Contains "commit") @>
+
+// --- extractSearchDir tests ---
+
+[<Fact>]
+let ``extractSearchDir - defaults to dot when not provided`` () =
+    let dir, remaining = extractSearchDir [| "check" |]
+    test <@ dir = "." @>
+    test <@ remaining = [| "check" |] @>
+
+[<Fact>]
+let ``extractSearchDir - extracts flag before command`` () =
+    let dir, remaining = extractSearchDir [| "--search-dir"; "coverage"; "check" |]
+    test <@ dir = "coverage" @>
+    test <@ remaining = [| "check" |] @>
+
+[<Fact>]
+let ``extractSearchDir - extracts flag after command`` () =
+    let dir, remaining = extractSearchDir [| "check"; "--search-dir"; "coverage" |]
+    test <@ dir = "coverage" @>
+    test <@ remaining = [| "check" |] @>
+
+[<Fact>]
+let ``extractSearchDir - ignores flag without value`` () =
+    let dir, remaining = extractSearchDir [| "check"; "--search-dir" |]
+    test <@ dir = "." @>
+    test <@ remaining = [| "check"; "--search-dir" |] @>
+
+[<Fact>]
+let ``extractSearchDir - empty argv`` () =
+    let dir, remaining = extractSearchDir Array.empty
+    test <@ dir = "." @>
+    test <@ remaining = Array.empty @>

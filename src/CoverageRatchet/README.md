@@ -95,6 +95,17 @@ Pushes current code, polls CI, and if coverage fails:
 
 Requires `gh` CLI and `jj` (or `git`).
 
+### Custom search directory
+
+By default, CoverageRatchet recursively searches `.` for coverage files. Use `--search-dir` to search a different directory:
+
+```bash
+coverageratchet --search-dir coverage check
+coverageratchet check --search-dir coverage
+```
+
+The flag works in any position. Directories like `.devenv` are automatically skipped to avoid slow traversal of Nix store symlinks.
+
 ### Custom config path
 
 ```bash
