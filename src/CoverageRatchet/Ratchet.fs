@@ -179,7 +179,7 @@ let loosen (config: Config) (files: FileCoverage list) : Config =
 let loosenRaw (raw: RawConfig) (files: FileCoverage list) : RawConfig =
     let resolved = resolveConfig raw
     let loosened = loosen resolved files
-    mergeRawOverrides raw resolved loosened (Some Platform.current)
+    mergeRawOverrides raw resolved loosened None
 
 let mergeFromCi (raw: RawConfig) (ciPlatform: Platform) (ciResults: Map<string, CiFileResult>) : RawConfig =
     let mutable result = raw.RawOverrides
