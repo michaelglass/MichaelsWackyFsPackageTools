@@ -18,6 +18,8 @@ type Command =
     | [<Cmd("Output coverage results as JSON for CI artifact upload")>] CheckJson of
         config: string option *
         output: string option
+    | [<Cmd("Show files sorted by coverage to find improvement targets")>] Targets of config: string option
+    | [<Cmd("Show uncovered branch points per file")>] Gaps of config: string option
     | [<Cmd("Fetch CI coverage results and update local platform-specific thresholds")>] LoosenFromCi of
         config: string option
 
@@ -133,6 +135,48 @@ let private runCheckJson (configPath: string) (outputPath: string) (files: FileC
 
     let failed = allResults |> List.filter (fun r -> not (FileResult.passed r))
     if List.isEmpty failed then 0 else 1
+
+let private runTargets (configPath: string) (files: FileCoverage list) =
+    let config = loadConfig configPath
+    let allResults = buildFileResults config files
+
+    let sorted = allResults |> List.sortBy (fun r -> r.File.LinePct)
+
+    printfn ""
+    printfn "Files by coverage (lowest first):"
+    printfn "────────────────────────────────────────────────────────────────"
+    printfn "%8s %8s  %s" "Line Cov" "Br. Cov" "File"
+    printfn "────────────────────────────────────────────────────────────────"
+
+    for r in sorted do
+        printfn "  %5.1f%%  %5.1f%%  %s" r.File.LinePct r.File.BranchPct r.File.FileName
+
+    printfn "────────────────────────────────────────────────────────────────"
+    printfn ""
+    printfn "  %d files" sorted.Length
+    printfn ""
+    0
+
+let private runGaps (xmlContents: string list) =
+    let rawLines = xmlContents |> List.collect extractRawLines
+    let gapFiles = buildBranchGaps rawLines
+
+    if List.isEmpty gapFiles then
+        printfn "No uncovered branches found."
+    else
+        for file in gapFiles do
+            printfn "  %-45s %.1f%% branch (%d uncovered)" file.FileName file.BranchPct file.Gaps.Length
+
+            for gap in file.Gaps do
+                printfn "      line %d: %d/%d branches covered" gap.Line gap.Covered gap.Total
+
+        printfn ""
+
+        let totalGaps = gapFiles |> List.sumBy (fun f -> f.Gaps.Length)
+        printfn "  Summary: %d uncovered branches across %d files" totalGaps gapFiles.Length
+
+    printfn ""
+    0
 
 type CiResult =
     | CiPassed
@@ -324,8 +368,15 @@ type CoverageFileCommand =
     | CfCheck
     | CfLoosen
     | CfCheckJson of output: string option
+    | CfTargets
+    | CfGaps
 
-let private runWithCoverageFile (cmd: CoverageFileCommand) (configPath: string) (files: FileCoverage list) =
+let private runWithCoverageFiles
+    (cmd: CoverageFileCommand)
+    (configPath: string)
+    (xmlPaths: string list)
+    (files: FileCoverage list)
+    =
     match cmd with
     | CfRatchet -> runRatchet configPath files
     | CfCheck -> runCheck configPath files
@@ -333,6 +384,8 @@ let private runWithCoverageFile (cmd: CoverageFileCommand) (configPath: string) 
     | CfCheckJson outputOpt ->
         let outputPath = outputOpt |> Option.defaultValue "coverage-results.json"
         runCheckJson configPath outputPath files
+    | CfTargets -> runTargets configPath files
+    | CfGaps -> runGaps (xmlPaths |> List.map File.ReadAllText)
 
 let run (command: Command) (searchDir: string) : Result<int, string> =
     let configPath =
@@ -341,6 +394,8 @@ let run (command: Command) (searchDir: string) : Result<int, string> =
         | Check(config = c)
         | Loosen(config = c)
         | CheckJson(config = c)
+        | Targets(config = c)
+        | Gaps(config = c)
         | LoosenFromCi(config = c) -> c |> Option.defaultValue defaultConfigPath
 
     let coverageFileCmd =
@@ -349,6 +404,8 @@ let run (command: Command) (searchDir: string) : Result<int, string> =
         | Check _ -> Some CfCheck
         | Loosen _ -> Some CfLoosen
         | CheckJson(output = outputOpt) -> Some(CfCheckJson outputOpt)
+        | Targets _ -> Some CfTargets
+        | Gaps _ -> Some CfGaps
         | LoosenFromCi _ -> None
 
     match coverageFileCmd with
@@ -360,7 +417,7 @@ let run (command: Command) (searchDir: string) : Result<int, string> =
             Error "No coverage.cobertura.xml found"
         else
             let files = parseFiles xmlPaths
-            Ok(runWithCoverageFile cmd configPath files)
+            Ok(runWithCoverageFiles cmd configPath xmlPaths files)
 
 [<EntryPoint>]
 let main argv =
