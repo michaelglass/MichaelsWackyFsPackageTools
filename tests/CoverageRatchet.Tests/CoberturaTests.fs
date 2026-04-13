@@ -368,7 +368,7 @@ let ``parseFiles - different files from different XMLs both appear`` () =
 let ``parseFiles - empty list returns empty`` () =
     let result = parseXmls []
 
-    test <@ result = [] @>
+    test <@ List.isEmpty result @>
 
 [<Fact>]
 let ``parseFiles - single XML same as parseXml`` () =
@@ -486,7 +486,7 @@ let ``buildBranchGaps - file with no uncovered branches not included`` () =
     let rawLines = extractRawLines xml
     let result = buildBranchGaps rawLines
 
-    test <@ result = [] @>
+    test <@ List.isEmpty result @>
 
 [<Fact>]
 let ``buildBranchGaps - file with no branches not included`` () =
@@ -506,7 +506,7 @@ let ``buildBranchGaps - file with no branches not included`` () =
     let rawLines = extractRawLines xml
     let result = buildBranchGaps rawLines
 
-    test <@ result = [] @>
+    test <@ List.isEmpty result @>
 
 [<Fact>]
 let ``buildBranchGaps - merges branch data across XMLs`` () =
@@ -599,7 +599,7 @@ let ``findCoverageFiles - returns all XMLs in directory`` () =
 let ``findCoverageFiles - returns empty list for missing directory`` () =
     let result = findCoverageFiles "/nonexistent/path/that/does/not/exist"
 
-    test <@ result = [] @>
+    test <@ List.isEmpty result @>
 
 [<Fact>]
 let ``findCoverageFiles - returns empty list for empty directory`` () =
@@ -608,7 +608,7 @@ let ``findCoverageFiles - returns empty list for empty directory`` () =
 
     try
         let result = findCoverageFiles tmpDir
-        test <@ result = [] @>
+        test <@ List.isEmpty result @>
     finally
         Directory.Delete(tmpDir, true)
 
