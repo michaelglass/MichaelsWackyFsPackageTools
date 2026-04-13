@@ -66,11 +66,19 @@ run = "dotnet fsi scripts/check-gitignore-leaks.fsx"
 description = "Verify all packable projects are linked in docs/docs-index.html"
 run = "dotnet fsi scripts/check-docs-index.fsx"
 
+[tasks.sync-docs]
+run = "dotnet run --project src/SyncDocs/SyncDocs.fsproj --no-build -- sync"
+depends = ["build"]
+
+[tasks.sync-docs-check]
+run = "dotnet run --project src/SyncDocs/SyncDocs.fsproj --no-build -- check"
+depends = ["build"]
+
 [tasks.check]
-depends = ["format", "lint", "lint-project", "docs", "coverage-check", "check-docs-index"]
+depends = ["format", "lint", "lint-project", "sync-docs", "docs", "coverage-check", "check-docs-index"]
 
 [tasks.ci]
-depends = ["format-check", "lint", "lint-project", "docs", "coverage-check", "check-docs-index"]
+depends = ["format-check", "lint", "lint-project", "sync-docs-check", "docs", "coverage-check", "check-docs-index"]
 
 [tasks.pack]
 run = """
