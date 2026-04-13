@@ -378,17 +378,21 @@ let ``packable project passes when equals-check property correct`` (_propName: s
 [<Fact>]
 let ``analyzer package skips symbol checks when IncludeBuildOutput is false`` () =
     let fsproj =
-        makePackableWith
-            (fullProperties
-             + "\n    <IncludeBuildOutput>false</IncludeBuildOutput>")
-            fullItemGroup
+        makePackableWith (fullProperties + "\n    <IncludeBuildOutput>false</IncludeBuildOutput>") fullItemGroup
 
     let props = removeProperty "IncludeSymbols" fsproj
     let props = removeProperty "SymbolPackageFormat" props
     let results = checkXml props
 
     test <@ results |> List.exists (fun r -> r.Name = "IncludeSymbols is true") |> not @>
-    test <@ results |> List.exists (fun r -> r.Name = "SymbolPackageFormat is snupkg") |> not @>
+
+    test
+        <@
+            results
+            |> List.exists (fun r -> r.Name = "SymbolPackageFormat is snupkg")
+            |> not
+        @>
+
     test <@ results |> List.forall isPassed @>
 
 // -- checkPropertyEquals edge cases --
