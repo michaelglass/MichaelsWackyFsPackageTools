@@ -113,6 +113,8 @@ let checkProject (doc: XDocument) : CheckResult list =
         [ checkPropertyEquals doc "TreatWarningsAsErrors" "true" "TreatWarningsAsErrors is true" ]
 
     if isPackable doc then
+        let includesBuildOutput = getProperty doc "IncludeBuildOutput" <> Some "false"
+
         let packageChecks =
             [ checkPropertyPresent doc "Version" "Version present"
               checkPropertyPresent doc "Description" "Description present"
@@ -121,8 +123,6 @@ let checkProject (doc: XDocument) : CheckResult list =
               checkPropertyPresent doc "RepositoryUrl" "RepositoryUrl present"
               checkPropertyPresent doc "RepositoryType" "RepositoryType present"
               checkPropertyEquals doc "GenerateDocumentationFile" "true" "GenerateDocumentationFile is true"
-              checkPropertyEquals doc "IncludeSymbols" "true" "IncludeSymbols is true"
-              checkPropertyEquals doc "SymbolPackageFormat" "snupkg" "SymbolPackageFormat is snupkg"
               (let has = hasPackageRef doc "Microsoft.SourceLink.GitHub"
 
                { Name = "Has Microsoft.SourceLink.GitHub"
@@ -132,7 +132,14 @@ let checkProject (doc: XDocument) : CheckResult list =
                    else
                        Failed "Missing Microsoft.SourceLink.GitHub PackageReference" }) ]
 
-        allProjectChecks @ packageChecks
+        let symbolChecks =
+            if includesBuildOutput then
+                [ checkPropertyEquals doc "IncludeSymbols" "true" "IncludeSymbols is true"
+                  checkPropertyEquals doc "SymbolPackageFormat" "snupkg" "SymbolPackageFormat is snupkg" ]
+            else
+                []
+
+        allProjectChecks @ packageChecks @ symbolChecks
     else
         allProjectChecks
 
