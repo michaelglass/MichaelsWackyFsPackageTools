@@ -46,6 +46,28 @@ done
 """
 depends = ["test"]
 
+[tasks.coverage-loosen]
+run = """
+for config in coverage-ratchet-*.json; do
+  [ -f "$config" ] || continue
+  project=$(echo "$config" | sed 's/coverage-ratchet-\\(.*\\)\\.json/\\1/')
+  echo "Loosening $project..."
+  (cd "coverage/$project" && dotnet run --project "../../src/CoverageRatchet/CoverageRatchet.fsproj" --no-build -- loosen "../../$config")
+done
+"""
+depends = ["test"]
+
+[tasks.loosen-from-ci]
+run = """
+for config in coverage-ratchet-*.json; do
+  [ -f "$config" ] || continue
+  project=$(echo "$config" | sed 's/coverage-ratchet-\\(.*\\)\\.json/\\1/')
+  echo "Loosening from CI $project..."
+  (cd "coverage/$project" && dotnet run --project "../../src/CoverageRatchet/CoverageRatchet.fsproj" --no-build -- loosen-from-ci "../../$config")
+done
+"""
+depends = ["test"]
+
 [tasks.format]
 run = "dotnet fantomas src/ tests/"
 depends = ["tool-restore"]
@@ -75,7 +97,7 @@ run = "dotnet run --project src/SyncDocs/SyncDocs.fsproj --no-build -- check"
 depends = ["build"]
 
 [tasks.check]
-depends = ["format", "lint", "lint-project", "sync-docs", "docs", "coverage-check", "check-docs-index"]
+depends = ["format", "lint", "lint-project", "sync-docs", "docs", "coverage-ratchet", "check-docs-index"]
 
 [tasks.ci]
 depends = ["format-check", "lint", "lint-project", "sync-docs-check", "docs", "coverage-check", "check-docs-index"]
