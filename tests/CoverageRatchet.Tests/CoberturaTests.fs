@@ -265,6 +265,221 @@ let ``parseXml - no classes element`` () =
 
     test <@ result.Length = 0 @>
 
+// --- parseFiles (multi-XML merge) ---
+
+[<Fact>]
+let ``parseFiles - merges line coverage across XMLs for same file`` () =
+    let xml1 =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages><package><classes>
+            <class filename="/src/Foo.fs">
+              <lines>
+                <line number="1" hits="1" />
+                <line number="2" hits="0" />
+                <line number="3" hits="0" />
+              </lines>
+            </class>
+          </classes></package></packages>
+        </coverage>"""
+
+    let xml2 =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages><package><classes>
+            <class filename="/src/Foo.fs">
+              <lines>
+                <line number="1" hits="0" />
+                <line number="2" hits="1" />
+                <line number="3" hits="0" />
+              </lines>
+            </class>
+          </classes></package></packages>
+        </coverage>"""
+
+    let result = parseXmls [ xml1; xml2 ]
+
+    test <@ result.Length = 1 @>
+    test <@ result.[0].FileName = "Foo.fs" @>
+    // Lines 1 and 2 hit across XMLs, line 3 never hit => 2/3
+    test <@ Math.Round(result.[0].LinePct, 1) = 66.7 @>
+
+[<Fact>]
+let ``parseFiles - merges branch coverage across XMLs taking best ratio`` () =
+    let xml1 =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages><package><classes>
+            <class filename="/src/Bar.fs">
+              <lines>
+                <line number="1" hits="1" condition-coverage="25% (1/4)" />
+              </lines>
+            </class>
+          </classes></package></packages>
+        </coverage>"""
+
+    let xml2 =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages><package><classes>
+            <class filename="/src/Bar.fs">
+              <lines>
+                <line number="1" hits="1" condition-coverage="75% (3/4)" />
+              </lines>
+            </class>
+          </classes></package></packages>
+        </coverage>"""
+
+    let result = parseXmls [ xml1; xml2 ]
+
+    test <@ result.Length = 1 @>
+    test <@ result.[0].BranchesCovered = 3 @>
+    test <@ result.[0].BranchesTotal = 4 @>
+
+[<Fact>]
+let ``parseFiles - different files from different XMLs both appear`` () =
+    let xml1 =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages><package><classes>
+            <class filename="/src/A.fs">
+              <lines><line number="1" hits="1" /></lines>
+            </class>
+          </classes></package></packages>
+        </coverage>"""
+
+    let xml2 =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages><package><classes>
+            <class filename="/src/B.fs">
+              <lines><line number="1" hits="0" /></lines>
+            </class>
+          </classes></package></packages>
+        </coverage>"""
+
+    let result = parseXmls [ xml1; xml2 ]
+
+    test <@ result.Length = 2 @>
+    let names = result |> List.map (fun f -> f.FileName) |> List.sort
+    test <@ names = [ "A.fs"; "B.fs" ] @>
+
+[<Fact>]
+let ``parseFiles - empty list returns empty`` () =
+    let result = parseXmls []
+
+    test <@ result = [] @>
+
+[<Fact>]
+let ``parseFiles - single XML same as parseXml`` () =
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage>
+          <packages><package><classes>
+            <class filename="/src/Solo.fs">
+              <lines>
+                <line number="1" hits="1" />
+                <line number="2" hits="0" />
+              </lines>
+            </class>
+          </classes></package></packages>
+        </coverage>"""
+
+    let single = parseXml xml
+    let multi = parseXmls [ xml ]
+
+    test <@ single.Length = multi.Length @>
+    test <@ single.[0].FileName = multi.[0].FileName @>
+    test <@ single.[0].LinePct = multi.[0].LinePct @>
+
+// --- parseFiles (disk-based multi-XML merge) ---
+
+[<Fact>]
+let ``parseFiles - reads and merges multiple XML files from disk`` () =
+    let tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
+    Directory.CreateDirectory(tmpDir) |> ignore
+
+    let xml1Path = Path.Combine(tmpDir, "cov1.xml")
+    let xml2Path = Path.Combine(tmpDir, "cov2.xml")
+
+    File.WriteAllText(
+        xml1Path,
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage><packages><package><classes>
+          <class filename="/src/Merged.fs">
+            <lines>
+              <line number="1" hits="1" />
+              <line number="2" hits="0" />
+            </lines>
+          </class>
+        </classes></package></packages></coverage>"""
+    )
+
+    File.WriteAllText(
+        xml2Path,
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage><packages><package><classes>
+          <class filename="/src/Merged.fs">
+            <lines>
+              <line number="1" hits="0" />
+              <line number="2" hits="1" />
+            </lines>
+          </class>
+        </classes></package></packages></coverage>"""
+    )
+
+    try
+        let result = parseFiles [ xml1Path; xml2Path ]
+
+        test <@ result.Length = 1 @>
+        test <@ result.[0].FileName = "Merged.fs" @>
+        test <@ result.[0].LinePct = 100.0 @>
+    finally
+        Directory.Delete(tmpDir, true)
+
+// --- findCoverageFiles (plural) ---
+
+[<Fact>]
+let ``findCoverageFiles - returns all XMLs in directory`` () =
+    let tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
+    let subDir1 = Path.Combine(tmpDir, "ProjectA")
+    let subDir2 = Path.Combine(tmpDir, "ProjectB")
+    Directory.CreateDirectory(subDir1) |> ignore
+    Directory.CreateDirectory(subDir2) |> ignore
+
+    let xml1 = Path.Combine(subDir1, "coverage.cobertura.xml")
+    let xml2 = Path.Combine(subDir2, "coverage.cobertura.xml")
+    File.WriteAllText(xml1, "<coverage/>")
+    File.WriteAllText(xml2, "<coverage/>")
+
+    try
+        let result = findCoverageFiles tmpDir
+
+        test <@ result.Length = 2 @>
+        test <@ result |> List.contains xml1 @>
+        test <@ result |> List.contains xml2 @>
+    finally
+        Directory.Delete(tmpDir, true)
+
+[<Fact>]
+let ``findCoverageFiles - returns empty list for missing directory`` () =
+    let result = findCoverageFiles "/nonexistent/path/that/does/not/exist"
+
+    test <@ result = [] @>
+
+[<Fact>]
+let ``findCoverageFiles - returns empty list for empty directory`` () =
+    let tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
+    Directory.CreateDirectory(tmpDir) |> ignore
+
+    try
+        let result = findCoverageFiles tmpDir
+        test <@ result = [] @>
+    finally
+        Directory.Delete(tmpDir, true)
+
+// --- findCoverageFile (singular, existing) ---
+
 [<Fact>]
 let ``findCoverageFile - discovers XML in directory`` () =
     let tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
