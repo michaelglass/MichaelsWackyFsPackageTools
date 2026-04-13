@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: add `--search-dir <dir>` flag to search a specific directory instead of `.` (works in any position)
+- fix: skip `.devenv` directories during coverage file search to avoid hanging on Nix store symlinks
 - fix: `loosen` command now creates platform-agnostic overrides for new files (only `loosen-from-ci` introduces platform-specific entries)
 - feat: add `targets` command — list files sorted by coverage, lowest first
 - feat: add `gaps` command — show uncovered branch points per file

@@ -419,14 +419,27 @@ let run (command: Command) (searchDir: string) : Result<int, string> =
             let files = parseFiles xmlPaths
             Ok(runWithCoverageFiles cmd configPath xmlPaths files)
 
+let extractSearchDir (argv: string array) : string * string array =
+    let rec loop i searchDir remaining =
+        if i >= argv.Length then
+            searchDir, Array.ofList (List.rev remaining)
+        elif argv.[i] = "--search-dir" && i + 1 < argv.Length then
+            loop (i + 2) argv.[i + 1] remaining
+        else
+            loop (i + 1) searchDir (argv.[i] :: remaining)
+
+    loop 0 "." []
+
 [<EntryPoint>]
 let main argv =
+    let searchDir, argv = extractSearchDir argv
+
     let tree =
         CommandReflection.fromUnion<Command> "Per-file coverage enforcement that only goes up"
 
     // Bare invocation runs the default (ratchet) command
     if Array.isEmpty argv then
-        match run (Ratchet None) "." with
+        match run (Ratchet None) searchDir with
         | Ok exitCode -> exitCode
         | Error msg ->
             eprintfn "Error: %s" msg
@@ -437,7 +450,7 @@ let main argv =
     else
         match CommandTree.parse tree argv with
         | Ok cmd ->
-            match run cmd "." with
+            match run cmd searchDir with
             | Ok exitCode -> exitCode
             | Error msg ->
                 eprintfn "Error: %s" msg

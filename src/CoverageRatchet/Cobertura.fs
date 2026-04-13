@@ -227,11 +227,33 @@ let parseFile (xmlPath: string) : FileCoverage list =
     let content = File.ReadAllText(xmlPath)
     parseXml content
 
+let private excludedSearchDirs = Set.singleton ".devenv"
+
+let private enumerateOptions =
+    EnumerationOptions(IgnoreInaccessible = true, RecurseSubdirectories = false)
+
 /// Find all coverage.cobertura.xml files in a directory (recursive).
+/// Skips .devenv to avoid traversing Nix store symlinks.
 let findCoverageFiles (searchDir: string) : string list =
     if Directory.Exists(searchDir) then
-        Directory.GetFiles(searchDir, "coverage.cobertura.xml", SearchOption.AllDirectories)
-        |> Array.toList
+        let results = ResizeArray<string>()
+        let queue = System.Collections.Generic.Queue<string>()
+        queue.Enqueue(searchDir)
+
+        while queue.Count > 0 do
+            let dir = queue.Dequeue()
+            let target = Path.Combine(dir, "coverage.cobertura.xml")
+
+            if File.Exists(target) then
+                results.Add(target)
+
+            for sub in Directory.GetDirectories(dir, "*", enumerateOptions) do
+                let name = Path.GetFileName(sub)
+
+                if not (excludedSearchDirs.Contains(name)) then
+                    queue.Enqueue(sub)
+
+        results |> Seq.toList
     else
         []
 
