@@ -9,6 +9,8 @@ Per-file code coverage enforcement that only goes up. CoverageRatchet reads your
 3. **`check`** fails the build if any file drops below its threshold.
 4. **`ratchet`** (the default command) updates thresholds to match current coverage -- thresholds only go up, not down.
 5. **`loosen`** sets thresholds to whatever coverage is right now, so `check` passes immediately.
+6. **`targets`** lists files sorted by coverage to find improvement opportunities.
+7. **`gaps`** shows uncovered branch points per file with line numbers.
 
 The default threshold for every file is **100% line and branch coverage**. Files that can't easily reach 100% (like CLI entry points) can get per-file overrides with a documented reason.
 
@@ -55,6 +57,22 @@ coverageratchet loosen
 ```
 
 This always exits 0. Files that were already at 100% don't get an override. New overrides get the reason `"loosened automatically"`.
+
+### Show improvement targets
+
+```bash
+coverageratchet targets
+```
+
+Lists all files sorted by line coverage (lowest first), so you can see where to focus testing effort. Always exits 0.
+
+### Show branch coverage gaps
+
+```bash
+coverageratchet gaps
+```
+
+Shows uncovered branch points per file, with specific line numbers and how many branches are covered vs total. Files are sorted by gap count (most gaps first). Always exits 0.
 
 ### Export coverage as JSON (for CI)
 
