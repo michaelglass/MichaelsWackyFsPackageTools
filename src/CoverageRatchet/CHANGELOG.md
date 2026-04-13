@@ -6,6 +6,12 @@
 - refactor: type-driven design — add `Platform` DU (replacing raw strings), `CiFileResult` record, `FileResult` module with computed `passed`/`linePassed`/`branchPassed`, `CoverageFileCommand` DU eliminating `failwith "unreachable"`, `CheckResult` now uses `RatchetStatus.NoChanges` without payload, `Override.Reason` is `string option`
 - fix: `loosen-from-ci` now works in jujutsu (jj) repos — detects `.jj/repo/store/git` and sets `GIT_DIR` with absolute path; checks `.git` first for normal git repos
 - refactor: DI for `pollCi`, `getVcsSha`, `vcsPush`, `vcsCommitAndPush` — accept injected `run` parameter for testability
+- feat: support multiple XML files for ratchet/check/loosen commands
+- feat: expose `RawLine`, `extractRawLines`, `buildCoverage` as public API for consumer use
+- feat: add `BranchGap`/`FileBranchGaps` types and `buildBranchGaps` function for branch gap analysis
+- feat: add `targets` command — list files sorted by coverage, lowest first
+- feat: add `gaps` command — show uncovered branch points per file
+- chore: remove FSharp.Core version pin to avoid forcing a specific version on consumers
 
 ## 0.10.0-alpha.1
 

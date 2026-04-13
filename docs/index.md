@@ -59,6 +59,12 @@ coverageratchet check
 
 # Set thresholds to current coverage (makes check pass immediately)
 coverageratchet loosen
+
+# Find files with lowest coverage
+coverageratchet targets
+
+# Show uncovered branch points per file
+coverageratchet gaps
 ```
 
 Configuration lives in a `coverage-ratchet.json` file. See the [CoverageRatchet README](src/CoverageRatchet/) for the full configuration format.
