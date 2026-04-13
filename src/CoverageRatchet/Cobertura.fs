@@ -149,10 +149,7 @@ let buildCoverage (rawLines: RawLine list) : FileCoverage list =
           BranchesTotal = totalBranches })
 
 /// A single uncovered branch point on a specific line.
-type BranchGap =
-    { Line: int
-      Covered: int
-      Total: int }
+type BranchGap = { Line: int; Covered: int; Total: int }
 
 /// Branch coverage gaps for a file.
 type FileBranchGaps =
@@ -184,7 +181,10 @@ let buildBranchGaps (rawLines: RawLine list) : FileBranchGaps list =
                 let covered, total = kv.Value
 
                 if covered < total then
-                    Some { Line = kv.Key; Covered = covered; Total = total }
+                    Some
+                        { Line = kv.Key
+                          Covered = covered
+                          Total = total }
                 else
                     None)
             |> Seq.sortBy (fun g -> g.Line)

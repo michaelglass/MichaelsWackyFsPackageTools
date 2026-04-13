@@ -438,7 +438,8 @@ let ``run - targets returns Ok 0 and lists files`` () =
 [<Fact>]
 let ``run - targets with no coverage file returns Error`` () =
     withTempDir (fun tmpDir ->
-        let result = run (Targets(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir
+        let result =
+            run (Targets(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir
 
         test <@ result = Error "No coverage.cobertura.xml found" @>)
 
