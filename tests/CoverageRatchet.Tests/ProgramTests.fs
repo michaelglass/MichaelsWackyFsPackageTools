@@ -404,6 +404,76 @@ let ``run - check-json with failing coverage returns Ok 1`` () =
 
         test <@ result = Ok 1 @>)
 
+// --- targets tests ---
+
+[<Fact>]
+let ``run - targets returns Ok 0 and lists files`` () =
+    withTempDir (fun tmpDir ->
+        let xml =
+            """<?xml version="1.0" encoding="utf-8"?>
+<coverage><packages><package><classes>
+  <class filename="/src/Low.fs">
+    <lines>
+      <line number="1" hits="1" />
+      <line number="2" hits="0" />
+    </lines>
+  </class>
+  <class filename="/src/High.fs">
+    <lines>
+      <line number="1" hits="1" />
+      <line number="2" hits="1" />
+    </lines>
+  </class>
+</classes></package></packages></coverage>"""
+
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        File.WriteAllText(xmlPath, xml)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        let result = run (Targets(config = Some configPath)) tmpDir
+
+        test <@ result = Ok 0 @>)
+
+[<Fact>]
+let ``run - targets with no coverage file returns Error`` () =
+    withTempDir (fun tmpDir ->
+        let result = run (Targets(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir
+
+        test <@ result = Error "No coverage.cobertura.xml found" @>)
+
+// --- gaps tests ---
+
+[<Fact>]
+let ``run - gaps returns Ok 0 with branch gaps`` () =
+    withTempDir (fun tmpDir ->
+        let xml =
+            """<?xml version="1.0" encoding="utf-8"?>
+<coverage><packages><package><classes>
+  <class filename="/src/Branchy.fs">
+    <lines>
+      <line number="1" hits="1" condition-coverage="50% (1/2)" />
+      <line number="2" hits="1" />
+    </lines>
+  </class>
+</classes></package></packages></coverage>"""
+
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        File.WriteAllText(xmlPath, xml)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        let result = run (Gaps(config = Some configPath)) tmpDir
+
+        test <@ result = Ok 0 @>)
+
+[<Fact>]
+let ``run - gaps with no coverage file returns Error`` () =
+    withTempDir (fun tmpDir ->
+        let result = run (Gaps(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir
+
+        test <@ result = Error "No coverage.cobertura.xml found" @>)
+
 // --- multi-XML tests ---
 
 [<Fact>]
