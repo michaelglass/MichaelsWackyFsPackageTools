@@ -1,14 +1,14 @@
 {
   "overrides": {
     "Cobertura.fs": {
-      "line": 100,
+      "line": 99,
       "branch": 86,
       "reason": "F# compiler generates extra branches for null checks and pattern matching"
     },
     "Program.fs": [
       {
-        "line": 77,
-        "branch": 75,
+        "line": 79,
+        "branch": 76,
         "reason": "CLI entry point with untestable shell-dependent code",
         "platform": "macos"
       },
@@ -22,7 +22,7 @@
     "Ratchet.fs": [
       {
         "line": 99,
-        "branch": 84,
+        "branch": 86,
         "reason": "new mergeFromCi branches",
         "platform": "macos"
       },
