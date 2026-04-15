@@ -178,10 +178,7 @@ let ``commitAndAdvanceMain - commits and moves main bookmark`` () =
 [<Fact>]
 let ``hasChangesSinceTag - returns true when files changed in path`` () =
     let run =
-        fakeRun
-            [ ("jj",
-               "diff --from v1.0.0 --to @ --summary \"glob:src/MyLib/**\"",
-               Success "M src/MyLib/Lib.fs") ]
+        fakeRun [ ("jj", "diff --from v1.0.0 --to @ --summary \"glob:src/MyLib/**\"", Success "M src/MyLib/Lib.fs") ]
 
     test <@ hasChangesSinceTag run "v1.0.0" "src/MyLib" = true @>
 

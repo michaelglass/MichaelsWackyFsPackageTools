@@ -312,7 +312,9 @@ let ``release - Auto with reserved version bumps past it`` () =
                 [ ("git", "tag -l \"v*\"", Success "v1.0.0")
                   // hasChangesSinceTag: report changes
                   ("jj",
-                   "diff --from v1.0.0 --to @ --summary \"glob:" + Path.GetDirectoryName(tmpFile) + "/**\"",
+                   "diff --from v1.0.0 --to @ --summary \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
                    Success "1 file changed") ]
 
         // Use the test assembly itself as a real DLL so extractFromAssembly works
@@ -553,7 +555,9 @@ let ``release - Auto detects breaking API change and bumps major`` () =
             passingCiRun
                 [ ("git", "tag -l \"v*\"", Success "v1.0.0")
                   ("jj",
-                   "diff --from v1.0.0 --to @ --summary \"glob:" + Path.GetDirectoryName(tmpFile) + "/**\"",
+                   "diff --from v1.0.0 --to @ --summary \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
                    Success "1 file changed") ]
 
         let oldApi = [ ApiSignature "type Foo"; ApiSignature "  Foo::Bar(): String" ]
@@ -594,7 +598,9 @@ let ``release - Auto detects addition and bumps minor`` () =
             passingCiRun
                 [ ("git", "tag -l \"v*\"", Success "v1.0.0")
                   ("jj",
-                   "diff --from v1.0.0 --to @ --summary \"glob:" + Path.GetDirectoryName(tmpFile) + "/**\"",
+                   "diff --from v1.0.0 --to @ --summary \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
                    Success "1 file changed") ]
 
         let oldApi = [ ApiSignature "type Foo" ]
@@ -636,7 +642,9 @@ let ``release - Auto falls back to NoChange when extractPreviousApi returns None
             passingCiRun
                 [ ("git", "tag -l \"v*\"", Success "v1.0.0")
                   ("jj",
-                   "diff --from v1.0.0 --to @ --summary \"glob:" + Path.GetDirectoryName(tmpFile) + "/**\"",
+                   "diff --from v1.0.0 --to @ --summary \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
                    Success "1 file changed") ]
 
         let extractPreviousApi (_tag: string) (_dllPath: string) = None
