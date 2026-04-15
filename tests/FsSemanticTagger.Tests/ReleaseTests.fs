@@ -312,9 +312,7 @@ let ``release - Auto with reserved version bumps past it`` () =
                 [ ("git", "tag -l \"v*\"", Success "v1.0.0")
                   // hasChangesSinceTag: report changes
                   ("jj",
-                   "diff --from v1.0.0 --to @ --stat \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
+                   "diff --from v1.0.0 --to @ \"glob:" + Path.GetDirectoryName(tmpFile) + "/**\"",
                    Success "1 file changed") ]
 
         // Use the test assembly itself as a real DLL so extractFromAssembly works
@@ -555,9 +553,7 @@ let ``release - Auto detects breaking API change and bumps major`` () =
             passingCiRun
                 [ ("git", "tag -l \"v*\"", Success "v1.0.0")
                   ("jj",
-                   "diff --from v1.0.0 --to @ --stat \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
+                   "diff --from v1.0.0 --to @ \"glob:" + Path.GetDirectoryName(tmpFile) + "/**\"",
                    Success "1 file changed") ]
 
         let oldApi = [ ApiSignature "type Foo"; ApiSignature "  Foo::Bar(): String" ]
@@ -598,9 +594,7 @@ let ``release - Auto detects addition and bumps minor`` () =
             passingCiRun
                 [ ("git", "tag -l \"v*\"", Success "v1.0.0")
                   ("jj",
-                   "diff --from v1.0.0 --to @ --stat \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
+                   "diff --from v1.0.0 --to @ \"glob:" + Path.GetDirectoryName(tmpFile) + "/**\"",
                    Success "1 file changed") ]
 
         let oldApi = [ ApiSignature "type Foo" ]
@@ -642,9 +636,7 @@ let ``release - Auto falls back to NoChange when extractPreviousApi returns None
             passingCiRun
                 [ ("git", "tag -l \"v*\"", Success "v1.0.0")
                   ("jj",
-                   "diff --from v1.0.0 --to @ --stat \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
+                   "diff --from v1.0.0 --to @ \"glob:" + Path.GetDirectoryName(tmpFile) + "/**\"",
                    Success "1 file changed") ]
 
         let extractPreviousApi (_tag: string) (_dllPath: string) = None
@@ -956,7 +948,7 @@ let ``release - PromoteToRC with HasPreviousRelease succeeds`` () =
             passingCiRun
                 [ ("git", "tag -l \"v*\"", Success "v1.0.0-beta.3")
                   ("jj",
-                   "diff --from v1.0.0-beta.3 --to @ --stat \"glob:"
+                   "diff --from v1.0.0-beta.3 --to @ \"glob:"
                    + Path.GetDirectoryName(tmpFile)
                    + "/**\"",
                    Success "1 file changed") ]
@@ -991,7 +983,7 @@ let ``release - PromoteToStable with HasPreviousRelease succeeds`` () =
             passingCiRun
                 [ ("git", "tag -l \"v*\"", Success "v1.0.0-rc.1")
                   ("jj",
-                   "diff --from v1.0.0-rc.1 --to @ --stat \"glob:"
+                   "diff --from v1.0.0-rc.1 --to @ \"glob:"
                    + Path.GetDirectoryName(tmpFile)
                    + "/**\"",
                    Success "1 file changed") ]
@@ -1026,7 +1018,7 @@ let ``release - PromoteToBeta with HasPreviousRelease succeeds`` () =
             passingCiRun
                 [ ("git", "tag -l \"v*\"", Success "v0.1.0-alpha.3")
                   ("jj",
-                   "diff --from v0.1.0-alpha.3 --to @ --stat \"glob:"
+                   "diff --from v0.1.0-alpha.3 --to @ \"glob:"
                    + Path.GetDirectoryName(tmpFile)
                    + "/**\"",
                    Success "1 file changed") ]
