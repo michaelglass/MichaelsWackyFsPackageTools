@@ -9,7 +9,7 @@
 - refactor: add `BumpDecision` type (`NeedsBump`/`AlreadyBumped`) and `readFsprojVersion` function
 - refactor: share compiled `versionElementRegex` between read/update functions
 - fix: trivially-true test assertion in CI failure test
-- fix: `hasChangesSinceTag` always returned true — `jj diff --stat` outputs summary text even for zero changes; removed `--stat` so empty diff returns empty string
+- fix: `hasChangesSinceTag` always returned true — `jj diff --stat` outputs summary text even for zero changes; use `--summary` instead (empty when no changes, compact file list otherwise)
 
 ## 0.12.0-alpha.1
 
