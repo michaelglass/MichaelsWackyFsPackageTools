@@ -179,21 +179,24 @@ let ``commitAndAdvanceMain - commits and moves main bookmark`` () =
 let ``hasChangesSinceTag - returns true when files changed in path`` () =
     let run =
         fakeRun
-            [ ("jj", "diff --from v1.0.0 --to @ --stat \"glob:src/MyLib/**\"", Success "src/MyLib/Lib.fs | 5 +++--") ]
+            [ ("jj",
+               "diff --from v1.0.0 --to @ \"glob:src/MyLib/**\"",
+               Success "diff --git a/src/MyLib/Lib.fs b/src/MyLib/Lib.fs\n...") ]
 
     test <@ hasChangesSinceTag run "v1.0.0" "src/MyLib" = true @>
 
 [<Fact>]
 let ``hasChangesSinceTag - returns false when no files changed in path`` () =
+    // jj diff (without --stat) returns empty string when no changes
     let run =
-        fakeRun [ ("jj", "diff --from v1.0.0 --to @ --stat \"glob:src/MyLib/**\"", Success "") ]
+        fakeRun [ ("jj", "diff --from v1.0.0 --to @ \"glob:src/MyLib/**\"", Success "") ]
 
     test <@ hasChangesSinceTag run "v1.0.0" "src/MyLib" = false @>
 
 [<Fact>]
 let ``hasChangesSinceTag - returns true when jj command fails`` () =
     let run =
-        fakeRun [ ("jj", "diff --from v1.0.0 --to @ --stat \"glob:src/MyLib/**\"", Failure "unknown tag") ]
+        fakeRun [ ("jj", "diff --from v1.0.0 --to @ \"glob:src/MyLib/**\"", Failure "unknown tag") ]
 
     // Conservative: if we can't tell, assume changes
     test <@ hasChangesSinceTag run "v1.0.0" "src/MyLib" = true @>

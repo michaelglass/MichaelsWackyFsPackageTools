@@ -68,7 +68,7 @@ let commitAndAdvanceMain (run: string -> string -> CommandResult) (message: stri
     runOrFail run "jj" "bookmark set main -r @-" |> ignore
 
 let hasChangesSinceTag (run: string -> string -> CommandResult) (tag: string) (path: string) : bool =
-    let args = sprintf "diff --from %s --to @ --stat \"glob:%s/**\"" tag path
+    let args = sprintf "diff --from %s --to @ \"glob:%s/**\"" tag path
 
     match run "jj" args with
     | Success output -> output.Trim() <> ""
