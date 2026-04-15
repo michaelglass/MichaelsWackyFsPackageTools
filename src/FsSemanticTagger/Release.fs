@@ -58,16 +58,30 @@ let forCommand (state: ReleaseState) (cmd: ReleaseCommand) : Result<Version, str
     | Auto, _ -> Error "Auto is handled separately"
     | cmd, FirstRelease -> Error $"Cannot {cmd} without a previous release"
 
+let private versionElementRegex =
+    System.Text.RegularExpressions.Regex(
+        "<Version>([^<]+)</Version>",
+        System.Text.RegularExpressions.RegexOptions.Compiled
+    )
+
 /// Update <Version> in an fsproj file
 let updateFsprojVersion (fsprojPath: string) (version: Version) : unit =
     let content = System.IO.File.ReadAllText(fsprojPath)
 
-    let pattern = System.Text.RegularExpressions.Regex("<Version>[^<]+</Version>")
-
     let newContent =
-        pattern.Replace(content, sprintf "<Version>%s</Version>" (format version))
+        versionElementRegex.Replace(content, sprintf "<Version>%s</Version>" (format version))
 
     System.IO.File.WriteAllText(fsprojPath, newContent)
+
+/// Read <Version> from an fsproj file, returning parsed Version if valid
+let readFsprojVersion (fsprojPath: string) : Version option =
+    let content = System.IO.File.ReadAllText(fsprojPath)
+    let m = versionElementRegex.Match(content)
+
+    if m.Success then
+        tryParse m.Groups[1].Value |> Result.toOption
+    else
+        None
 
 let internal waitForCi (run: string -> string -> CommandResult) (pollIntervalMs: int) (maxAttempts: int) : CiStatus =
     let rec poll attempt =
@@ -91,6 +105,49 @@ let internal waitForCi (run: string -> string -> CommandResult) (pollIntervalMs:
         | other -> other
 
     poll 0
+
+let private waitForCiAndPushTags
+    (run: string -> string -> CommandResult)
+    (ciPollIntervalMs: int)
+    (ciMaxAttempts: int)
+    (tags: string list)
+    : int =
+    printfn "Waiting for CI on version bump commit..."
+    let ciStatus = waitForCi run ciPollIntervalMs ciMaxAttempts
+
+    match ciStatus with
+    | Passed ->
+        pushTags run tags
+        printfn "Tags pushed. GitHub Actions will handle the release."
+        0
+    | Failed runs ->
+        printfn "Error: CI failed on version bump commit. Not pushing tags."
+
+        for r in runs do
+            printfn "  FAILED: %s — %s" r.Name r.Url
+
+        1
+    | InProgress _ ->
+        printfn "Error: CI still running after timeout. Not pushing tags."
+        printfn "Run the release command again to resume."
+        1
+    | _ ->
+        printfn "Error: could not determine CI status. Not pushing tags."
+        printfn "Run the release command again to resume."
+        1
+
+let private packLocally (run: string -> string -> CommandResult) (bumps: (PackageConfig * Version) list) : int =
+    for (pkg, _version) in bumps do
+        runOrFail run "dotnet" (sprintf "pack %s -c Release -o artifacts/" pkg.Fsproj)
+        |> ignore
+
+        printfn "Packed: %s" pkg.Name
+
+    0
+
+type BumpDecision =
+    | NeedsBump of PackageConfig * Version
+    | AlreadyBumped of PackageConfig * Version
 
 /// Main release orchestration
 let release
@@ -151,7 +208,7 @@ let release
             runOrFail run "dotnet" "build -c Release" |> ignore
 
             // 4. For each package: determine release state and version bump
-            let bumps =
+            let decisions =
                 config.Packages
                 |> List.choose (fun pkg ->
                     let state =
@@ -172,51 +229,95 @@ let release
                         None
                     | _ ->
 
-                        match cmd with
-                        | Auto ->
-                            match state with
-                            | FirstRelease -> None // Need explicit command for first release
-                            | HasPreviousRelease currentVersion ->
-                                let change =
-                                    match extractPreviousApi pkg.Name (format currentVersion) with
-                                    | Some oldApi ->
-                                        let currentApi = extractCurrentApi pkg.DllPath
-                                        compare oldApi currentApi
-                                    | None -> NoChange
+                        let newVersionOpt =
+                            match cmd with
+                            | Auto ->
+                                match state with
+                                | FirstRelease -> None // Need explicit command for first release
+                                | HasPreviousRelease currentVersion ->
+                                    let change =
+                                        match extractPreviousApi pkg.Name (format currentVersion) with
+                                        | Some oldApi ->
+                                            let currentApi = extractCurrentApi pkg.DllPath
+                                            compare oldApi currentApi
+                                        | None -> NoChange
 
-                                let newVersion = determineBump currentVersion change
+                                    let newVersion = determineBump currentVersion change
 
-                                let newVersion =
-                                    if config.ReservedVersions.Contains(format newVersion) then
-                                        bumpPatch newVersion
+                                    let newVersion =
+                                        if config.ReservedVersions.Contains(format newVersion) then
+                                            bumpPatch newVersion
+                                        else
+                                            newVersion
+
+                                    Some newVersion
+                            | _ ->
+                                match forCommand state cmd with
+                                | Ok v ->
+                                    if config.ReservedVersions.Contains(format v) then
+                                        printfn "Warning: version %s is reserved, skipping" (format v)
+                                        None
                                     else
-                                        newVersion
-
-                                Some(pkg, newVersion)
-                        | _ ->
-                            match forCommand state cmd with
-                            | Ok v ->
-                                if config.ReservedVersions.Contains(format v) then
-                                    printfn "Warning: version %s is reserved, skipping" (format v)
+                                        Some v
+                                | Error msg ->
+                                    printfn "%s for %s" msg pkg.Name
                                     None
-                                else
-                                    Some(pkg, v)
-                            | Error msg ->
-                                printfn "%s for %s" msg pkg.Name
-                                None)
 
-            if bumps.IsEmpty then
+                        newVersionOpt
+                        |> Option.map (fun newVersion ->
+                            let currentFsprojVersion = readFsprojVersion pkg.Fsproj
+
+                            if currentFsprojVersion = Some newVersion then
+                                AlreadyBumped(pkg, newVersion)
+                            else
+                                NeedsBump(pkg, newVersion)))
+
+            let needsBump =
+                decisions
+                |> List.choose (function
+                    | NeedsBump(p, v) -> Some(p, v)
+                    | _ -> None)
+
+            let alreadyBumped =
+                decisions
+                |> List.choose (function
+                    | AlreadyBumped(p, v) -> Some(p, v)
+                    | _ -> None)
+
+            if needsBump.IsEmpty && alreadyBumped.IsEmpty then
                 printfn "No packages to release"
                 0
+            elif needsBump.IsEmpty then
+                printfn "\nResuming release (versions already bumped):"
+
+                for (pkg, version) in alreadyBumped do
+                    printfn "  %s -> %s (tag: %s)" pkg.Name (format version) (toTag pkg.TagPrefix version)
+
+                // Create tags if they don't exist locally
+                let tags =
+                    alreadyBumped
+                    |> List.map (fun (pkg, version) ->
+                        let tag = toTag pkg.TagPrefix version
+
+                        if not (tagExists run tag) then
+                            tagRevision run tag "main"
+
+                        tag)
+
+                match mode with
+                | GitHubActions -> waitForCiAndPushTags run ciPollIntervalMs ciMaxAttempts tags
+                | LocalPublish -> packLocally run alreadyBumped
             else
+                let allBumps = needsBump @ alreadyBumped
+
                 // 5. Show summary
                 printfn "\nRelease plan:"
 
-                for (pkg, version) in bumps do
+                for (pkg, version) in allBumps do
                     printfn "  %s -> %s (tag: %s)" pkg.Name (format version) (toTag pkg.TagPrefix version)
 
-                // 6. Update fsproj versions
-                for (pkg, version) in bumps do
+                // 6. Update fsproj versions (only for packages that need it)
+                for (pkg, version) in needsBump do
                     updateFsprojVersion pkg.Fsproj version
 
                     for extra in pkg.FsProjsSharingSameTag do
@@ -224,7 +325,7 @@ let release
 
                 // 7. Commit version bump and advance main bookmark
                 let versionSummary =
-                    bumps
+                    allBumps
                     |> List.map (fun (pkg, version) -> sprintf "%s %s" pkg.Name (format version))
                     |> String.concat ", "
 
@@ -232,7 +333,7 @@ let release
 
                 // 8. Tag main (the version bump commit) for each package
                 let tags =
-                    bumps
+                    allBumps
                     |> List.map (fun (pkg, version) ->
                         let tag = toTag pkg.TagPrefix version
                         tagRevision run tag "main"
@@ -242,34 +343,5 @@ let release
                 match mode with
                 | GitHubActions ->
                     pushMain run
-                    printfn "Waiting for CI on version bump commit..."
-                    let ciStatus = waitForCi run ciPollIntervalMs ciMaxAttempts
-
-                    match ciStatus with
-                    | Passed ->
-                        pushTags run tags
-                        printfn "Tags pushed. GitHub Actions will handle the release."
-                    | Failed runs ->
-                        printfn "Error: CI failed on version bump commit. Not pushing tags."
-
-                        for r in runs do
-                            printfn "  FAILED: %s — %s" r.Name r.Url
-
-                        () // exit code 0 since version bump is already pushed
-                    | InProgress _ ->
-                        printfn "Error: CI still running after timeout. Not pushing tags."
-                        printfn "Run 'jj git push' to push tags manually after CI passes."
-                        ()
-                    | _ ->
-                        printfn "Error: could not determine CI status. Not pushing tags."
-                        printfn "Run 'jj git push' to push tags manually after CI passes."
-                        ()
-                | LocalPublish ->
-                    for (pkg, _version) in bumps do
-                        runOrFail run "dotnet" (sprintf "pack %s -c Release -o artifacts/" pkg.Fsproj)
-                        |> ignore
-
-                        printfn "Packed: %s" pkg.Name
-                // NuGet push would go here
-
-                0
+                    waitForCiAndPushTags run ciPollIntervalMs ciMaxAttempts tags
+                | LocalPublish -> packLocally run allBumps
