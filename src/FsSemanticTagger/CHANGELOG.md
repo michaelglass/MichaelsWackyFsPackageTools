@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- feat: idempotent release — detect already-bumped fsproj versions on retry, skip commit/push, resume from CI polling
+- feat: return exit code 1 on post-push CI failure/timeout (was incorrectly returning 0)
+- feat: bump CI polling timeout from 10 to 15 minutes
+- refactor: extract `waitForCiAndPushTags` and `packLocally` helpers
+- refactor: add `BumpDecision` type (`NeedsBump`/`AlreadyBumped`) and `readFsprojVersion` function
+- refactor: share compiled `versionElementRegex` between read/update functions
+- fix: trivially-true test assertion in CI failure test
+
+## 0.12.0-alpha.1
+
 - refactor: type-driven design — add `RunStatus`/`RunConclusion` DUs (replacing raw strings in `CiRunInfo`), `ApiChange` uses non-empty list pattern `head * rest`, `Version.tryParse` returns `Result` instead of throwing, `Config.load`/`discover` return `Result` instead of throwing, `HasPreviousRelease` drops redundant `tag` field
 - fix: `withJjGitDir` now uses `resolveGitDir` with absolute paths and `.git` pre-check (matching CoverageRatchet fix)
 - chore: bump CommandTree dependency to 0.4.0
