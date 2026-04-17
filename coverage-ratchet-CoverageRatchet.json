@@ -1,10 +1,18 @@
 {
   "overrides": {
-    "Cobertura.fs": {
-      "line": 99,
-      "branch": 86,
-      "reason": "F# compiler generates extra branches for null checks and pattern matching"
-    },
+    "Cobertura.fs": [
+      {
+        "line": 99,
+        "branch": 86,
+        "reason": "F# compiler generates extra branches for null checks and pattern matching",
+        "platform": "macos"
+      },
+      {
+        "line": 99,
+        "branch": 86,
+        "platform": "linux"
+      }
+    ],
     "Program.fs": [
       {
         "line": 80,
@@ -13,8 +21,8 @@
         "platform": "macos"
       },
       {
-        "line": 75,
-        "branch": 75,
+        "line": 68,
+        "branch": 71,
         "reason": "deliberately too high to induce a linux coverage failure for loosen-from-ci end-to-end test",
         "platform": "linux"
       }
@@ -27,8 +35,8 @@
         "platform": "macos"
       },
       {
-        "line": 98,
-        "branch": 83,
+        "line": 99,
+        "branch": 86,
         "reason": "new mergeFromCi branches",
         "platform": "linux"
       }
@@ -41,10 +49,18 @@
         "platform": "linux"
       }
     ],
-    "Thresholds.fs": {
-      "line": 96,
-      "branch": 93,
-      "reason": "F# compiler generates extra branches for pattern matching; platform detection branches unreachable on non-native OS"
-    }
+    "Thresholds.fs": [
+      {
+        "line": 96,
+        "branch": 93,
+        "reason": "F# compiler generates extra branches for pattern matching; platform detection branches unreachable on non-native OS",
+        "platform": "macos"
+      },
+      {
+        "line": 96,
+        "branch": 93,
+        "platform": "linux"
+      }
+    ]
   }
 }

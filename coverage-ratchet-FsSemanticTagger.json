@@ -1,10 +1,18 @@
 {
   "overrides": {
-    "Api.fs": {
-      "line": 97,
-      "branch": 77,
-      "reason": "Assembly path resolution depends on runtime environment; reflection branches from compiler"
-    },
+    "Api.fs": [
+      {
+        "line": 97,
+        "branch": 77,
+        "reason": "Assembly path resolution depends on runtime environment; reflection branches from compiler",
+        "platform": "macos"
+      },
+      {
+        "line": 97,
+        "branch": 77,
+        "platform": "linux"
+      }
+    ],
     "Cobertura.fs": [
       {
         "line": 100,
@@ -13,16 +21,32 @@
         "platform": "macos"
       }
     ],
-    "Config.fs": {
-      "line": 100,
-      "branch": 88,
-      "reason": "F# compiler generates extra branches for TryGetProperty patterns; toJson serializer branches"
-    },
-    "Program.fs": {
-      "line": 77,
-      "branch": 72,
-      "reason": "CLI entry point using exit and CWD; initCommand prints to stdout"
-    },
+    "Config.fs": [
+      {
+        "line": 100,
+        "branch": 88,
+        "reason": "F# compiler generates extra branches for TryGetProperty patterns; toJson serializer branches",
+        "platform": "macos"
+      },
+      {
+        "line": 100,
+        "branch": 88,
+        "platform": "linux"
+      }
+    ],
+    "Program.fs": [
+      {
+        "line": 77,
+        "branch": 72,
+        "reason": "CLI entry point using exit and CWD; initCommand prints to stdout",
+        "platform": "macos"
+      },
+      {
+        "line": 77,
+        "branch": 72,
+        "platform": "linux"
+      }
+    ],
     "Ratchet.fs": [
       {
         "line": 98,
@@ -39,8 +63,8 @@
         "platform": "macos"
       },
       {
-        "line": 93,
-        "branch": 93,
+        "line": 99,
+        "branch": 98,
         "reason": "hasCoverageRatchet branches",
         "platform": "linux"
       }
@@ -66,16 +90,24 @@
         "platform": "macos"
       },
       {
-        "line": 93,
-        "branch": 82,
+        "line": 95,
+        "branch": 88,
         "reason": "All functions call jj/git processes; fewer branches on Linux",
         "platform": "linux"
       }
     ],
-    "Version.fs": {
-      "line": 98,
-      "branch": 100,
-      "reason": "Uncovered lines are unreachable match cases"
-    }
+    "Version.fs": [
+      {
+        "line": 98,
+        "branch": 100,
+        "reason": "Uncovered lines are unreachable match cases",
+        "platform": "macos"
+      },
+      {
+        "line": 98,
+        "branch": 100,
+        "platform": "linux"
+      }
+    ]
   }
 }
