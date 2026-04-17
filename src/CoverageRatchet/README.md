@@ -95,6 +95,28 @@ Pushes current code, polls CI, and if coverage fails:
 
 Requires `gh` CLI and `jj` (or `git`).
 
+#### Artifact contract
+
+`loosen-from-ci` expects CI to upload an artifact named `coverage-thresholds`
+containing one file per project: `coverage-thresholds-<project>.json`. Each
+file is the output of `check-json` with shape:
+
+```json
+{
+  "platform": "linux",
+  "results": {
+    "Foo.fs": { "line": 72, "branch": 54 },
+    "Bar.fs": { "line": 80, "branch": 100 }
+  }
+}
+```
+
+`platform` is one of `linux`, `macos`, `windows`. `<project>` matches the
+suffix of the local `coverage-ratchet-<project>.json` config; files named
+`coverage-thresholds-default.json` (or `coverage-thresholds-.json`) merge
+into the default `coverage-ratchet.json` config. The reusable build workflow
+`michaels-wacky-build.yml` produces this artifact automatically.
+
 ### Custom search directory
 
 By default, CoverageRatchet recursively searches `.` for coverage files. Use `--search-dir` to search a different directory:
