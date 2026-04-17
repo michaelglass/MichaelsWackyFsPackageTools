@@ -123,7 +123,14 @@ jobs:
             [ -f "$config" ] || continue
             project=$(echo "$config" | sed 's/coverage-ratchet-\(.*\)\.json/\1/')
             echo "Generating thresholds for $project..."
-            (cd "coverage/$project" && ${{ inputs.coverageratchet-cmd }} check-json "${{ github.workspace }}/$config") > "coverage-thresholds-${project}.json" || true
+            # check-json writes JSON to the output path (2nd positional arg); exit code
+            # is non-zero when any file fails coverage, which is exactly when we need
+            # the artifact for loosen-from-ci — so ignore the exit code.
+            (cd "coverage/$project" && ${{ inputs.coverageratchet-cmd }} check-json "${{ github.workspace }}/$config" "${{ github.workspace }}/coverage-thresholds-${project}.json") || true
+            if [ ! -s "coverage-thresholds-${project}.json" ]; then
+              echo "::warning::check-json produced no output for $project; skipping artifact entry"
+              rm -f "coverage-thresholds-${project}.json"
+            fi
           done
       - name: Upload coverage thresholds
         if: always() && steps.test-coverage.outcome == 'success'
