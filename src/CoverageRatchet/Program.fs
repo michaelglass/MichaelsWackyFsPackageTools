@@ -325,10 +325,8 @@ let private runLoosenFromCi (configPath: string) : int =
     | CiCoverageFailure artifactDir ->
         printfn "CI coverage failure detected, downloading thresholds..."
 
-        try
-            let thresholdFiles = Directory.GetFiles(artifactDir, "coverage-thresholds-*.json")
-
-            for thresholdFile in thresholdFiles do
+        let parseFile thresholdFile =
+            try
                 let json = File.ReadAllText(thresholdFile)
                 let ciPlatform, ciResults = parseCiThresholds json
 
@@ -341,27 +339,101 @@ let private runLoosenFromCi (configPath: string) : int =
                     else
                         sprintf "coverage-ratchet-%s.json" projectName
 
-                let raw = loadRawConfig localConfigPath
-                let merged = mergeFromCi raw ciPlatform ciResults
-                saveRawConfig localConfigPath merged
-                printfn "Updated %s with %s thresholds" localConfigPath (Platform.toString ciPlatform)
-        finally
+                Ok(localConfigPath, ciPlatform, ciResults)
+            with ex ->
+                eprintfn "Failed to parse %s: %s" thresholdFile ex.Message
+                Error thresholdFile
+
+        let writeConfig (localConfigPath: string) (platformResults: (Platform * Map<string, CiFileResult>) list) =
             try
-                Directory.Delete(artifactDir, true)
-            with _ ->
-                ()
+                let raw = loadRawConfig localConfigPath
 
-        vcsCommitAndPush run configPath
-        let newSha = getVcsSha run
-        printfn "Re-polling CI for commit %s..." newSha
+                let merged =
+                    platformResults
+                    |> List.fold (fun acc (plat, res) -> mergeFromCi acc plat res) raw
 
-        match pollCi run newSha 30000 60 with
-        | CiPassed ->
-            printfn "CI passed after threshold update."
-            0
-        | _ ->
-            eprintfn "CI still failing after threshold update."
+                saveRawConfig localConfigPath merged
+
+                let platforms =
+                    platformResults |> List.map (fst >> Platform.toString) |> String.concat ", "
+
+                printfn "Updated %s with %s thresholds" localConfigPath platforms
+                Ok localConfigPath
+            with ex ->
+                eprintfn "Failed to save %s: %s" localConfigPath ex.Message
+                Error localConfigPath
+
+        let writeResults, parseFailures =
+            try
+                let thresholdFiles = Directory.GetFiles(artifactDir, "coverage-thresholds-*.json")
+
+                if Array.isEmpty thresholdFiles then
+                    eprintfn
+                        "No coverage-thresholds-*.json files found in CI artifact at %s. \
+                         The CI workflow must upload a 'coverage-thresholds' artifact containing \
+                         per-project threshold files (e.g. coverage-thresholds-MyProj.json)."
+                        artifactDir
+
+                let parsed = thresholdFiles |> Array.map parseFile |> Array.toList
+
+                let parseFailures =
+                    parsed
+                    |> List.sumBy (function
+                        | Error _ -> 1
+                        | Ok _ -> 0)
+
+                let writes =
+                    parsed
+                    |> List.choose (function
+                        | Ok x -> Some x
+                        | Error _ -> None)
+                    |> List.groupBy (fun (path, _, _) -> path)
+                    |> List.map (fun (path, entries) ->
+                        let platformResults = entries |> List.map (fun (_, plat, res) -> plat, res)
+                        writeConfig path platformResults)
+
+                writes, parseFailures
+            finally
+                try
+                    Directory.Delete(artifactDir, true)
+                with
+                | :? IOException
+                | :? System.UnauthorizedAccessException as ex ->
+                    eprintfn "Warning: could not clean up artifact directory %s: %s" artifactDir ex.Message
+
+        let updates =
+            writeResults
+            |> List.sumBy (function
+                | Ok _ -> 1
+                | Error _ -> 0)
+
+        let writeFailures =
+            writeResults
+            |> List.sumBy (function
+                | Error _ -> 1
+                | Ok _ -> 0)
+
+        let failures = parseFailures + writeFailures
+
+        if updates = 0 || failures > 0 then
+            eprintfn
+                "loosen-from-ci did not update any thresholds (%d updates, %d failures). Not committing."
+                updates
+                failures
+
             1
+        else
+            vcsCommitAndPush run configPath
+            let newSha = getVcsSha run
+            printfn "Re-polling CI for commit %s..." newSha
+
+            match pollCi run newSha 30000 60 with
+            | CiPassed ->
+                printfn "CI passed after threshold update."
+                0
+            | _ ->
+                eprintfn "CI still failing after threshold update."
+                1
 
 type CoverageFileCommand =
     | CfRatchet
