@@ -8,8 +8,8 @@
         "platform": "macos"
       },
       {
-        "line": 95,
-        "branch": 93,
+        "line": 98,
+        "branch": 100,
         "reason": "compiler-generated branches in pattern matching",
         "platform": "linux"
       }
