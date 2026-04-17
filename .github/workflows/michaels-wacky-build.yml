@@ -36,6 +36,10 @@ on:
         description: 'Extra arguments appended to dotnet test (e.g. --ignore-exit-code 7)'
         type: string
         default: ''
+      lint-cmd:
+        description: 'Command to run for the Lint step. Empty string uses the default `dotnet fsharplint lint <solution>`. Override to e.g. `dotnet run --project src/MyCli -- analyze --run-once` when hosting analyzers in-process.'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -72,7 +76,7 @@ jobs:
         run: dotnet build --warnaserror --no-restore
       - name: Lint
         timeout-minutes: 15
-        run: dotnet fsharplint lint ${{ inputs.solution }}
+        run: ${{ inputs.lint-cmd != '' && inputs.lint-cmd || format('dotnet fsharplint lint {0}', inputs.solution) }}
       - name: Generate docs
         if: inputs.check-docs
         run: dotnet fsdocs build --output output/docs --clean
