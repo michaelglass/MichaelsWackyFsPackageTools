@@ -1057,3 +1057,17 @@ let ``parseCiThresholds with empty results returns empty map`` () =
     let platform, results = parseCiThresholds json
     test <@ platform = Linux @>
     test <@ results = Map.empty @>
+
+// --- parseCiThresholds error cases ---
+
+[<Fact>]
+let ``parseCiThresholds - empty string raises actionable error`` () =
+    let ex = Assert.ThrowsAny<exn>(fun () -> parseCiThresholds "" |> ignore)
+    test <@ not (ex :? System.Text.Json.JsonException) @>
+    test <@ ex.Message.Contains("empty") @>
+
+[<Fact>]
+let ``parseCiThresholds - whitespace-only string raises actionable error`` () =
+    let ex = Assert.ThrowsAny<exn>(fun () -> parseCiThresholds "   \n\t  " |> ignore)
+    test <@ not (ex :? System.Text.Json.JsonException) @>
+    test <@ ex.Message.Contains("empty") @>

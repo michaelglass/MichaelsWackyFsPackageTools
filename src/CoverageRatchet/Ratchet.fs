@@ -1,5 +1,6 @@
 module CoverageRatchet.Ratchet
 
+open System
 open System.Text.Json
 open CoverageRatchet.Cobertura
 open CoverageRatchet.Thresholds
@@ -237,6 +238,11 @@ let mergeFromCi (raw: RawConfig) (ciPlatform: Platform) (ciResults: Map<string, 
     { raw with RawOverrides = result }
 
 let parseCiThresholds (json: string) : Platform * Map<string, CiFileResult> =
+    if String.IsNullOrWhiteSpace(json) then
+        failwith
+            "CI thresholds JSON is empty. Expected a coverage-thresholds artifact with shape \
+             {\"platform\":\"linux|macos|windows\",\"results\":{\"File.fs\":{\"line\":N,\"branch\":N}}}."
+
     use doc = JsonDocument.Parse(json)
     let root = doc.RootElement
     let platformStr = root.GetProperty("platform").GetString()
