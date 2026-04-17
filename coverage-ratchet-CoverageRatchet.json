@@ -13,9 +13,9 @@
         "platform": "macos"
       },
       {
-        "line": 46,
-        "branch": 44,
-        "reason": "CLI entry point with untestable shell-dependent code",
+        "line": 75,
+        "branch": 75,
+        "reason": "deliberately too high to induce a linux coverage failure for loosen-from-ci end-to-end test",
         "platform": "linux"
       }
     ],
