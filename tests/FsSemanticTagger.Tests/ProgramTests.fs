@@ -366,7 +366,11 @@ let ``runReleaseWith - returns Error when config missing`` () =
 [<Fact>]
 let ``runCommandWith - Release dispatches with Auto`` () =
     let mutable captured = None
-    let fake cmd opts = captured <- Some(cmd, opts); Ok 42
+
+    let fake cmd opts =
+        captured <- Some(cmd, opts)
+        Ok 42
+
     let result = runCommandWith fake (Release { publish = false })
     test <@ result = Ok 42 @>
     test <@ captured = Some(Release.Auto, { publish = false }) @>
@@ -374,28 +378,44 @@ let ``runCommandWith - Release dispatches with Auto`` () =
 [<Fact>]
 let ``runCommandWith - Alpha dispatches with StartAlpha`` () =
     let mutable captured = None
-    let fake cmd opts = captured <- Some(cmd, opts); Ok 0
+
+    let fake cmd opts =
+        captured <- Some(cmd, opts)
+        Ok 0
+
     runCommandWith fake (Alpha { publish = true }) |> ignore
     test <@ captured = Some(Release.StartAlpha, { publish = true }) @>
 
 [<Fact>]
 let ``runCommandWith - Beta dispatches with PromoteToBeta`` () =
     let mutable captured = None
-    let fake cmd opts = captured <- Some(cmd, opts); Ok 0
+
+    let fake cmd opts =
+        captured <- Some(cmd, opts)
+        Ok 0
+
     runCommandWith fake (Beta { publish = false }) |> ignore
     test <@ captured = Some(Release.PromoteToBeta, { publish = false }) @>
 
 [<Fact>]
 let ``runCommandWith - Rc dispatches with PromoteToRC`` () =
     let mutable captured = None
-    let fake cmd opts = captured <- Some(cmd, opts); Ok 0
+
+    let fake cmd opts =
+        captured <- Some(cmd, opts)
+        Ok 0
+
     runCommandWith fake (Rc { publish = false }) |> ignore
     test <@ captured = Some(Release.PromoteToRC, { publish = false }) @>
 
 [<Fact>]
 let ``runCommandWith - Stable dispatches with PromoteToStable`` () =
     let mutable captured = None
-    let fake cmd opts = captured <- Some(cmd, opts); Ok 0
+
+    let fake cmd opts =
+        captured <- Some(cmd, opts)
+        Ok 0
+
     runCommandWith fake (Stable { publish = true }) |> ignore
     test <@ captured = Some(Release.PromoteToStable, { publish = true }) @>
 
@@ -405,7 +425,8 @@ let ``runReleaseWith - returns Ok 0 for empty-package config when CI passes`` ()
         let cfg = """{"packages": []}"""
         File.WriteAllText(Path.Combine(tmpDir, "semantic-tagger.json"), cfg)
 
-        let ghPassed = """[{"name":"ci","url":"u","status":"completed","conclusion":"success"}]"""
+        let ghPassed =
+            """[{"name":"ci","url":"u","status":"completed","conclusion":"success"}]"""
 
         let fakeRun (cmd: string) (args: string) : Shell.CommandResult =
             match cmd, args with
@@ -434,6 +455,7 @@ let ``runReleaseWith - returns Ok when config loads (release aborts on uncommitt
     { "name": "Dummy", "fsproj": "src/Dummy/Dummy.fsproj", "dllPath": "src/Dummy/bin/Release/net10.0/Dummy.dll", "tagPrefix": "v" }
   ]
 }"""
+
         File.WriteAllText(Path.Combine(tmpDir, "semantic-tagger.json"), cfg)
 
         // run returns Failure so hasUncommittedChanges => true, release returns 1
