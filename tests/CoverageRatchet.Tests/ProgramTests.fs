@@ -4,6 +4,7 @@ open System
 open System.IO
 open System.Text.Json
 open Xunit
+open Tests.Common
 open Swensen.Unquote
 open CoverageRatchet.Thresholds
 open CoverageRatchet.Program
@@ -1333,3 +1334,92 @@ let ``extractSearchDir - empty argv`` () =
     let dir, remaining = extractSearchDir Array.empty
     test <@ dir = "." @>
     test <@ remaining = Array.empty @>
+
+// --- runLoosenFromCi tests ---
+
+[<Fact>]
+let ``runLoosenFromCi - CI passes returns 0`` () =
+    let passJson = """[{"status":"completed","conclusion":"success","databaseId":1}]"""
+
+    let run =
+        fakeRun
+            [ ("jj", "git push", CoverageRatchet.Shell.Success "")
+              ("jj", "log", CoverageRatchet.Shell.Success "abc123")
+              ("gh", "run list", CoverageRatchet.Shell.Success passJson) ]
+
+    let result = runLoosenFromCi run "coverage-ratchet.json"
+    test <@ result = 0 @>
+
+[<Fact>]
+let ``runLoosenFromCi - CI other failure returns 1`` () =
+    let run =
+        fakeRun
+            [ ("jj", "git push", CoverageRatchet.Shell.Success "")
+              ("jj", "log", CoverageRatchet.Shell.Success "abc123")
+              ("gh", "run list", CoverageRatchet.Shell.Failure("gh exploded", 1)) ]
+
+    let result = runLoosenFromCi run "coverage-ratchet.json"
+    test <@ result = 1 @>
+
+[<Fact>]
+let ``runLoosenFromCi - CI coverage failure with valid artifact writes config and returns 0`` () =
+    let runId = 555444333L
+    let artifactDir = Path.Combine(Path.GetTempPath(), sprintf "coverage-%d" runId)
+    Directory.CreateDirectory(artifactDir) |> ignore
+
+    // Use project name "default" so localConfigPath collapses back to the caller-supplied configPath (absolute)
+    let thresholdsJson =
+        """{"platform":"linux","results":{"Foo.fs":{"line":59,"branch":23}}}"""
+
+    File.WriteAllText(Path.Combine(artifactDir, "coverage-thresholds-default.json"), thresholdsJson)
+
+    Tests.Common.TestHelpers.withTempDir (fun tmpDir ->
+        let configPath = Path.Combine(tmpDir, "coverage-ratchet.json")
+
+        let failedJson =
+            sprintf """[{"status":"completed","conclusion":"failure","databaseId":%d}]""" runId
+
+        let passedJson = """[{"status":"completed","conclusion":"success","databaseId":1}]"""
+
+        let run =
+            fakeRun
+                [ ("jj", "git push", CoverageRatchet.Shell.Success "")
+                  ("jj", "log", CoverageRatchet.Shell.Success "oldsha")
+                  ("gh", "run list", CoverageRatchet.Shell.Success failedJson)
+                  ("gh", "run download", CoverageRatchet.Shell.Success "")
+                  ("jj", "describe", CoverageRatchet.Shell.Success "")
+                  ("jj", "bookmark set main -r @", CoverageRatchet.Shell.Success "")
+                  ("jj", "new", CoverageRatchet.Shell.Success "")
+                  ("jj", "git push --bookmark main", CoverageRatchet.Shell.Success "")
+                  ("jj", "log", CoverageRatchet.Shell.Success "newsha")
+                  ("gh", "run list", CoverageRatchet.Shell.Success passedJson) ]
+
+        let result = runLoosenFromCi run configPath
+        test <@ result = 0 @>
+        test <@ File.Exists configPath @>
+        test <@ not (Directory.Exists artifactDir) @>
+        let written = File.ReadAllText configPath
+        test <@ written.Contains("Foo.fs") @>)
+
+[<Fact>]
+let ``runLoosenFromCi - CI coverage failure with empty artifact returns 1`` () =
+    // pollCi builds artifact path as /tmp/coverage-<runId>. Pre-create it so
+    // the CiCoverageFailure branch finds an empty directory and reports "no updates".
+    let runId = 987654321L
+    let artifactDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), sprintf "coverage-%d" runId)
+    System.IO.Directory.CreateDirectory(artifactDir) |> ignore
+
+    let failedJson =
+        sprintf """[{"status":"completed","conclusion":"failure","databaseId":%d}]""" runId
+
+    let run =
+        fakeRun
+            [ ("jj", "git push", CoverageRatchet.Shell.Success "")
+              ("jj", "log", CoverageRatchet.Shell.Success "abc123")
+              ("gh", "run list", CoverageRatchet.Shell.Success failedJson)
+              ("gh", "run download", CoverageRatchet.Shell.Success "") ]
+
+    let result = runLoosenFromCi run "coverage-ratchet.json"
+    test <@ result = 1 @>
+    // runLoosenFromCi deletes artifactDir in its finally block
+    test <@ not (System.IO.Directory.Exists artifactDir) @>

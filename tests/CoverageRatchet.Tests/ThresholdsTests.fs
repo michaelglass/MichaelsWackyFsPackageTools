@@ -3,6 +3,7 @@ module CoverageRatchet.Tests.ThresholdsTests
 open System
 open System.IO
 open Xunit
+open Tests.Common
 open Swensen.Unquote
 open CoverageRatchet.Thresholds
 open CoverageRatchet.Tests.CoverageTestHelpers

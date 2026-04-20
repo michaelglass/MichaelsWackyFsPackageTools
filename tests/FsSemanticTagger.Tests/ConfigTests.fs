@@ -2,6 +2,7 @@ module FsSemanticTagger.Tests.ConfigTests
 
 open System.IO
 open Xunit
+open Tests.Common
 open Swensen.Unquote
 open FsSemanticTagger.Config
 open Tests.Common.TestHelpers

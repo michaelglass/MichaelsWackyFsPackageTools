@@ -1,6 +1,7 @@
 module FsSemanticTagger.Tests.VcsTests
 
 open Xunit
+open Tests.Common
 open Swensen.Unquote
 open FsSemanticTagger.Shell
 open FsSemanticTagger.Vcs

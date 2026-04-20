@@ -1,6 +1,7 @@
 module FsSemanticTagger.Tests.BumpTests
 
 open Xunit
+open Tests.Common
 open Swensen.Unquote
 open FsSemanticTagger.Version
 open FsSemanticTagger.Api

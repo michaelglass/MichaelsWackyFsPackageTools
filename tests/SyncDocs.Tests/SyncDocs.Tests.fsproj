@@ -16,6 +16,7 @@
     <ProjectReference Include="../Tests.Common/Tests.Common.fsproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AttributesTests.fs" />
     <Compile Include="SyncTests.fs" />
     <Compile Include="ProgramTests.fs" />
   </ItemGroup>

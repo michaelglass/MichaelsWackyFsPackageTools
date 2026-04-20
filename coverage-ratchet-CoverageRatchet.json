@@ -15,8 +15,8 @@
     ],
     "Program.fs": [
       {
-        "line": 80,
-        "branch": 78,
+        "line": 90,
+        "branch": 82,
         "reason": "CLI entry point with untestable shell-dependent code",
         "platform": "macos"
       },

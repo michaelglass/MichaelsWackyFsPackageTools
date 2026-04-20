@@ -3,6 +3,7 @@ module CoverageRatchet.Tests.CoberturaTests
 open System
 open System.IO
 open Xunit
+open Tests.Common
 open Swensen.Unquote
 open CoverageRatchet.Cobertura
 

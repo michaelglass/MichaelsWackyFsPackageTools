@@ -2,6 +2,7 @@ module FsProjLint.Tests.RepoCheckTests
 
 open System.IO
 open Xunit
+open Tests.Common
 open Swensen.Unquote
 open FsProjLint.Checks
 open Tests.Common.TestHelpers

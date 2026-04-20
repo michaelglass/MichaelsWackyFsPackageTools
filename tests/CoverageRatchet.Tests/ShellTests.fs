@@ -1,6 +1,7 @@
 module CoverageRatchet.Tests.ShellTests
 
 open Xunit
+open Tests.Common
 open Swensen.Unquote
 open CoverageRatchet.Shell
 
