@@ -5,12 +5,10 @@ open Tests.Common
 open Swensen.Unquote
 
 [<Fact>]
-let ``computeTimeoutMs - null returns 1000`` () =
-    test <@ computeTimeoutMs null = 1000 @>
+let ``computeTimeoutMs - null returns 1000`` () = test <@ computeTimeoutMs null = 1000 @>
 
 [<Fact>]
-let ``computeTimeoutMs - empty returns 1000`` () =
-    test <@ computeTimeoutMs "" = 1000 @>
+let ``computeTimeoutMs - empty returns 1000`` () = test <@ computeTimeoutMs "" = 1000 @>
 
 [<Fact>]
 let ``computeTimeoutMs - "false" returns 1000`` () =

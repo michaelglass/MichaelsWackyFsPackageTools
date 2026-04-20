@@ -1379,7 +1379,8 @@ let ``runLoosenFromCi - CI coverage failure with valid artifact writes config an
         let failedJson =
             sprintf """[{"status":"completed","conclusion":"failure","databaseId":%d}]""" runId
 
-        let passedJson = """[{"status":"completed","conclusion":"success","databaseId":1}]"""
+        let passedJson =
+            """[{"status":"completed","conclusion":"success","databaseId":1}]"""
 
         let run =
             fakeRun
@@ -1406,7 +1407,10 @@ let ``runLoosenFromCi - CI coverage failure with empty artifact returns 1`` () =
     // pollCi builds artifact path as /tmp/coverage-<runId>. Pre-create it so
     // the CiCoverageFailure branch finds an empty directory and reports "no updates".
     let runId = 987654321L
-    let artifactDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), sprintf "coverage-%d" runId)
+
+    let artifactDir =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), sprintf "coverage-%d" runId)
+
     System.IO.Directory.CreateDirectory(artifactDir) |> ignore
 
     let failedJson =
