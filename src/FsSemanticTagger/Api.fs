@@ -200,13 +200,10 @@ let extractFromAssembly (dllPath: string) : ApiSignature list =
               yield ApiSignature(sprintf "  %s::.ctor(%s)" t.Name ps) ]
     |> List.sort
 
-/// Try to extract API signatures from a previously published NuGet package.
-/// Looks in the local NuGet cache at ~/.nuget/packages/<id>/<version>/lib/<tfm>/.
-let extractFromNuGetCache (packageId: string) (version: string) : ApiSignature list option =
-    let home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
-
-    let pkgDir =
-        Path.Combine(home, ".nuget", "packages", packageId.ToLowerInvariant(), version)
+/// Try to extract API signatures from a previously published NuGet package
+/// under an arbitrary cache root (cacheRoot/<id>/<version>/{lib,tools}/<tfm>/).
+let extractFromCacheRoot (cacheRoot: string) (packageId: string) (version: string) : ApiSignature list option =
+    let pkgDir = Path.Combine(cacheRoot, packageId.ToLowerInvariant(), version)
 
     if not (Directory.Exists(pkgDir)) then
         None
@@ -233,6 +230,12 @@ let extractFromNuGetCache (packageId: string) (version: string) : ApiSignature l
                 Some(extractFromAssembly dllPath)
             else
                 None)
+
+/// Try to extract API signatures from a previously published NuGet package
+/// in the default user-local cache at ~/.nuget/packages/.
+let extractFromNuGetCache (packageId: string) (version: string) : ApiSignature list option =
+    let home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+    extractFromCacheRoot (Path.Combine(home, ".nuget", "packages")) packageId version
 
 /// Compare two API surfaces
 let compare (baseline: ApiSignature list) (current: ApiSignature list) : ApiChange =
