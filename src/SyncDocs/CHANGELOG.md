@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.12.0-alpha.2 - 2026-04-15
+
+- Version bump only
+
+## 0.12.0-alpha.1 - 2026-04-13
+
+- Version bump only
+
+## 0.11.0-alpha.1 - 2026-04-13
+
+- Version bump only
+
+## 0.10.0-alpha.2 - 2026-04-11
 
 - refactor: type-driven design — add `SyncMode` DU (replacing `check: bool`), `SyncOutcome`/`SyncError` split (fixing silent exit 0 on missing files), `SyncPair` record, `DiscoveryWarning` DU, `DiscoveryResult` record
 
