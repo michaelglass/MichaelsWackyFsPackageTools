@@ -37,13 +37,6 @@
       ],
       "rollForward": false
     },
-    "fssemantictagger": {
-      "version": "0.12.0-alpha.2",
-      "commands": [
-        "fssemantictagger"
-      ],
-      "rollForward": false
-    },
     "fsprojlint": {
       "version": "0.9.0-alpha.2",
       "commands": [
