@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.12.0-alpha.3 - 2026-04-20
+
+- fix: `hasChangesSinceTag` always returned true — `jj diff --stat` outputs summary text even for zero changes; use `--summary` instead (empty when no changes, compact file list otherwise)
+
+## 0.12.0-alpha.2 - 2026-04-15
 
 - feat: idempotent release — detect already-bumped fsproj versions on retry, skip commit/push, resume from CI polling
 - feat: return exit code 1 on post-push CI failure/timeout (was incorrectly returning 0)
@@ -9,7 +13,6 @@
 - refactor: add `BumpDecision` type (`NeedsBump`/`AlreadyBumped`) and `readFsprojVersion` function
 - refactor: share compiled `versionElementRegex` between read/update functions
 - fix: trivially-true test assertion in CI failure test
-- fix: `hasChangesSinceTag` always returned true — `jj diff --stat` outputs summary text even for zero changes; use `--summary` instead (empty when no changes, compact file list otherwise)
 
 ## 0.12.0-alpha.1
 
