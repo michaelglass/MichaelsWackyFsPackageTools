@@ -1,6 +1,7 @@
 module CoverageRatchet.Tests.RatchetTests
 
 open Xunit
+open Tests.Common
 open Swensen.Unquote
 open CoverageRatchet.Thresholds
 open CoverageRatchet.Ratchet

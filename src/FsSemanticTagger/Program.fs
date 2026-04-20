@@ -57,21 +57,38 @@ let initCommand (rootDir: string) : Result<int, string> =
 
             Ok 0
 
-let private runRelease (releaseCmd: Release.ReleaseCommand) (opts: ReleaseOptions) : Result<int, string> =
-    match Config.load (Directory.GetCurrentDirectory()) with
+let internal publishMode (opts: ReleaseOptions) : Release.PublishMode =
+    if opts.publish then
+        Release.LocalPublish
+    else
+        Release.GitHubActions
+
+let internal runReleaseWith
+    (cwd: string)
+    (run: string -> string -> Shell.CommandResult)
+    (extractPreviousApi: string -> string -> Api.ApiSignature list option)
+    (extractCurrentApi: string -> Api.ApiSignature list)
+    (releaseCmd: Release.ReleaseCommand)
+    (opts: ReleaseOptions)
+    : Result<int, string> =
+    match Config.load cwd with
     | Error msg -> Error msg
     | Ok config ->
-        let mode =
-            if opts.publish then
-                Release.LocalPublish
-            else
-                Release.GitHubActions
+        Ok(Release.release run config releaseCmd (publishMode opts) extractPreviousApi extractCurrentApi 15000 60)
 
-        let extractPreviousApi = Api.extractFromNuGetCache
-        let extractCurrentApi = Api.extractFromAssembly
-        Ok(Release.release Shell.run config releaseCmd mode extractPreviousApi extractCurrentApi 15000 60)
+let private runRelease (releaseCmd: Release.ReleaseCommand) (opts: ReleaseOptions) : Result<int, string> =
+    runReleaseWith
+        (Directory.GetCurrentDirectory())
+        Shell.run
+        Api.extractFromNuGetCache
+        Api.extractFromAssembly
+        releaseCmd
+        opts
 
-let runCommand (cmd: Command) : Result<int, string> =
+let internal runCommandWith
+    (releaseHandler: Release.ReleaseCommand -> ReleaseOptions -> Result<int, string>)
+    (cmd: Command)
+    : Result<int, string> =
     match cmd with
     | Init -> initCommand (Directory.GetCurrentDirectory())
     | ExtractApi dll ->
@@ -107,11 +124,13 @@ let runCommand (cmd: Command) : Result<int, string> =
         | Api.NoChange ->
             printfn "No API changes"
             Ok 0
-    | Release opts -> runRelease Release.Auto opts
-    | Alpha opts -> runRelease Release.StartAlpha opts
-    | Beta opts -> runRelease Release.PromoteToBeta opts
-    | Rc opts -> runRelease Release.PromoteToRC opts
-    | Stable opts -> runRelease Release.PromoteToStable opts
+    | Release opts -> releaseHandler Release.Auto opts
+    | Alpha opts -> releaseHandler Release.StartAlpha opts
+    | Beta opts -> releaseHandler Release.PromoteToBeta opts
+    | Rc opts -> releaseHandler Release.PromoteToRC opts
+    | Stable opts -> releaseHandler Release.PromoteToStable opts
+
+let runCommand (cmd: Command) : Result<int, string> = runCommandWith runRelease cmd
 
 let run (argv: string array) : Result<int, string> =
     let tree =

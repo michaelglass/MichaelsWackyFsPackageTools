@@ -1,6 +1,7 @@
 module FsSemanticTagger.Tests.VersionTests
 
 open Xunit
+open Tests.Common
 open Swensen.Unquote
 open FsSemanticTagger.Version
 

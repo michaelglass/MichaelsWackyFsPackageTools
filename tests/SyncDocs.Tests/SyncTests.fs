@@ -3,6 +3,7 @@ module SyncDocs.Tests.SyncTests
 open System
 open System.IO
 open Xunit
+open Tests.Common
 open Swensen.Unquote
 open SyncDocs.Sync
 open Tests.Common.TestHelpers

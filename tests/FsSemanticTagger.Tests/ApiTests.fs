@@ -1,6 +1,7 @@
 module FsSemanticTagger.Tests.ApiTests
 
 open Xunit
+open Tests.Common
 open Swensen.Unquote
 open FsSemanticTagger.Api
 
@@ -216,13 +217,38 @@ let ``ApiChange.toList single item Breaking`` () =
     test <@ ApiChange.toList change = [ ApiSignature "a" ] @>
 
 [<Fact>]
-let ``extractFromNuGetCache returns signatures for cached tool package`` () =
-    // CoverageRatchet is a dotnet tool in the local NuGet cache (tools/<tfm>/any/)
-    let result = extractFromNuGetCache "CoverageRatchet" "0.3.0-alpha.1"
+let ``extractFromCacheRoot returns signatures for cached tool package`` () =
+    // Build a fake NuGet cache layout mimicking a dotnet tool:
+    //   <root>/fakepkg/1.0.0/tools/net10.0/any/FakePkg.dll
+    // Reuse the compiled test assembly as the DLL payload so the test has no
+    // external-cache dependency.
+    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
 
-    match result with
-    | Some sigs -> test <@ sigs.Length > 0 @>
-    | None -> failwith "Expected Some signatures for CoverageRatchet in NuGet cache"
+    let srcDll =
+        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+
+    let cacheRoot =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fstagger-cache-" + System.Guid.NewGuid().ToString("N"))
+
+    let toolsDir =
+        System.IO.Path.Combine(cacheRoot, "fakepkg", "1.0.0", "tools", "net10.0", "any")
+
+    System.IO.Directory.CreateDirectory(toolsDir) |> ignore
+    System.IO.File.Copy(srcDll, System.IO.Path.Combine(toolsDir, "FakePkg.dll"))
+    // The resolver needs FSharp.Core alongside for MetadataLoadContext;
+    // copy every sibling DLL so we don't couple to a specific dependency set.
+    for dep in System.IO.Directory.GetFiles(System.IO.Path.GetDirectoryName(srcDll), "*.dll") do
+        let destName = System.IO.Path.GetFileName(dep)
+
+        if destName <> "FakePkg.dll" then
+            System.IO.File.Copy(dep, System.IO.Path.Combine(toolsDir, destName), true)
+
+    try
+        match extractFromCacheRoot cacheRoot "FakePkg" "1.0.0" with
+        | Some sigs -> test <@ sigs.Length > 0 @>
+        | None -> failwith "Expected Some signatures from fixture cache"
+    finally
+        System.IO.Directory.Delete(cacheRoot, true)
 
 [<Fact>]
 let ``formatTypeName handles nested generic types`` () =

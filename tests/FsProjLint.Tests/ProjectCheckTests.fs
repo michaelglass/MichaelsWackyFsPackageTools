@@ -2,6 +2,7 @@ module FsProjLint.Tests.ProjectCheckTests
 
 open System.Xml.Linq
 open Xunit
+open Tests.Common
 open Swensen.Unquote
 open FsProjLint.Checks
 open FsProjLint.Tests.TestFixtures

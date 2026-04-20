@@ -310,12 +310,12 @@ let internal vcsCommitAndPush (run: string -> string -> CommandResult) (configPa
         mustRun "git" "commit -m \"fix: update coverage thresholds from CI\""
         mustRun "git" "push"
 
-let private runLoosenFromCi (configPath: string) : int =
-    vcsPush run
-    let sha = getVcsSha run
+let internal runLoosenFromCi (runShell: string -> string -> CommandResult) (configPath: string) : int =
+    vcsPush runShell
+    let sha = getVcsSha runShell
     printfn "Polling CI for commit %s..." sha
 
-    match pollCi run sha 30000 60 with
+    match pollCi runShell sha 30000 60 with
     | CiPassed ->
         printfn "CI passed, no coverage loosening needed."
         0
@@ -423,11 +423,11 @@ let private runLoosenFromCi (configPath: string) : int =
 
             1
         else
-            vcsCommitAndPush run configPath
-            let newSha = getVcsSha run
+            vcsCommitAndPush runShell configPath
+            let newSha = getVcsSha runShell
             printfn "Re-polling CI for commit %s..." newSha
 
-            match pollCi run newSha 30000 60 with
+            match pollCi runShell newSha 30000 60 with
             | CiPassed ->
                 printfn "CI passed after threshold update."
                 0
@@ -481,7 +481,7 @@ let run (command: Command) (searchDir: string) : Result<int, string> =
         | LoosenFromCi _ -> None
 
     match coverageFileCmd with
-    | None -> Ok(runLoosenFromCi configPath)
+    | None -> Ok(runLoosenFromCi Shell.run configPath)
     | Some cmd ->
         let xmlPaths = findCoverageFiles searchDir
 
