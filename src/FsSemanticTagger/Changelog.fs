@@ -31,7 +31,7 @@ let internal isUnreleasedHeading (line: string) : bool =
 
         String.Equals(stripped, "Unreleased", StringComparison.OrdinalIgnoreCase)
 
-let internal isLevel2Heading (line: string) : bool = line.TrimStart().StartsWith("## ")
+let private isLevel2Heading (line: string) : bool = line.TrimStart().StartsWith("## ")
 
 let validateUnreleased (changelogPath: string) : Result<unit, ChangelogError> =
     if not (File.Exists changelogPath) then

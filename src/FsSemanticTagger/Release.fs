@@ -324,10 +324,13 @@ let release
                 for (pkg, version) in allBumps do
                     printfn "  %s -> %s (tag: %s)" pkg.Name (format version) (toTag pkg.TagPrefix version)
 
-                // 5b. Validate CHANGELOGs fail-fast before any writes.
+                // Validate CHANGELOGs fail-fast before any writes.
+                let bumpsWithChangelogs =
+                    needsBump |> List.map (fun (pkg, v) -> pkg, v, changelogPathsFor pkg)
+
                 let changelogErrors =
-                    needsBump
-                    |> List.collect (fun (pkg, _) -> changelogPathsFor pkg)
+                    bumpsWithChangelogs
+                    |> List.collect (fun (_, _, paths) -> paths)
                     |> List.choose (fun (pkgName, path) ->
                         match Changelog.validateUnreleased path with
                         | Ok() -> None
@@ -342,21 +345,18 @@ let release
                     1
                 else
 
-                    // 6. Update fsproj versions (only for packages that need it)
                     for (pkg, version) in needsBump do
                         updateFsprojVersion pkg.Fsproj version
 
                         for extra in pkg.FsProjsSharingSameTag do
                             updateFsprojVersion extra version
 
-                    // 6b. Promote CHANGELOG Unreleased -> versioned for each bumped package.
                     let today = System.DateTime.Today
 
-                    for (pkg, version) in needsBump do
-                        for (_, path) in changelogPathsFor pkg do
+                    for (_, version, paths) in bumpsWithChangelogs do
+                        for (_, path) in paths do
                             Changelog.promoteUnreleased path version today
 
-                    // 7. Commit version bump and advance main bookmark
                     let versionSummary =
                         allBumps
                         |> List.map (fun (pkg, version) -> sprintf "%s %s" pkg.Name (format version))
@@ -364,7 +364,6 @@ let release
 
                     commitAndAdvanceMain run (sprintf "Bump versions: %s" versionSummary)
 
-                    // 8. Tag main (the version bump commit) for each package
                     let tags =
                         allBumps
                         |> List.map (fun (pkg, version) ->
@@ -372,7 +371,6 @@ let release
                             tagRevision run tag "main"
                             tag)
 
-                    // 9. Publish or push tags + main
                     match mode with
                     | GitHubActions ->
                         pushMain run
