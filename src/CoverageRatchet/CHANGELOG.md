@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.13.0-alpha.2 - 2026-04-22
+
 - test: raise Program.fs coverage via DI seams; add default test timeouts
 - docs: attribute CHANGELOG entries to released versions
 

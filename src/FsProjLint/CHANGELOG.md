@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.0-alpha.3 - 2026-04-22
+
 - docs: attribute CHANGELOG entries to released versions
 
 ## 0.9.0-alpha.2 - 2026-04-15
