@@ -151,9 +151,9 @@ type BumpDecision =
 
 /// Collect (packageName, changelogPath) pairs for a package.
 /// Single-package repos use repo-root CHANGELOG.md; multi-package repos use per-fsproj-dir.
-let internal changelogPathsFor (isSinglePackage: bool) (rootDir: string) (pkg: PackageConfig) : (string * string) list =
-    if isSinglePackage then
-        [ pkg.Name, System.IO.Path.Combine(rootDir, "CHANGELOG.md") ]
+let internal changelogPathsFor (config: ToolConfig) (pkg: PackageConfig) : (string * string) list =
+    if config.Packages.Length = 1 then
+        [ pkg.Name, System.IO.Path.Combine(config.RootDir, "CHANGELOG.md") ]
     else
         pkg.Fsproj :: pkg.FsProjsSharingSameTag
         |> List.map System.IO.Path.GetDirectoryName
@@ -163,7 +163,6 @@ let internal changelogPathsFor (isSinglePackage: bool) (rootDir: string) (pkg: P
 /// Main release orchestration
 let release
     (run: string -> string -> CommandResult)
-    (rootDir: string)
     (config: ToolConfig)
     (cmd: ReleaseCommand)
     (mode: PublishMode)
@@ -329,11 +328,8 @@ let release
                     printfn "  %s -> %s (tag: %s)" pkg.Name (format version) (toTag pkg.TagPrefix version)
 
                 // Validate CHANGELOGs fail-fast before any writes.
-                let isSinglePackage = config.Packages.Length = 1
-
                 let bumpsWithChangelogs =
-                    needsBump
-                    |> List.map (fun (pkg, v) -> pkg, v, changelogPathsFor isSinglePackage rootDir pkg)
+                    needsBump |> List.map (fun (pkg, v) -> pkg, v, changelogPathsFor config pkg)
 
                 let changelogErrors =
                     bumpsWithChangelogs

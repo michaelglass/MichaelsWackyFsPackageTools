@@ -15,7 +15,8 @@ type PackageConfig =
 type ToolConfig =
     { Packages: PackageConfig list
       ReservedVersions: Set<string>
-      PreBuildCmds: string list }
+      PreBuildCmds: string list
+      RootDir: string }
 
 let private assemblyNameRegex =
     Regex(@"<AssemblyName>([^<]+)</AssemblyName>", RegexOptions.Compiled)
@@ -75,7 +76,8 @@ let discover (rootDir: string) : Result<ToolConfig, string> =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = rootDir }
     | n -> Error $"Found {n} packable .fsproj files; create a semantic-tagger.json to configure multi-package release"
 
 let private tryGet (name: string) (el: JsonElement) =
@@ -141,7 +143,8 @@ let parseJson (json: string) : ToolConfig =
 
     { Packages = packages
       ReservedVersions = reservedVersions
-      PreBuildCmds = preBuildCmds }
+      PreBuildCmds = preBuildCmds
+      RootDir = "" }
 
 /// Serialize a ToolConfig to JSON string
 let toJson (config: ToolConfig) : string =
@@ -200,6 +203,7 @@ let load (rootDir: string) : Result<ToolConfig, string> =
 
         Ok
             { config with
+                RootDir = rootDir
                 Packages =
                     config.Packages
                     |> List.map (fun pkg ->

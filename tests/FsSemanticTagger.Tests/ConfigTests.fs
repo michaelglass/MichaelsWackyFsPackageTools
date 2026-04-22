@@ -374,7 +374,8 @@ let ``toJson roundtrips through parseJson`` () =
                 TagPrefix = "mylib-v"
                 FsProjsSharingSameTag = [ "src/Shared/Shared.fsproj" ] } ]
           ReservedVersions = set [ "1.0.0" ]
-          PreBuildCmds = [] }
+          PreBuildCmds = []
+          RootDir = "" }
 
     let json = toJson config
     let roundtripped = parseJson json
@@ -416,7 +417,8 @@ let ``toJson includes preBuildCmds when not empty`` () =
                 TagPrefix = "v"
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
-          PreBuildCmds = [ "dotnet tool restore" ] }
+          PreBuildCmds = [ "dotnet tool restore" ]
+          RootDir = "" }
 
     let json = toJson config
     test <@ json.Contains "preBuildCmds" @>
@@ -432,7 +434,8 @@ let ``toJson omits empty preBuildCmds`` () =
                 TagPrefix = "v"
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+          PreBuildCmds = []
+          RootDir = "" }
 
     let json = toJson config
     test <@ not (json.Contains "preBuildCmds") @>
@@ -447,7 +450,8 @@ let ``toJson omits empty fsProjsSharingSameTag`` () =
                 TagPrefix = "v"
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+          PreBuildCmds = []
+          RootDir = "" }
 
     let json = toJson config
     test <@ not (json.Contains "fsProjsSharingSameTag") @>
@@ -462,7 +466,8 @@ let ``toJson includes reservedVersions when not empty`` () =
                 TagPrefix = "v"
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = set [ "1.0.0"; "2.0.0" ]
-          PreBuildCmds = [] }
+          PreBuildCmds = []
+          RootDir = "" }
 
     let json = toJson config
     test <@ json.Contains "reservedVersions" @>
@@ -560,7 +565,8 @@ let ``toJson omits empty reservedVersions`` () =
                 TagPrefix = "v"
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+          PreBuildCmds = []
+          RootDir = "" }
 
     let json = toJson config
     test <@ not (json.Contains "reservedVersions") @>
@@ -696,7 +702,8 @@ let ``toJson roundtrips with preBuildCmds`` () =
                 TagPrefix = "v"
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
-          PreBuildCmds = [ "dotnet tool restore"; "dotnet build" ] }
+          PreBuildCmds = [ "dotnet tool restore"; "dotnet build" ]
+          RootDir = "" }
 
     let json = toJson config
     let roundtripped = parseJson json
@@ -712,7 +719,8 @@ let ``toJson roundtrips with empty collections`` () =
                 TagPrefix = "v"
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+          PreBuildCmds = []
+          RootDir = "" }
 
     let json = toJson config
     let roundtripped = parseJson json
