@@ -22,7 +22,17 @@ let private seedTmpChangelog () =
 
 let private runRelease run config cmd mode prev cur poll max =
     seedTmpChangelog ()
-    release run (Path.GetTempPath()) config cmd mode prev cur poll max
+
+    release
+        run
+        { config with
+            RootDir = Path.GetTempPath() }
+        cmd
+        mode
+        prev
+        cur
+        poll
+        max
 
 [<Fact>]
 let ``updateFsprojVersion - updates Version element in fsproj`` () =
@@ -127,7 +137,8 @@ let ``release - returns 1 when uncommitted changes`` () =
     let config =
         { Packages = []
           ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+          PreBuildCmds = []
+          RootDir = "" }
 
     let result =
         runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
@@ -147,7 +158,8 @@ let ``release - returns 1 when CI not passing`` () =
     let config =
         { Packages = []
           ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+          PreBuildCmds = []
+          RootDir = "" }
 
     let result =
         runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
@@ -174,7 +186,8 @@ let ``release - Auto with no previous tags returns 0 with no packages`` () =
                 TagPrefix = "v"
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+          PreBuildCmds = []
+          RootDir = "" }
 
     let result =
         runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
@@ -222,7 +235,8 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
@@ -294,7 +308,8 @@ let ``release - StartAlpha with LocalPublish calls dotnet pack`` () =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config StartAlpha LocalPublish noPreviousApi noCurrentApi 0 10
@@ -339,7 +354,8 @@ let ``release - Auto with reserved version bumps past it`` () =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.ofList [ "1.0.1" ]
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
@@ -362,7 +378,8 @@ let ``release - non-Auto with reserved version skips package`` () =
                 TagPrefix = "v"
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.ofList [ "0.1.0-alpha.1" ]
-          PreBuildCmds = [] }
+          PreBuildCmds = []
+          RootDir = "" }
 
     let result =
         runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
@@ -381,7 +398,8 @@ let ``release - PromoteToBeta with FirstRelease returns 0 no packages`` () =
                 TagPrefix = "v"
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+          PreBuildCmds = []
+          RootDir = "" }
 
     let result =
         runRelease fakeRun config PromoteToBeta GitHubActions noPreviousApi noCurrentApi 0 10
@@ -408,7 +426,8 @@ let ``release - runs preBuildCmds before build`` () =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [ "dotnet tool restore"; "dotnet tool run paket restore" ] }
+              PreBuildCmds = [ "dotnet tool restore"; "dotnet tool run paket restore" ]
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
@@ -540,7 +559,8 @@ let ``release - skips packages with no changes since last tag`` () =
                     TagPrefix = "libb-v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
@@ -586,7 +606,8 @@ let ``release - Auto detects breaking API change and bumps major`` () =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi) 0 10
@@ -630,7 +651,8 @@ let ``release - Auto detects addition and bumps minor`` () =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi) 0 10
@@ -671,7 +693,8 @@ let ``release - Auto falls back to NoChange when extractPreviousApi returns None
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi) 0 10
@@ -725,7 +748,8 @@ let ``release - does not push tags when post-push CI fails`` () =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
@@ -777,7 +801,8 @@ let ``release - does not push tags when post-push CI times out`` () =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 3
@@ -828,7 +853,8 @@ let ``release - does not push tags when post-push CI has no runs`` () =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
@@ -858,7 +884,8 @@ let ``release - uses coverageratchet loosen-from-ci when available`` () =
     let config =
         { Packages = []
           ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+          PreBuildCmds = []
+          RootDir = "" }
 
     let result =
         runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
@@ -890,7 +917,8 @@ let ``release - returns 1 when coverageratchet loosen-from-ci fails`` () =
     let config =
         { Packages = []
           ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+          PreBuildCmds = []
+          RootDir = "" }
 
     let result =
         runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
@@ -910,7 +938,8 @@ let ``release - returns 1 when CI has no runs`` () =
     let config =
         { Packages = []
           ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+          PreBuildCmds = []
+          RootDir = "" }
 
     let result =
         runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
@@ -929,7 +958,8 @@ let ``release - returns 1 when CI status is Unknown`` () =
     let config =
         { Packages = []
           ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+          PreBuildCmds = []
+          RootDir = "" }
 
     let result =
         runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
@@ -949,7 +979,8 @@ let ``release - returns 1 when CI times out still in progress`` () =
     let config =
         { Packages = []
           ReservedVersions = Set.empty
-          PreBuildCmds = [] }
+          PreBuildCmds = []
+          RootDir = "" }
 
     let result =
         runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 2
@@ -980,7 +1011,8 @@ let ``release - PromoteToRC with HasPreviousRelease succeeds`` () =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config PromoteToRC GitHubActions noPreviousApi noCurrentApi 0 10
@@ -1015,7 +1047,8 @@ let ``release - PromoteToStable with HasPreviousRelease succeeds`` () =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config PromoteToStable GitHubActions noPreviousApi noCurrentApi 0 10
@@ -1050,7 +1083,8 @@ let ``release - PromoteToBeta with HasPreviousRelease succeeds`` () =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config PromoteToBeta GitHubActions noPreviousApi noCurrentApi 0 10
@@ -1121,7 +1155,8 @@ let ``release - updates fsProjsSharingSameTag versions too`` () =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [ tmpFileShared ] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
@@ -1176,7 +1211,8 @@ let ``release - resumes when fsproj already has target version (idempotent)`` ()
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
@@ -1236,7 +1272,8 @@ let ``release - fails fast when resuming and CI has failed`` () =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
@@ -1293,7 +1330,8 @@ let ``release - resumes and polls when CI is in progress`` () =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
@@ -1335,7 +1373,8 @@ let ``release - second run after successful first run produces no changes`` () =
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = "" }
 
         let result =
             runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
@@ -1380,10 +1419,11 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
-              PreBuildCmds = [] }
+              PreBuildCmds = []
+              RootDir = Path.GetTempPath() }
 
         let result =
-            release fakeRun (Path.GetTempPath()) config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 1 @>
         // fsproj untouched
