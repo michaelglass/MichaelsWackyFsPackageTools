@@ -38,6 +38,7 @@
   <ItemGroup>
     <Compile Include="Shell.fs" />
     <Compile Include="Version.fs" />
+    <Compile Include="Changelog.fs" />
     <Compile Include="Api.fs" />
     <Compile Include="Config.fs" />
     <Compile Include="Vcs.fs" />
