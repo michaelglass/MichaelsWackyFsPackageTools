@@ -74,7 +74,7 @@ let internal runReleaseWith
     match Config.load cwd with
     | Error msg -> Error msg
     | Ok config ->
-        Ok(Release.release run config releaseCmd (publishMode opts) extractPreviousApi extractCurrentApi 15000 60)
+        Ok(Release.release run cwd config releaseCmd (publishMode opts) extractPreviousApi extractCurrentApi 15000 60)
 
 let private runRelease (releaseCmd: Release.ReleaseCommand) (opts: ReleaseOptions) : Result<int, string> =
     runReleaseWith

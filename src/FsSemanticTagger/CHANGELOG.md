@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- feat: promote `## Unreleased` section in each released package's `CHANGELOG.md` to `## <version> - YYYY-MM-DD`, inserting a fresh empty `## Unreleased` above it. Release aborts fail-fast (exit 1, no writes) if CHANGELOG.md is missing, has no `## Unreleased` section, or the section is empty. Applies to each path in `fsProjsSharingSameTag` as well.
+- feat: promote `## Unreleased` section to `## <version> - YYYY-MM-DD` on release, inserting a fresh empty `## Unreleased` above it. Single-package repos use repo-root `CHANGELOG.md`; multi-package repos use `CHANGELOG.md` next to each fsproj (and each `fsProjsSharingSameTag`). Release aborts fail-fast (exit 1, no writes) if any required CHANGELOG.md is missing, has no `## Unreleased` section, or the section is empty.
 
 ## 0.12.0-alpha.3 - 2026-04-20
 
