@@ -67,7 +67,12 @@ let ``validate is case-insensitive on Unreleased`` () =
 let ``promote rewrites Unreleased header to version + date`` () =
     withTempDir (fun dir ->
         let path = Path.Combine(dir, "CHANGELOG.md")
-        File.WriteAllText(path, "# Changelog\n\n## Unreleased\n\n- feat: new thing\n\n## 0.1.0 - 2026-01-01\n\n- old\n")
+
+        File.WriteAllText(
+            path,
+            "# Changelog\n\n## Unreleased\n\n- feat: new thing\n\n## 0.1.0 - 2026-01-01\n\n- old\n"
+        )
+
         promoteUnreleased path (v "0.2.0-alpha.1") sampleDate
         let updated = File.ReadAllText path
         test <@ updated.Contains "## 0.2.0-alpha.1 - 2026-04-22" @>

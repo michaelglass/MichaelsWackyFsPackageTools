@@ -149,6 +149,14 @@ type BumpDecision =
     | NeedsBump of PackageConfig * Version
     | AlreadyBumped of PackageConfig * Version
 
+/// Collect (packageName, changelogPath) pairs for a package, covering the primary
+/// fsproj dir and each shared-tag fsproj dir. Each CHANGELOG sits next to its fsproj.
+let internal changelogPathsFor (pkg: PackageConfig) : (string * string) list =
+    pkg.Fsproj :: pkg.FsProjsSharingSameTag
+    |> List.map System.IO.Path.GetDirectoryName
+    |> List.distinct
+    |> List.map (fun dir -> pkg.Name, System.IO.Path.Combine(dir, "CHANGELOG.md"))
+
 /// Main release orchestration
 let release
     (run: string -> string -> CommandResult)
@@ -316,32 +324,57 @@ let release
                 for (pkg, version) in allBumps do
                     printfn "  %s -> %s (tag: %s)" pkg.Name (format version) (toTag pkg.TagPrefix version)
 
-                // 6. Update fsproj versions (only for packages that need it)
-                for (pkg, version) in needsBump do
-                    updateFsprojVersion pkg.Fsproj version
+                // 5b. Validate CHANGELOGs fail-fast before any writes.
+                let changelogErrors =
+                    needsBump
+                    |> List.collect (fun (pkg, _) -> changelogPathsFor pkg)
+                    |> List.choose (fun (pkgName, path) ->
+                        match Changelog.validateUnreleased path with
+                        | Ok() -> None
+                        | Error err -> Some(pkgName, err))
 
-                    for extra in pkg.FsProjsSharingSameTag do
-                        updateFsprojVersion extra version
+                if not changelogErrors.IsEmpty then
+                    printfn "\nError: CHANGELOG validation failed. Aborting release before any writes."
 
-                // 7. Commit version bump and advance main bookmark
-                let versionSummary =
-                    allBumps
-                    |> List.map (fun (pkg, version) -> sprintf "%s %s" pkg.Name (format version))
-                    |> String.concat ", "
+                    for (pkgName, err) in changelogErrors do
+                        printfn "  %s: %s" pkgName (Changelog.formatError err)
 
-                commitAndAdvanceMain run (sprintf "Bump versions: %s" versionSummary)
+                    1
+                else
 
-                // 8. Tag main (the version bump commit) for each package
-                let tags =
-                    allBumps
-                    |> List.map (fun (pkg, version) ->
-                        let tag = toTag pkg.TagPrefix version
-                        tagRevision run tag "main"
-                        tag)
+                    // 6. Update fsproj versions (only for packages that need it)
+                    for (pkg, version) in needsBump do
+                        updateFsprojVersion pkg.Fsproj version
 
-                // 9. Publish or push tags + main
-                match mode with
-                | GitHubActions ->
-                    pushMain run
-                    waitForCiAndPushTags run ciPollIntervalMs ciMaxAttempts tags
-                | LocalPublish -> packLocally run allBumps
+                        for extra in pkg.FsProjsSharingSameTag do
+                            updateFsprojVersion extra version
+
+                    // 6b. Promote CHANGELOG Unreleased -> versioned for each bumped package.
+                    let today = System.DateTime.Today
+
+                    for (pkg, version) in needsBump do
+                        for (_, path) in changelogPathsFor pkg do
+                            Changelog.promoteUnreleased path version today
+
+                    // 7. Commit version bump and advance main bookmark
+                    let versionSummary =
+                        allBumps
+                        |> List.map (fun (pkg, version) -> sprintf "%s %s" pkg.Name (format version))
+                        |> String.concat ", "
+
+                    commitAndAdvanceMain run (sprintf "Bump versions: %s" versionSummary)
+
+                    // 8. Tag main (the version bump commit) for each package
+                    let tags =
+                        allBumps
+                        |> List.map (fun (pkg, version) ->
+                            let tag = toTag pkg.TagPrefix version
+                            tagRevision run tag "main"
+                            tag)
+
+                    // 9. Publish or push tags + main
+                    match mode with
+                    | GitHubActions ->
+                        pushMain run
+                        waitForCiAndPushTags run ciPollIntervalMs ciMaxAttempts tags
+                    | LocalPublish -> packLocally run allBumps
