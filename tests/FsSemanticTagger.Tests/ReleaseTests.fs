@@ -22,7 +22,7 @@ let private seedTmpChangelog () =
 
 let private runRelease run config cmd mode prev cur poll max =
     seedTmpChangelog ()
-    release run config cmd mode prev cur poll max
+    release run (Path.GetTempPath()) config cmd mode prev cur poll max
 
 [<Fact>]
 let ``updateFsprojVersion - updates Version element in fsproj`` () =
@@ -1383,7 +1383,7 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
               PreBuildCmds = [] }
 
         let result =
-            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+            release fakeRun (Path.GetTempPath()) config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 1 @>
         // fsproj untouched
