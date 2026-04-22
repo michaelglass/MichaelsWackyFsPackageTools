@@ -123,3 +123,32 @@ let ``promote then validate returns EmptyUnreleasedSection (idempotency)`` () =
         File.WriteAllText(path, "# Changelog\n\n## Unreleased\n\n- item\n")
         promoteUnreleased path (v "0.2.0-alpha.1") sampleDate
         test <@ validateUnreleased path = Error(EmptyUnreleasedSection path) @>)
+
+[<Fact>]
+let ``promote handles Unreleased as the first line of the file`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        File.WriteAllText(path, "## Unreleased\n\n- item\n")
+        promoteUnreleased path (v "0.2.0-alpha.1") sampleDate
+        let lines = File.ReadAllLines path
+        test <@ lines[0].Trim() = "## Unreleased" @>
+        test <@ lines |> Array.exists (fun l -> l.Trim() = "## 0.2.0-alpha.1 - 2026-04-22") @>)
+
+[<Fact>]
+let ``validate rejects bracketed non-Unreleased heading`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        File.WriteAllText(path, "# Changelog\n\n## [0.1.0]\n\n- thing\n")
+        test <@ validateUnreleased path = Error(NoUnreleasedSection path) @>)
+
+[<Fact>]
+let ``formatError - NoFile`` () =
+    test <@ formatError (NoFile "x.md") = "x.md: CHANGELOG.md not found" @>
+
+[<Fact>]
+let ``formatError - NoUnreleasedSection`` () =
+    test <@ formatError (NoUnreleasedSection "x.md") = "x.md: no '## Unreleased' section" @>
+
+[<Fact>]
+let ``formatError - EmptyUnreleasedSection`` () =
+    test <@ formatError (EmptyUnreleasedSection "x.md") = "x.md: '## Unreleased' section is empty" @>

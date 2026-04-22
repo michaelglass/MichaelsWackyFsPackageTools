@@ -75,8 +75,26 @@ The `release` command:
 1. Checks for a clean working copy (no uncommitted changes)
 2. Builds in Release configuration
 3. Compares API against the previous release tag
-4. Updates the version in your `.fsproj` file(s)
-5. Creates a VCS tag (supports both Git and [Jujutsu](https://jj-vcs.github.io/jj/))
+4. Validates each bumped package's `CHANGELOG.md` has a non-empty `## Unreleased` section
+5. Updates the version in your `.fsproj` file(s)
+6. Promotes the `## Unreleased` section to `## <version> - YYYY-MM-DD` and inserts a fresh empty `## Unreleased` above it
+7. Creates a VCS tag (supports both Git and [Jujutsu](https://jj-vcs.github.io/jj/))
+
+### Changelog promotion
+
+For each package being bumped the tool promotes its `CHANGELOG.md`'s `## Unreleased` section to a versioned header of the form:
+
+```
+## <version> - YYYY-MM-DD
+```
+
+A fresh empty `## Unreleased` heading is inserted above it so the file is ready for the next cycle. Both `## Unreleased` and `## [Unreleased]` are recognized (case-insensitive); the re-inserted heading is always unbracketed. The changelog edit lands in the same "Bump versions: ..." commit as the fsproj version update.
+
+**Changelog location:**
+- **Single-package repos** (one packable fsproj): `CHANGELOG.md` at the repo root.
+- **Multi-package repos**: `CHANGELOG.md` next to each package's fsproj (and next to each path in `fsProjsSharingSameTag`).
+
+**Fail-fast:** if any package needing a bump is missing `CHANGELOG.md`, is missing the `## Unreleased` section, or the section is empty, the release aborts with exit code 1 before any files are modified.
 
 Add `--publish` to build and pack locally instead of pushing tags for CI:
 

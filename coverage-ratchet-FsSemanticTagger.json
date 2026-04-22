@@ -13,6 +13,11 @@
         "platform": "linux"
       }
     ],
+    "Changelog.fs": {
+      "line": 100,
+      "branch": 70,
+      "reason": "loosened automatically"
+    },
     "Cobertura.fs": [
       {
         "line": 100,
