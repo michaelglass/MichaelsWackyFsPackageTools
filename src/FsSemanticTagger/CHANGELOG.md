@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- feat: promote `## Unreleased` section in each released package's `CHANGELOG.md` to `## <version> - YYYY-MM-DD`, inserting a fresh empty `## Unreleased` above it. Release aborts fail-fast (exit 1, no writes) if CHANGELOG.md is missing, has no `## Unreleased` section, or the section is empty. Applies to each path in `fsProjsSharingSameTag` as well.
+
 ## 0.12.0-alpha.3 - 2026-04-20
 
 - fix: `hasChangesSinceTag` always returned true — `jj diff --stat` outputs summary text even for zero changes; use `--summary` instead (empty when no changes, compact file list otherwise)

@@ -31,8 +31,7 @@ let internal isUnreleasedHeading (line: string) : bool =
 
         String.Equals(stripped, "Unreleased", StringComparison.OrdinalIgnoreCase)
 
-let internal isLevel2Heading (line: string) : bool =
-    line.TrimStart().StartsWith("## ")
+let internal isLevel2Heading (line: string) : bool = line.TrimStart().StartsWith("## ")
 
 let validateUnreleased (changelogPath: string) : Result<unit, ChangelogError> =
     if not (File.Exists changelogPath) then
@@ -60,7 +59,9 @@ let validateUnreleased (changelogPath: string) : Result<unit, ChangelogError> =
 let promoteUnreleased (changelogPath: string) (version: Version) (today: DateTime) : unit =
     let lines = File.ReadAllLines changelogPath
     let idx = lines |> Array.findIndex isUnreleasedHeading
-    let versionHeader = sprintf "## %s - %s" (format version) (today.ToString("yyyy-MM-dd"))
+
+    let versionHeader =
+        sprintf "## %s - %s" (format version) (today.ToString("yyyy-MM-dd"))
 
     let before = if idx = 0 then [||] else lines[.. idx - 1]
     let after = lines[idx + 1 ..]

@@ -14,6 +14,12 @@ open FsSemanticTagger.Vcs
 let private noPreviousApi (_tag: string) (_dll: string) : ApiSignature list option = None
 let private noCurrentApi (_dll: string) : ApiSignature list = []
 
+/// Release tests put fsproj files in the system temp dir, so CHANGELOG.md
+/// also lives there. Re-seeds before every release call (promotion mutates it).
+let private seedTmpChangelog () =
+    let p = Path.Combine(Path.GetTempPath(), "CHANGELOG.md")
+    File.WriteAllText(p, "# Changelog\n\n## Unreleased\n\n- test entry\n")
+
 [<Fact>]
 let ``updateFsprojVersion - updates Version element in fsproj`` () =
     let tmpFile = Path.GetTempFileName()
@@ -120,6 +126,8 @@ let ``release - returns 1 when uncommitted changes`` () =
           PreBuildCmds = [] }
 
     let result =
+        seedTmpChangelog ()
+
         release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
 
     test <@ result = 1 @>
@@ -140,6 +148,8 @@ let ``release - returns 1 when CI not passing`` () =
           PreBuildCmds = [] }
 
     let result =
+        seedTmpChangelog ()
+
         release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
 
     test <@ result = 1 @>
@@ -167,6 +177,8 @@ let ``release - Auto with no previous tags returns 0 with no packages`` () =
           PreBuildCmds = [] }
 
     let result =
+        seedTmpChangelog ()
+
         release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
 
     test <@ result = 0 @>
@@ -215,6 +227,8 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
@@ -287,6 +301,8 @@ let ``release - StartAlpha with LocalPublish calls dotnet pack`` () =
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config StartAlpha LocalPublish noPreviousApi noCurrentApi 0 10
 
         let calls = getCalls ()
@@ -332,6 +348,8 @@ let ``release - Auto with reserved version bumps past it`` () =
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
@@ -355,6 +373,8 @@ let ``release - non-Auto with reserved version skips package`` () =
           PreBuildCmds = [] }
 
     let result =
+        seedTmpChangelog ()
+
         release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
     test <@ result = 0 @>
@@ -374,6 +394,8 @@ let ``release - PromoteToBeta with FirstRelease returns 0 no packages`` () =
           PreBuildCmds = [] }
 
     let result =
+        seedTmpChangelog ()
+
         release fakeRun config PromoteToBeta GitHubActions noPreviousApi noCurrentApi 0 10
 
     test <@ result = 0 @>
@@ -401,6 +423,8 @@ let ``release - runs preBuildCmds before build`` () =
               PreBuildCmds = [ "dotnet tool restore"; "dotnet tool run paket restore" ] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
         let calls = getCalls ()
@@ -533,6 +557,8 @@ let ``release - skips packages with no changes since last tag`` () =
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
@@ -579,6 +605,8 @@ let ``release - Auto detects breaking API change and bumps major`` () =
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi) 0 10
 
         test <@ result = 0 @>
@@ -623,6 +651,8 @@ let ``release - Auto detects addition and bumps minor`` () =
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi) 0 10
 
         test <@ result = 0 @>
@@ -664,6 +694,8 @@ let ``release - Auto falls back to NoChange when extractPreviousApi returns None
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi) 0 10
 
         test <@ result = 0 @>
@@ -718,6 +750,8 @@ let ``release - does not push tags when post-push CI fails`` () =
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 1 @>
@@ -770,6 +804,8 @@ let ``release - does not push tags when post-push CI times out`` () =
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 3
 
         test <@ result = 1 @>
@@ -821,6 +857,8 @@ let ``release - does not push tags when post-push CI has no runs`` () =
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 1 @>
@@ -851,6 +889,8 @@ let ``release - uses coverageratchet loosen-from-ci when available`` () =
           PreBuildCmds = [] }
 
     let result =
+        seedTmpChangelog ()
+
         release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
 
     test <@ result = 0 @>
@@ -883,6 +923,8 @@ let ``release - returns 1 when coverageratchet loosen-from-ci fails`` () =
           PreBuildCmds = [] }
 
     let result =
+        seedTmpChangelog ()
+
         release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
 
     test <@ result = 1 @>
@@ -903,6 +945,8 @@ let ``release - returns 1 when CI has no runs`` () =
           PreBuildCmds = [] }
 
     let result =
+        seedTmpChangelog ()
+
         release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
 
     test <@ result = 1 @>
@@ -922,6 +966,8 @@ let ``release - returns 1 when CI status is Unknown`` () =
           PreBuildCmds = [] }
 
     let result =
+        seedTmpChangelog ()
+
         release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
 
     test <@ result = 1 @>
@@ -942,6 +988,8 @@ let ``release - returns 1 when CI times out still in progress`` () =
           PreBuildCmds = [] }
 
     let result =
+        seedTmpChangelog ()
+
         release fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 2
 
     test <@ result = 1 @>
@@ -973,6 +1021,8 @@ let ``release - PromoteToRC with HasPreviousRelease succeeds`` () =
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config PromoteToRC GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
@@ -1008,6 +1058,8 @@ let ``release - PromoteToStable with HasPreviousRelease succeeds`` () =
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config PromoteToStable GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
@@ -1043,6 +1095,8 @@ let ``release - PromoteToBeta with HasPreviousRelease succeeds`` () =
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config PromoteToBeta GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
@@ -1114,6 +1168,8 @@ let ``release - updates fsProjsSharingSameTag versions too`` () =
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
@@ -1169,6 +1225,8 @@ let ``release - resumes when fsproj already has target version (idempotent)`` ()
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
@@ -1229,6 +1287,8 @@ let ``release - fails fast when resuming and CI has failed`` () =
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 1 @>
@@ -1286,6 +1346,8 @@ let ``release - resumes and polls when CI is in progress`` () =
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
@@ -1328,6 +1390,8 @@ let ``release - second run after successful first run produces no changes`` () =
               PreBuildCmds = [] }
 
         let result =
+            seedTmpChangelog ()
+
             release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
@@ -1336,3 +1400,50 @@ let ``release - second run after successful first run produces no changes`` () =
         test <@ content.Contains("<Version>0.2.0-alpha.1</Version>") @>
     finally
         File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` () =
+    let tmpFile = Path.GetTempFileName()
+    let changelogPath = Path.Combine(Path.GetTempPath(), "CHANGELOG.md")
+
+    try
+        let fsprojBefore =
+            """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Version>0.0.0</Version></PropertyGroup>
+</Project>"""
+
+        File.WriteAllText(tmpFile, fsprojBefore)
+        // CHANGELOG with no Unreleased section -> validation must fail before any writes
+        File.WriteAllText(changelogPath, "# Changelog\n\n## 0.1.0 - 2026-01-01\n\n- stuff\n")
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [] }
+
+        let result =
+            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+
+        test <@ result = 1 @>
+        // fsproj untouched
+        test <@ File.ReadAllText(tmpFile) = fsprojBefore @>
+    finally
+        File.Delete(tmpFile)
+
+        if File.Exists changelogPath then
+            File.Delete changelogPath
