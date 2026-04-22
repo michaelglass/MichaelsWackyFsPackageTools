@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- docs: attribute CHANGELOG entries to released versions
+
 ## 0.9.0-alpha.2 - 2026-04-15
 
 - Version bump only

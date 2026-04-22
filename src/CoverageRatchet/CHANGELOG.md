@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- test: raise Program.fs coverage via DI seams; add default test timeouts
+- docs: attribute CHANGELOG entries to released versions
+
 ## 0.13.0-alpha.1 - 2026-04-17
 
 - fix: harden `loosen-from-ci` against empty/missing threshold artifacts
