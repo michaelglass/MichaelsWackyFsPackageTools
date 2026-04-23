@@ -3,6 +3,7 @@ module FsSemanticTagger.Tests.ReleaseTests
 open System.IO
 open Xunit
 open Tests.Common
+open Tests.Common.TestHelpers
 open Swensen.Unquote
 open FsSemanticTagger.Shell
 open FsSemanticTagger.Config
@@ -941,20 +942,11 @@ let ``release - prints coverageratchet error message when loosen-from-ci fails``
           PreBuildCmds = []
           RootDir = "" }
 
-    let output = System.Text.StringBuilder()
-    let writer = new System.IO.StringWriter(output)
-    let original = System.Console.Out
-    System.Console.SetOut(writer)
+    let output, result =
+        withCapturedConsole (fun () -> runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10)
 
-    try
-        let result =
-            runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
-
-        writer.Flush()
-        test <@ result = 1 @>
-        test <@ output.ToString().Contains("CI failed for non-coverage reasons.") @>
-    finally
-        System.Console.SetOut(original)
+    test <@ result = 1 @>
+    test <@ output.Contains("CI failed for non-coverage reasons.") @>
 
 [<Fact>]
 let ``release - returns 1 when CI has no runs`` () =

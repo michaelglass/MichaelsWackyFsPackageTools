@@ -40,7 +40,6 @@ let ``runSilent - returns None for failing command`` () =
 
 [<Fact>]
 let ``run - returns stdout in Failure when stderr is empty`` () =
-    // bash -c exits non-zero; printf goes to stdout, no stderr
     match run "bash" "-c \"printf 'stdout-only-error'; exit 1\"" with
     | Failure msg -> test <@ msg = "stdout-only-error" @>
     | Success _ -> failwith "Expected Failure"

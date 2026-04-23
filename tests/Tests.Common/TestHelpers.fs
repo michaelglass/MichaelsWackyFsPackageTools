@@ -19,3 +19,16 @@ let withTempDir (action: string -> 'a) =
         action dir
     finally
         cleanupDir dir
+
+let withCapturedConsole (action: unit -> 'a) : string * 'a =
+    let output = System.Text.StringBuilder()
+    let writer = new StringWriter(output)
+    let original = Console.Out
+    Console.SetOut(writer)
+
+    try
+        let result = action ()
+        writer.Flush()
+        output.ToString(), result
+    finally
+        Console.SetOut(original)
