@@ -183,7 +183,11 @@ let release
                 match run "dotnet" "tool run coverageratchet loosen-from-ci" with
                 | Success _ -> true
                 | Failure msg ->
-                    printfn "Error: coverageratchet loosen-from-ci failed%s" (if msg <> "" then ": " + msg else "")
+                    printfn "Error: coverageratchet loosen-from-ci failed"
+
+                    if msg <> "" then
+                        printfn "  %s" msg
+
                     false
             else
                 match waitForCi run ciPollIntervalMs ciMaxAttempts with

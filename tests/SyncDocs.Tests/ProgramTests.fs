@@ -15,17 +15,8 @@ let ``run - check prints warnings for incomplete pairs`` () =
         File.WriteAllText(Path.Combine(srcDir, "README.md"), "lib readme")
         // No docs/MyLib/index.md -- should warn
 
-        let output = System.Text.StringBuilder()
-        let origOut = System.Console.Out
-        System.Console.SetOut(new System.IO.StringWriter(output))
-
-        try
-            let result = run [| "check" |] tmpDir
-            test <@ result = Ok 0 @>
-        finally
-            System.Console.SetOut(origOut)
-
-        let printed = output.ToString()
+        let printed, result = withCapturedConsole (fun () -> run [| "check" |] tmpDir)
+        test <@ result = Ok 0 @>
         test <@ printed.Contains "MyLib" @>
         test <@ printed.Contains "index.md" @>)
 
@@ -147,17 +138,7 @@ let ``run - check prints in sync message`` () =
         File.WriteAllText(Path.Combine(tmpDir, "README.md"), "Same")
         File.WriteAllText(Path.Combine(docsDir, "index.md"), "Same")
 
-        let output = System.Text.StringBuilder()
-        let origOut = System.Console.Out
-        System.Console.SetOut(new System.IO.StringWriter(output))
-
-        try
-            let _ = run [| "check" |] tmpDir
-            ()
-        finally
-            System.Console.SetOut(origOut)
-
-        let printed = output.ToString()
+        let printed, _ = withCapturedConsole (fun () -> run [| "check" |] tmpDir)
         test <@ printed.Contains "in sync" @>)
 
 [<Fact>]
@@ -168,17 +149,7 @@ let ``run - sync prints updated message`` () =
         File.WriteAllText(Path.Combine(tmpDir, "README.md"), "New")
         File.WriteAllText(Path.Combine(docsDir, "index.md"), "Old")
 
-        let output = System.Text.StringBuilder()
-        let origOut = System.Console.Out
-        System.Console.SetOut(new System.IO.StringWriter(output))
-
-        try
-            let _ = run [| "sync" |] tmpDir
-            ()
-        finally
-            System.Console.SetOut(origOut)
-
-        let printed = output.ToString()
+        let printed, _ = withCapturedConsole (fun () -> run [| "sync" |] tmpDir)
         test <@ printed.Contains "updated" @>)
 
 [<Fact>]
@@ -189,33 +160,13 @@ let ``run - check prints OUT OF SYNC message`` () =
         File.WriteAllText(Path.Combine(tmpDir, "README.md"), "New")
         File.WriteAllText(Path.Combine(docsDir, "index.md"), "Old")
 
-        let output = System.Text.StringBuilder()
-        let origOut = System.Console.Out
-        System.Console.SetOut(new System.IO.StringWriter(output))
-
-        try
-            let _ = run [| "check" |] tmpDir
-            ()
-        finally
-            System.Console.SetOut(origOut)
-
-        let printed = output.ToString()
+        let printed, _ = withCapturedConsole (fun () -> run [| "check" |] tmpDir)
         test <@ printed.Contains "OUT OF SYNC" @>)
 
 [<Fact>]
 let ``run - check prints no pairs found message`` () =
     withTempDir (fun tmpDir ->
-        let output = System.Text.StringBuilder()
-        let origOut = System.Console.Out
-        System.Console.SetOut(new System.IO.StringWriter(output))
-
-        try
-            let _ = run [| "check" |] tmpDir
-            ()
-        finally
-            System.Console.SetOut(origOut)
-
-        let printed = output.ToString()
+        let printed, _ = withCapturedConsole (fun () -> run [| "check" |] tmpDir)
         test <@ printed.Contains "No README.md -> docs/ pairs found" @>)
 
 [<Fact>]
@@ -243,17 +194,8 @@ let ``run - check prints MissingSource warning when docs target exists but sourc
         let srcDir = Path.Combine(tmpDir, "src", "MyLib")
         Directory.CreateDirectory(srcDir) |> ignore
 
-        let output = System.Text.StringBuilder()
-        let origOut = System.Console.Out
-        System.Console.SetOut(new System.IO.StringWriter(output))
-
-        try
-            let result = run [| "check" |] tmpDir
-            test <@ result = Ok 0 @>
-        finally
-            System.Console.SetOut(origOut)
-
-        let printed = output.ToString()
+        let printed, result = withCapturedConsole (fun () -> run [| "check" |] tmpDir)
+        test <@ result = Ok 0 @>
         test <@ printed.Contains "Warning" @>
         test <@ printed.Contains "MyLib" @>
         test <@ printed.Contains "README.md" @>)
@@ -305,15 +247,5 @@ let ``run - sync prints in sync message for already synced pair`` () =
         File.WriteAllText(Path.Combine(tmpDir, "README.md"), "Same content")
         File.WriteAllText(Path.Combine(docsDir, "index.md"), "Same content")
 
-        let output = System.Text.StringBuilder()
-        let origOut = System.Console.Out
-        System.Console.SetOut(new System.IO.StringWriter(output))
-
-        try
-            let _ = run [| "sync" |] tmpDir
-            ()
-        finally
-            System.Console.SetOut(origOut)
-
-        let printed = output.ToString()
+        let printed, _ = withCapturedConsole (fun () -> run [| "sync" |] tmpDir)
         test <@ printed.Contains "in sync" @>)
