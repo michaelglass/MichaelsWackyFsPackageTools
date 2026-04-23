@@ -203,19 +203,10 @@ let ``Program.main returns 0 for fully passing repo`` () =
         try
             Directory.SetCurrentDirectory(tmpDir)
 
-            let output = System.Text.StringBuilder()
-            let origOut = System.Console.Out
-            System.Console.SetOut(new System.IO.StringWriter(output))
-
-            try
-                let result = FsProjLint.Program.main [||]
-                test <@ result = 0 @>
-
-                let printed = output.ToString()
-                test <@ printed.Contains "Passed:" @>
-                test <@ not (printed.Contains "FAILED:") @>
-            finally
-                System.Console.SetOut(origOut)
+            let printed, result = withCapturedConsole (fun () -> FsProjLint.Program.main [||])
+            test <@ result = 0 @>
+            test <@ printed.Contains "Passed:" @>
+            test <@ not (printed.Contains "FAILED:") @>
         finally
             Directory.SetCurrentDirectory(prev))
 
@@ -230,21 +221,12 @@ let ``Program.main prints FAILED and Passed sections for mixed results`` () =
         try
             Directory.SetCurrentDirectory(tmpDir)
 
-            let output = System.Text.StringBuilder()
-            let origOut = System.Console.Out
-            System.Console.SetOut(new System.IO.StringWriter(output))
-
-            try
-                let result = FsProjLint.Program.main [||]
-                test <@ result = 1 @>
-
-                let printed = output.ToString()
-                test <@ printed.Contains "FAILED:" @>
-                test <@ printed.Contains "FAIL" @>
-                test <@ printed.Contains "Passed:" @>
-                test <@ printed.Contains "PASS" @>
-                test <@ printed.Contains "Result:" @>
-            finally
-                System.Console.SetOut(origOut)
+            let printed, result = withCapturedConsole (fun () -> FsProjLint.Program.main [||])
+            test <@ result = 1 @>
+            test <@ printed.Contains "FAILED:" @>
+            test <@ printed.Contains "FAIL" @>
+            test <@ printed.Contains "Passed:" @>
+            test <@ printed.Contains "PASS" @>
+            test <@ printed.Contains "Result:" @>
         finally
             Directory.SetCurrentDirectory(prev))

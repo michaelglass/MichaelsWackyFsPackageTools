@@ -24,7 +24,7 @@ let run (cmd: string) (args: string) : CommandResult =
         Success(stdout.TrimEnd())
     else
         let msg =
-            if stderr.Length > 0 then
+            if stderr.Trim() <> "" then
                 stderr.TrimEnd()
             else
                 stdout.TrimEnd()
