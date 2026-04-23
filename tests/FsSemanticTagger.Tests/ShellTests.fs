@@ -37,3 +37,10 @@ let ``runSilent - returns Some for successful command`` () =
 let ``runSilent - returns None for failing command`` () =
     let result = runSilent "ls" "/nonexistent_path_xyz_abc_123"
     test <@ result = None @>
+
+[<Fact>]
+let ``run - returns stdout in Failure when stderr is empty`` () =
+    // bash -c exits non-zero; printf goes to stdout, no stderr
+    match run "bash" "-c \"printf 'stdout-only-error'; exit 1\"" with
+    | Failure msg -> test <@ msg = "stdout-only-error" @>
+    | Success _ -> failwith "Expected Failure"

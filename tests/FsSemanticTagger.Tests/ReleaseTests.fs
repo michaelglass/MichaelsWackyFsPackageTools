@@ -926,6 +926,37 @@ let ``release - returns 1 when coverageratchet loosen-from-ci fails`` () =
     test <@ result = 1 @>
 
 [<Fact>]
+let ``release - prints coverageratchet error message when loosen-from-ci fails`` () =
+    let fakeRun (cmd: string) (args: string) : CommandResult =
+        match cmd, args with
+        | "jj", "status" -> Success "The working copy is clean"
+        | "dotnet", "tool list" -> Success "coverageratchet    0.8.0-alpha.4    coverageratchet"
+        | "dotnet", a when a.StartsWith("tool run coverageratchet loosen-from-ci") ->
+            Failure "CI failed for non-coverage reasons."
+        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+    let config =
+        { Packages = []
+          ReservedVersions = Set.empty
+          PreBuildCmds = []
+          RootDir = "" }
+
+    let output = System.Text.StringBuilder()
+    let writer = new System.IO.StringWriter(output)
+    let original = System.Console.Out
+    System.Console.SetOut(writer)
+
+    try
+        let result =
+            runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+
+        writer.Flush()
+        test <@ result = 1 @>
+        test <@ output.ToString().Contains("CI failed for non-coverage reasons.") @>
+    finally
+        System.Console.SetOut(original)
+
+[<Fact>]
 let ``release - returns 1 when CI has no runs`` () =
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- fix: print error message when `coverageratchet loosen-from-ci` fails instead of silently exiting with code 1
+- fix: `Shell.run` now falls back to stdout when stderr is empty on failure, so diagnostic messages from tools that write to stdout are not lost
+
 ## 0.12.0-alpha.4 - 2026-04-22
 
 - feat: promote `## Unreleased` section to `## <version> - YYYY-MM-DD` on release, inserting a fresh empty `## Unreleased` above it. Single-package repos use repo-root `CHANGELOG.md`; multi-package repos use `CHANGELOG.md` next to each fsproj (and each `fsProjsSharingSameTag`). Release aborts fail-fast (exit 1, no writes) if any required CHANGELOG.md is missing, has no `## Unreleased` section, or the section is empty.
