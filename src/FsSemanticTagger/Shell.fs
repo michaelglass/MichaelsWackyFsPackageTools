@@ -24,7 +24,13 @@ let run (cmd: string) (args: string) : CommandResult =
     if p.ExitCode = 0 then
         Success(stdout.TrimEnd())
     else
-        Failure(stderr.TrimEnd())
+        let msg =
+            if stderr.Trim() <> "" then
+                stderr.TrimEnd()
+            else
+                stdout.TrimEnd()
+
+        Failure msg
 
 let runOrFail (cmd: string) (args: string) : string =
     match run cmd args with
