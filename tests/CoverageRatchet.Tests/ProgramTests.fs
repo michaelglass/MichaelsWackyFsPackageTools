@@ -123,7 +123,7 @@ let private makeCoverageXml (linePct: int) =
 [<Fact>]
 let ``run - check with no coverage file returns Error`` () =
     withTempDir (fun tmpDir ->
-        let result = run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir
+        let result = run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
 
         test <@ result = Error "No coverage.cobertura.xml found" @>)
 
@@ -133,7 +133,7 @@ let ``run - check with passing coverage file returns Ok 0`` () =
         let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
         File.WriteAllText(xmlPath, makeCoverageXml 100)
 
-        let result = run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir
+        let result = run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
 
         test <@ result = Ok 0 @>)
 
@@ -143,7 +143,7 @@ let ``run - check with failing coverage returns Ok 1`` () =
         let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
         File.WriteAllText(xmlPath, makeCoverageXml 50)
 
-        let result = run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir
+        let result = run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
 
         test <@ result = Ok 1 @>)
 
@@ -170,7 +170,7 @@ let ``run - ratchet with no changes returns Ok 0`` () =
 
         saveConfig configPath config
 
-        let result = run (Ratchet(config = Some configPath)) tmpDir
+        let result = run (Ratchet(config = Some configPath)) tmpDir false
 
         test <@ result = Ok 0 @>)
 
@@ -197,7 +197,7 @@ let ``run - ratchet with tightened config returns Ok 1`` () =
 
         saveConfig configPath config
 
-        let result = run (Ratchet(config = Some configPath)) tmpDir
+        let result = run (Ratchet(config = Some configPath)) tmpDir false
 
         test <@ result = Ok 1 @>)
 
@@ -211,7 +211,7 @@ let ``run - ratchet with failed files returns Ok 2`` () =
         let configPath = Path.Combine(tmpDir, "config.json")
 
         // No overrides, so default 100% threshold applies and 50% coverage fails
-        let result = run (Ratchet(config = Some configPath)) tmpDir
+        let result = run (Ratchet(config = Some configPath)) tmpDir false
 
         test <@ result = Ok 2 @>)
 
@@ -222,7 +222,7 @@ let ``run - ratchet creates config and returns Ok 2 when below threshold`` () =
         File.WriteAllText(xmlPath, makeCoverageXml 50)
 
         let configPath = Path.Combine(tmpDir, "config.json")
-        let result = run (Ratchet(config = Some configPath)) tmpDir
+        let result = run (Ratchet(config = Some configPath)) tmpDir false
 
         test <@ result = Ok 2 @>
         test <@ File.Exists(configPath) @>)
@@ -234,7 +234,7 @@ let ``run - loosen creates config and returns Ok 0`` () =
         File.WriteAllText(xmlPath, makeCoverageXml 50)
 
         let configPath = Path.Combine(tmpDir, "config.json")
-        let result = run (Loosen(config = Some configPath)) tmpDir
+        let result = run (Loosen(config = Some configPath)) tmpDir false
 
         test <@ result = Ok 0 @>
         test <@ File.Exists(configPath) @>)
@@ -248,10 +248,10 @@ let ``run - loosen then check passes`` () =
         let configPath = Path.Combine(tmpDir, "config.json")
 
         // Loosen first
-        let _ = run (Loosen(config = Some configPath)) tmpDir
+        let _ = run (Loosen(config = Some configPath)) tmpDir false
 
         // Now check should pass
-        let result = run (Check(config = Some configPath)) tmpDir
+        let result = run (Check(config = Some configPath)) tmpDir false
 
         test <@ result = Ok 0 @>)
 
@@ -268,7 +268,7 @@ let ``run - check with only non-fs files returns Ok 0`` () =
         let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
         File.WriteAllText(xmlPath, xml)
 
-        let result = run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir
+        let result = run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
 
         test <@ result = Ok 0 @>)
 
@@ -332,7 +332,7 @@ let ``run - ratchet with new file in coverage only counts existing overrides as 
         saveConfig configPath config
 
         // Ratchet runs - Foo.fs tightens from 30 to 50, Bar.fs gets created via Failed path
-        let result = run (Ratchet(config = Some configPath)) tmpDir
+        let result = run (Ratchet(config = Some configPath)) tmpDir false
 
         // Bar.fs is below 100% with no override, so this is a Failed result (Ok 2)
         test <@ result = Ok 2 @>)
@@ -349,7 +349,7 @@ let ``run - check-json writes platform and file results to output file`` () =
         let outputPath = Path.Combine(tmpDir, "output.json")
 
         let result =
-            run (CheckJson(config = Some configPath, output = Some outputPath)) tmpDir
+            run (CheckJson(config = Some configPath, output = Some outputPath)) tmpDir false
 
         test <@ result = Ok 1 @>
         test <@ File.Exists(outputPath) @>
@@ -380,7 +380,7 @@ let ``run - check-json with passing coverage returns Ok 0`` () =
         let outputPath = Path.Combine(tmpDir, "output.json")
 
         let result =
-            run (CheckJson(config = Some configPath, output = Some outputPath)) tmpDir
+            run (CheckJson(config = Some configPath, output = Some outputPath)) tmpDir false
 
         test <@ result = Ok 0 @>
         test <@ File.Exists(outputPath) @>
@@ -401,7 +401,7 @@ let ``run - check-json with failing coverage returns Ok 1`` () =
         let outputPath = Path.Combine(tmpDir, "output.json")
 
         let result =
-            run (CheckJson(config = Some configPath, output = Some outputPath)) tmpDir
+            run (CheckJson(config = Some configPath, output = Some outputPath)) tmpDir false
 
         test <@ result = Ok 1 @>)
 
@@ -432,7 +432,7 @@ let ``run - targets returns Ok 0 and lists files`` () =
 
         let configPath = Path.Combine(tmpDir, "config.json")
 
-        let result = run (Targets(config = Some configPath)) tmpDir
+        let result = run (Targets(config = Some configPath)) tmpDir false
 
         test <@ result = Ok 0 @>)
 
@@ -440,7 +440,7 @@ let ``run - targets returns Ok 0 and lists files`` () =
 let ``run - targets with no coverage file returns Error`` () =
     withTempDir (fun tmpDir ->
         let result =
-            run (Targets(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir
+            run (Targets(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
 
         test <@ result = Error "No coverage.cobertura.xml found" @>)
 
@@ -465,14 +465,14 @@ let ``run - gaps returns Ok 0 with branch gaps`` () =
 
         let configPath = Path.Combine(tmpDir, "config.json")
 
-        let result = run (Gaps(config = Some configPath)) tmpDir
+        let result = run (Gaps(config = Some configPath)) tmpDir false
 
         test <@ result = Ok 0 @>)
 
 [<Fact>]
 let ``run - gaps with no coverage file returns Error`` () =
     withTempDir (fun tmpDir ->
-        let result = run (Gaps(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir
+        let result = run (Gaps(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
 
         test <@ result = Error "No coverage.cobertura.xml found" @>)
 
@@ -535,7 +535,7 @@ let ``run - check merges coverage from multiple XMLs in subdirectories`` () =
 
         // With merging, Foo.fs should be 100% (all lines hit across both XMLs)
         // Without merging, only one XML is read and Foo.fs is 50%
-        let result = run (Check(config = Some configPath)) tmpDir
+        let result = run (Check(config = Some configPath)) tmpDir false
 
         test <@ result = Ok 0 @>)
 
@@ -583,7 +583,7 @@ let ``run - ratchet merges coverage from multiple XMLs`` () =
 
         let configPath = Path.Combine(tmpDir, "config.json")
         // Merged = 100%, so ratchet should produce no changes
-        let result = run (Ratchet(config = Some configPath)) tmpDir
+        let result = run (Ratchet(config = Some configPath)) tmpDir false
 
         test <@ result = Ok 0 @>)
 
@@ -664,14 +664,14 @@ let ``run - check-json with default output path`` () =
 
         let configPath = Path.Combine(tmpDir, "config.json")
         // No explicit output path - uses default
-        let result = run (CheckJson(config = Some configPath, output = None)) tmpDir
+        let result = run (CheckJson(config = Some configPath, output = None)) tmpDir false
 
         test <@ result = Ok 0 @>)
 
 [<Fact>]
 let ``run - loosen with no coverage file returns Error`` () =
     withTempDir (fun tmpDir ->
-        let result = run (Loosen(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir
+        let result = run (Loosen(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
 
         test <@ result = Error "No coverage.cobertura.xml found" @>)
 
@@ -679,7 +679,7 @@ let ``run - loosen with no coverage file returns Error`` () =
 let ``run - ratchet with no coverage file returns Error`` () =
     withTempDir (fun tmpDir ->
         let result =
-            run (Ratchet(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir
+            run (Ratchet(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
 
         test <@ result = Error "No coverage.cobertura.xml found" @>)
 
@@ -687,7 +687,7 @@ let ``run - ratchet with no coverage file returns Error`` () =
 let ``run - check-json with no coverage file returns Error`` () =
     withTempDir (fun tmpDir ->
         let result =
-            run (CheckJson(config = Some(Path.Combine(tmpDir, "config.json")), output = Some "out.json")) tmpDir
+            run (CheckJson(config = Some(Path.Combine(tmpDir, "config.json")), output = Some "out.json")) tmpDir false
 
         test <@ result = Error "No coverage.cobertura.xml found" @>)
 
@@ -765,7 +765,7 @@ let ``run - uses default config path when None`` () =
         File.WriteAllText(xmlPath, makeCoverageXml 100)
 
         // Check with config=None uses the defaultConfigPath relative to cwd
-        let result = run (Check(config = None)) tmpDir
+        let result = run (Check(config = None)) tmpDir false
 
         // 100% coverage passes default thresholds
         test <@ result = Ok 0 @>)
@@ -778,7 +778,7 @@ let ``run - loosen with config None creates default config`` () =
         let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
         File.WriteAllText(xmlPath, makeCoverageXml 50)
 
-        let result = run (Loosen(config = None)) tmpDir
+        let result = run (Loosen(config = None)) tmpDir false
 
         test <@ result = Ok 0 @>)
 
@@ -806,7 +806,7 @@ let ``run - ratchet removes override when file reaches 100 percent`` () =
 
         saveConfig configPath config
 
-        let result = run (Ratchet(config = Some configPath)) tmpDir
+        let result = run (Ratchet(config = Some configPath)) tmpDir false
 
         // Tightened returns Ok 1
         test <@ result = Ok 1 @>
@@ -825,7 +825,7 @@ let ``run - ratchet with 100 percent coverage and no config returns Ok 0`` () =
 
         let configPath = Path.Combine(tmpDir, "config.json")
 
-        let result = run (Ratchet(config = Some configPath)) tmpDir
+        let result = run (Ratchet(config = Some configPath)) tmpDir false
 
         test <@ result = Ok 0 @>)
 
@@ -862,7 +862,7 @@ let ``run - check reports both passed and failed files`` () =
 
         let configPath = Path.Combine(tmpDir, "config.json")
 
-        let result = run (Check(config = Some configPath)) tmpDir
+        let result = run (Check(config = Some configPath)) tmpDir false
 
         // Bad.fs is at 50% with 100% threshold, so it fails
         test <@ result = Ok 1 @>)
@@ -898,7 +898,7 @@ let ``run - check with all files passing returns Ok 0`` () =
 
         let configPath = Path.Combine(tmpDir, "config.json")
 
-        let result = run (Check(config = Some configPath)) tmpDir
+        let result = run (Check(config = Some configPath)) tmpDir false
 
         test <@ result = Ok 0 @>)
 
@@ -912,7 +912,7 @@ let ``run - check-json with None output writes coverage-results.json`` () =
 
         let configPath = Path.Combine(tmpDir, "config.json")
 
-        let result = run (CheckJson(config = Some configPath, output = None)) tmpDir
+        let result = run (CheckJson(config = Some configPath, output = None)) tmpDir false
 
         test <@ result = Ok 0 @>
         // The default output path is "coverage-results.json" (relative)
@@ -929,10 +929,10 @@ let ``run - loosen then ratchet produces no changes`` () =
         let configPath = Path.Combine(tmpDir, "config.json")
 
         // Loosen first
-        let _ = run (Loosen(config = Some configPath)) tmpDir
+        let _ = run (Loosen(config = Some configPath)) tmpDir false
 
         // Ratchet should produce no changes (already loosened to actual)
-        let result = run (Ratchet(config = Some configPath)) tmpDir
+        let result = run (Ratchet(config = Some configPath)) tmpDir false
 
         test <@ result = Ok 0 @>)
 
@@ -1004,7 +1004,7 @@ let ``run - ratchet tightens some overrides and removes others`` () =
 
         saveConfig configPath config
 
-        let result = run (Ratchet(config = Some configPath)) tmpDir
+        let result = run (Ratchet(config = Some configPath)) tmpDir false
 
         // Tightened returns Ok 1
         test <@ result = Ok 1 @>
@@ -1030,7 +1030,7 @@ let ``run dispatches Ratchet to CfRatchet`` () =
         File.WriteAllText(xmlPath, makeCoverageXml 100)
 
         let configPath = Path.Combine(tmpDir, "config.json")
-        let result = run (Ratchet(config = Some configPath)) tmpDir
+        let result = run (Ratchet(config = Some configPath)) tmpDir false
         test <@ result = Ok 0 @>)
 
 [<Fact>]
@@ -1039,7 +1039,7 @@ let ``run dispatches Loosen None to CfLoosen`` () =
         let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
         File.WriteAllText(xmlPath, makeCoverageXml 50)
 
-        let result = run (Loosen(config = None)) tmpDir
+        let result = run (Loosen(config = None)) tmpDir false
         test <@ result = Ok 0 @>)
 
 // --- CiResult type ---
@@ -1094,7 +1094,7 @@ let ``run - check-json includes multiple files in output`` () =
         let outputPath = Path.Combine(tmpDir, "results.json")
 
         let result =
-            run (CheckJson(config = Some configPath, output = Some outputPath)) tmpDir
+            run (CheckJson(config = Some configPath, output = Some outputPath)) tmpDir false
 
         test <@ result = Ok 1 @>
 
@@ -1303,37 +1303,57 @@ let ``vcsCommitAndPush - jj fails falls back to git workflow`` () =
     test <@ calls |> List.exists (fun (c, _) -> c = "git") @>
     test <@ calls |> List.exists (fun (_, a) -> a.Contains "commit") @>
 
-// --- extractSearchDir tests ---
+// --- extractFlags tests ---
 
 [<Fact>]
-let ``extractSearchDir - defaults to dot when not provided`` () =
-    let dir, remaining = extractSearchDir [| "check" |]
+let ``extractFlags - defaults to dot when not provided`` () =
+    let dir, mergeBaselines, remaining = extractFlags [| "check" |]
     test <@ dir = "." @>
+    test <@ mergeBaselines = false @>
     test <@ remaining = [| "check" |] @>
 
 [<Fact>]
-let ``extractSearchDir - extracts flag before command`` () =
-    let dir, remaining = extractSearchDir [| "--search-dir"; "coverage"; "check" |]
+let ``extractFlags - extracts search-dir before command`` () =
+    let dir, mergeBaselines, remaining = extractFlags [| "--search-dir"; "coverage"; "check" |]
     test <@ dir = "coverage" @>
+    test <@ mergeBaselines = false @>
     test <@ remaining = [| "check" |] @>
 
 [<Fact>]
-let ``extractSearchDir - extracts flag after command`` () =
-    let dir, remaining = extractSearchDir [| "check"; "--search-dir"; "coverage" |]
+let ``extractFlags - extracts search-dir after command`` () =
+    let dir, mergeBaselines, remaining = extractFlags [| "check"; "--search-dir"; "coverage" |]
     test <@ dir = "coverage" @>
+    test <@ mergeBaselines = false @>
     test <@ remaining = [| "check" |] @>
 
 [<Fact>]
-let ``extractSearchDir - ignores flag without value`` () =
-    let dir, remaining = extractSearchDir [| "check"; "--search-dir" |]
+let ``extractFlags - ignores search-dir without value`` () =
+    let dir, mergeBaselines, remaining = extractFlags [| "check"; "--search-dir" |]
     test <@ dir = "." @>
+    test <@ mergeBaselines = false @>
     test <@ remaining = [| "check"; "--search-dir" |] @>
 
 [<Fact>]
-let ``extractSearchDir - empty argv`` () =
-    let dir, remaining = extractSearchDir Array.empty
+let ``extractFlags - empty argv`` () =
+    let dir, mergeBaselines, remaining = extractFlags Array.empty
     test <@ dir = "." @>
+    test <@ mergeBaselines = false @>
     test <@ remaining = Array.empty @>
+
+[<Fact>]
+let ``extractFlags - extracts merge-baselines flag`` () =
+    let dir, mergeBaselines, remaining = extractFlags [| "check"; "--merge-baselines" |]
+    test <@ dir = "." @>
+    test <@ mergeBaselines = true @>
+    test <@ remaining = [| "check" |] @>
+
+[<Fact>]
+let ``extractFlags - search-dir and merge-baselines combined`` () =
+    let dir, mergeBaselines, remaining =
+        extractFlags [| "--search-dir"; "coverage"; "check"; "--merge-baselines" |]
+    test <@ dir = "coverage" @>
+    test <@ mergeBaselines = true @>
+    test <@ remaining = [| "check" |] @>
 
 // --- runLoosenFromCi tests ---
 
@@ -1427,3 +1447,162 @@ let ``runLoosenFromCi - CI coverage failure with empty artifact returns 1`` () =
     test <@ result = 1 @>
     // runLoosenFromCi deletes artifactDir in its finally block
     test <@ not (System.IO.Directory.Exists artifactDir) @>
+
+// --- auto-refresh gate tests ---
+//
+// These exercise the FSHW_RAN_FULL_SUITE env-var gate in `run`. The env var must
+// be reset in try/finally so tests don't leak state to siblings.
+
+/// Cobertura XML where every line is hit (100% coverage, passes default thresholds).
+let private passingCobertura =
+    """<?xml version="1.0" encoding="utf-8"?>
+<coverage line-rate="1.0" branch-rate="1.0" lines-covered="2" lines-valid="2" branches-covered="0" branches-valid="0" version="1" timestamp="0">
+  <packages>
+    <package name="p" line-rate="1.0" branch-rate="1.0">
+      <classes>
+        <class name="Foo" filename="/src/Foo.fs" line-rate="1.0" branch-rate="1.0">
+          <methods />
+          <lines>
+            <line number="1" hits="1" branch="false" />
+            <line number="2" hits="1" branch="false" />
+          </lines>
+        </class>
+      </classes>
+    </package>
+  </packages>
+</coverage>"""
+
+/// Cobertura XML with one hit, one miss (50% coverage, fails default 100% threshold).
+let private failingCobertura =
+    """<?xml version="1.0" encoding="utf-8"?>
+<coverage line-rate="0.5" branch-rate="1.0" lines-covered="1" lines-valid="2" branches-covered="0" branches-valid="0" version="1" timestamp="0">
+  <packages>
+    <package name="p" line-rate="0.5" branch-rate="1.0">
+      <classes>
+        <class name="Foo" filename="/src/Foo.fs" line-rate="0.5" branch-rate="1.0">
+          <methods />
+          <lines>
+            <line number="1" hits="1" branch="false" />
+            <line number="2" hits="0" branch="false" />
+          </lines>
+        </class>
+      </classes>
+    </package>
+  </packages>
+</coverage>"""
+
+/// Baseline with identical line numbers as cobertura but hits=0, so merging it into
+/// the passing cobertura (all hits=1) yields the same passing result. Byte contents
+/// differ from any cobertura above, so we can still detect whether refreshBaselines
+/// overwrote the baseline.
+let private staleBaseline =
+    """<?xml version="1.0" encoding="utf-8"?>
+<coverage line-rate="0" branch-rate="0" lines-covered="0" lines-valid="2" branches-covered="0" branches-valid="0" version="1" timestamp="0">
+  <packages>
+    <package name="p" line-rate="0" branch-rate="0">
+      <classes>
+        <class name="Foo" filename="/src/Foo.fs" line-rate="0" branch-rate="0">
+          <methods />
+          <lines>
+            <line number="1" hits="0" branch="false" />
+            <line number="2" hits="0" branch="false" />
+          </lines>
+        </class>
+      </classes>
+    </package>
+  </packages>
+</coverage>"""
+
+let private withFshwEnv (value: string option) (action: unit -> 'a) : 'a =
+    let prior = Environment.GetEnvironmentVariable("FSHW_RAN_FULL_SUITE")
+
+    match value with
+    | Some v -> Environment.SetEnvironmentVariable("FSHW_RAN_FULL_SUITE", v)
+    | None -> Environment.SetEnvironmentVariable("FSHW_RAN_FULL_SUITE", null)
+
+    try
+        action ()
+    finally
+        Environment.SetEnvironmentVariable("FSHW_RAN_FULL_SUITE", prior)
+
+/// Seed a per-project coverage.cobertura.xml + coverage.baseline.xml under searchDir.
+let private seedProject (searchDir: string) (projName: string) (cobertura: string) (baseline: string) =
+    let projDir = Path.Combine(searchDir, projName)
+    Directory.CreateDirectory(projDir) |> ignore
+    File.WriteAllText(Path.Combine(projDir, "coverage.cobertura.xml"), cobertura)
+    File.WriteAllText(Path.Combine(projDir, "coverage.baseline.xml"), baseline)
+    projDir
+
+[<Fact>]
+let ``auto-refresh - env=true + pass + merge=true refreshes baseline`` () =
+    withTempDir (fun tmpDir ->
+        let projDir = seedProject tmpDir "Proj1" passingCobertura staleBaseline
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        let result =
+            withFshwEnv (Some "true") (fun () -> run (Check(config = Some configPath)) tmpDir true)
+
+        test <@ result = Ok 0 @>
+
+        // After refresh, baseline.xml is byte-identical to the (post-merge) cobertura.xml.
+        let coverageBytes = File.ReadAllBytes(Path.Combine(projDir, "coverage.cobertura.xml"))
+        let baselineBytes = File.ReadAllBytes(Path.Combine(projDir, "coverage.baseline.xml"))
+        test <@ coverageBytes = baselineBytes @>)
+
+[<Fact>]
+let ``auto-refresh - env=true + FAIL + merge=true does NOT refresh`` () =
+    withTempDir (fun tmpDir ->
+        let projDir = seedProject tmpDir "Proj1" failingCobertura staleBaseline
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        let baselinePath = Path.Combine(projDir, "coverage.baseline.xml")
+        let baselineBefore = File.ReadAllBytes(baselinePath)
+
+        let result =
+            withFshwEnv (Some "true") (fun () -> run (Check(config = Some configPath)) tmpDir true)
+
+        // Failing check -> Ok 1 (rc != 0), so auto-refresh must NOT run.
+        test <@ result = Ok 1 @>
+
+        // Baseline on disk is unchanged (mergeIntoBaselines writes to cobertura, not baseline).
+        let baselineAfter = File.ReadAllBytes(baselinePath)
+        test <@ baselineBefore = baselineAfter @>)
+
+[<Fact>]
+let ``auto-refresh - no env var + pass + merge=true does NOT refresh`` () =
+    withTempDir (fun tmpDir ->
+        let projDir = seedProject tmpDir "Proj1" passingCobertura staleBaseline
+        let configPath = Path.Combine(tmpDir, "config.json")
+        let baselinePath = Path.Combine(projDir, "coverage.baseline.xml")
+        let baselineBefore = File.ReadAllBytes(baselinePath)
+
+        let result =
+            withFshwEnv None (fun () -> run (Check(config = Some configPath)) tmpDir true)
+
+        test <@ result = Ok 0 @>
+
+        // mergeIntoBaselines ran and may have rewritten cobertura, but refreshBaselines
+        // should NOT fire without the env var, so baseline is untouched.
+        let baselineAfter = File.ReadAllBytes(baselinePath)
+        test <@ baselineBefore = baselineAfter @>)
+
+[<Fact>]
+let ``auto-refresh - env=true + pass + merge=false does NOT refresh (env ignored)`` () =
+    withTempDir (fun tmpDir ->
+        let projDir = seedProject tmpDir "Proj1" passingCobertura staleBaseline
+        let configPath = Path.Combine(tmpDir, "config.json")
+        let baselinePath = Path.Combine(projDir, "coverage.baseline.xml")
+        let coveragePath = Path.Combine(projDir, "coverage.cobertura.xml")
+        let baselineBefore = File.ReadAllBytes(baselinePath)
+        let coverageBefore = File.ReadAllBytes(coveragePath)
+
+        let result =
+            withFshwEnv (Some "true") (fun () -> run (Check(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 0 @>
+
+        // With mergeBaselines=false, neither the merge step nor auto-refresh should run.
+        let baselineAfter = File.ReadAllBytes(baselinePath)
+        let coverageAfter = File.ReadAllBytes(coveragePath)
+        test <@ baselineBefore = baselineAfter @>
+        test <@ coverageBefore = coverageAfter @>)
