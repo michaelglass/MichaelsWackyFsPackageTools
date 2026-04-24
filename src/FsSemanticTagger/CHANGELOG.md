@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.12.0-alpha.5 - 2026-04-24
+
 - feat: `--dry-run` flag on `release`/`alpha`/`beta`/`rc`/`stable` previews version bumps without modifying files, creating tags, or running the clean-working-copy and CI checks. Missing or empty `## Unreleased` sections report as warnings instead of aborting.
 - **Breaking:** CLI flags are now named (`--publish`, `--dry-run`) rather than positional booleans. Callers passing `release true` must switch to `release --publish`.
 - fix: print error message when `coverageratchet loosen-from-ci` fails instead of silently exiting with code 1
