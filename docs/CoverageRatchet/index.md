@@ -117,6 +117,45 @@ suffix of the local `coverage-ratchet-<project>.json` config; files named
 into the default `coverage-ratchet.json` config. The reusable build workflow
 `michaels-wacky-build.yml` produces this artifact automatically.
 
+### Partial-run survival with baselines
+
+If your test runner only runs a *subset* of tests (e.g. a test-impact analyzer like fs-hot-watch's TestPrune runs only tests affected by your changes), the coverage XML from that partial run will reflect only the lines touched by that subset. Lines covered by tests that *didn't* re-run show zero hits. Coverage appears to drop; `check` fails even though nothing regressed.
+
+CoverageRatchet can guard against this by merging each run onto a per-project **baseline** — a snapshot of the last full run. Merging takes the max hits per line across baseline and current, so partial runs can only raise coverage, never lower it.
+
+**Layout** — per test project:
+
+```
+coverage/<project>/
+  coverage.baseline.xml   # last full run; source of truth
+  coverage.cobertura.xml  # what check reads; merged after every run
+```
+
+**Flow:**
+
+```bash
+# Before each check, layer baseline onto current run. Bootstraps baseline
+# on the first run automatically if it doesn't exist yet.
+coverageratchet --search-dir coverage check --merge-baselines
+
+# After a deliberate *full* test run (no impact filter), advance baseline:
+coverageratchet --search-dir coverage refresh-baseline
+```
+
+If `FSHW_RAN_FULL_SUITE=true` is set when `check --merge-baselines` runs AND the check passes, the baseline is refreshed automatically — useful when a test runner can tell you whether it just ran the full suite.
+
+**One-shot merge** — for ad-hoc merges outside the standard layout:
+
+```bash
+coverageratchet merge <baseline.xml> <partial.xml> <output.xml>
+```
+
+**Gotchas:**
+
+- **Deleted tests leave stale hits in the baseline until it's refreshed.** If you delete a test that was the only one covering some lines, those lines keep their old hit counts until `refresh-baseline` runs. Budget a periodic full run (daily CI, for example) to catch this.
+- **New source files added in a partial-only run** are measured only by whichever tests ran — that's all the merger knows about. Ratchet thresholds for new files will reflect partial coverage until the next full run refreshes the baseline.
+- Baselines are a safety net against false drops, not a substitute for periodic full runs.
+
 ### Custom search directory
 
 By default, CoverageRatchet recursively searches `.` for coverage files. Use `--search-dir` to search a different directory:
