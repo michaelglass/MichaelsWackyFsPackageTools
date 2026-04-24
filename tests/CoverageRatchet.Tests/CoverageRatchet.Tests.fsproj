@@ -22,6 +22,7 @@
     <Compile Include="CoberturaTests.fs" />
     <Compile Include="ThresholdsTests.fs" />
     <Compile Include="RatchetTests.fs" />
+    <Compile Include="MergeTests.fs" />
     <Compile Include="ProgramTests.fs" />
   </ItemGroup>
   <ItemGroup>

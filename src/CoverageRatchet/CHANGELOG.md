@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.1 - 2026-04-24
+
+- feat: add `merge` command — take two Cobertura XMLs, produce one with max hits per line (union classes/methods/conditions, rates recomputed)
+- feat: add `check --merge-baselines` flag — before checking, layer each `coverage.cobertura.xml` onto a sibling `coverage.baseline.xml`. Partial (impact-filtered) test runs can raise coverage but never lower it. Bootstraps a missing baseline from the current run.
+- feat: add `refresh-baseline` command — advance each project's baseline to match the current coverage. Use after a deliberate full test run.
+- feat: `check --merge-baselines` auto-refreshes baselines when the `FSHW_RAN_FULL_SUITE=true` env var is set AND the check passes, so fs-hot-watch-driven full runs don't need a separate refresh step.
+- internal: `mergeIntoBaselines` wraps per-project errors with the project directory, so corrupt-baseline failures identify which project needs attention
+
 ## 0.13.0-alpha.2 - 2026-04-22
 
 - test: raise Program.fs coverage via DI seams; add default test timeouts

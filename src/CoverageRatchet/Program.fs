@@ -8,6 +8,7 @@ open CoverageRatchet.Cobertura
 open CoverageRatchet.Thresholds
 open CoverageRatchet.Ratchet
 open CoverageRatchet.Shell
+open CoverageRatchet.Merge
 
 let defaultConfigPath = "coverage-ratchet.json"
 
@@ -22,6 +23,11 @@ type Command =
     | [<Cmd("Show uncovered branch points per file")>] Gaps of config: string option
     | [<Cmd("Fetch CI coverage results and update local platform-specific thresholds")>] LoosenFromCi of
         config: string option
+    | [<Cmd("Merge two Cobertura files by taking max hits per line")>] Merge of
+        baseline: string *
+        partial: string *
+        output: string
+    | [<Cmd("Copy each coverage.cobertura.xml to coverage.baseline.xml in the search dir")>] RefreshBaseline
 
 let formatFileResult (r: FileResult) =
     let branchStr =
@@ -459,59 +465,91 @@ let private runWithCoverageFiles
     | CfTargets -> runTargets configPath files
     | CfGaps -> runGaps (xmlPaths |> List.map File.ReadAllText)
 
-let run (command: Command) (searchDir: string) : Result<int, string> =
-    let configPath =
-        match command with
-        | Ratchet(config = c)
-        | Check(config = c)
-        | Loosen(config = c)
-        | CheckJson(config = c)
-        | Targets(config = c)
-        | Gaps(config = c)
-        | LoosenFromCi(config = c) -> c |> Option.defaultValue defaultConfigPath
+let run (command: Command) (searchDir: string) (mergeBaselines: bool) : Result<int, string> =
+    match command with
+    | Merge(baseline, partialFile, output) ->
+        Merge.mergeFiles baseline partialFile output
+        printfn "merged %s + %s -> %s" baseline partialFile output
+        Ok 0
+    | RefreshBaseline ->
+        Merge.refreshBaselines searchDir
+        Ok 0
+    | _ ->
+        let configPath =
+            match command with
+            | Ratchet(config = c)
+            | Check(config = c)
+            | Loosen(config = c)
+            | CheckJson(config = c)
+            | Targets(config = c)
+            | Gaps(config = c)
+            | LoosenFromCi(config = c) -> c |> Option.defaultValue defaultConfigPath
+            | Merge _
+            | RefreshBaseline -> defaultConfigPath
 
-    let coverageFileCmd =
-        match command with
-        | Ratchet _ -> Some CfRatchet
-        | Check _ -> Some CfCheck
-        | Loosen _ -> Some CfLoosen
-        | CheckJson(output = outputOpt) -> Some(CfCheckJson outputOpt)
-        | Targets _ -> Some CfTargets
-        | Gaps _ -> Some CfGaps
-        | LoosenFromCi _ -> None
+        let coverageFileCmd =
+            match command with
+            | Ratchet _ -> Some CfRatchet
+            | Check _ -> Some CfCheck
+            | Loosen _ -> Some CfLoosen
+            | CheckJson(output = outputOpt) -> Some(CfCheckJson outputOpt)
+            | Targets _ -> Some CfTargets
+            | Gaps _ -> Some CfGaps
+            | LoosenFromCi _ -> None
+            | Merge _
+            | RefreshBaseline -> None
 
-    match coverageFileCmd with
-    | None -> Ok(runLoosenFromCi Shell.run configPath)
-    | Some cmd ->
-        let xmlPaths = findCoverageFiles searchDir
+        match coverageFileCmd with
+        | None -> Ok(runLoosenFromCi Shell.run configPath)
+        | Some cmd ->
+            // Layer each coverage.cobertura.xml onto a per-project baseline
+            // before reading, so impact-filtered partial runs can't lower the
+            // ratchet. Skipped unless --merge-baselines is set.
+            if mergeBaselines then
+                Merge.mergeIntoBaselines searchDir
 
-        if List.isEmpty xmlPaths then
-            Error "No coverage.cobertura.xml found"
-        else
-            let files = parseFiles xmlPaths
-            Ok(runWithCoverageFiles cmd configPath xmlPaths files)
+            let xmlPaths = findCoverageFiles searchDir
 
-let extractSearchDir (argv: string array) : string * string array =
-    let rec loop i searchDir remaining =
+            if List.isEmpty xmlPaths then
+                Error "No coverage.cobertura.xml found"
+            else
+                let files = parseFiles xmlPaths
+                let result = runWithCoverageFiles cmd configPath xmlPaths files
+
+                // If the run just completed a known-full test suite (signalled
+                // by fs-hot-watch via FSHW_RAN_FULL_SUITE=true), advance the
+                // baseline to the current coverage so stale hits from deleted
+                // tests drop out.
+                if mergeBaselines
+                   && result = 0
+                   && System.Environment.GetEnvironmentVariable("FSHW_RAN_FULL_SUITE") = "true" then
+                    Merge.refreshBaselines searchDir
+
+                Ok result
+
+let extractFlags (argv: string array) : string * bool * string array =
+    let rec loop i searchDir mergeBaselines remaining =
         if i >= argv.Length then
-            searchDir, Array.ofList (List.rev remaining)
+            searchDir, mergeBaselines, Array.ofList (List.rev remaining)
         elif argv.[i] = "--search-dir" && i + 1 < argv.Length then
-            loop (i + 2) argv.[i + 1] remaining
+            loop (i + 2) argv.[i + 1] mergeBaselines remaining
+        elif argv.[i] = "--merge-baselines" then
+            loop (i + 1) searchDir true remaining
         else
-            loop (i + 1) searchDir (argv.[i] :: remaining)
+            loop (i + 1) searchDir mergeBaselines (argv.[i] :: remaining)
 
-    loop 0 "." []
+    loop 0 "." false []
 
 [<EntryPoint>]
 let main argv =
-    let searchDir, argv = extractSearchDir argv
+    let searchDir, mergeBaselines, argv = extractFlags argv
 
     let tree =
         CommandReflection.fromUnion<Command> "Per-file coverage enforcement that only goes up"
 
     // Bare invocation runs the default (ratchet) command
     if Array.isEmpty argv then
-        match run (Ratchet None) searchDir with
+        match run (Ratchet None) searchDir mergeBaselines with
         | Ok exitCode -> exitCode
         | Error msg ->
             eprintfn "Error: %s" msg
@@ -522,7 +560,7 @@ let main argv =
     else
         match CommandTree.parse tree argv with
         | Ok cmd ->
-            match run cmd searchDir with
+            match run cmd searchDir mergeBaselines with
             | Ok exitCode -> exitCode
             | Error msg ->
                 eprintfn "Error: %s" msg
