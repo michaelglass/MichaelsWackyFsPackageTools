@@ -60,15 +60,15 @@ Exit codes:
 
 ```bash
 # Auto-detect changes and bump version accordingly
-fssemantictagger release auto
+fssemantictagger release
 
 # Start a pre-release cycle
-fssemantictagger release alpha
-fssemantictagger release beta
-fssemantictagger release rc
+fssemantictagger alpha
+fssemantictagger beta
+fssemantictagger rc
 
 # Promote to stable
-fssemantictagger release stable
+fssemantictagger stable
 ```
 
 The `release` command:
@@ -96,10 +96,19 @@ A fresh empty `## Unreleased` heading is inserted above it so the file is ready 
 
 **Fail-fast:** if any package needing a bump is missing `CHANGELOG.md`, is missing the `## Unreleased` section, or the section is empty, the release aborts with exit code 1 before any files are modified.
 
-Add `--publish` to build and pack locally instead of pushing tags for CI:
+### Flags
+
+All release commands (`release`, `alpha`, `beta`, `rc`, `stable`) accept:
+
+- `--dry-run` — preview version bumps without modifying files or creating tags. Skips the clean-working-copy and CI checks; still builds and compares APIs so the preview is accurate. Missing or empty `## Unreleased` sections are reported as warnings instead of aborting.
+- `--publish` — build and pack locally (`dotnet pack -c Release -o artifacts/`) instead of pushing tags for CI to publish.
 
 ```bash
-fssemantictagger release auto --publish
+# Preview what would be released
+fssemantictagger release --dry-run
+
+# Local build-and-pack instead of CI release
+fssemantictagger release --publish
 ```
 
 ## Configuration

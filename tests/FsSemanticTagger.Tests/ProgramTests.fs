@@ -339,12 +339,20 @@ let ``main - check-api different dlls returns 2 for Breaking`` () =
     test <@ result = 2 @>
 
 [<Fact>]
-let ``publishMode - publish=true returns LocalPublish`` () =
-    test <@ publishMode { publish = true } = Release.LocalPublish @>
+let ``releaseMode - Publish returns LocalPublish`` () =
+    test <@ releaseMode [ Publish ] = Release.LocalPublish @>
 
 [<Fact>]
-let ``publishMode - publish=false returns GitHubActions`` () =
-    test <@ publishMode { publish = false } = Release.GitHubActions @>
+let ``releaseMode - empty returns PushTags`` () =
+    test <@ releaseMode [] = Release.PushTags @>
+
+[<Fact>]
+let ``releaseMode - DryRun returns DryRun`` () =
+    test <@ releaseMode [ DryRun ] = Release.DryRun @>
+
+[<Fact>]
+let ``releaseMode - DryRun takes precedence over Publish`` () =
+    test <@ releaseMode [ Publish; DryRun ] = Release.DryRun @>
 
 [<Fact>]
 let ``runReleaseWith - returns Error when config missing`` () =
@@ -354,7 +362,7 @@ let ``runReleaseWith - returns Error when config missing`` () =
         let fakeExtractCur _ = []
 
         let result =
-            runReleaseWith tmpDir fakeRun fakeExtractPrev fakeExtractCur Release.Auto { publish = false }
+            runReleaseWith tmpDir fakeRun fakeExtractPrev fakeExtractCur Release.Auto []
 
         test
             <@
@@ -371,9 +379,9 @@ let ``runCommandWith - Release dispatches with Auto`` () =
         captured <- Some(cmd, opts)
         Ok 42
 
-    let result = runCommandWith fake (Release { publish = false })
+    let result = runCommandWith fake (Release [])
     test <@ result = Ok 42 @>
-    test <@ captured = Some(Release.Auto, { publish = false }) @>
+    test <@ captured = Some(Release.Auto, []) @>
 
 [<Fact>]
 let ``runCommandWith - Alpha dispatches with StartAlpha`` () =
@@ -383,8 +391,8 @@ let ``runCommandWith - Alpha dispatches with StartAlpha`` () =
         captured <- Some(cmd, opts)
         Ok 0
 
-    runCommandWith fake (Alpha { publish = true }) |> ignore
-    test <@ captured = Some(Release.StartAlpha, { publish = true }) @>
+    runCommandWith fake (Alpha [ Publish ]) |> ignore
+    test <@ captured = Some(Release.StartAlpha, [ Publish ]) @>
 
 [<Fact>]
 let ``runCommandWith - Beta dispatches with PromoteToBeta`` () =
@@ -394,8 +402,8 @@ let ``runCommandWith - Beta dispatches with PromoteToBeta`` () =
         captured <- Some(cmd, opts)
         Ok 0
 
-    runCommandWith fake (Beta { publish = false }) |> ignore
-    test <@ captured = Some(Release.PromoteToBeta, { publish = false }) @>
+    runCommandWith fake (Beta []) |> ignore
+    test <@ captured = Some(Release.PromoteToBeta, []) @>
 
 [<Fact>]
 let ``runCommandWith - Rc dispatches with PromoteToRC`` () =
@@ -405,8 +413,8 @@ let ``runCommandWith - Rc dispatches with PromoteToRC`` () =
         captured <- Some(cmd, opts)
         Ok 0
 
-    runCommandWith fake (Rc { publish = false }) |> ignore
-    test <@ captured = Some(Release.PromoteToRC, { publish = false }) @>
+    runCommandWith fake (Rc []) |> ignore
+    test <@ captured = Some(Release.PromoteToRC, []) @>
 
 [<Fact>]
 let ``runCommandWith - Stable dispatches with PromoteToStable`` () =
@@ -416,8 +424,8 @@ let ``runCommandWith - Stable dispatches with PromoteToStable`` () =
         captured <- Some(cmd, opts)
         Ok 0
 
-    runCommandWith fake (Stable { publish = true }) |> ignore
-    test <@ captured = Some(Release.PromoteToStable, { publish = true }) @>
+    runCommandWith fake (Stable [ Publish ]) |> ignore
+    test <@ captured = Some(Release.PromoteToStable, [ Publish ]) @>
 
 [<Fact>]
 let ``runReleaseWith - returns Ok 0 for empty-package config when CI passes`` () =
@@ -441,7 +449,7 @@ let ``runReleaseWith - returns Ok 0 for empty-package config when CI passes`` ()
         let extractCur _ = []
 
         let result =
-            runReleaseWith tmpDir fakeRun extractPrev extractCur Release.Auto { publish = false }
+            runReleaseWith tmpDir fakeRun extractPrev extractCur Release.Auto []
 
         test <@ result = Ok 0 @>)
 
@@ -464,6 +472,6 @@ let ``runReleaseWith - returns Ok when config loads (release aborts on uncommitt
         let fakeExtractCur _ = []
 
         let result =
-            runReleaseWith tmpDir fakeRun fakeExtractPrev fakeExtractCur Release.Auto { publish = true }
+            runReleaseWith tmpDir fakeRun fakeExtractPrev fakeExtractCur Release.Auto [ Publish ]
 
         test <@ result = Ok 1 @>)

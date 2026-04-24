@@ -3,17 +3,19 @@ module FsSemanticTagger.Program
 open System.IO
 open CommandTree
 
-type ReleaseOptions = { publish: bool }
+type ReleaseFlag =
+    | [<Cmd("Build and pack locally instead of pushing tags for CI")>] Publish
+    | [<Cmd("Preview version bumps without modifying files or creating tags")>] DryRun
 
 type Command =
     | [<Cmd("Initialize semantic-tagger.json config")>] Init
     | [<Cmd("Extract public API signatures from a DLL")>] ExtractApi of dll: string
     | [<Cmd("Compare APIs between two DLLs")>] CheckApi of oldDll: string * newDll: string
-    | [<Cmd("Auto release based on API changes")>] Release of ReleaseOptions
-    | [<Cmd("Start alpha pre-release cycle")>] Alpha of ReleaseOptions
-    | [<Cmd("Promote to beta")>] Beta of ReleaseOptions
-    | [<Cmd("Promote to release candidate")>] Rc of ReleaseOptions
-    | [<Cmd("Promote to stable release")>] Stable of ReleaseOptions
+    | [<Cmd("Auto release based on API changes")>] Release of ReleaseFlag list
+    | [<Cmd("Start alpha pre-release cycle")>] Alpha of ReleaseFlag list
+    | [<Cmd("Promote to beta")>] Beta of ReleaseFlag list
+    | [<Cmd("Promote to release candidate")>] Rc of ReleaseFlag list
+    | [<Cmd("Promote to stable release")>] Stable of ReleaseFlag list
 
 let initCommand (rootDir: string) : Result<int, string> =
     let jsonPath = Path.Combine(rootDir, "semantic-tagger.json")
@@ -58,11 +60,10 @@ let initCommand (rootDir: string) : Result<int, string> =
 
             Ok 0
 
-let internal publishMode (opts: ReleaseOptions) : Release.PublishMode =
-    if opts.publish then
-        Release.LocalPublish
-    else
-        Release.GitHubActions
+let internal releaseMode (flags: ReleaseFlag list) : Release.ReleaseMode =
+    if flags |> List.contains DryRun then Release.DryRun
+    elif flags |> List.contains Publish then Release.LocalPublish
+    else Release.PushTags
 
 let internal runReleaseWith
     (cwd: string)
@@ -70,24 +71,34 @@ let internal runReleaseWith
     (extractPreviousApi: string -> string -> Api.ApiSignature list option)
     (extractCurrentApi: string -> Api.ApiSignature list)
     (releaseCmd: Release.ReleaseCommand)
-    (opts: ReleaseOptions)
+    (flags: ReleaseFlag list)
     : Result<int, string> =
     match Config.load cwd with
     | Error msg -> Error msg
     | Ok config ->
-        Ok(Release.release run config releaseCmd (publishMode opts) extractPreviousApi extractCurrentApi 15000 60)
+        Ok(
+            Release.release
+                { Run = run
+                  Config = config
+                  Command = releaseCmd
+                  Mode = releaseMode flags
+                  ExtractPreviousApi = extractPreviousApi
+                  ExtractCurrentApi = extractCurrentApi
+                  CiPollIntervalMs = 15000
+                  CiMaxAttempts = 60 }
+        )
 
-let private runRelease (releaseCmd: Release.ReleaseCommand) (opts: ReleaseOptions) : Result<int, string> =
+let private runRelease (releaseCmd: Release.ReleaseCommand) (flags: ReleaseFlag list) : Result<int, string> =
     runReleaseWith
         (Directory.GetCurrentDirectory())
         Shell.run
         Api.extractFromNuGetCache
         Api.extractFromAssembly
         releaseCmd
-        opts
+        flags
 
 let internal runCommandWith
-    (releaseHandler: Release.ReleaseCommand -> ReleaseOptions -> Result<int, string>)
+    (releaseHandler: Release.ReleaseCommand -> ReleaseFlag list -> Result<int, string>)
     (cmd: Command)
     : Result<int, string> =
     match cmd with

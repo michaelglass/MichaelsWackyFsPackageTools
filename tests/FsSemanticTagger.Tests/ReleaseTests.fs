@@ -25,15 +25,16 @@ let private runRelease run config cmd mode prev cur poll max =
     seedTmpChangelog ()
 
     release
-        run
-        { config with
-            RootDir = Path.GetTempPath() }
-        cmd
-        mode
-        prev
-        cur
-        poll
-        max
+        { Run = run
+          Config =
+            { config with
+                RootDir = Path.GetTempPath() }
+          Command = cmd
+          Mode = mode
+          ExtractPreviousApi = prev
+          ExtractCurrentApi = cur
+          CiPollIntervalMs = poll
+          CiMaxAttempts = max }
 
 [<Fact>]
 let ``updateFsprojVersion - updates Version element in fsproj`` () =
@@ -142,7 +143,7 @@ let ``release - returns 1 when uncommitted changes`` () =
           RootDir = "" }
 
     let result =
-        runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+        runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
     test <@ result = 1 @>
 
@@ -163,7 +164,7 @@ let ``release - returns 1 when CI not passing`` () =
           RootDir = "" }
 
     let result =
-        runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+        runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
     test <@ result = 1 @>
 
@@ -191,7 +192,7 @@ let ``release - Auto with no previous tags returns 0 with no packages`` () =
           RootDir = "" }
 
     let result =
-        runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+        runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
     test <@ result = 0 @>
 
@@ -240,7 +241,7 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+            runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
 
@@ -359,7 +360,7 @@ let ``release - Auto with reserved version bumps past it`` () =
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+            runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
@@ -383,7 +384,7 @@ let ``release - non-Auto with reserved version skips package`` () =
           RootDir = "" }
 
     let result =
-        runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+        runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
     test <@ result = 0 @>
 
@@ -403,7 +404,7 @@ let ``release - PromoteToBeta with FirstRelease returns 0 no packages`` () =
           RootDir = "" }
 
     let result =
-        runRelease fakeRun config PromoteToBeta GitHubActions noPreviousApi noCurrentApi 0 10
+        runRelease fakeRun config PromoteToBeta PushTags noPreviousApi noCurrentApi 0 10
 
     test <@ result = 0 @>
 
@@ -431,7 +432,7 @@ let ``release - runs preBuildCmds before build`` () =
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+            runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
         let calls = getCalls ()
         test <@ result = 0 @>
@@ -564,7 +565,7 @@ let ``release - skips packages with no changes since last tag`` () =
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+            runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
 
@@ -611,7 +612,7 @@ let ``release - Auto detects breaking API change and bumps major`` () =
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi) 0 10
+            runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
 
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
@@ -656,7 +657,7 @@ let ``release - Auto detects addition and bumps minor`` () =
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi) 0 10
+            runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
 
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
@@ -698,7 +699,7 @@ let ``release - Auto falls back to NoChange when extractPreviousApi returns None
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config Auto GitHubActions extractPreviousApi (fun _ -> currentApi) 0 10
+            runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
 
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
@@ -753,7 +754,7 @@ let ``release - does not push tags when post-push CI fails`` () =
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+            runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 1 @>
 
@@ -806,7 +807,7 @@ let ``release - does not push tags when post-push CI times out`` () =
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 3
+            runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 3
 
         test <@ result = 1 @>
         test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
@@ -858,7 +859,7 @@ let ``release - does not push tags when post-push CI has no runs`` () =
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+            runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 1 @>
 
@@ -889,7 +890,7 @@ let ``release - uses coverageratchet loosen-from-ci when available`` () =
           RootDir = "" }
 
     let result =
-        runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+        runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
     test <@ result = 0 @>
 
@@ -922,7 +923,7 @@ let ``release - returns 1 when coverageratchet loosen-from-ci fails`` () =
           RootDir = "" }
 
     let result =
-        runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+        runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
     test <@ result = 1 @>
 
@@ -943,7 +944,7 @@ let ``release - prints coverageratchet error message when loosen-from-ci fails``
           RootDir = "" }
 
     let output, result =
-        withCapturedConsole (fun () -> runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10)
+        withCapturedConsole (fun () -> runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10)
 
     test <@ result = 1 @>
     test <@ output.Contains("CI failed for non-coverage reasons.") @>
@@ -965,7 +966,7 @@ let ``release - returns 1 when CI has no runs`` () =
           RootDir = "" }
 
     let result =
-        runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+        runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
     test <@ result = 1 @>
 
@@ -985,7 +986,7 @@ let ``release - returns 1 when CI status is Unknown`` () =
           RootDir = "" }
 
     let result =
-        runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 10
+        runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
     test <@ result = 1 @>
 
@@ -1006,7 +1007,7 @@ let ``release - returns 1 when CI times out still in progress`` () =
           RootDir = "" }
 
     let result =
-        runRelease fakeRun config Auto GitHubActions noPreviousApi noCurrentApi 0 2
+        runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 2
 
     test <@ result = 1 @>
 
@@ -1038,7 +1039,7 @@ let ``release - PromoteToRC with HasPreviousRelease succeeds`` () =
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config PromoteToRC GitHubActions noPreviousApi noCurrentApi 0 10
+            runRelease fakeRun config PromoteToRC PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
@@ -1074,7 +1075,7 @@ let ``release - PromoteToStable with HasPreviousRelease succeeds`` () =
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config PromoteToStable GitHubActions noPreviousApi noCurrentApi 0 10
+            runRelease fakeRun config PromoteToStable PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
@@ -1110,7 +1111,7 @@ let ``release - PromoteToBeta with HasPreviousRelease succeeds`` () =
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config PromoteToBeta GitHubActions noPreviousApi noCurrentApi 0 10
+            runRelease fakeRun config PromoteToBeta PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
@@ -1182,7 +1183,7 @@ let ``release - updates fsProjsSharingSameTag versions too`` () =
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+            runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
         let mainContent = File.ReadAllText(tmpFileMain)
@@ -1238,7 +1239,7 @@ let ``release - resumes when fsproj already has target version (idempotent)`` ()
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+            runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
 
@@ -1299,7 +1300,7 @@ let ``release - fails fast when resuming and CI has failed`` () =
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+            runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 1 @>
     finally
@@ -1357,7 +1358,7 @@ let ``release - resumes and polls when CI is in progress`` () =
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+            runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
         // Polled multiple times (1 pre-release + 2 in-progress + 1 success = 4)
@@ -1400,7 +1401,7 @@ let ``release - second run after successful first run produces no changes`` () =
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+            runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
         // Version not changed
@@ -1446,7 +1447,15 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
               RootDir = Path.GetTempPath() }
 
         let result =
-            release fakeRun config StartAlpha GitHubActions noPreviousApi noCurrentApi 0 10
+            release
+                { Run = fakeRun
+                  Config = config
+                  Command = StartAlpha
+                  Mode = PushTags
+                  ExtractPreviousApi = noPreviousApi
+                  ExtractCurrentApi = noCurrentApi
+                  CiPollIntervalMs = 0
+                  CiMaxAttempts = 10 }
 
         test <@ result = 1 @>
         // fsproj untouched
@@ -1456,3 +1465,99 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
 
         if File.Exists changelogPath then
             File.Delete changelogPath
+
+[<Fact>]
+let ``release - dryRun skips uncommitted check and does not write fsproj`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        let fsprojBefore =
+            """<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>"""
+
+        File.WriteAllText(tmpFile, fsprojBefore)
+
+        let mutable calls = []
+
+        // jj status reports uncommitted changes; in a normal release this aborts.
+        // In dry-run the check should be skipped entirely. Also no CI calls, no commit/tag/push.
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let result =
+            runRelease fakeRun config StartAlpha DryRun noPreviousApi noCurrentApi 0 10
+
+        test <@ result = 0 @>
+        // fsproj untouched
+        test <@ File.ReadAllText(tmpFile) = fsprojBefore @>
+        // no commit, tag, or push calls
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("commit"))) @>
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push")) @>
+        // no CI check
+        test <@ not (calls |> List.exists (fun (_, a) -> a.Contains("run list"))) @>
+        // explicit-mode dry-run skips the Release build
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "dotnet" && a = "build -c Release")) @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
+    let tmpFile = Path.GetTempFileName()
+    let tmpDir = createTempDir ()
+
+    try
+        let fsprojPath = Path.Combine(tmpDir, "MyLib.fsproj")
+        File.WriteAllText(fsprojPath, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        // No CHANGELOG at repo root => validation would fail in real run
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            match cmd, args with
+            | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            | _ -> Failure(sprintf "unexpected: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = fsprojPath
+                    DllPath = "x.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = tmpDir }
+
+        // Bypass the seedTmpChangelog helper; call release directly with rootDir = tmpDir (no CHANGELOG.md there)
+        let output, result =
+            withCapturedConsole (fun () ->
+                release
+                    { Run = fakeRun
+                      Config = config
+                      Command = StartAlpha
+                      Mode = DryRun
+                      ExtractPreviousApi = noPreviousApi
+                      ExtractCurrentApi = noCurrentApi
+                      CiPollIntervalMs = 0
+                      CiMaxAttempts = 10 })
+
+        test <@ result = 0 @>
+        test <@ output.ToLowerInvariant().Contains("warning") || output.ToLowerInvariant().Contains("changelog") @>
+        // fsproj version not advanced
+        test <@ File.ReadAllText(fsprojPath).Contains("<Version>0.0.0</Version>") @>
+    finally
+        File.Delete(tmpFile)
+        cleanupDir tmpDir
