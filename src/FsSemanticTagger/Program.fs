@@ -61,9 +61,12 @@ let initCommand (rootDir: string) : Result<int, string> =
             Ok 0
 
 let internal releaseMode (flags: ReleaseFlag list) : Release.ReleaseMode =
-    if flags |> List.contains DryRun then Release.DryRun
-    elif flags |> List.contains Publish then Release.LocalPublish
-    else Release.PushTags
+    if flags |> List.contains DryRun then
+        Release.DryRun
+    elif flags |> List.contains Publish then
+        Release.LocalPublish
+    else
+        Release.PushTags
 
 let internal runReleaseWith
     (cwd: string)
