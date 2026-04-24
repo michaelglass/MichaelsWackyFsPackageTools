@@ -520,9 +520,11 @@ let run (command: Command) (searchDir: string) (mergeBaselines: bool) : Result<i
                 // by fs-hot-watch via FSHW_RAN_FULL_SUITE=true), advance the
                 // baseline to the current coverage so stale hits from deleted
                 // tests drop out.
-                if mergeBaselines
-                   && result = 0
-                   && System.Environment.GetEnvironmentVariable("FSHW_RAN_FULL_SUITE") = "true" then
+                if
+                    mergeBaselines
+                    && result = 0
+                    && System.Environment.GetEnvironmentVariable("FSHW_RAN_FULL_SUITE") = "true"
+                then
                     Merge.refreshBaselines searchDir
 
                 Ok result
