@@ -15,6 +15,12 @@
     ],
     "Merge.fs": [
       {
+        "line": 95,
+        "branch": 79,
+        "reason": "pure XML merging; remaining gaps are edge error-handling",
+        "platform": "macos"
+      },
+      {
         "line": 65,
         "branch": 49,
         "platform": "linux"

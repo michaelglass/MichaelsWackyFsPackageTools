@@ -685,3 +685,457 @@ let ``mergeIntoBaselines skips baseline-only project (no cobertura.xml)`` () =
 
         let baselineAfter = File.ReadAllBytes(baselinePath)
         test <@ baselineBefore = baselineAfter @>)
+
+// ---------- Branch-line merging coverage ----------
+
+/// Helper: build a cobertura doc from a list of already-built <package> XML strings.
+let private buildWithPackages (packagesXml: string) =
+    sprintf
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><coverage line-rate=\"0\" branch-rate=\"0\" lines-covered=\"0\" lines-valid=\"0\" branches-covered=\"0\" branches-valid=\"0\" version=\"1\" timestamp=\"0\"><sources><source>.</source></sources><packages>%s</packages></coverage>"
+        packagesXml
+
+[<Fact>]
+let ``branch line merges conditions and picks higher covered for condition-coverage`` () =
+    withTempDir (fun dir ->
+        let baselinePath = Path.Combine(dir, "b.xml")
+        let partialPath = Path.Combine(dir, "p.xml")
+        let outPath = Path.Combine(dir, "o.xml")
+
+        // Baseline: line 5 is a branch line with 1/4 covered, condition 0 at 25%.
+        let baselineXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><lines><line number="5" hits="3" branch="true" condition-coverage="25% (1/4)"><conditions><condition number="0" type="jump" coverage="25%" /></conditions></line></lines></class></classes></package>"""
+
+        // Partial: line 5 is a branch line with 3/4 covered, condition 0 at 75%,
+        // and introduces a NEW condition 1 at 50%.
+        let partialXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><lines><line number="5" hits="7" branch="true" condition-coverage="75% (3/4)"><conditions><condition number="0" type="jump" coverage="75%" /><condition number="1" type="jump" coverage="50%" /></conditions></line></lines></class></classes></package>"""
+
+        File.WriteAllText(baselinePath, baselineXml)
+        File.WriteAllText(partialPath, partialXml)
+
+        mergeFiles baselinePath partialPath outPath
+
+        let root = loadRoot outPath
+        let mergedLine = root.Descendants(xn "line") |> Seq.head
+        // Max hits wins.
+        test <@ mergedLine.Attribute(xn "hits").Value = "7" @>
+        test <@ mergedLine.Attribute(xn "branch").Value = "true" @>
+        // condition-coverage picks the side with more covered (partial: 3 > 1).
+        test <@ mergedLine.Attribute(xn "condition-coverage").Value.Contains("3/4") @>
+
+        // Conditions are unioned (0 and 1 present), sorted by number.
+        let conds =
+            mergedLine.Descendants(xn "condition")
+            |> Seq.map (fun c -> c.Attribute(xn "number").Value, c.Attribute(xn "coverage").Value)
+            |> Seq.toList
+
+        test <@ conds = [ ("0", "75%"); ("1", "50%") ] @>)
+
+[<Fact>]
+let ``branch line picks baseline condition-coverage when it has strictly more covered`` () =
+    withTempDir (fun dir ->
+        let baselinePath = Path.Combine(dir, "b.xml")
+        let partialPath = Path.Combine(dir, "p.xml")
+        let outPath = Path.Combine(dir, "o.xml")
+
+        // Baseline 3/4 > partial 1/4: baseline wins.
+        let baselineXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><lines><line number="5" hits="10" branch="true" condition-coverage="75% (3/4)"><conditions><condition number="0" type="jump" coverage="75%" /></conditions></line></lines></class></classes></package>"""
+
+        let partialXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><lines><line number="5" hits="2" branch="true" condition-coverage="25% (1/4)"><conditions><condition number="0" type="jump" coverage="25%" /></conditions></line></lines></class></classes></package>"""
+
+        File.WriteAllText(baselinePath, baselineXml)
+        File.WriteAllText(partialPath, partialXml)
+
+        mergeFiles baselinePath partialPath outPath
+        let root = loadRoot outPath
+        let mergedLine = root.Descendants(xn "line") |> Seq.head
+        test <@ mergedLine.Attribute(xn "condition-coverage").Value.Contains("3/4") @>
+        // Baseline condition (75%) is preserved since it exceeds partial's 25%.
+        let cond = mergedLine.Descendants(xn "condition") |> Seq.head
+        test <@ cond.Attribute(xn "coverage").Value = "75%" @>)
+
+[<Fact>]
+let ``branch line tie on covered picks max total for condition-coverage`` () =
+    withTempDir (fun dir ->
+        let baselinePath = Path.Combine(dir, "b.xml")
+        let partialPath = Path.Combine(dir, "p.xml")
+        let outPath = Path.Combine(dir, "o.xml")
+
+        // baseline 2/4, partial 2/6 — tied on covered, partial has more total.
+        let baselineXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><lines><line number="1" hits="1" branch="true" condition-coverage="50% (2/4)"><conditions><condition number="0" type="jump" coverage="50%" /></conditions></line></lines></class></classes></package>"""
+
+        let partialXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><lines><line number="1" hits="1" branch="true" condition-coverage="33.33% (2/6)"><conditions><condition number="0" type="jump" coverage="33%" /></conditions></line></lines></class></classes></package>"""
+
+        File.WriteAllText(baselinePath, baselineXml)
+        File.WriteAllText(partialPath, partialXml)
+
+        mergeFiles baselinePath partialPath outPath
+        let root = loadRoot outPath
+        let mergedLine = root.Descendants(xn "line") |> Seq.head
+        // Max total wins on tie: 2/6.
+        test <@ mergedLine.Attribute(xn "condition-coverage").Value.Contains("2/6") @>)
+
+[<Fact>]
+let ``branch line where only one side has condition-coverage keeps that side`` () =
+    withTempDir (fun dir ->
+        let baselinePath = Path.Combine(dir, "b.xml")
+        let partialPath = Path.Combine(dir, "p.xml")
+        let outPath = Path.Combine(dir, "o.xml")
+
+        // Baseline has condition-coverage; partial's line declares branch="true"
+        // but has no condition-coverage attribute.
+        let baselineXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><lines><line number="1" hits="1" branch="true" condition-coverage="50% (1/2)"><conditions><condition number="0" type="jump" coverage="50%" /></conditions></line></lines></class></classes></package>"""
+
+        let partialXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><lines><line number="1" hits="2" branch="true" /></lines></class></classes></package>"""
+
+        File.WriteAllText(baselinePath, baselineXml)
+        File.WriteAllText(partialPath, partialXml)
+
+        mergeFiles baselinePath partialPath outPath
+        let root = loadRoot outPath
+        let mergedLine = root.Descendants(xn "line") |> Seq.head
+        test <@ mergedLine.Attribute(xn "condition-coverage").Value.Contains("1/2") @>)
+
+[<Fact>]
+let ``branch line with malformed condition-coverage (no parens) yields no summary`` () =
+    withTempDir (fun dir ->
+        let baselinePath = Path.Combine(dir, "b.xml")
+        let partialPath = Path.Combine(dir, "p.xml")
+        let outPath = Path.Combine(dir, "o.xml")
+
+        // condition-coverage string is missing "(x/y)" — parseCondCoverage -> None.
+        let baselineXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><lines><line number="1" hits="1" branch="true" condition-coverage="weird" /></lines></class></classes></package>"""
+
+        let partialXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><lines><line number="1" hits="2" branch="true" condition-coverage="also-weird" /></lines></class></classes></package>"""
+
+        File.WriteAllText(baselinePath, baselineXml)
+        File.WriteAllText(partialPath, partialXml)
+
+        mergeFiles baselinePath partialPath outPath
+        let root = loadRoot outPath
+        let mergedLine = root.Descendants(xn "line") |> Seq.head
+        // hits still merged to max; condition-coverage was unparseable so attr is left as-is (one of the inputs).
+        test <@ mergedLine.Attribute(xn "hits").Value = "2" @>
+        test <@ mergedLine.Attribute(xn "branch").Value = "true" @>)
+
+[<Fact>]
+let ``branch line with condition-coverage denominator zero is treated as unparseable`` () =
+    withTempDir (fun dir ->
+        let baselinePath = Path.Combine(dir, "b.xml")
+        let partialPath = Path.Combine(dir, "p.xml")
+        let outPath = Path.Combine(dir, "o.xml")
+
+        // total=0 fails the `b > 0` guard in parseCondCoverage -> None.
+        let baselineXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><lines><line number="1" hits="1" branch="true" condition-coverage="0% (0/0)" /></lines></class></classes></package>"""
+
+        File.WriteAllText(baselinePath, baselineXml)
+        File.WriteAllText(partialPath, baselineXml)
+        mergeFiles baselinePath partialPath outPath
+
+        // Just assert it doesn't throw and produces a valid doc.
+        let root = loadRoot outPath
+        test <@ root.Descendants(xn "line") |> Seq.length = 1 @>)
+
+[<Fact>]
+let ``branch line where baseline non-branch and partial branch promotes to branch`` () =
+    withTempDir (fun dir ->
+        let baselinePath = Path.Combine(dir, "b.xml")
+        let partialPath = Path.Combine(dir, "p.xml")
+        let outPath = Path.Combine(dir, "o.xml")
+
+        // baseline line is branch="false"; partial promotes same line to branch="true".
+        let baselineXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><lines><line number="1" hits="1" branch="false" /></lines></class></classes></package>"""
+
+        let partialXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><lines><line number="1" hits="1" branch="true" condition-coverage="50% (1/2)"><conditions><condition number="0" type="jump" coverage="50%" /></conditions></line></lines></class></classes></package>"""
+
+        File.WriteAllText(baselinePath, baselineXml)
+        File.WriteAllText(partialPath, partialXml)
+
+        mergeFiles baselinePath partialPath outPath
+        let root = loadRoot outPath
+        let mergedLine = root.Descendants(xn "line") |> Seq.head
+        test <@ mergedLine.Attribute(xn "branch").Value = "true" @>
+        test <@ mergedLine.Attribute(xn "condition-coverage").Value.Contains("1/2") @>
+        test <@ mergedLine.Descendants(xn "condition") |> Seq.length = 1 @>)
+
+[<Fact>]
+let ``method-level lines are merged when methods match by name+signature`` () =
+    withTempDir (fun dir ->
+        let baselinePath = Path.Combine(dir, "b.xml")
+        let partialPath = Path.Combine(dir, "p.xml")
+        let outPath = Path.Combine(dir, "o.xml")
+
+        // Both sides have matching method a(); method-level lines differ — we
+        // verify they merge (max hits) inside the <method><lines> element.
+        let baselineXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><methods><method name="a" signature="()"><lines><line number="1" hits="1" branch="false" /><line number="2" hits="0" branch="false" /></lines></method></methods></class></classes></package>"""
+
+        let partialXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><methods><method name="a" signature="()"><lines><line number="2" hits="9" branch="false" /><line number="3" hits="5" branch="false" /></lines></method></methods></class></classes></package>"""
+
+        File.WriteAllText(baselinePath, baselineXml)
+        File.WriteAllText(partialPath, partialXml)
+        mergeFiles baselinePath partialPath outPath
+
+        let root = loadRoot outPath
+
+        let methLines =
+            root.Descendants(xn "method")
+            |> Seq.filter (fun m -> m.Attribute(xn "name").Value = "a")
+            |> Seq.collect (fun m -> m.Descendants(xn "line"))
+            |> Seq.map (fun l -> l.Attribute(xn "number").Value |> int, l.Attribute(xn "hits").Value |> int)
+            |> Seq.sortBy fst
+            |> Seq.toList
+
+        test <@ methLines = [ (1, 1); (2, 9); (3, 5) ] @>)
+
+[<Fact>]
+let ``class in partial with methods but none in baseline creates methods element`` () =
+    withTempDir (fun dir ->
+        let baselinePath = Path.Combine(dir, "b.xml")
+        let partialPath = Path.Combine(dir, "p.xml")
+        let outPath = Path.Combine(dir, "o.xml")
+
+        // Baseline class C has only <lines>; partial class C has <methods>.
+        let baselineXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><lines><line number="1" hits="1" branch="false" /></lines></class></classes></package>"""
+
+        let partialXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><methods><method name="a" signature="()"><lines><line number="1" hits="2" branch="false" /></lines></method></methods></class></classes></package>"""
+
+        File.WriteAllText(baselinePath, baselineXml)
+        File.WriteAllText(partialPath, partialXml)
+        mergeFiles baselinePath partialPath outPath
+
+        let root = loadRoot outPath
+        // The merged class must now contain a <methods> element with method "a".
+        let methods =
+            root.Descendants(xn "class")
+            |> Seq.filter (fun c -> c.Attribute(xn "filename").Value = "C.fs")
+            |> Seq.collect (fun c -> c.Descendants(xn "method"))
+            |> Seq.map (fun m -> m.Attribute(xn "name").Value)
+            |> Seq.toList
+
+        test <@ methods = [ "a" ] @>)
+
+[<Fact>]
+let ``method with lines in partial but not baseline adds lines element`` () =
+    withTempDir (fun dir ->
+        let baselinePath = Path.Combine(dir, "b.xml")
+        let partialPath = Path.Combine(dir, "p.xml")
+        let outPath = Path.Combine(dir, "o.xml")
+
+        // Matching method a() — baseline has method a() with NO <lines>, partial has <lines>.
+        let baselineXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><methods><method name="a" signature="()"></method></methods></class></classes></package>"""
+
+        let partialXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><methods><method name="a" signature="()"><lines><line number="1" hits="7" branch="false" /></lines></method></methods></class></classes></package>"""
+
+        File.WriteAllText(baselinePath, baselineXml)
+        File.WriteAllText(partialPath, partialXml)
+        mergeFiles baselinePath partialPath outPath
+
+        let root = loadRoot outPath
+
+        let lineHits =
+            root.Descendants(xn "method")
+            |> Seq.filter (fun m -> m.Attribute(xn "name").Value = "a")
+            |> Seq.collect (fun m -> m.Descendants(xn "line"))
+            |> Seq.map (fun l -> l.Attribute(xn "hits").Value |> int)
+            |> Seq.toList
+
+        test <@ lineHits = [ 7 ] @>)
+
+[<Fact>]
+let ``package in partial but not baseline is copied wholesale`` () =
+    withTempDir (fun dir ->
+        let baselinePath = Path.Combine(dir, "b.xml")
+        let partialPath = Path.Combine(dir, "p.xml")
+        let outPath = Path.Combine(dir, "o.xml")
+
+        // Baseline has package "existing"; partial introduces package "brandNew".
+        File.WriteAllText(
+            baselinePath,
+            buildCobertura
+                [ { Package = "existing"
+                    Filename = "A.fs"
+                    ClassName = "A"
+                    Lines = [ line 1 1 ] } ]
+        )
+
+        File.WriteAllText(
+            partialPath,
+            buildCobertura
+                [ { Package = "brandNew"
+                    Filename = "B.fs"
+                    ClassName = "B"
+                    Lines = [ line 1 4 ] } ]
+        )
+
+        mergeFiles baselinePath partialPath outPath
+        let root = loadRoot outPath
+
+        let packageNames =
+            root.Descendants(xn "package")
+            |> Seq.map (fun p -> p.Attribute(xn "name").Value)
+            |> Seq.toList
+            |> List.sort
+
+        test <@ packageNames = [ "brandNew"; "existing" ] @>
+        // brandNew package data made it through.
+        test <@ findLine root "B.fs" 1 = Some("B.fs", 1, 4, false) @>)
+
+[<Fact>]
+let ``baseline package missing classes element gains one from partial`` () =
+    withTempDir (fun dir ->
+        let baselinePath = Path.Combine(dir, "b.xml")
+        let partialPath = Path.Combine(dir, "p.xml")
+        let outPath = Path.Combine(dir, "o.xml")
+
+        // baseline has package p with NO <classes> element; partial provides one.
+        let baselineXml =
+            buildWithPackages """<package name="p" line-rate="0" branch-rate="0" />"""
+
+        let partialXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="A" filename="A.fs" line-rate="0" branch-rate="0"><lines><line number="1" hits="2" branch="false" /></lines></class></classes></package>"""
+
+        File.WriteAllText(baselinePath, baselineXml)
+        File.WriteAllText(partialPath, partialXml)
+        mergeFiles baselinePath partialPath outPath
+
+        let root = loadRoot outPath
+        test <@ findLine root "A.fs" 1 = Some("A.fs", 1, 2, false) @>)
+
+[<Fact>]
+let ``baseline missing packages element gains one from partial`` () =
+    withTempDir (fun dir ->
+        let baselinePath = Path.Combine(dir, "b.xml")
+        let partialPath = Path.Combine(dir, "p.xml")
+        let outPath = Path.Combine(dir, "o.xml")
+
+        // baseline has <coverage> with NO <packages> element at all.
+        let baselineXml =
+            """<?xml version="1.0" encoding="utf-8"?><coverage line-rate="0" branch-rate="0" lines-covered="0" lines-valid="0" branches-covered="0" branches-valid="0" version="1" timestamp="0"><sources><source>.</source></sources></coverage>"""
+
+        let partialXml =
+            buildCobertura
+                [ { Package = "p"
+                    Filename = "F.fs"
+                    ClassName = "F"
+                    Lines = [ line 1 3 ] } ]
+
+        File.WriteAllText(baselinePath, baselineXml)
+        File.WriteAllText(partialPath, partialXml)
+        mergeFiles baselinePath partialPath outPath
+
+        let root = loadRoot outPath
+        test <@ findLine root "F.fs" 1 = Some("F.fs", 1, 3, false) @>)
+
+[<Fact>]
+let ``recomputeRates counts branches from condition-coverage on branch lines`` () =
+    withTempDir (fun dir ->
+        let baselinePath = Path.Combine(dir, "b.xml")
+        let partialPath = Path.Combine(dir, "p.xml")
+        let outPath = Path.Combine(dir, "o.xml")
+
+        // One branch line (2/4) + one non-branch line (hit) + one non-branch line (missed).
+        let xml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><lines><line number="1" hits="1" branch="false" /><line number="2" hits="0" branch="false" /><line number="3" hits="4" branch="true" condition-coverage="50% (2/4)"><conditions><condition number="0" type="jump" coverage="50%" /></conditions></line></lines></class></classes></package>"""
+
+        File.WriteAllText(baselinePath, xml)
+        File.WriteAllText(partialPath, xml)
+        mergeFiles baselinePath partialPath outPath
+
+        let root = loadRoot outPath
+        // 3 lines, 2 covered. 1 branch line with 2/4 covered.
+        test <@ attrInt root "lines-valid" = 3 @>
+        test <@ attrInt root "lines-covered" = 2 @>
+        test <@ attrInt root "branches-valid" = 4 @>
+        test <@ attrInt root "branches-covered" = 2 @>
+        // branch-rate = 0.5
+        test <@ abs (attrFloat root "branch-rate" - 0.5) < 0.001 @>)
+
+[<Fact>]
+let ``recomputeRates with zero branches reports branch-rate of 1.0`` () =
+    withTempDir (fun dir ->
+        let baselinePath = Path.Combine(dir, "b.xml")
+        let partialPath = Path.Combine(dir, "p.xml")
+        let outPath = Path.Combine(dir, "o.xml")
+
+        let xml =
+            buildCobertura
+                [ { Package = "p"
+                    Filename = "F.fs"
+                    ClassName = "F"
+                    Lines = [ line 1 1 ] } ]
+
+        File.WriteAllText(baselinePath, xml)
+        File.WriteAllText(partialPath, xml)
+        mergeFiles baselinePath partialPath outPath
+
+        let root = loadRoot outPath
+        test <@ attrInt root "branches-valid" = 0 @>
+        test <@ abs (attrFloat root "branch-rate" - 1.0) < 0.001 @>)
+
+[<Fact>]
+let ``mergeFiles preserves distinct method+signature variants (overloads)`` () =
+    withTempDir (fun dir ->
+        let baselinePath = Path.Combine(dir, "b.xml")
+        let partialPath = Path.Combine(dir, "p.xml")
+        let outPath = Path.Combine(dir, "o.xml")
+
+        // Same method name "a" but different signatures — keyed separately.
+        let baselineXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><methods><method name="a" signature="(int)"><lines><line number="1" hits="1" branch="false" /></lines></method></methods></class></classes></package>"""
+
+        let partialXml =
+            buildWithPackages
+                """<package name="p" line-rate="0" branch-rate="0"><classes><class name="C" filename="C.fs" line-rate="0" branch-rate="0"><methods><method name="a" signature="(string)"><lines><line number="5" hits="2" branch="false" /></lines></method></methods></class></classes></package>"""
+
+        File.WriteAllText(baselinePath, baselineXml)
+        File.WriteAllText(partialPath, partialXml)
+        mergeFiles baselinePath partialPath outPath
+
+        let root = loadRoot outPath
+
+        let sigs =
+            root.Descendants(xn "method")
+            |> Seq.map (fun m -> m.Attribute(xn "signature").Value)
+            |> Seq.toList
+            |> List.sort
+
+        test <@ sigs = [ "(int)"; "(string)" ] @>)

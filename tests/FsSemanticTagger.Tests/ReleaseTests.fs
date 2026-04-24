@@ -1557,3 +1557,103 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
     finally
         File.Delete(tmpFile)
         cleanupDir tmpDir
+
+[<Fact>]
+let ``release - resume in DryRun mode takes no actions and returns 0`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        // fsproj already at the target version — AlreadyBumped path, DryRun short-circuit.
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.2.0-alpha.1</Version></PropertyGroup></Project>")
+
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "jj", a when a.Contains("tag list") && a.Contains("\"glob:v") -> Success "v0.1.0-alpha.1"
+            | "jj", a when a.Contains("--from v0.1.0-alpha.1") -> Success "1 file changed"
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let result =
+            runRelease fakeRun config StartAlpha DryRun noPreviousApi noCurrentApi 0 10
+
+        test <@ result = 0 @>
+        // DryRun resume must NOT set tags.
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
+        // DryRun resume must NOT push.
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push")) @>
+
+        // fsproj version unchanged.
+        test <@ File.ReadAllText(tmpFile).Contains("<Version>0.2.0-alpha.1</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - resume with LocalPublish packs without pushing`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.2.0-alpha.1</Version></PropertyGroup></Project>")
+
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "jj", a when a.Contains("tag list") && a.Contains("\"glob:v") -> Success "v0.1.0-alpha.1"
+            | "jj", a when a.Contains("--from v0.1.0-alpha.1") -> Success "1 file changed"
+            // tagExists probes (tag not yet set)
+            | "jj", "tag list v0.2.0-alpha.1" -> Success ""
+            | "git", "tag -l v0.2.0-alpha.1" -> Success ""
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "dotnet", arg when arg.StartsWith("pack") -> Success "Successfully created package"
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let result =
+            runRelease fakeRun config StartAlpha LocalPublish noPreviousApi noCurrentApi 0 10
+
+        test <@ result = 0 @>
+        // LocalPublish resume must pack.
+        test
+            <@
+                calls
+                |> List.exists (fun (c, a) -> c = "dotnet" && a.StartsWith("pack") && a.Contains(tmpFile))
+            @>
+        // LocalPublish resume must NOT push tags.
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
+    finally
+        File.Delete(tmpFile)
