@@ -13,6 +13,13 @@
         "platform": "linux"
       }
     ],
+    "Merge.fs": [
+      {
+        "line": 65,
+        "branch": 49,
+        "platform": "linux"
+      }
+    ],
     "Program.fs": [
       {
         "line": 90,
@@ -21,8 +28,8 @@
         "platform": "macos"
       },
       {
-        "line": 68,
-        "branch": 71,
+        "line": 88,
+        "branch": 82,
         "reason": "deliberately too high to induce a linux coverage failure for loosen-from-ci end-to-end test",
         "platform": "linux"
       }
