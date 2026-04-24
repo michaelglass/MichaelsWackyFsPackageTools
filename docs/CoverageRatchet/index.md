@@ -232,6 +232,24 @@ Resolution rules:
 
 The `loosen` command creates **platform-agnostic** overrides for new files. Only `loosen-from-ci` introduces platform-specific entries, since it integrates coverage results from CI runners on different platforms.
 
+### Multi-platform workflow
+
+When `loosen-from-ci` writes a single-platform entry (e.g. `linux`), the default 100%/100% threshold still applies to other platforms for that file. Running `check` locally on a platform without an entry will fail — even if actual coverage is high — because 95% < 100%.
+
+The fix is to run `loosen` locally to add the matching platform entry from your actual coverage:
+
+```
+# CI (linux) fails on Foo.fs → loosen-from-ci adds { line: 65, branch: 49, platform: linux }
+# On your macOS dev machine, `check` now fails because there's no macos entry → default 100%.
+coverageratchet loosen coverage-ratchet-<project>.json
+# macOS entry added from actual local coverage.
+# Later, once tests improve actual coverage on both platforms:
+coverageratchet ratchet coverage-ratchet-<project>.json
+# Both entries tightened to current numbers.
+```
+
+`ratchet` only tightens **existing** entries — it won't synthesize a new platform entry. That's `loosen`'s job. This keeps the split of responsibilities clean: `loosen-from-ci` pins the CI platform at release time, `loosen` pins the dev platform on demand, `ratchet` tightens both as coverage goes up.
+
 ## Example Output
 
 ```
