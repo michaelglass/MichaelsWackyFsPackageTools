@@ -448,8 +448,7 @@ let ``runReleaseWith - returns Ok 0 for empty-package config when CI passes`` ()
         let extractPrev _ _ = None
         let extractCur _ = []
 
-        let result =
-            runReleaseWith tmpDir fakeRun extractPrev extractCur Release.Auto []
+        let result = runReleaseWith tmpDir fakeRun extractPrev extractCur Release.Auto []
 
         test <@ result = Ok 0 @>)
 

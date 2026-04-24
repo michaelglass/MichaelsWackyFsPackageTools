@@ -142,8 +142,7 @@ let ``release - returns 1 when uncommitted changes`` () =
           PreBuildCmds = []
           RootDir = "" }
 
-    let result =
-        runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
+    let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
     test <@ result = 1 @>
 
@@ -163,8 +162,7 @@ let ``release - returns 1 when CI not passing`` () =
           PreBuildCmds = []
           RootDir = "" }
 
-    let result =
-        runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
+    let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
     test <@ result = 1 @>
 
@@ -191,8 +189,7 @@ let ``release - Auto with no previous tags returns 0 with no packages`` () =
           PreBuildCmds = []
           RootDir = "" }
 
-    let result =
-        runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
+    let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
     test <@ result = 0 @>
 
@@ -359,8 +356,7 @@ let ``release - Auto with reserved version bumps past it`` () =
               PreBuildCmds = []
               RootDir = "" }
 
-        let result =
-            runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
+        let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
@@ -889,8 +885,7 @@ let ``release - uses coverageratchet loosen-from-ci when available`` () =
           PreBuildCmds = []
           RootDir = "" }
 
-    let result =
-        runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
+    let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
     test <@ result = 0 @>
 
@@ -922,8 +917,7 @@ let ``release - returns 1 when coverageratchet loosen-from-ci fails`` () =
           PreBuildCmds = []
           RootDir = "" }
 
-    let result =
-        runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
+    let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
     test <@ result = 1 @>
 
@@ -965,8 +959,7 @@ let ``release - returns 1 when CI has no runs`` () =
           PreBuildCmds = []
           RootDir = "" }
 
-    let result =
-        runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
+    let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
     test <@ result = 1 @>
 
@@ -985,8 +978,7 @@ let ``release - returns 1 when CI status is Unknown`` () =
           PreBuildCmds = []
           RootDir = "" }
 
-    let result =
-        runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
+    let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
     test <@ result = 1 @>
 
@@ -1006,8 +998,7 @@ let ``release - returns 1 when CI times out still in progress`` () =
           PreBuildCmds = []
           RootDir = "" }
 
-    let result =
-        runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 2
+    let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 2
 
     test <@ result = 1 @>
 
@@ -1555,7 +1546,12 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
                       CiMaxAttempts = 10 })
 
         test <@ result = 0 @>
-        test <@ output.ToLowerInvariant().Contains("warning") || output.ToLowerInvariant().Contains("changelog") @>
+
+        test
+            <@
+                output.ToLowerInvariant().Contains("warning")
+                || output.ToLowerInvariant().Contains("changelog")
+            @>
         // fsproj version not advanced
         test <@ File.ReadAllText(fsprojPath).Contains("<Version>0.0.0</Version>") @>
     finally

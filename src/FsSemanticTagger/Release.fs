@@ -287,10 +287,7 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
             else
                 NeedsBump(pkg, newVersion))
 
-let private resumeAlreadyBumped
-    (input: ReleaseInput)
-    (alreadyBumped: (PackageConfig * Version) list)
-    : int =
+let private resumeAlreadyBumped (input: ReleaseInput) (alreadyBumped: (PackageConfig * Version) list) : int =
     printfn "\nResuming release (versions already bumped):"
 
     for (pkg, version) in alreadyBumped do
@@ -327,7 +324,8 @@ let private executeBumps
         printfn "  %s -> %s (tag: %s)" pkg.Name (format version) (toTag pkg.TagPrefix version)
 
     let bumpsWithChangelogs =
-        needsBump |> List.map (fun (pkg, v) -> pkg, v, changelogPathsFor input.Config pkg)
+        needsBump
+        |> List.map (fun (pkg, v) -> pkg, v, changelogPathsFor input.Config pkg)
 
     let changelogErrors =
         bumpsWithChangelogs
