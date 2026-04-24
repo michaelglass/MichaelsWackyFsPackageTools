@@ -30,8 +30,7 @@ let private attr (name: string) (e: XElement) =
 
 let private attrOr d n e = defaultArg (attr n e) d
 
-let private setAttr (name: string) (value: string) (e: XElement) =
-    e.SetAttributeValue(xn name, value)
+let private setAttr (name: string) (value: string) (e: XElement) = e.SetAttributeValue(xn name, value)
 
 let private parseInt (s: string) =
     match Int32.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture) with
@@ -62,14 +61,12 @@ let private parseCondCoverage (s: string) : (int * int) option =
 
 let private formatCondCoverage (covered: int) (total: int) =
     let pct =
-        if total = 0 then 100.0
-        else 100.0 * float covered / float total
+        if total = 0 then
+            100.0
+        else
+            100.0 * float covered / float total
 
-    sprintf
-        "%s%% (%d/%d)"
-        (pct.ToString("0.##", CultureInfo.InvariantCulture))
-        covered
-        total
+    sprintf "%s%% (%d/%d)" (pct.ToString("0.##", CultureInfo.InvariantCulture)) covered total
 
 let private mergeLine (a: XElement) (b: XElement) =
     let aHits = attrOr "0" "hits" a |> parseInt
@@ -307,12 +304,12 @@ let private recomputeRates (root: XElement) =
                         | None -> ()
 
                     let lr =
-                        if linesTot = 0 then 1.0
-                        else float linesCov / float linesTot
+                        if linesTot = 0 then
+                            1.0
+                        else
+                            float linesCov / float linesTot
 
-                    let br =
-                        if bT = 0 then 1.0
-                        else float bC / float bT
+                    let br = if bT = 0 then 1.0 else float bC / float bT
 
                     setAttr "line-rate" (lr.ToString("0.####", CultureInfo.InvariantCulture)) cls
                     setAttr "branch-rate" (br.ToString("0.####", CultureInfo.InvariantCulture)) cls
@@ -321,11 +318,9 @@ let private recomputeRates (root: XElement) =
                     pBC <- pBC + bC
                     pBT <- pBT + bT
 
-            let plr =
-                if pLT = 0 then 1.0 else float pLC / float pLT
+            let plr = if pLT = 0 then 1.0 else float pLC / float pLT
 
-            let pbr =
-                if pBT = 0 then 1.0 else float pBC / float pBT
+            let pbr = if pBT = 0 then 1.0 else float pBC / float pBT
 
             setAttr "line-rate" (plr.ToString("0.####", CultureInfo.InvariantCulture)) pkg
             setAttr "branch-rate" (pbr.ToString("0.####", CultureInfo.InvariantCulture)) pkg
@@ -335,12 +330,16 @@ let private recomputeRates (root: XElement) =
             rootBranchesTot <- rootBranchesTot + pBT
 
     let rlr =
-        if rootLinesTot = 0 then 1.0
-        else float rootLinesCov / float rootLinesTot
+        if rootLinesTot = 0 then
+            1.0
+        else
+            float rootLinesCov / float rootLinesTot
 
     let rbr =
-        if rootBranchesTot = 0 then 1.0
-        else float rootBranchesCov / float rootBranchesTot
+        if rootBranchesTot = 0 then
+            1.0
+        else
+            float rootBranchesCov / float rootBranchesTot
 
     setAttr "line-rate" (rlr.ToString("0.####", CultureInfo.InvariantCulture)) root
     setAttr "branch-rate" (rbr.ToString("0.####", CultureInfo.InvariantCulture)) root
@@ -356,8 +355,10 @@ let mergeFiles (baselinePath: string) (partialPath: string) (outputPath: string)
     let existsB = File.Exists baselinePath
 
     let a =
-        if existsB then XDocument.Load(baselinePath).Root
-        else XDocument.Load(partialPath).Root
+        if existsB then
+            XDocument.Load(baselinePath).Root
+        else
+            XDocument.Load(partialPath).Root
 
     if existsB then
         let b = XDocument.Load(partialPath).Root
@@ -372,7 +373,10 @@ let mergeFiles (baselinePath: string) (partialPath: string) (outputPath: string)
             mergePackages aPkgs bPkgs
 
     recomputeRates a
-    let settings = XmlWriterSettings(Indent = true, IndentChars = "  ", OmitXmlDeclaration = false)
+
+    let settings =
+        XmlWriterSettings(Indent = true, IndentChars = "  ", OmitXmlDeclaration = false)
+
     use w = XmlWriter.Create(outputPath, settings)
     a.Document.Save(w)
 
@@ -392,9 +396,7 @@ let mergeIntoBaselines (searchDir: string) : unit =
                 mergeFiles baseline coverageFile tmp
                 File.Move(tmp, coverageFile, overwrite = true)
             with ex ->
-                raise (
-                    exn ($"Failed to merge baseline for project {dir}: {ex.Message}", ex)
-                )
+                raise (exn ($"Failed to merge baseline for project {dir}: {ex.Message}", ex))
         else
             File.Copy(coverageFile, baseline, overwrite = false)
 

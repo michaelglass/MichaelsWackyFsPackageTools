@@ -123,7 +123,8 @@ let private makeCoverageXml (linePct: int) =
 [<Fact>]
 let ``run - check with no coverage file returns Error`` () =
     withTempDir (fun tmpDir ->
-        let result = run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
+        let result =
+            run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
 
         test <@ result = Error "No coverage.cobertura.xml found" @>)
 
@@ -133,7 +134,8 @@ let ``run - check with passing coverage file returns Ok 0`` () =
         let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
         File.WriteAllText(xmlPath, makeCoverageXml 100)
 
-        let result = run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
+        let result =
+            run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
 
         test <@ result = Ok 0 @>)
 
@@ -143,7 +145,8 @@ let ``run - check with failing coverage returns Ok 1`` () =
         let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
         File.WriteAllText(xmlPath, makeCoverageXml 50)
 
-        let result = run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
+        let result =
+            run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
 
         test <@ result = Ok 1 @>)
 
@@ -268,7 +271,8 @@ let ``run - check with only non-fs files returns Ok 0`` () =
         let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
         File.WriteAllText(xmlPath, xml)
 
-        let result = run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
+        let result =
+            run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
 
         test <@ result = Ok 0 @>)
 
@@ -472,7 +476,8 @@ let ``run - gaps returns Ok 0 with branch gaps`` () =
 [<Fact>]
 let ``run - gaps with no coverage file returns Error`` () =
     withTempDir (fun tmpDir ->
-        let result = run (Gaps(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
+        let result =
+            run (Gaps(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
 
         test <@ result = Error "No coverage.cobertura.xml found" @>)
 
@@ -671,7 +676,8 @@ let ``run - check-json with default output path`` () =
 [<Fact>]
 let ``run - loosen with no coverage file returns Error`` () =
     withTempDir (fun tmpDir ->
-        let result = run (Loosen(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
+        let result =
+            run (Loosen(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
 
         test <@ result = Error "No coverage.cobertura.xml found" @>)
 
@@ -1314,14 +1320,18 @@ let ``extractFlags - defaults to dot when not provided`` () =
 
 [<Fact>]
 let ``extractFlags - extracts search-dir before command`` () =
-    let dir, mergeBaselines, remaining = extractFlags [| "--search-dir"; "coverage"; "check" |]
+    let dir, mergeBaselines, remaining =
+        extractFlags [| "--search-dir"; "coverage"; "check" |]
+
     test <@ dir = "coverage" @>
     test <@ mergeBaselines = false @>
     test <@ remaining = [| "check" |] @>
 
 [<Fact>]
 let ``extractFlags - extracts search-dir after command`` () =
-    let dir, mergeBaselines, remaining = extractFlags [| "check"; "--search-dir"; "coverage" |]
+    let dir, mergeBaselines, remaining =
+        extractFlags [| "check"; "--search-dir"; "coverage" |]
+
     test <@ dir = "coverage" @>
     test <@ mergeBaselines = false @>
     test <@ remaining = [| "check" |] @>
@@ -1351,6 +1361,7 @@ let ``extractFlags - extracts merge-baselines flag`` () =
 let ``extractFlags - search-dir and merge-baselines combined`` () =
     let dir, mergeBaselines, remaining =
         extractFlags [| "--search-dir"; "coverage"; "check"; "--merge-baselines" |]
+
     test <@ dir = "coverage" @>
     test <@ mergeBaselines = true @>
     test <@ remaining = [| "check" |] @>
@@ -1545,8 +1556,12 @@ let ``auto-refresh - env=true + pass + merge=true refreshes baseline`` () =
         test <@ result = Ok 0 @>
 
         // After refresh, baseline.xml is byte-identical to the (post-merge) cobertura.xml.
-        let coverageBytes = File.ReadAllBytes(Path.Combine(projDir, "coverage.cobertura.xml"))
-        let baselineBytes = File.ReadAllBytes(Path.Combine(projDir, "coverage.baseline.xml"))
+        let coverageBytes =
+            File.ReadAllBytes(Path.Combine(projDir, "coverage.cobertura.xml"))
+
+        let baselineBytes =
+            File.ReadAllBytes(Path.Combine(projDir, "coverage.baseline.xml"))
+
         test <@ coverageBytes = baselineBytes @>)
 
 [<Fact>]

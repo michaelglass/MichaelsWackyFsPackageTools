@@ -24,8 +24,7 @@ type ClassSpec =
       ClassName: string
       Lines: LineSpec list }
 
-let line n h =
-    { Num = n; Hits = h; Branch = None }
+let line n h = { Num = n; Hits = h; Branch = None }
 
 let branchLine n h c t =
     { Num = n
@@ -119,8 +118,7 @@ let findLine (root: XElement) (filename: string) (num: int) =
     extractLines root
     |> List.tryFind (fun (fn, n, _, _) -> fn = filename && n = num)
 
-let attrInt (root: XElement) name =
-    root.Attribute(xn name).Value |> int
+let attrInt (root: XElement) name = root.Attribute(xn name).Value |> int
 
 let attrFloat (root: XElement) (name: string) =
     Double.Parse(root.Attribute(xn name).Value, System.Globalization.CultureInfo.InvariantCulture)
@@ -321,7 +319,13 @@ let ``new file in partial appears in merged output`` () =
 
         mergeFiles baselinePath partialPath outPath
         let root = loadRoot outPath
-        let files = extractLines root |> List.map (fun (f, _, _, _) -> f) |> List.distinct |> List.sort
+
+        let files =
+            extractLines root
+            |> List.map (fun (f, _, _, _) -> f)
+            |> List.distinct
+            |> List.sort
+
         test <@ files = [ "Brand/New.fs"; "Old.fs" ] @>
         test <@ findLine root "Brand/New.fs" 1 = Some("Brand/New.fs", 1, 4, false) @>)
 
@@ -586,7 +590,12 @@ let ``baseline-only class in same package persists after merge`` () =
 
         mergeFiles baselinePath partialPath outPath
         let root = loadRoot outPath
-        let files = extractLines root |> List.map (fun (f, _, _, _) -> f) |> List.distinct |> List.sort
+
+        let files =
+            extractLines root
+            |> List.map (fun (f, _, _, _) -> f)
+            |> List.distinct
+            |> List.sort
         // Both classes must survive.
         test <@ files = [ "Bar.fs"; "Foo.fs" ] @>
         test <@ findLine root "Foo.fs" 1 = Some("Foo.fs", 1, 3, false) @>
