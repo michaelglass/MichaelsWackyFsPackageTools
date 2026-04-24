@@ -474,6 +474,33 @@ let ``run - gaps returns Ok 0 with branch gaps`` () =
         test <@ result = Ok 0 @>)
 
 [<Fact>]
+let ``run - gaps returns Ok 0 with no branch gaps at all`` () =
+    withTempDir (fun tmpDir ->
+        // No branch lines, no gaps.
+        let xml =
+            """<?xml version="1.0" encoding="utf-8"?>
+<coverage><packages><package><classes>
+  <class filename="/src/Plain.fs">
+    <lines>
+      <line number="1" hits="1" />
+      <line number="2" hits="1" />
+    </lines>
+  </class>
+</classes></package></packages></coverage>"""
+
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        File.WriteAllText(xmlPath, xml)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        let _output, result =
+            withCapturedConsole (fun () -> run (Gaps(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 0 @>
+        // Output should signal the empty-gap case.
+        test <@ _output.Contains("No uncovered branches") @>)
+
+[<Fact>]
 let ``run - gaps with no coverage file returns Error`` () =
     withTempDir (fun tmpDir ->
         let result =
@@ -1621,3 +1648,45 @@ let ``auto-refresh - env=true + pass + merge=false does NOT refresh (env ignored
         let coverageAfter = File.ReadAllBytes(coveragePath)
         test <@ baselineBefore = baselineAfter @>
         test <@ coverageBefore = coverageAfter @>)
+
+// --- Merge / RefreshBaseline commands dispatched through `run` ---
+
+[<Fact>]
+let ``run - Merge command writes output and returns Ok 0`` () =
+    withTempDir (fun tmpDir ->
+        let baselinePath = Path.Combine(tmpDir, "baseline.xml")
+        let partialPath = Path.Combine(tmpDir, "partial.xml")
+        let outputPath = Path.Combine(tmpDir, "merged.xml")
+
+        let xml =
+            """<?xml version="1.0" encoding="utf-8"?><coverage line-rate="0" branch-rate="0" lines-covered="0" lines-valid="0" branches-covered="0" branches-valid="0" version="1" timestamp="0"><sources><source>.</source></sources><packages><package name="p" line-rate="0" branch-rate="0"><classes><class name="F" filename="F.fs" line-rate="0" branch-rate="0"><lines><line number="1" hits="1" branch="false" /></lines></class></classes></package></packages></coverage>"""
+
+        File.WriteAllText(baselinePath, xml)
+        File.WriteAllText(partialPath, xml)
+
+        let result =
+            run (Merge(baseline = baselinePath, partial = partialPath, output = outputPath)) tmpDir false
+
+        test <@ result = Ok 0 @>
+        test <@ File.Exists outputPath @>)
+
+[<Fact>]
+let ``run - RefreshBaseline copies coverage to baseline and returns Ok 0`` () =
+    withTempDir (fun tmpDir ->
+        let projDir = Path.Combine(tmpDir, "P1")
+        Directory.CreateDirectory(projDir) |> ignore
+
+        let coveragePath = Path.Combine(projDir, "coverage.cobertura.xml")
+        let baselinePath = Path.Combine(projDir, "coverage.baseline.xml")
+
+        let xml =
+            """<?xml version="1.0" encoding="utf-8"?><coverage line-rate="0" branch-rate="0" lines-covered="0" lines-valid="0" branches-covered="0" branches-valid="0" version="1" timestamp="0"><sources><source>.</source></sources><packages><package name="p" line-rate="0" branch-rate="0"><classes><class name="F" filename="F.fs" line-rate="0" branch-rate="0"><lines><line number="1" hits="42" branch="false" /></lines></class></classes></package></packages></coverage>"""
+
+        File.WriteAllText(coveragePath, xml)
+        // Seed a different baseline to prove it gets overwritten.
+        File.WriteAllText(baselinePath, "<coverage/>")
+
+        let result = run RefreshBaseline tmpDir false
+
+        test <@ result = Ok 0 @>
+        test <@ File.ReadAllText(baselinePath) = xml @>)
