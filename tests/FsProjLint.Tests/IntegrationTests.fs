@@ -172,9 +172,27 @@ let ``Program.main returns 0 for help flag`` () =
 
 [<Fact>]
 let ``Program.main returns 1 for unknown flag`` () =
-    let result = FsProjLint.Program.main [| "-h" |]
+    let result = FsProjLint.Program.main [| "--bogus" |]
 
     test <@ result = 1 @>
+
+[<Fact>]
+let ``Program.main returns 0 for -h`` () =
+    let result = FsProjLint.Program.main [| "-h" |]
+
+    test <@ result = 0 @>
+
+[<Fact>]
+let ``Program.main returns 0 for help`` () =
+    let result = FsProjLint.Program.main [| "help" |]
+
+    test <@ result = 0 @>
+
+[<Fact>]
+let ``Program.main returns 0 for --help`` () =
+    let result = FsProjLint.Program.main [| "--help" |]
+
+    test <@ result = 0 @>
 
 [<Fact>]
 let ``Program.main returns 1 for failing repo`` () =

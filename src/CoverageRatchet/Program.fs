@@ -14,15 +14,14 @@ let defaultConfigPath = "coverage-ratchet.json"
 
 type Command =
     | [<Cmd("Tighten thresholds to match current coverage (default)"); CmdDefault>] Ratchet of config: string option
-    | [<Cmd("Check coverage against thresholds")>] Check of config: string option
-    | [<Cmd("Set thresholds to current coverage (makes check pass immediately)")>] Loosen of config: string option
-    | [<Cmd("Output coverage results as JSON for CI artifact upload")>] CheckJson of
+    | [<Cmd("Check coverage against thresholds (exits non-zero if any file fails)")>] Check of config: string option
+    | [<Cmd("Set thresholds down to current coverage (makes check pass immediately)")>] Loosen of config: string option
+    | [<Cmd("Write per-file coverage results as JSON for CI artifact upload")>] CheckJson of
         config: string option *
         output: string option
-    | [<Cmd("Show files sorted by coverage to find improvement targets")>] Targets of config: string option
-    | [<Cmd("Show uncovered branch points per file")>] Gaps of config: string option
-    | [<Cmd("Fetch CI coverage results and update local platform-specific thresholds")>] LoosenFromCi of
-        config: string option
+    | [<Cmd("List files sorted by coverage to find improvement targets")>] Targets of config: string option
+    | [<Cmd("List uncovered branch points per file")>] Gaps of config: string option
+    | [<Cmd("Pull CI coverage results into local platform-specific thresholds")>] LoosenFromCi of config: string option
     | [<Cmd("Merge two Cobertura files by taking max hits per line")>] Merge of
         baseline: string *
         partial: string *
@@ -542,12 +541,179 @@ let extractFlags (argv: string array) : string * bool * string array =
 
     loop 0 "." false []
 
+let private subcommandExtras (path: string list) : string option =
+    match path with
+    | [ "ratchet" ] ->
+        Some
+            """
+For each F# file under --search-dir, raise [config]'s line+branch
+threshold to the current coverage. Coverage can only go up. Files
+not listed in [config] must hit 100%/100% (which is also the default
+for newly-encountered files).
+
+Arguments:
+  config  path to the JSON config file (default: coverage-ratchet.json)
+"""
+    | [ "check" ] ->
+        Some
+            """
+Exits 0 if every F# file meets its line+branch threshold, 1 otherwise.
+Use in CI. Files not listed in [config] must hit 100%/100%.
+
+Arguments:
+  config  path to the JSON config file (default: coverage-ratchet.json)
+"""
+    | [ "loosen" ] ->
+        Some
+            """
+Lower thresholds in [config] to match current coverage so 'check'
+passes. Use sparingly — bootstrapping, or after a deliberate drop.
+Unlike 'ratchet' this can move thresholds DOWN.
+
+Arguments:
+  config  path to the JSON config file (default: coverage-ratchet.json)
+"""
+    | [ "check-json" ] ->
+        Some
+            """
+Run 'check' and write per-file results as JSON for CI to upload as
+an artifact. Output includes the detected platform so loosen-from-ci
+can merge results from other platforms back in.
+
+Arguments:
+  config  path to the JSON config file (default: coverage-ratchet.json)
+  output  path to write JSON results (default: coverage-results.json)
+"""
+    | [ "targets" ] ->
+        Some
+            """
+Lists every F# file with line and branch percentages, lowest first.
+Read-only; never modifies [config]. Use to find what to test next.
+
+Arguments:
+  config  path to the JSON config file (default: coverage-ratchet.json)
+"""
+    | [ "gaps" ] ->
+        Some
+            """
+For each file with branches < 100%, prints the source lines where
+uncovered branches sit. Use to plan tests for partial branch
+coverage.
+
+Arguments:
+  config  path to the JSON config file (default: coverage-ratchet.json)
+"""
+    | [ "loosen-from-ci" ] ->
+        Some
+            """
+Push the current commit, poll GitHub Actions, and if the failure was
+a coverage shortfall on a platform other than yours, download the
+'coverage-thresholds' CI artifact and merge those numbers into
+[config] as platform-tagged overrides. Then commits and pushes.
+
+Requires:
+  - gh CLI authenticated to the repo
+  - CI workflow that uploads a 'coverage-thresholds' artifact built
+    by 'check-json' (one coverage-thresholds-<project>.json per project)
+
+Arguments:
+  config  path to the JSON config file (default: coverage-ratchet.json)
+"""
+    | [ "merge" ] ->
+        Some
+            """
+Layers the two Cobertura files line-by-line, keeping the higher hit
+count for each line, and writes the result to <output>. Use this when
+a partial test run (e.g. impact-filtered) would otherwise drop coverage
+below the ratchet for lines whose tests didn't re-run.
+
+Most users want --merge-baselines on check/ratchet instead, which
+does this automatically per project under --search-dir using a
+coverage.baseline.xml sibling file.
+
+Arguments:
+  baseline  Cobertura XML from the prior full run
+  partial   Cobertura XML from the current (possibly partial) run
+  output    where to write the merged Cobertura XML
+
+Example:
+  coverageratchet merge \\
+    coverage/MyProj/coverage.baseline.xml \\
+    coverage/MyProj/coverage.cobertura.xml \\
+    coverage/MyProj/coverage.cobertura.xml
+"""
+    | [ "refresh-baseline" ] ->
+        Some
+            """
+For every coverage.cobertura.xml under --search-dir, copy it to
+coverage.baseline.xml beside it. Run this after a deliberate
+full-suite test pass to advance the baseline so stale hits from
+deleted tests drop out of subsequent merged runs.
+"""
+    | _ -> None
+
+let private rootHelpExtras =
+    """
+Global flags (can appear anywhere):
+  --search-dir <path>   directory to scan for coverage.cobertura.xml
+                        (default: current directory; recursive)
+  --merge-baselines     before reading coverage, merge each
+                        coverage.cobertura.xml onto its sibling
+                        coverage.baseline.xml (max hits per line) so
+                        partial test runs cannot lower the ratchet.
+                        Bootstraps a baseline on first use.
+
+Config file format (default: coverage-ratchet.json):
+  {
+    "overrides": {
+      "Program.fs": {
+        "line": 85.5,
+        "branch": 77.0,
+        "reason": "CLI entry point — exit calls are not coverable"
+      },
+      "Os.fs": [
+        { "line": 79, "branch": 76, "platform": "macos" },
+        { "line": 46, "branch": 44, "platform": "linux" }
+      ]
+    }
+  }
+
+  - Files not listed must have 100% line and 100% branch coverage.
+  - "platform" is optional: "macos" | "linux" | "windows". Use an array of
+    entries when coverage differs per platform; a platform-less entry
+    serves as fallback.
+  - "reason" is free-form prose explaining the override.
+
+Examples:
+  coverageratchet                         # ratchet using ./coverage-ratchet.json
+  coverageratchet --search-dir coverage check
+  coverageratchet --search-dir coverage check --merge-baselines
+  coverageratchet targets coverage-ratchet-MyProj.json
+  coverageratchet merge prior.xml run.xml merged.xml
+
+Run 'coverageratchet <command> --help' for command-specific details.
+"""
+
+let private normalizeHelpFlags (argv: string array) : string array =
+    argv |> Array.map (fun a -> if a = "-h" || a = "help" then "--help" else a)
+
 [<EntryPoint>]
 let main argv =
+    let argv = normalizeHelpFlags argv
     let searchDir, mergeBaselines, argv = extractFlags argv
 
     let tree =
         CommandReflection.fromUnion<Command> "Per-file coverage enforcement that only goes up"
+
+    let printHelp (path: string list) =
+        printfn "%s" (CommandTree.helpForPath tree path "coverageratchet")
+
+        if List.isEmpty path then
+            printfn "%s" rootHelpExtras
+        else
+            match subcommandExtras path with
+            | Some extras -> printfn "%s" extras
+            | None -> ()
 
     // Bare invocation runs the default (ratchet) command
     if Array.isEmpty argv then
@@ -556,9 +722,6 @@ let main argv =
         | Error msg ->
             eprintfn "Error: %s" msg
             1
-    elif argv |> Array.exists (fun a -> a = "--help" || a = "-h" || a = "help") then
-        printfn "%s" (CommandTree.helpFull tree "coverageratchet")
-        0
     else
         match CommandTree.parse tree argv with
         | Ok cmd ->
@@ -568,7 +731,7 @@ let main argv =
                 eprintfn "Error: %s" msg
                 1
         | Error(HelpRequested path) ->
-            printfn "%s" (CommandTree.helpForPath tree path "coverageratchet")
+            printHelp path
             0
         | Error err ->
             eprintfn "Error: %A" err

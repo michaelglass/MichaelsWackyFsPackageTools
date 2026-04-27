@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- feat: subcommand `--help` now emits per-command details (e.g. `fssemantictagger release --help` explains what `release`/`alpha`/`beta`/`rc`/`stable` do and what `--dry-run` / `--publish` mean)
+- feat: top-level `--help` documents the `semantic-tagger.json` schema and shows examples
+- feat: accept `-h` and `help` as aliases for `--help`
+
 ## 0.12.0-alpha.5 - 2026-04-24
 
 - feat: `--dry-run` flag on `release`/`alpha`/`beta`/`rc`/`stable` previews version bumps without modifying files, creating tags, or running the clean-working-copy and CI checks. Missing or empty `## Unreleased` sections report as warnings instead of aborting.

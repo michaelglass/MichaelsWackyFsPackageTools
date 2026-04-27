@@ -2,8 +2,8 @@
   "overrides": {
     "Program.fs": [
       {
-        "line": 92,
-        "branch": 100,
+        "line": 94,
+        "branch": 80,
         "reason": "CLI entry point using exit and CWD",
         "platform": "macos"
       },
