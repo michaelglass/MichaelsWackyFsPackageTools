@@ -12,20 +12,37 @@ open CoverageRatchet.Merge
 
 let defaultConfigPath = "coverage-ratchet.json"
 
+type MergeArgs =
+    { [<CmdArg("Cobertura XML from the prior full run")>]
+      Baseline: string
+      [<CmdArg("Cobertura XML from the current (possibly partial) run")>]
+      Partial: string
+      [<CmdArg("Where to write the merged Cobertura XML")>]
+      Output: string }
+
 type Command =
-    | [<Cmd("Tighten thresholds to match current coverage (default)"); CmdDefault>] Ratchet of config: string option
-    | [<Cmd("Check coverage against thresholds (exits non-zero if any file fails)")>] Check of config: string option
-    | [<Cmd("Set thresholds down to current coverage (makes check pass immediately)")>] Loosen of config: string option
-    | [<Cmd("Write per-file coverage results as JSON for CI artifact upload")>] CheckJson of
+    | [<Cmd("Tighten thresholds to match current coverage (default)");
+        CmdDefault;
+        CmdArg("Path to the JSON config file", Default = "coverage-ratchet.json")>] Ratchet of config: string option
+    | [<Cmd("Check coverage against thresholds (exits non-zero if any file fails)");
+        CmdArg("Path to the JSON config file", Default = "coverage-ratchet.json")>] Check of config: string option
+    | [<Cmd("Set thresholds down to current coverage (makes check pass immediately)");
+        CmdArg("Path to the JSON config file", Default = "coverage-ratchet.json")>] Loosen of config: string option
+    | [<Cmd("Write per-file coverage results as JSON for CI artifact upload");
+        CmdArg("Path to the JSON config file", Default = "coverage-ratchet.json");
+        CmdArg("Path to write JSON results", FieldIndex = 1, Default = "coverage-results.json")>] CheckJson of
         config: string option *
         output: string option
-    | [<Cmd("List files sorted by coverage to find improvement targets")>] Targets of config: string option
-    | [<Cmd("List uncovered branch points per file")>] Gaps of config: string option
-    | [<Cmd("Pull CI coverage results into local platform-specific thresholds")>] LoosenFromCi of config: string option
-    | [<Cmd("Merge two Cobertura files by taking max hits per line")>] Merge of
-        baseline: string *
-        partial: string *
-        output: string
+    | [<Cmd("List files sorted by coverage to find improvement targets");
+        CmdArg("Path to the JSON config file", Default = "coverage-ratchet.json")>] Targets of config: string option
+    | [<Cmd("List uncovered branch points per file");
+        CmdArg("Path to the JSON config file", Default = "coverage-ratchet.json")>] Gaps of config: string option
+    | [<Cmd("Pull CI coverage results into local platform-specific thresholds");
+        CmdArg("Path to the JSON config file", Default = "coverage-ratchet.json")>] LoosenFromCi of
+        config: string option
+    | [<Cmd("Merge two Cobertura files by taking max hits per line");
+        CmdExample("coverage/MyProj/coverage.baseline.xml coverage/MyProj/coverage.cobertura.xml coverage/MyProj/coverage.cobertura.xml")>] Merge of
+        MergeArgs
     | [<Cmd("Copy each coverage.cobertura.xml to coverage.baseline.xml in the search dir")>] RefreshBaseline
 
 let formatFileResult (r: FileResult) =
@@ -466,7 +483,9 @@ let private runWithCoverageFiles
 
 let run (command: Command) (searchDir: string) (mergeBaselines: bool) : Result<int, string> =
     match command with
-    | Merge(baseline, partialFile, output) ->
+    | Merge { Baseline = baseline
+              Partial = partialFile
+              Output = output } ->
         Merge.mergeFiles baseline partialFile output
         printfn "merged %s + %s -> %s" baseline partialFile output
         Ok 0
@@ -550,18 +569,12 @@ For each F# file under --search-dir, raise [config]'s line+branch
 threshold to the current coverage. Coverage can only go up. Files
 not listed in [config] must hit 100%/100% (which is also the default
 for newly-encountered files).
-
-Arguments:
-  config  path to the JSON config file (default: coverage-ratchet.json)
 """
     | [ "check" ] ->
         Some
             """
 Exits 0 if every F# file meets its line+branch threshold, 1 otherwise.
 Use in CI. Files not listed in [config] must hit 100%/100%.
-
-Arguments:
-  config  path to the JSON config file (default: coverage-ratchet.json)
 """
     | [ "loosen" ] ->
         Some
@@ -569,9 +582,6 @@ Arguments:
 Lower thresholds in [config] to match current coverage so 'check'
 passes. Use sparingly — bootstrapping, or after a deliberate drop.
 Unlike 'ratchet' this can move thresholds DOWN.
-
-Arguments:
-  config  path to the JSON config file (default: coverage-ratchet.json)
 """
     | [ "check-json" ] ->
         Some
@@ -579,19 +589,12 @@ Arguments:
 Run 'check' and write per-file results as JSON for CI to upload as
 an artifact. Output includes the detected platform so loosen-from-ci
 can merge results from other platforms back in.
-
-Arguments:
-  config  path to the JSON config file (default: coverage-ratchet.json)
-  output  path to write JSON results (default: coverage-results.json)
 """
     | [ "targets" ] ->
         Some
             """
 Lists every F# file with line and branch percentages, lowest first.
 Read-only; never modifies [config]. Use to find what to test next.
-
-Arguments:
-  config  path to the JSON config file (default: coverage-ratchet.json)
 """
     | [ "gaps" ] ->
         Some
@@ -599,9 +602,6 @@ Arguments:
 For each file with branches < 100%, prints the source lines where
 uncovered branches sit. Use to plan tests for partial branch
 coverage.
-
-Arguments:
-  config  path to the JSON config file (default: coverage-ratchet.json)
 """
     | [ "loosen-from-ci" ] ->
         Some
@@ -615,9 +615,6 @@ Requires:
   - gh CLI authenticated to the repo
   - CI workflow that uploads a 'coverage-thresholds' artifact built
     by 'check-json' (one coverage-thresholds-<project>.json per project)
-
-Arguments:
-  config  path to the JSON config file (default: coverage-ratchet.json)
 """
     | [ "merge" ] ->
         Some
@@ -630,17 +627,6 @@ below the ratchet for lines whose tests didn't re-run.
 Most users want --merge-baselines on check/ratchet instead, which
 does this automatically per project under --search-dir using a
 coverage.baseline.xml sibling file.
-
-Arguments:
-  baseline  Cobertura XML from the prior full run
-  partial   Cobertura XML from the current (possibly partial) run
-  output    where to write the merged Cobertura XML
-
-Example:
-  coverageratchet merge \\
-    coverage/MyProj/coverage.baseline.xml \\
-    coverage/MyProj/coverage.cobertura.xml \\
-    coverage/MyProj/coverage.cobertura.xml
 """
     | [ "refresh-baseline" ] ->
         Some
