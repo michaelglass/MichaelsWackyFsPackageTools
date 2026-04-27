@@ -1665,7 +1665,13 @@ let ``run - Merge command writes output and returns Ok 0`` () =
         File.WriteAllText(partialPath, xml)
 
         let result =
-            run (Merge(baseline = baselinePath, partial = partialPath, output = outputPath)) tmpDir false
+            run
+                (Merge
+                    { Baseline = baselinePath
+                      Partial = partialPath
+                      Output = outputPath })
+                tmpDir
+                false
 
         test <@ result = Ok 0 @>
         test <@ File.Exists outputPath @>)
