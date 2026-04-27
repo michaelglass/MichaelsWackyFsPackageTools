@@ -15,7 +15,7 @@
   </ItemGroup>
   <PropertyGroup>
     <PackageId>CoverageRatchet</PackageId>
-    <Version>0.13.0-alpha.3</Version>
+    <Version>0.14.0-alpha.1</Version>
     <Authors>michaelglass</Authors>
     <Description>Per-file coverage enforcement with automatic threshold ratcheting from Cobertura XML</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

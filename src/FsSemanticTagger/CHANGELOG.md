@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.13.0-alpha.1 - 2026-04-27
+
 - feat: subcommand `--help` now emits per-command details (e.g. `fssemantictagger release --help` explains what `release`/`alpha`/`beta`/`rc`/`stable` do and what `--dry-run` / `--publish` mean)
 - feat: top-level `--help` documents the `semantic-tagger.json` schema and shows examples
 - feat: accept `-h` and `help` as aliases for `--help`

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.1 - 2026-04-27
+
 - feat: subcommand `--help` now works (e.g. `coverageratchet merge --help`) and emits per-command details — argument descriptions, when to use it, and where applicable an example invocation
 - feat: top-level `--help` documents global flags (`--search-dir`, `--merge-baselines`), the full `coverage-ratchet.json` schema (including platform-specific overrides), and example invocations
 - feat: accept `-h` and `help` as aliases for `--help`
