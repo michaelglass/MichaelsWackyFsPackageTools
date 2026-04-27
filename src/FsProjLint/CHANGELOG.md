@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- feat: top-level `--help` now lists every repo-level and project-level check fsprojlint runs, so users know what's being validated without reading the source
+- feat: accept `-h` and `help` as aliases for `--help`
+
 ## 0.9.0-alpha.3 - 2026-04-22
 
 - docs: attribute CHANGELOG entries to released versions

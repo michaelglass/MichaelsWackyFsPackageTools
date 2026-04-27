@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- feat: subcommand `--help` now works (e.g. `coverageratchet merge --help`) and emits per-command details — argument descriptions, when to use it, and where applicable an example invocation
+- feat: top-level `--help` documents global flags (`--search-dir`, `--merge-baselines`), the full `coverage-ratchet.json` schema (including platform-specific overrides), and example invocations
+- feat: accept `-h` and `help` as aliases for `--help`
+
 ## 0.13.0-alpha.3 - 2026-04-24
 
 - feat: add `merge` command — take two Cobertura XMLs, produce one with max hits per line (union classes/methods/conditions, rates recomputed)
