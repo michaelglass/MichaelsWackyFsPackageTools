@@ -4,15 +4,16 @@ open System.IO
 open CommandTree
 
 type ReleaseFlag =
-    | [<Cmd("Build and pack locally instead of pushing tags for CI")>] Publish
-    | [<Cmd("Preview version bumps without modifying files or creating tags")>] DryRun
+    | [<CmdFlag(Description = "Build and pack locally instead of pushing tags for CI")>] Publish
+    | [<CmdFlag(Description = "Preview version bumps without modifying files or creating tags")>] DryRun
 
 type Command =
     | [<Cmd("Initialize semantic-tagger.json by scanning for packable .fsproj files")>] Init
-    | [<Cmd("Print the public API signatures of a built DLL")>] ExtractApi of dll: string
-    | [<Cmd("Compare two DLLs and report breaking vs additive API changes")>] CheckApi of
-        oldDll: string *
-        newDll: string
+    | [<Cmd("Print the public API signatures of a built DLL"); CmdArg("Path to built DLL")>] ExtractApi of dll: string
+    | [<Cmd("Compare two DLLs and report breaking vs additive API changes");
+        CmdArg("Old DLL path");
+        CmdArg("New DLL path", FieldIndex = 1);
+        CmdExample("before/MyLib.dll after/MyLib.dll")>] CheckApi of oldDll: string * newDll: string
     | [<Cmd("Bump version and tag based on API diff vs the last release")>] Release of ReleaseFlag list
     | [<Cmd("Start an alpha pre-release cycle (X.Y.Z-alpha.N)")>] Alpha of ReleaseFlag list
     | [<Cmd("Promote the current pre-release to beta (X.Y.Z-beta.N)")>] Beta of ReleaseFlag list
