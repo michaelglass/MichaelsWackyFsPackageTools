@@ -21,8 +21,8 @@
         "platform": "macos"
       },
       {
-        "line": 65,
-        "branch": 49,
+        "line": 95,
+        "branch": 79,
         "platform": "linux"
       }
     ],
@@ -34,7 +34,7 @@
         "platform": "macos"
       },
       {
-        "line": 88,
+        "line": 83,
         "branch": 82,
         "reason": "deliberately too high to induce a linux coverage failure for loosen-from-ci end-to-end test",
         "platform": "linux"
