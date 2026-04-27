@@ -378,7 +378,7 @@ let private executeBumps
             pushMain input.Run
             waitForCiAndPushTags input.Run input.CiPollIntervalMs input.CiMaxAttempts tags
         | LocalPublish -> packLocally input.Run allBumps
-        | DryRun -> 0 // unreachable; matched above
+        | DryRun -> 0
 
 /// Main release orchestration
 let release (input: ReleaseInput) : int =
