@@ -55,8 +55,8 @@
         "platform": "macos"
       },
       {
-        "line": 86,
-        "branch": 83,
+        "line": 92,
+        "branch": 79,
         "platform": "linux"
       }
     ],
@@ -76,7 +76,7 @@
         "platform": "macos"
       },
       {
-        "line": 98,
+        "line": 99,
         "branch": 98,
         "reason": "hasCoverageRatchet branches",
         "platform": "linux"
