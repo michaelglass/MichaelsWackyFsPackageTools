@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: `--publish` (LocalPublish) mode no longer creates jj tags that are never pushed — tags are now only created in PushTags mode, preventing "no changes since <unpushed-tag>" false-skips on subsequent runs
+
 ## 0.13.0-alpha.1 - 2026-04-27
 
 - feat: subcommand `--help` now emits per-command details (e.g. `fssemantictagger release --help` explains what `release`/`alpha`/`beta`/`rc`/`stable` do and what `--dry-run` / `--publish` mean)
