@@ -295,7 +295,7 @@ let private resumeAlreadyBumped (input: ReleaseInput) (alreadyBumped: (PackageCo
 
     match input.Mode with
     | DryRun -> 0
-    | mode ->
+    | PushTags ->
         let tags =
             alreadyBumped
             |> List.map (fun (pkg, version) ->
@@ -306,10 +306,8 @@ let private resumeAlreadyBumped (input: ReleaseInput) (alreadyBumped: (PackageCo
 
                 tag)
 
-        match mode with
-        | PushTags -> waitForCiAndPushTags input.Run input.CiPollIntervalMs input.CiMaxAttempts tags
-        | LocalPublish -> packLocally input.Run alreadyBumped
-        | DryRun -> 0 // unreachable; matched above
+        waitForCiAndPushTags input.Run input.CiPollIntervalMs input.CiMaxAttempts tags
+    | LocalPublish -> packLocally input.Run alreadyBumped
 
 let private executeBumps
     (input: ReleaseInput)
@@ -368,15 +366,15 @@ let private executeBumps
 
         commitAndAdvanceMain input.Run (sprintf "Bump versions: %s" versionSummary)
 
-        let tags =
-            allBumps
-            |> List.map (fun (pkg, version) ->
-                let tag = toTag pkg.TagPrefix version
-                tagRevision input.Run tag "main"
-                tag)
-
         match mode with
         | PushTags ->
+            let tags =
+                allBumps
+                |> List.map (fun (pkg, version) ->
+                    let tag = toTag pkg.TagPrefix version
+                    tagRevision input.Run tag "main"
+                    tag)
+
             pushMain input.Run
             waitForCiAndPushTags input.Run input.CiPollIntervalMs input.CiMaxAttempts tags
         | LocalPublish -> packLocally input.Run allBumps
