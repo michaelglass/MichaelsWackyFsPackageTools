@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: real `--help` / `-h` / `help` support — explains the `README.md` ↔ `docs/index.md` discovery convention and the `<!-- sync:NAME:start/end -->` marker syntax (was previously just a one-line "Usage: ..." on bad input)
+
 ## 0.12.0-alpha.3 - 2026-04-22
 
 - docs: attribute CHANGELOG entries to released versions

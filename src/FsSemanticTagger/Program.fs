@@ -8,14 +8,16 @@ type ReleaseFlag =
     | [<Cmd("Preview version bumps without modifying files or creating tags")>] DryRun
 
 type Command =
-    | [<Cmd("Initialize semantic-tagger.json config")>] Init
-    | [<Cmd("Extract public API signatures from a DLL")>] ExtractApi of dll: string
-    | [<Cmd("Compare APIs between two DLLs")>] CheckApi of oldDll: string * newDll: string
-    | [<Cmd("Auto release based on API changes")>] Release of ReleaseFlag list
-    | [<Cmd("Start alpha pre-release cycle")>] Alpha of ReleaseFlag list
-    | [<Cmd("Promote to beta")>] Beta of ReleaseFlag list
-    | [<Cmd("Promote to release candidate")>] Rc of ReleaseFlag list
-    | [<Cmd("Promote to stable release")>] Stable of ReleaseFlag list
+    | [<Cmd("Initialize semantic-tagger.json by scanning for packable .fsproj files")>] Init
+    | [<Cmd("Print the public API signatures of a built DLL")>] ExtractApi of dll: string
+    | [<Cmd("Compare two DLLs and report breaking vs additive API changes")>] CheckApi of
+        oldDll: string *
+        newDll: string
+    | [<Cmd("Bump version and tag based on API diff vs the last release")>] Release of ReleaseFlag list
+    | [<Cmd("Start an alpha pre-release cycle (X.Y.Z-alpha.N)")>] Alpha of ReleaseFlag list
+    | [<Cmd("Promote the current pre-release to beta (X.Y.Z-beta.N)")>] Beta of ReleaseFlag list
+    | [<Cmd("Promote the current pre-release to release candidate (X.Y.Z-rc.N)")>] Rc of ReleaseFlag list
+    | [<Cmd("Promote the current pre-release to a stable release (X.Y.Z)")>] Stable of ReleaseFlag list
 
 let initCommand (rootDir: string) : Result<int, string> =
     let jsonPath = Path.Combine(rootDir, "semantic-tagger.json")
@@ -147,21 +149,125 @@ let internal runCommandWith
 
 let runCommand (cmd: Command) : Result<int, string> = runCommandWith runRelease cmd
 
-let run (argv: string array) : Result<int, string> =
+let private subcommandExtras (path: string list) : string option =
+    match path with
+    | [ "init" ] ->
+        Some
+            """
+Scans the current directory for .fsproj files with a <PackageId> element
+and creates semantic-tagger.json with one entry per packable project. In
+multi-package repos, each project gets its own tag prefix (<name>-v...);
+single-package repos use plain v... tags. Skips silently if the file
+already exists.
+"""
+    | [ "extract-api" ] ->
+        Some
+            """
+Loads <dll> with reflection and prints one line per public API element
+(types, functions, fields, attributes). Useful to inspect what
+check-api will compare against.
+
+Arguments:
+  dll  path to a built assembly (e.g. bin/Release/net10.0/MyProj.dll)
+"""
+    | [ "check-api" ] ->
+        Some
+            """
+Compares the public API of <old-dll> and <new-dll>. Exit codes:
+  0  no API change
+  1  additions only (minor bump)
+  2  breaking changes (major bump)
+
+Arguments:
+  old-dll  path to the previous version's assembly
+  new-dll  path to the current build's assembly
+"""
+    | [ "release" ]
+    | [ "alpha" ]
+    | [ "beta" ]
+    | [ "rc" ]
+    | [ "stable" ] ->
+        Some
+            """
+Reads semantic-tagger.json, locates each package's prior release tag,
+extracts the public API from the cached NuGet package for that version,
+diffs it against the current build, and bumps the version accordingly.
+
+Modes (one chosen per invocation):
+  release  auto-pick patch / minor / major based on the API diff
+  alpha    start a new alpha pre-release (X.Y.Z-alpha.N)
+  beta     promote the current pre-release to beta
+  rc       promote the current pre-release to release candidate
+  stable   promote the current pre-release to a stable release
+
+Flags:
+  --dry-run  print what would happen without writing or tagging
+  --publish  build & pack locally instead of pushing tags (CI normally
+             reacts to the pushed tag and does the pack itself)
+"""
+    | _ -> None
+
+let private rootHelpExtras =
+    """
+Config file (semantic-tagger.json), produced by 'init':
+  {
+    "Packages": [
+      {
+        "Name": "MyTool",
+        "Fsproj": "src/MyTool/MyTool.fsproj",
+        "DllPath": "src/MyTool/bin/Release/net10.0/MyTool.dll",
+        "TagPrefix": "mytool-v",
+        "FsProjsSharingSameTag": []
+      }
+    ],
+    "ReservedVersions": [],
+    "PreBuildCmds": []
+  }
+
+  - TagPrefix is "v" in single-package repos and "<name>-v" in
+    multi-package repos.
+  - FsProjsSharingSameTag lets multiple .fsproj files version together
+    under one tag.
+  - PreBuildCmds run before the build that produces DllPath.
+
+Examples:
+  fssemantictagger init
+  fssemantictagger extract-api src/MyTool/bin/Release/net10.0/MyTool.dll
+  fssemantictagger check-api old.dll new.dll
+  fssemantictagger release --dry-run
+  fssemantictagger alpha
+  fssemantictagger stable
+
+Run 'fssemantictagger <command> --help' for command-specific details.
+"""
+
+let private normalizeHelpFlags (argv: string array) : string array =
+    argv |> Array.map (fun a -> if a = "-h" || a = "help" then "--help" else a)
+
+let run (rawArgv: string array) : Result<int, string> =
+    let argv = normalizeHelpFlags rawArgv
+
     let tree =
         CommandReflection.fromUnion<Command> "Semantic versioning with API change detection"
 
-    if
-        Array.isEmpty argv
-        || argv |> Array.exists (fun a -> a = "--help" || a = "-h" || a = "help")
-    then
-        printfn "%s" (CommandTree.helpFull tree "fssemantictagger")
+    let printHelp (path: string list) =
+        printfn "%s" (CommandTree.helpForPath tree path "fssemantictagger")
+
+        if List.isEmpty path then
+            printfn "%s" rootHelpExtras
+        else
+            match subcommandExtras path with
+            | Some extras -> printfn "%s" extras
+            | None -> ()
+
+    if Array.isEmpty argv then
+        printHelp []
         Ok 0
     else
         match CommandTree.parse tree argv with
         | Ok cmd -> runCommand cmd
         | Error(HelpRequested path) ->
-            printfn "%s" (CommandTree.helpForPath tree path "fssemantictagger")
+            printHelp path
             Ok 0
         | Error err -> Error(sprintf "%A" err)
 
