@@ -22,6 +22,10 @@ on:
         description: 'Pass --no-build to dotnet pack. Set to false for projects with custom pack targets that need ResolveReferences (e.g. TargetsForTfmSpecificBuildOutput).'
         type: boolean
         default: true
+      pre-build-cmd:
+        description: 'Shell commands to run after restore but before build (e.g. clone sibling repos for ProjectReferences).'
+        type: string
+        default: ''
     outputs:
       version:
         description: 'The version extracted from the git tag'
@@ -69,6 +73,9 @@ jobs:
         if: inputs.paket-restore
         run: dotnet tool run paket restore
       - run: dotnet restore
+      - name: Pre-build
+        if: inputs.pre-build-cmd != ''
+        run: ${{ inputs.pre-build-cmd }}
       - run: dotnet build -c Release --no-restore
       - name: Pack main package
         run: dotnet pack ${{ inputs.fsproj-path }} -c Release ${{ inputs.no-build-pack == true && '--no-build' || '' }} -o ./artifacts
