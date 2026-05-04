@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/CoverageRatchet.Core/CoverageRatchet.Core.fsproj" />
     <Project Path="src/CoverageRatchet/CoverageRatchet.fsproj" />
     <Project Path="src/FsSemanticTagger/FsSemanticTagger.fsproj" />
     <Project Path="src/SyncDocs/SyncDocs.fsproj" />
