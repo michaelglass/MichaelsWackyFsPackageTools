@@ -408,16 +408,3 @@ let refreshBaselines (searchDir: string) : unit =
         let dir = Path.GetDirectoryName(coverageFile)
         let baseline = Path.Combine(dir, "coverage.baseline.xml")
         File.Copy(coverageFile, baseline, overwrite = true)
-
-/// Delete all coverage.baseline.xml files under searchDir. After this,
-/// the next partial run starts a fresh baseline from scratch.
-let deleteBaselines (searchDir: string) : int =
-    let mutable count = 0
-
-    if Directory.Exists(searchDir) then
-        for baseline in
-            Directory.EnumerateFiles(searchDir, "coverage.baseline.xml", SearchOption.AllDirectories) do
-            File.Delete(baseline)
-            count <- count + 1
-
-    count
