@@ -308,13 +308,39 @@ let internal getVcsSha (run: string -> string -> CommandResult) : string =
         | Success sha -> sha.Trim()
         | Failure(msg, _) -> failwithf "Could not get commit SHA: %s" msg
 
+// jj hint line: "Hint: Rejected commit: <change-id> <commit-id> <bookmark>* | (empty)..."
+let private rejectedBookmarkPattern =
+    System.Text.RegularExpressions.Regex(@"Rejected commit: \S+ \S+ (\S+)\*")
+
+let private gitPushFallback (run: string -> string -> CommandResult) =
+    match run "git" "push" with
+    | Success _ -> ()
+    | Failure(msg, _) -> failwithf "git push failed: %s" msg
+
 let internal vcsPush (run: string -> string -> CommandResult) =
     match run "jj" "git push" with
     | Success _ -> ()
-    | Failure _ ->
-        match run "git" "push" with
+    | Failure(msg, _) when msg.Contains("has no description") ->
+        // The working-copy draft sits on a tracked bookmark. Parse the rejected
+        // bookmark names from jj's hint lines and push each one explicitly.
+        let bookmarks =
+            msg.Split('\n')
+            |> Array.choose (fun line ->
+                let m = rejectedBookmarkPattern.Match(line)
+                if m.Success then Some m.Groups.[1].Value else None)
+
+        if bookmarks.Length = 0 then
+            failwithf
+                "jj git push rejected with 'has no description' but no bookmark names could be parsed from error: %s"
+                msg
+
+        let pushArgs =
+            bookmarks |> Array.map (fun b -> sprintf "--bookmark %s" b) |> String.concat " "
+
+        match run "jj" (sprintf "git push %s" pushArgs) with
         | Success _ -> ()
-        | Failure(msg, _) -> failwithf "git push failed: %s" msg
+        | Failure _ -> gitPushFallback run
+    | Failure _ -> gitPushFallback run
 
 let internal vcsCommitAndPush (run: string -> string -> CommandResult) (configPath: string) =
     let mustRun cmd args =

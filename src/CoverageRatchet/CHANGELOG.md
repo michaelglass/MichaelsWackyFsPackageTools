@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: vcsPush now handles jj "has no description" error by parsing rejected bookmark names from hint lines and retrying with explicit --bookmark flags instead of failing
+
 ## 0.14.0-alpha.1 - 2026-04-27
 
 - feat: subcommand `--help` now works (e.g. `coverageratchet merge --help`) and emits per-command details — argument descriptions, when to use it, and where applicable an example invocation
