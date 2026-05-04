@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- chore: bump CommandTree to 0.5.0; update FSharp.Core to 10.1.203
+
 ## 0.10.0-alpha.1 - 2026-04-27
 
 - feat: top-level `--help` now lists every repo-level and project-level check fsprojlint runs, so users know what's being validated without reading the source
