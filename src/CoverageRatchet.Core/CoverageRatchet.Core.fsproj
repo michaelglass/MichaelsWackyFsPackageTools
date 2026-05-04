@@ -1,45 +1,32 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <OutputType>Library</OutputType>
     <TargetFramework>net10.0</TargetFramework>
-    <PackAsTool>true</PackAsTool>
-    <ToolCommandName>coverageratchet</ToolCommandName>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <WarningLevel>5</WarningLevel>
     <WarnOn>3390;1104;0020;0044;0025;3391;0067;0021;1182</WarnOn>
     <NoWarn>$(NoWarn);NU1605;MSB3277;NETSDK1188</NoWarn>
   </PropertyGroup>
-  <ItemGroup>
-    <InternalsVisibleTo Include="CoverageRatchet.Tests" />
-  </ItemGroup>
   <PropertyGroup>
-    <PackageId>CoverageRatchet</PackageId>
-    <Version>0.14.0-alpha.2</Version>
+    <PackageId>CoverageRatchet.Core</PackageId>
+    <Version>0.1.0-alpha.1</Version>
     <Authors>michaelglass</Authors>
-    <Description>Per-file coverage enforcement with automatic threshold ratcheting from Cobertura XML</Description>
+    <Description>Cobertura XML parsing, threshold checking, and ratcheting — library form of CoverageRatchet</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/michaelglass/MichaelsWackyFsPackageTools</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>coverage;testing;cobertura;ratchet</PackageTags>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
   <ItemGroup>
-    <None Include="README.md" Pack="true" PackagePath="/" />
-  </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="CommandTree" Version="0.5.0" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.201" PrivateAssets="All" />
-    <!-- Let the SDK provide FSharp.Core; don't force a specific version on consumers -->
-    <!-- <PackageReference Update="FSharp.Core" Version="10.1.201" /> -->
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="../CoverageRatchet.Core/CoverageRatchet.Core.fsproj" />
-  </ItemGroup>
-  <ItemGroup>
-    <Compile Include="Shell.fs" />
-    <Compile Include="Program.fs" />
+    <Compile Include="Cobertura.fs" />
+    <Compile Include="Merge.fs" />
+    <Compile Include="Thresholds.fs" />
+    <Compile Include="Ratchet.fs" />
   </ItemGroup>
 </Project>
