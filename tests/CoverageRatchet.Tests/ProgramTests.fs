@@ -1303,6 +1303,64 @@ let ``vcsPush - jj fails falls back to git push`` () =
     vcsPush run
     test <@ calls = [ "jj"; "git" ] @>
 
+[<Fact>]
+let ``vcsPush - jj fails with has no description parses bookmarks and pushes explicitly`` () =
+    let mutable jjArgs = []
+
+    let noDescMsg =
+        "Error: ...\nhas no description\nHint: Rejected commit: abc123 def456 main*\n"
+
+    let run cmd (args: string) =
+        if cmd = "jj" then
+            jjArgs <- jjArgs @ [ args ]
+
+            if args = "git push" then
+                CoverageRatchet.Shell.Failure(noDescMsg, 1)
+            else
+                CoverageRatchet.Shell.Success "pushed"
+        else
+            CoverageRatchet.Shell.Success "pushed"
+
+    vcsPush run
+    test <@ jjArgs |> List.exists (fun a -> a.Contains("--bookmark main")) @>
+
+[<Fact>]
+let ``vcsPush - jj fails with has no description explicit bookmark push fails falls back to git`` () =
+    let mutable calls = []
+
+    let noDescMsg =
+        "Error: ...\nhas no description\nHint: Rejected commit: abc123 def456 main*\n"
+
+    let run cmd (args: string) =
+        calls <- calls @ [ cmd ]
+
+        if cmd = "jj" then
+            CoverageRatchet.Shell.Failure(noDescMsg, 1)
+        else
+            CoverageRatchet.Shell.Success "pushed"
+
+    vcsPush run
+    test <@ calls |> List.filter (fun c -> c = "git") |> List.length = 1 @>
+
+[<Fact>]
+let ``vcsPush - jj fails with has no description but no bookmarks parsed throws`` () =
+    let noDescMsgNoBookmarks = "Error: ...\nhas no description\nHint: some other hint\n"
+
+    let run cmd args =
+        CoverageRatchet.Shell.Failure(noDescMsgNoBookmarks, 1)
+
+    Assert.ThrowsAny<exn>(fun () -> vcsPush run) |> ignore
+
+[<Fact>]
+let ``vcsPush - git push fallback fails throws`` () =
+    let run cmd (args: string) =
+        if cmd = "jj" then
+            CoverageRatchet.Shell.Failure("no jj", 1)
+        else
+            CoverageRatchet.Shell.Failure("git push failed", 1)
+
+    Assert.ThrowsAny<exn>(fun () -> vcsPush run) |> ignore
+
 // --- vcsCommitAndPush tests ---
 
 [<Fact>]
