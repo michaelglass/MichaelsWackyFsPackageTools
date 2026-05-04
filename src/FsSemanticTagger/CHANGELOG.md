@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.13.0-alpha.2 - 2026-05-04
+
 - fix: `--publish` (LocalPublish) mode no longer creates jj tags that are never pushed — tags are now only created in PushTags mode, preventing "no changes since <unpushed-tag>" false-skips on subsequent runs
 
 ## 0.13.0-alpha.1 - 2026-04-27
