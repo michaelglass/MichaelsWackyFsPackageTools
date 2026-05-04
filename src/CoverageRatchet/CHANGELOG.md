@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.2 - 2026-05-04
+
 - fix: vcsPush now handles jj "has no description" error by parsing rejected bookmark names from hint lines and retrying with explicit --bookmark flags instead of failing
 
 ## 0.14.0-alpha.1 - 2026-04-27
