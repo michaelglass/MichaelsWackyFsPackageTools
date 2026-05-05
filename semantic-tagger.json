@@ -19,6 +19,11 @@
       "name": "FsProjLint",
       "fsproj": "src/FsProjLint/FsProjLint.fsproj",
       "tagPrefix": "fsprojlint-v"
+    },
+    {
+      "name": "CoverageRatchet.Core",
+      "fsproj": "src/CoverageRatchet.Core/CoverageRatchet.Core.fsproj",
+      "tagPrefix": "coverageratchet-core-v"
     }
   ]
 }

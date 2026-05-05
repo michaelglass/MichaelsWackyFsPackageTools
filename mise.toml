@@ -105,6 +105,7 @@ depends = ["format-check", "lint", "lint-project", "sync-docs-check", "docs", "c
 [tasks.pack]
 run = """
 dotnet pack src/CoverageRatchet/CoverageRatchet.fsproj -c Release -o artifacts/
+dotnet pack src/CoverageRatchet.Core/CoverageRatchet.Core.fsproj -c Release -o artifacts/
 dotnet pack src/SyncDocs/SyncDocs.fsproj -c Release -o artifacts/
 dotnet pack src/FsSemanticTagger/FsSemanticTagger.fsproj -c Release -o artifacts/
 dotnet pack src/FsProjLint/FsProjLint.fsproj -c Release -o artifacts/
