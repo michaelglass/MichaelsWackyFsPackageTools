@@ -6,6 +6,7 @@ on:
       - 'syncdocs-v*'
       - 'fssemantictagger-v*'
       - 'fsprojlint-v*'
+      - 'coverageratchet-core-v*'
 
 permissions:
   contents: write
@@ -115,6 +116,35 @@ jobs:
   publish-fsprojlint:
     if: startsWith(github.ref, 'refs/tags/fsprojlint-v')
     needs: release-fsprojlint
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nuget-packages
+          path: ./artifacts
+      - name: Login to NuGet (Trusted Publishing)
+        id: nuget-login
+        uses: nuget/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+      - name: Publish to NuGet
+        run: dotnet nuget push ./artifacts/*.nupkg --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+  release-coverageratchet-core:
+    if: startsWith(github.ref, 'refs/tags/coverageratchet-core-v')
+    uses: ./.github/workflows/michaels-wacky-release.yml
+    with:
+      package-name: CoverageRatchet.Core
+      tag-prefix: coverageratchet-core-v
+      fsproj-path: src/CoverageRatchet.Core/CoverageRatchet.Core.fsproj
+    permissions:
+      contents: write
+
+  publish-coverageratchet-core:
+    if: startsWith(github.ref, 'refs/tags/coverageratchet-core-v')
+    needs: release-coverageratchet-core
     runs-on: ubuntu-latest
     permissions:
       id-token: write
