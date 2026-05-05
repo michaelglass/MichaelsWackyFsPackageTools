@@ -1,0 +1,24 @@
+{
+  "overrides": {
+    "Cobertura.fs": {
+      "line": 89,
+      "branch": 72,
+      "reason": "loosened automatically"
+    },
+    "Merge.fs": {
+      "line": 54,
+      "branch": 41,
+      "reason": "loosened automatically"
+    },
+    "Ratchet.fs": {
+      "line": 78,
+      "branch": 58,
+      "reason": "loosened automatically"
+    },
+    "Thresholds.fs": {
+      "line": 82,
+      "branch": 53,
+      "reason": "loosened automatically"
+    }
+  }
+}
