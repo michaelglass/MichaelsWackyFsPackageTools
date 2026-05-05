@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- refactor: extract Cobertura parsing, threshold checking, ratcheting, and merging into CoverageRatchet.Core; CoverageRatchet CLI delegates to the shared library
+
 ## 0.14.0-alpha.2 - 2026-05-04
 
 - fix: vcsPush now handles jj "has no description" error by parsing rejected bookmark names from hint lines and retrying with explicit --bookmark flags instead of failing
