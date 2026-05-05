@@ -12,5 +12,6 @@
     <Project Path="tests/FsSemanticTagger.Tests/FsSemanticTagger.Tests.fsproj" />
     <Project Path="tests/SyncDocs.Tests/SyncDocs.Tests.fsproj" />
     <Project Path="tests/FsProjLint.Tests/FsProjLint.Tests.fsproj" />
+    <Project Path="tests/CoverageRatchet.Core.Tests/CoverageRatchet.Core.Tests.fsproj" />
   </Folder>
 </Solution>
