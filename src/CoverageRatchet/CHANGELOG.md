@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.15.0-alpha.1 - 2026-05-05
+
 - refactor: extract Cobertura parsing, threshold checking, ratcheting, and merging into CoverageRatchet.Core; CoverageRatchet CLI delegates to the shared library
 
 ## 0.14.0-alpha.2 - 2026-05-04
