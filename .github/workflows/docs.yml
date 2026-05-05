@@ -6,6 +6,7 @@ on:
       - 'syncdocs-v*'
       - 'fssemantictagger-v*'
       - 'fsprojlint-v*'
+      - 'coverageratchet-core-v*'
 
 concurrency:
   group: docs-${{ github.sha }}
