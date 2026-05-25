@@ -156,6 +156,36 @@ coverageratchet merge <baseline.xml> <partial.xml> <output.xml>
 - **New source files added in a partial-only run** are measured only by whichever tests ran — that's all the merger knows about. Ratchet thresholds for new files will reflect partial coverage until the next full run refreshes the baseline.
 - Baselines are a safety net against false drops, not a substitute for periodic full runs.
 
+### Excluding upstream package source files
+
+If your project takes a **local** NuGet `PackageReference` (e.g. a sibling library you build locally instead of consuming from a feed), `dotnet-coverage` will happily instrument the upstream package's source files and emit them in your Cobertura XML. They aren't your code — you can't fix their coverage — but CoverageRatchet will still hold you to the default 100% / 100% on every file it sees.
+
+**Recommended fix: exclude at the instrumentation layer.** Add a `.coverage-settings.xml` next to your `dotnet test` invocation and pass it via `--settings`:
+
+```xml
+<!-- .coverage-settings.xml -->
+<CodeCoverage>
+  <ModulePaths>
+    <Exclude>
+      <ModulePath>.*UnionConfig.*</ModulePath>
+      <ModulePath>.*FsHotWatch.*</ModulePath>
+    </Exclude>
+  </ModulePaths>
+</CodeCoverage>
+```
+
+```bash
+dotnet test --settings .coverage-settings.xml --coverage --coverage-output-format cobertura ...
+```
+
+The upstream files never get instrumented, never appear in the Cobertura XML, and never reach CoverageRatchet. This is the right layer for the fix:
+
+- One source of truth — IDE coverage gutters, Codecov, and any other consumer of the same XML also see them excluded.
+- Works for any threshold tool, not just CoverageRatchet.
+- Matches what dotnet-coverage natively understands (assembly / module patterns).
+
+CoverageRatchet has **no config-level exclude list** by design — exclusions belong at the instrumentation boundary, not in the threshold checker. The built-in path filters (`paket-files/`, `vendor/`, `node_modules/`, `.fable/`, plus `Test*` / `AssemblyInfo*` / `AssemblyAttributes*` filenames) only exist because they are universal F# OSS conventions, not project-specific exclusions.
+
 ### Custom search directory
 
 By default, CoverageRatchet recursively searches `.` for coverage files. Use `--search-dir` to search a different directory:
