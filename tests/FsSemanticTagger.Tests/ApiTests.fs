@@ -661,3 +661,276 @@ let ``getAssemblySearchPaths skips deps.json entries whose packages are not in l
             System.IO.Directory.Delete(tmpDir, true)
         with _ ->
             ()
+
+[<Fact>]
+let ``readNuspecDependencies parses grouped and flat dependencies`` () =
+    let tmpDir =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"))
+
+    System.IO.Directory.CreateDirectory(tmpDir) |> ignore
+
+    try
+        let nuspec =
+            """<?xml version="1.0"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>Test.Pkg</id>
+    <version>1.0.0</version>
+    <dependencies>
+      <group targetFramework="net10.0">
+        <dependency id="Falco" version="5.2.0" />
+        <dependency id="FSharp.Core" version="[10.1.201, )" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>"""
+
+        System.IO.File.WriteAllText(System.IO.Path.Combine(tmpDir, "test.pkg.nuspec"), nuspec)
+        let deps = readNuspecDependencies tmpDir
+        test <@ deps |> List.contains ("Falco", "5.2.0") @>
+        test <@ deps |> List.contains ("FSharp.Core", "[10.1.201, )") @>
+    finally
+        try
+            System.IO.Directory.Delete(tmpDir, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``readNuspecDependencies returns empty when no nuspec present`` () =
+    let tmpDir =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"))
+
+    System.IO.Directory.CreateDirectory(tmpDir) |> ignore
+
+    try
+        test <@ List.isEmpty (readNuspecDependencies tmpDir) @>
+    finally
+        try
+            System.IO.Directory.Delete(tmpDir, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``resolveCachedPackageDir resolves an exact version range`` () =
+    let cacheRoot =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"))
+
+    let verDir = System.IO.Path.Combine(cacheRoot, "falco", "5.2.0")
+    System.IO.Directory.CreateDirectory(verDir) |> ignore
+
+    try
+        // NuGet often records the lower bound as a range like "[5.2.0, )".
+        test <@ resolveCachedPackageDir cacheRoot "Falco" "[5.2.0, )" = Some verDir @>
+    finally
+        try
+            System.IO.Directory.Delete(cacheRoot, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``resolveCachedPackageDir falls back to highest cached version when exact is absent`` () =
+    let cacheRoot =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"))
+
+    System.IO.Directory.CreateDirectory(System.IO.Path.Combine(cacheRoot, "falco", "5.1.0"))
+    |> ignore
+
+    let high = System.IO.Path.Combine(cacheRoot, "falco", "5.2.0")
+    System.IO.Directory.CreateDirectory(high) |> ignore
+
+    try
+        test <@ resolveCachedPackageDir cacheRoot "Falco" "9.9.9" = Some high @>
+        test <@ resolveCachedPackageDir cacheRoot "Nonexistent" "1.0.0" = None @>
+    finally
+        try
+            System.IO.Directory.Delete(cacheRoot, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``pickLibDir picks the first existing lib tfm`` () =
+    let pkgDir =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"))
+
+    let libNet8 = System.IO.Path.Combine(pkgDir, "lib", "net8.0")
+    System.IO.Directory.CreateDirectory(libNet8) |> ignore
+
+    try
+        test <@ pickLibDir pkgDir = Some libNet8 @>
+    finally
+        try
+            System.IO.Directory.Delete(pkgDir, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``nuspecClosureDirsFor walks transitive deps for a cache-resident dll`` () =
+    let cacheRoot =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"))
+
+    // Lay out a fake cache: MyPkg -> Dep1 -> Dep2 (transitive).
+    let mkPackage (id: string) (version: string) (deps: (string * string) list) =
+        let verDir = System.IO.Path.Combine(cacheRoot, id.ToLowerInvariant(), version)
+
+        System.IO.Directory.CreateDirectory(System.IO.Path.Combine(verDir, "lib", "net10.0"))
+        |> ignore
+
+        let depXml =
+            deps
+            |> List.map (fun (i, v) -> sprintf """<dependency id="%s" version="%s" />""" i v)
+            |> String.concat "\n"
+
+        let nuspec =
+            sprintf
+                """<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd"><metadata><dependencies><group targetFramework="net10.0">%s</group></dependencies></metadata></package>"""
+                depXml
+
+        System.IO.File.WriteAllText(System.IO.Path.Combine(verDir, id.ToLowerInvariant() + ".nuspec"), nuspec)
+        verDir
+
+    try
+        let myPkgDir = mkPackage "MyPkg" "1.0.0" [ "Dep1", "5.0.0" ]
+        let dep1Dir = mkPackage "Dep1" "5.0.0" [ "Dep2", "2.0.0" ]
+        let dep2Dir = mkPackage "Dep2" "2.0.0" []
+
+        let dllPath = System.IO.Path.Combine(myPkgDir, "lib", "net10.0", "MyPkg.dll")
+        let dirs = nuspecClosureDirsFor cacheRoot dllPath
+
+        // Both the direct and the transitive dependency lib dirs are resolved.
+        test <@ dirs |> List.contains (System.IO.Path.Combine(dep1Dir, "lib", "net10.0")) @>
+        test <@ dirs |> List.contains (System.IO.Path.Combine(dep2Dir, "lib", "net10.0")) @>
+    finally
+        try
+            System.IO.Directory.Delete(cacheRoot, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``nuspecClosureDirsFor returns empty for a dll outside the cache root`` () =
+    let cacheRoot =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"))
+
+    let outsideDll =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"), "Foo.dll")
+
+    test <@ List.isEmpty (nuspecClosureDirsFor cacheRoot outsideDll) @>
+
+[<Fact>]
+let ``nuspecClosureDirsFor returns empty when under cache but no nuspec is found`` () =
+    let cacheRoot =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"))
+
+    // A dll under the cache root whose package dir has no .nuspec anywhere upward.
+    let libDir =
+        System.IO.Path.Combine(cacheRoot, "nonuspec", "1.0.0", "lib", "net10.0")
+
+    System.IO.Directory.CreateDirectory(libDir) |> ignore
+
+    try
+        let dllPath = System.IO.Path.Combine(libDir, "NoNuspec.dll")
+        test <@ List.isEmpty (nuspecClosureDirsFor cacheRoot dllPath) @>
+    finally
+        try
+            System.IO.Directory.Delete(cacheRoot, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``nuspecClosureDirsFor skips dependencies absent from the cache`` () =
+    let cacheRoot =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"))
+
+    let verDir = System.IO.Path.Combine(cacheRoot, "lonely", "1.0.0")
+
+    System.IO.Directory.CreateDirectory(System.IO.Path.Combine(verDir, "lib", "net10.0"))
+    |> ignore
+
+    // Depends on a package that is not present in the cache — it is simply skipped.
+    System.IO.File.WriteAllText(
+        System.IO.Path.Combine(verDir, "lonely.nuspec"),
+        """<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd"><metadata><dependencies><dependency id="MissingDep" version="9.9.9" /></dependencies></metadata></package>"""
+    )
+
+    try
+        let dllPath = System.IO.Path.Combine(verDir, "lib", "net10.0", "Lonely.dll")
+        test <@ List.isEmpty (nuspecClosureDirsFor cacheRoot dllPath) @>
+    finally
+        try
+            System.IO.Directory.Delete(cacheRoot, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``readNuspecDependencies returns empty for malformed nuspec xml`` () =
+    let tmpDir =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"))
+
+    System.IO.Directory.CreateDirectory(tmpDir) |> ignore
+
+    try
+        System.IO.File.WriteAllText(System.IO.Path.Combine(tmpDir, "bad.nuspec"), "<package><not closed")
+        test <@ List.isEmpty (readNuspecDependencies tmpDir) @>
+    finally
+        try
+            System.IO.Directory.Delete(tmpDir, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``resolveCachedPackageDir with empty version falls back to highest`` () =
+    let cacheRoot =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"))
+
+    System.IO.Directory.CreateDirectory(System.IO.Path.Combine(cacheRoot, "pkg", "1.0.0"))
+    |> ignore
+
+    let high = System.IO.Path.Combine(cacheRoot, "pkg", "2.0.0")
+    System.IO.Directory.CreateDirectory(high) |> ignore
+
+    try
+        test <@ resolveCachedPackageDir cacheRoot "Pkg" "" = Some high @>
+    finally
+        try
+            System.IO.Directory.Delete(cacheRoot, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``readNuspecDependencies skips deps without id and defaults missing version`` () =
+    let tmpDir =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"))
+
+    System.IO.Directory.CreateDirectory(tmpDir) |> ignore
+
+    try
+        // First dependency has no id (skipped); second has no version (defaults to "").
+        let nuspec =
+            """<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd"><metadata><dependencies><dependency version="1.0.0" /><dependency id="HasNoVersion" /></dependencies></metadata></package>"""
+
+        System.IO.File.WriteAllText(System.IO.Path.Combine(tmpDir, "x.nuspec"), nuspec)
+        let deps = readNuspecDependencies tmpDir
+        test <@ deps = [ "HasNoVersion", "" ] @>
+    finally
+        try
+            System.IO.Directory.Delete(tmpDir, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``extractFromCacheRoot returns None when the cached assembly cannot be read`` () =
+    let cacheRoot =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"))
+
+    let libDir = System.IO.Path.Combine(cacheRoot, "badpkg", "1.0.0", "lib", "net10.0")
+    System.IO.Directory.CreateDirectory(libDir) |> ignore
+
+    try
+        // A file with the expected name but not a valid assembly — extraction must
+        // degrade to None rather than throwing.
+        System.IO.File.WriteAllText(System.IO.Path.Combine(libDir, "BadPkg.dll"), "not a real assembly")
+        test <@ extractFromCacheRoot cacheRoot "BadPkg" "1.0.0" = None @>
+    finally
+        try
+            System.IO.Directory.Delete(cacheRoot, true)
+        with _ ->
+            ()

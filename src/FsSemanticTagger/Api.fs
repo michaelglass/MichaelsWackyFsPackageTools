@@ -22,6 +22,105 @@ module ApiChange =
 let private supportedTfms =
     [ "net10.0"; "net9.0"; "net8.0"; "netstandard2.1"; "netstandard2.0" ]
 
+/// The user-local NuGet package cache root (~/.nuget/packages).
+let private nugetCacheRoot () =
+    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages")
+
+/// Pick the first existing lib/<tfm> directory for a cached package-version dir.
+let internal pickLibDir (pkgVersionDir: string) : string option =
+    supportedTfms
+    |> List.map (fun tfm -> Path.Combine(pkgVersionDir, "lib", tfm))
+    |> List.tryFind Directory.Exists
+
+/// Resolve a package id + version (which may be a NuGet range such as
+/// "[5.2.0, )") to its cached version directory, falling back to the highest
+/// cached version when the exact one is absent.
+let internal resolveCachedPackageDir (cacheRoot: string) (id: string) (versionSpec: string) : string option =
+    let idDir = Path.Combine(cacheRoot, id.ToLowerInvariant())
+
+    if not (Directory.Exists idDir) then
+        None
+    else
+        // Strip range brackets/parens; take the lower bound (first comma part).
+        let exact = versionSpec.Trim([| '['; ']'; '('; ')'; ' ' |]).Split(',').[0].Trim()
+
+        let exactDir = Path.Combine(idDir, exact)
+
+        if exact <> "" && Directory.Exists exactDir then
+            Some exactDir
+        else
+            Directory.GetDirectories idDir |> Array.sortDescending |> Array.tryHead
+
+/// Read direct dependency (id, versionSpec) pairs from a cached package's .nuspec.
+let internal readNuspecDependencies (pkgVersionDir: string) : (string * string) list =
+    try
+        match Directory.GetFiles(pkgVersionDir, "*.nuspec") |> Array.tryHead with
+        | None -> []
+        | Some nuspec ->
+            let doc = System.Xml.Linq.XDocument.Load(nuspec: string)
+
+            let attr (e: System.Xml.Linq.XElement) (n: string) =
+                e.Attributes()
+                |> Seq.tryFind (fun a -> a.Name.LocalName = n)
+                |> Option.map (fun a -> a.Value)
+
+            doc.Descendants()
+            |> Seq.filter (fun e -> e.Name.LocalName = "dependency")
+            |> Seq.choose (fun e ->
+                match attr e "id" with
+                | Some id -> Some(id, defaultArg (attr e "version") "")
+                | None -> None)
+            |> Seq.toList
+    with _ ->
+        []
+
+/// Resolve the transitive dependency lib directories for a dll that lives inside
+/// the NuGet package cache (where there is no co-located .deps.json — e.g. when
+/// diffing against a previously published package). Walks the package's .nuspec
+/// dependency graph under `cacheRoot`, adding each resolved package's lib/<tfm>
+/// dir. Returns [] when the dll is not under the cache or has no .nuspec.
+let internal nuspecClosureDirsFor (cacheRoot: string) (dllPath: string) : string list =
+    let fullDll = Path.GetFullPath(dllPath)
+    let dllDir = Path.GetDirectoryName(fullDll)
+
+    let underCache =
+        fullDll.StartsWith(
+            Path.GetFullPath(cacheRoot) + string Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase
+        )
+
+    // Locate the package version dir by walking up to the nearest .nuspec.
+    let rec findPkgDir (dir: string) =
+        if String.IsNullOrEmpty dir then
+            None
+        elif Directory.Exists dir && Directory.GetFiles(dir, "*.nuspec").Length > 0 then
+            Some dir
+        else
+            findPkgDir (Path.GetDirectoryName dir)
+
+    if not underCache then
+        []
+    else
+        match findPkgDir dllDir with
+        | None -> []
+        | Some rootPkgDir ->
+            let visited =
+                System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+
+            let dirs = System.Collections.Generic.List<string>()
+
+            let rec walk (pkgVersionDir: string) =
+                if visited.Add(pkgVersionDir) then
+                    for id, ver in readNuspecDependencies pkgVersionDir do
+                        match resolveCachedPackageDir cacheRoot id ver with
+                        | Some depVerDir ->
+                            pickLibDir depVerDir |> Option.iter dirs.Add
+                            walk depVerDir
+                        | None -> ()
+
+            walk rootPkgDir
+            List.ofSeq dirs
+
 let private getDotnetRoot (runtimeDir: string) =
     let envRoot = Environment.GetEnvironmentVariable("DOTNET_ROOT")
 
@@ -113,11 +212,20 @@ let getAssemblySearchPaths (dllPath: string) : string list =
         else
             []
 
+    // When the target dll lives inside the NuGet package cache (e.g. when
+    // diffing against a *previously published* package extracted from the
+    // cache), there is no co-located .deps.json to resolve transitive
+    // dependencies from. Walk the package's .nuspec dependency graph and add
+    // each resolved package's lib/<tfm> dir so MetadataLoadContext can load
+    // types that reference those dependencies.
+    let nuspecClosureDirs = nuspecClosureDirsFor (nugetCacheRoot ()) dllPath
+
     [ dllDir; runtimeDir ]
     @ sdkDirs
     @ sharedFrameworkDirs
     @ nugetDirs
     @ depsJsonDirs
+    @ nuspecClosureDirs
 
 let createResolver (dllPath: string) : MetadataAssemblyResolver =
     let searchPaths = getAssemblySearchPaths dllPath
@@ -227,7 +335,14 @@ let extractFromCacheRoot (cacheRoot: string) (packageId: string) (version: strin
             let dllPath = Path.Combine(dir, dllName)
 
             if File.Exists(dllPath) then
-                Some(extractFromAssembly dllPath)
+                // Degrade gracefully: if a transitive dependency can't be
+                // resolved we return None (callers treat that as "couldn't read
+                // the previous API" and refuse to guess) rather than crashing.
+                try
+                    Some(extractFromAssembly dllPath)
+                with ex ->
+                    eprintfn "Warning: could not read API from %s: %s" dllPath ex.Message
+                    None
             else
                 None)
 
