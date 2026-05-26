@@ -237,6 +237,78 @@ let extractFromNuGetCache (packageId: string) (version: string) : ApiSignature l
     let home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
     extractFromCacheRoot (Path.Combine(home, ".nuget", "packages")) packageId version
 
+/// Build the `dotnet restore` arguments for the probe project. The probe lives
+/// in a temp dir, so NuGet would otherwise resolve sources from the temp/global
+/// hierarchy and miss the repo's `nuget.config` — pin it with `--configfile`
+/// when present so repo-local / private feeds (and their credentials) are honored.
+let internal probeRestoreArgs (nugetConfig: string option) (proj: string) : string =
+    match nugetConfig with
+    | Some cfg -> sprintf "restore \"%s\" --configfile \"%s\"" proj cfg
+    | None -> sprintf "restore \"%s\"" proj
+
+/// The repo's nuget.config in the current working directory, if any.
+let private currentNuGetConfig () : string option =
+    let cwd = Directory.GetCurrentDirectory()
+
+    [ "nuget.config"; "NuGet.config" ]
+    |> List.map (fun n -> Path.Combine(cwd, n))
+    |> List.tryFind File.Exists
+
+/// Best-effort: pull a published package version into the local NuGet cache by
+/// restoring a throwaway project that references it. Used when the previous
+/// release isn't already cached (e.g. a clean machine or CI runner). Returns
+/// true if the restore command succeeded.
+let downloadToCache (run: string -> string -> Shell.CommandResult) (packageId: string) (version: string) : bool =
+    let tmpDir =
+        Path.Combine(Path.GetTempPath(), "fsst-probe-" + Guid.NewGuid().ToString("N"))
+
+    Directory.CreateDirectory(tmpDir) |> ignore
+
+    try
+        let proj = Path.Combine(tmpDir, "probe.csproj")
+
+        File.WriteAllText(
+            proj,
+            sprintf
+                """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="%s" Version="%s" />
+  </ItemGroup>
+</Project>"""
+                packageId
+                version
+        )
+
+        match run "dotnet" (probeRestoreArgs (currentNuGetConfig ()) proj) with
+        | Shell.Success _ -> true
+        | Shell.Failure _ -> false
+    finally
+        try
+            Directory.Delete(tmpDir, true)
+        with _ ->
+            ()
+
+/// Extract the previous release's API: try the local NuGet cache first, then
+/// fall back to downloading the published package into the cache. Returns None
+/// only when the package genuinely can't be obtained (offline, unpublished, or
+/// a private feed without credentials) — callers MUST NOT treat None as
+/// "no API change", or a breaking release would be mis-versioned as a patch.
+let extractPreviousFromNuGet
+    (run: string -> string -> Shell.CommandResult)
+    (packageId: string)
+    (version: string)
+    : ApiSignature list option =
+    match extractFromNuGetCache packageId version with
+    | Some api -> Some api
+    | None ->
+        if downloadToCache run packageId version then
+            extractFromNuGetCache packageId version
+        else
+            None
+
 /// Compare two API surfaces
 let compare (baseline: ApiSignature list) (current: ApiSignature list) : ApiChange =
     let baseSet = Set.ofList baseline

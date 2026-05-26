@@ -195,6 +195,86 @@ let ``compare does not flag new nested type as breaking when parent is new`` () 
 let ``extractFromNuGetCache returns None for nonexistent package`` () =
     test <@ extractFromNuGetCache "ThisPackageDoesNotExist12345" "1.0.0" = None @>
 
+// downloadToCache / extractPreviousFromNuGet — the prior-API fetch path.
+// These guard the bug where a missing prior package silently became "no change".
+
+[<Fact>]
+let ``downloadToCache returns true and runs dotnet restore on a probe project when restore succeeds`` () =
+    let mutable invoked = []
+
+    let fakeRun (cmd: string) (args: string) : FsSemanticTagger.Shell.CommandResult =
+        invoked <- invoked @ [ (cmd, args) ]
+        FsSemanticTagger.Shell.Success ""
+
+    let ok = downloadToCache fakeRun "SomePackage" "1.2.3"
+    test <@ ok = true @>
+    // It restores a throwaway .csproj rather than touching the real repo
+    test
+        <@
+            invoked
+            |> List.exists (fun (c, a) -> c = "dotnet" && a.StartsWith("restore") && a.Contains(".csproj"))
+        @>
+
+[<Fact>]
+let ``downloadToCache returns false when restore fails`` () =
+    let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        FsSemanticTagger.Shell.Failure "no such package"
+
+    test <@ downloadToCache fakeRun "SomePackage" "1.2.3" = false @>
+
+[<Fact>]
+let ``probeRestoreArgs pins repo nuget.config via --configfile when present`` () =
+    let args = probeRestoreArgs (Some "/repo/nuget.config") "/tmp/probe.csproj"
+    test <@ args.StartsWith("restore \"/tmp/probe.csproj\"") @>
+    // Without this, a prior release on a repo-local/private feed wouldn't resolve.
+    test <@ args.Contains("--configfile \"/repo/nuget.config\"") @>
+
+[<Fact>]
+let ``probeRestoreArgs omits --configfile when no repo nuget.config`` () =
+    let args = probeRestoreArgs None "/tmp/probe.csproj"
+    test <@ args = "restore \"/tmp/probe.csproj\"" @>
+
+[<Fact>]
+let ``extractPreviousFromNuGet returns None when uncached and download fails`` () =
+    let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        FsSemanticTagger.Shell.Failure "restore failed"
+
+    test <@ extractPreviousFromNuGet fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = None @>
+
+[<Fact>]
+let ``extractPreviousFromNuGet returns None when download succeeds but package still absent`` () =
+    // Restore "succeeds" but our fake doesn't actually place the package in the cache,
+    // so the re-check still finds nothing — must stay None, never fabricate an API.
+    let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        FsSemanticTagger.Shell.Success ""
+
+    test <@ extractPreviousFromNuGet fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = None @>
+
+[<Fact>]
+let ``extractPreviousFromNuGet returns cached API without downloading when already present`` () =
+    // FSharp.Core is always in the cache (it's a build dependency). Find a version
+    // whose lib/ contains the dll, then assert the cache hit short-circuits download.
+    let home =
+        System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
+
+    let fsCoreDir = System.IO.Path.Combine(home, ".nuget", "packages", "fsharp.core")
+
+    let cachedVersion =
+        System.IO.Directory.GetDirectories(fsCoreDir)
+        |> Array.map System.IO.Path.GetFileName
+        |> Array.filter (fun v -> System.IO.Directory.Exists(System.IO.Path.Combine(fsCoreDir, v, "lib")))
+        |> Array.head
+
+    let mutable downloadAttempted = false
+
+    let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        downloadAttempted <- true
+        FsSemanticTagger.Shell.Failure "should not be called on a cache hit"
+
+    let result = extractPreviousFromNuGet fakeRun "FSharp.Core" cachedVersion
+    test <@ Option.isSome result @>
+    test <@ not downloadAttempted @>
+
 // ApiChange.toList
 
 [<Fact>]
