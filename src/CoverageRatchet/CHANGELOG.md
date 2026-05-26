@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.15.0-alpha.2 - 2026-05-26
+
 - docs: document the upstream-package coverage-exclusion pattern
 
 ## 0.15.0-alpha.1 - 2026-05-05
