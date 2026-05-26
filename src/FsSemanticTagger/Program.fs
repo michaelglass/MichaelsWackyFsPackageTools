@@ -98,7 +98,7 @@ let private runRelease (releaseCmd: Release.ReleaseCommand) (flags: ReleaseFlag 
     runReleaseWith
         (Directory.GetCurrentDirectory())
         Shell.run
-        Api.extractFromNuGetCache
+        (Api.extractPreviousFromNuGet Shell.run)
         Api.extractFromAssembly
         releaseCmd
         flags

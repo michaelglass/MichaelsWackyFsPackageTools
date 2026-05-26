@@ -160,6 +160,9 @@ let private packLocally (run: string -> string -> CommandResult) (bumps: (Packag
 type BumpDecision =
     | NeedsBump of PackageConfig * Version
     | AlreadyBumped of PackageConfig * Version
+    /// Auto mode couldn't read the previous release's API, so the bump can't be
+    /// computed. We refuse to guess (a breaking change must not ship as a patch).
+    | CannotDetermine of PackageConfig * reason: string
 
 /// Collect (packageName, changelogPath) pairs for a package.
 /// Single-package repos use repo-root CHANGELOG.md; multi-package repos use per-fsproj-dir.
@@ -244,19 +247,33 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
         printfn "Skipping %s: no changes since %s" pkg.Name (toTag pkg.TagPrefix currentVersion)
         None
     | _ ->
-        let newVersionOpt =
-            match input.Command with
-            | Auto ->
-                match state with
-                | FirstRelease -> None // Need explicit command for first release
-                | HasPreviousRelease currentVersion ->
-                    let change =
-                        match input.ExtractPreviousApi pkg.Name (format currentVersion) with
-                        | Some oldApi ->
-                            let currentApi = input.ExtractCurrentApi pkg.DllPath
-                            compare oldApi currentApi
-                        | None -> NoChange
+        let toDecision (newVersion: Version) =
+            if readFsprojVersion pkg.Fsproj = Some newVersion then
+                AlreadyBumped(pkg, newVersion)
+            else
+                NeedsBump(pkg, newVersion)
 
+        match input.Command with
+        | Auto ->
+            match state with
+            | FirstRelease -> None // Need explicit command for first release
+            | HasPreviousRelease currentVersion ->
+                match input.ExtractPreviousApi pkg.Name (format currentVersion) with
+                | None ->
+                    // The previous release's API couldn't be read. Treating this as
+                    // "no change" would let a breaking release ship as a patch (the
+                    // very bug this guards against), so refuse to guess.
+                    Some(
+                        CannotDetermine(
+                            pkg,
+                            sprintf
+                                "could not read the public API of the previous release %s (package not in the NuGet cache and download failed — check network/feed access). Refusing to guess the version bump; re-run once the package is reachable, or use an explicit alpha/beta/rc/stable command."
+                                (toTag pkg.TagPrefix currentVersion)
+                        )
+                    )
+                | Some oldApi ->
+                    let currentApi = input.ExtractCurrentApi pkg.DllPath
+                    let change = compare oldApi currentApi
                     let newVersion = determineBump currentVersion change
 
                     let newVersion =
@@ -265,27 +282,18 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                         else
                             newVersion
 
-                    Some newVersion
-            | _ ->
-                match forCommand state input.Command with
-                | Ok v ->
-                    if input.Config.ReservedVersions.Contains(format v) then
-                        printfn "Warning: version %s is reserved, skipping" (format v)
-                        None
-                    else
-                        Some v
-                | Error msg ->
-                    printfn "%s for %s" msg pkg.Name
+                    Some(toDecision newVersion)
+        | _ ->
+            match forCommand state input.Command with
+            | Ok v ->
+                if input.Config.ReservedVersions.Contains(format v) then
+                    printfn "Warning: version %s is reserved, skipping" (format v)
                     None
-
-        newVersionOpt
-        |> Option.map (fun newVersion ->
-            let currentFsprojVersion = readFsprojVersion pkg.Fsproj
-
-            if currentFsprojVersion = Some newVersion then
-                AlreadyBumped(pkg, newVersion)
-            else
-                NeedsBump(pkg, newVersion))
+                else
+                    Some(toDecision v)
+            | Error msg ->
+                printfn "%s for %s" msg pkg.Name
+                None
 
 let private resumeAlreadyBumped (input: ReleaseInput) (alreadyBumped: (PackageConfig * Version) list) : int =
     printfn "\nResuming release (versions already bumped):"
@@ -397,6 +405,12 @@ let release (input: ReleaseInput) : int =
 
         let decisions = input.Config.Packages |> List.choose (decideBump input)
 
+        let cannotDetermine =
+            decisions
+            |> List.choose (function
+                | CannotDetermine(p, reason) -> Some(p, reason)
+                | _ -> None)
+
         let needsBump =
             decisions
             |> List.choose (function
@@ -409,7 +423,14 @@ let release (input: ReleaseInput) : int =
                 | AlreadyBumped(p, v) -> Some(p, v)
                 | _ -> None)
 
-        if needsBump.IsEmpty && alreadyBumped.IsEmpty then
+        if not cannotDetermine.IsEmpty then
+            printfn "\nError: cannot determine the version bump. Aborting before any writes."
+
+            for (pkg, reason) in cannotDetermine do
+                printfn "  %s: %s" pkg.Name reason
+
+            1
+        elif needsBump.IsEmpty && alreadyBumped.IsEmpty then
             printfn "No packages to release"
             0
         elif needsBump.IsEmpty then
