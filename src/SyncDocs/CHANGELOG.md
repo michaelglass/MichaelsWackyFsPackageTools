@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- deps: bump Microsoft.SourceLink.GitHub 10.0.201 -> 10.0.300
+
 ## 0.13.0-alpha.1 - 2026-04-27
 
 - feat: real `--help` / `-h` / `help` support — explains the `README.md` ↔ `docs/index.md` discovery convention and the `<!-- sync:NAME:start/end -->` marker syntax (was previously just a one-line "Usage: ..." on bad input)
