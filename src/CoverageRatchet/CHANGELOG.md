@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- docs: document the upstream-package coverage-exclusion pattern
+
 ## 0.15.0-alpha.1 - 2026-05-05
 
 - refactor: extract Cobertura parsing, threshold checking, ratcheting, and merging into CoverageRatchet.Core; CoverageRatchet CLI delegates to the shared library

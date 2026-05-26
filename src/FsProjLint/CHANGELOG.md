@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- chore: align FSharp.Core to 10.1.300 (matches the .NET 10 SDK; resolves an NU1605 downgrade in the test projects)
+
 ## 0.10.0-alpha.2 - 2026-05-04
 
 - chore: bump CommandTree to 0.5.0; update FSharp.Core to 10.1.203
