@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- deps: bump Microsoft.SourceLink.GitHub 10.0.201 -> 10.0.300
+
 ## 0.10.0-alpha.3 - 2026-05-26
 
 - chore: align FSharp.Core to 10.1.300 (matches the .NET 10 SDK; resolves an NU1605 downgrade in the test projects)
