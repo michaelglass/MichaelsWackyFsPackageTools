@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: `release` no longer ships a breaking change as a patch when the previous release's package isn't in the local NuGet cache. It now downloads the prior package to read its API (honoring the repo's `nuget.config` via `--configfile`), and if the previous API still can't be obtained it aborts loudly instead of silently assuming "no change".
+
 ## 0.13.0-alpha.2 - 2026-05-04
 
 - fix: `--publish` (LocalPublish) mode no longer creates jj tags that are never pushed — tags are now only created in PushTags mode, preventing "no changes since <unpushed-tag>" false-skips on subsequent runs
