@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.13.0-alpha.2 - 2026-05-27
+
 - deps: bump Microsoft.SourceLink.GitHub 10.0.201 -> 10.0.300
 
 ## 0.13.0-alpha.1 - 2026-04-27

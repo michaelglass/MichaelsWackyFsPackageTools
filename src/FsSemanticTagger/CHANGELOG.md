@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.13.0-alpha.4 - 2026-05-27
+
 - deps: bump Microsoft.SourceLink.GitHub 10.0.201 -> 10.0.300, System.Reflection.MetadataLoadContext 10.0.5 -> 10.0.8
 
 ## 0.13.0-alpha.3 - 2026-05-26
