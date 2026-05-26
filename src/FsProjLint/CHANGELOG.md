@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.10.0-alpha.3 - 2026-05-26
+
 - chore: align FSharp.Core to 10.1.300 (matches the .NET 10 SDK; resolves an NU1605 downgrade in the test projects)
 
 ## 0.10.0-alpha.2 - 2026-05-04
