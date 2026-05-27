@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: `release` no longer crashes when diffing against a previously-published package whose public API references external dependencies (e.g. `Falco`). The prior release's assembly is loaded from the NuGet cache lib dir, which has no co-located `.deps.json`, so transitive dependency assemblies were never added to the `MetadataLoadContext` resolver and reading any dependency-referencing type threw `FileNotFoundException`. The resolver now walks the package's `.nuspec` dependency graph to resolve those lib dirs, and assembly extraction degrades to "couldn't read the previous API" instead of crashing.
+
 ## 0.13.0-alpha.4 - 2026-05-27
 
 - deps: bump Microsoft.SourceLink.GitHub 10.0.201 -> 10.0.300, System.Reflection.MetadataLoadContext 10.0.5 -> 10.0.8
