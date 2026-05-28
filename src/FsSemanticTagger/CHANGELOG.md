@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.13.0-alpha.6 - 2026-05-28
+
 - chore: bump CommandTree 0.5.0 → 0.5.1.
 
 ## 0.13.0-alpha.5 - 2026-05-28
