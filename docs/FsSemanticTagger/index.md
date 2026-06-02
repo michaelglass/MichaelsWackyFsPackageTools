@@ -102,6 +102,7 @@ All release commands (`release`, `alpha`, `beta`, `rc`, `stable`) accept:
 
 - `--dry-run` — preview version bumps without modifying files or creating tags. Skips the clean-working-copy and CI checks; still builds and compares APIs so the preview is accurate. Missing or empty `## Unreleased` sections are reported as warnings instead of aborting.
 - `--publish` — build and pack locally (`dotnet pack -c Release -o artifacts/`) instead of pushing tags for CI to publish.
+- `--skip-nuget-wait` — after pushing tags, exit immediately instead of polling NuGet until the published package(s) are restorable. By default the command waits for the new version(s) to be indexed; this poll never changes the exit code (a timeout warns and still exits 0).
 
 ```bash
 # Preview what would be released
@@ -109,6 +110,9 @@ fssemantictagger release --dry-run
 
 # Local build-and-pack instead of CI release
 fssemantictagger release --publish
+
+# Push tags but don't wait for NuGet to index the release
+fssemantictagger release --skip-nuget-wait
 ```
 
 ## Configuration

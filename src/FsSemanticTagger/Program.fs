@@ -6,6 +6,7 @@ open CommandTree
 type ReleaseFlag =
     | [<CmdFlag(Description = "Build and pack locally instead of pushing tags for CI")>] Publish
     | [<CmdFlag(Description = "Preview version bumps without modifying files or creating tags")>] DryRun
+    | [<CmdFlag(Description = "Skip polling NuGet for the published package(s) after pushing tags")>] SkipNugetWait
 
 type Command =
     | [<Cmd("Initialize semantic-tagger.json by scanning for packable .fsproj files")>] Init
@@ -91,7 +92,11 @@ let internal runReleaseWith
                   ExtractPreviousApi = extractPreviousApi
                   ExtractCurrentApi = extractCurrentApi
                   CiPollIntervalMs = 15000
-                  CiMaxAttempts = 60 }
+                  CiMaxAttempts = 60
+                  CheckPublished = Api.isPublished run
+                  WaitForNuGet = not (flags |> List.contains SkipNugetWait)
+                  NuGetPollIntervalMs = 15000
+                  NuGetMaxAttempts = 40 }
         )
 
 let private runRelease (releaseCmd: Release.ReleaseCommand) (flags: ReleaseFlag list) : Result<int, string> =
@@ -202,9 +207,13 @@ Modes (one chosen per invocation):
   stable   promote the current pre-release to a stable release
 
 Flags:
-  --dry-run  print what would happen without writing or tagging
-  --publish  build & pack locally instead of pushing tags (CI normally
-             reacts to the pushed tag and does the pack itself)
+  --dry-run          print what would happen without writing or tagging
+  --publish          build & pack locally instead of pushing tags (CI
+                     normally reacts to the pushed tag and does the pack
+                     itself)
+  --skip-nuget-wait  after pushing tags, exit immediately instead of
+                     polling NuGet until the published package(s) are
+                     restorable (the poll never changes the exit code)
 """
     | _ -> None
 
