@@ -20,18 +20,50 @@ type ReleaseMode =
 
 [<NoEquality; NoComparison>]
 type ReleaseInput =
-    { Run: string -> string -> CommandResult
-      Config: ToolConfig
-      Command: ReleaseCommand
-      Mode: ReleaseMode
-      ExtractPreviousApi: string -> string -> ApiSignature list option
-      ExtractCurrentApi: string -> ApiSignature list
-      CiPollIntervalMs: int
-      CiMaxAttempts: int
-      CheckPublished: string -> string -> bool
-      WaitForNuGet: bool
-      NuGetPollIntervalMs: int
-      NuGetMaxAttempts: int }
+    {
+        Run: string -> string -> CommandResult
+        Config: ToolConfig
+        Command: ReleaseCommand
+        Mode: ReleaseMode
+        /// When non-empty, restrict the run to packages whose `Name` is in this
+        /// list (the `--only` filter). Empty = all packages (the default).
+        TargetPackages: string list
+        ExtractPreviousApi: string -> string -> ApiSignature list option
+        ExtractCurrentApi: string -> ApiSignature list
+        CiPollIntervalMs: int
+        CiMaxAttempts: int
+        CheckPublished: string -> string -> bool
+        WaitForNuGet: bool
+        NuGetPollIntervalMs: int
+        NuGetMaxAttempts: int
+    }
+
+/// Restrict `packages` to those whose `Name` appears in `targetNames`.
+///
+/// An empty `targetNames` means "no filter" — all packages are returned
+/// unchanged (the default behaviour). When names are given, every one must
+/// match a package's `Name`; an unknown name is an error that lists the valid
+/// names so the caller can fix the typo rather than silently no-op.
+let selectPackages (targetNames: string list) (packages: PackageConfig list) : Result<PackageConfig list, string> =
+    match targetNames with
+    | [] -> Ok packages
+    | names ->
+        let known = packages |> List.map (fun p -> p.Name) |> Set.ofList
+
+        let unknown =
+            names |> List.filter (fun n -> not (known.Contains n)) |> List.distinct
+
+        match unknown with
+        | [] -> Ok(packages |> List.filter (fun p -> List.contains p.Name names))
+        | bad ->
+            let valid = packages |> List.map (fun p -> p.Name) |> String.concat ", "
+
+            Error(
+                sprintf
+                    "Unknown package(s): %s. Valid package name(s): %s"
+                    (String.concat ", " bad)
+                    (if valid = "" then "(none)" else valid)
+            )
 
 type ReleaseState =
     | FirstRelease
@@ -429,47 +461,62 @@ let release (input: ReleaseInput) : int =
     if input.Mode = DryRun then
         printfn "Dry run: no files will be modified and no tags will be created."
 
-    match preReleaseChecks input with
-    | Error code -> code
-    | Ok() ->
-        // Explicit modes (non-Auto) skip API diffing, so the build is only needed
-        // when comparing the current assembly against the previously published one.
-        let needsBuild = input.Mode <> DryRun || input.Command = Auto
+    match selectPackages input.TargetPackages input.Config.Packages with
+    | Error msg ->
+        printfn "Error: %s" msg
+        1
+    | Ok selectedPackages ->
 
-        if needsBuild then
-            runPreBuild input
+        let input =
+            { input with
+                Config =
+                    { input.Config with
+                        Packages = selectedPackages } }
 
-        let decisions = input.Config.Packages |> List.choose (decideBump input)
+        if not input.TargetPackages.IsEmpty then
+            printfn "Targeting: %s" (selectedPackages |> List.map (fun p -> p.Name) |> String.concat ", ")
 
-        let cannotDetermine =
-            decisions
-            |> List.choose (function
-                | CannotDetermine(p, reason) -> Some(p, reason)
-                | _ -> None)
+        match preReleaseChecks input with
+        | Error code -> code
+        | Ok() ->
+            // Explicit modes (non-Auto) skip API diffing, so the build is only needed
+            // when comparing the current assembly against the previously published one.
+            let needsBuild = input.Mode <> DryRun || input.Command = Auto
 
-        let needsBump =
-            decisions
-            |> List.choose (function
-                | NeedsBump(p, v) -> Some(p, v)
-                | _ -> None)
+            if needsBuild then
+                runPreBuild input
 
-        let alreadyBumped =
-            decisions
-            |> List.choose (function
-                | AlreadyBumped(p, v) -> Some(p, v)
-                | _ -> None)
+            let decisions = input.Config.Packages |> List.choose (decideBump input)
 
-        if not cannotDetermine.IsEmpty then
-            printfn "\nError: cannot determine the version bump. Aborting before any writes."
+            let cannotDetermine =
+                decisions
+                |> List.choose (function
+                    | CannotDetermine(p, reason) -> Some(p, reason)
+                    | _ -> None)
 
-            for (pkg, reason) in cannotDetermine do
-                printfn "  %s: %s" pkg.Name reason
+            let needsBump =
+                decisions
+                |> List.choose (function
+                    | NeedsBump(p, v) -> Some(p, v)
+                    | _ -> None)
 
-            1
-        elif needsBump.IsEmpty && alreadyBumped.IsEmpty then
-            printfn "No packages to release"
-            0
-        elif needsBump.IsEmpty then
-            resumeAlreadyBumped input alreadyBumped
-        else
-            executeBumps input needsBump alreadyBumped
+            let alreadyBumped =
+                decisions
+                |> List.choose (function
+                    | AlreadyBumped(p, v) -> Some(p, v)
+                    | _ -> None)
+
+            if not cannotDetermine.IsEmpty then
+                printfn "\nError: cannot determine the version bump. Aborting before any writes."
+
+                for (pkg, reason) in cannotDetermine do
+                    printfn "  %s: %s" pkg.Name reason
+
+                1
+            elif needsBump.IsEmpty && alreadyBumped.IsEmpty then
+                printfn "No packages to release"
+                0
+            elif needsBump.IsEmpty then
+                resumeAlreadyBumped input alreadyBumped
+            else
+                executeBumps input needsBump alreadyBumped

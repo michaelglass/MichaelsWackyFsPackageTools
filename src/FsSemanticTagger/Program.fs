@@ -7,6 +7,22 @@ type ReleaseFlag =
     | [<CmdFlag(Description = "Build and pack locally instead of pushing tags for CI")>] Publish
     | [<CmdFlag(Description = "Preview version bumps without modifying files or creating tags")>] DryRun
     | [<CmdFlag(Description = "Skip polling NuGet for the published package(s) after pushing tags")>] SkipNugetWait
+    | [<CmdFlag(Description = "Restrict the run to specific package(s) by name (comma-separated)")>] Only of string
+
+/// Parse the comma-separated value of `--only` (the `Only` flag) into a list of
+/// package names, trimming whitespace and dropping empty entries. Returns [] when
+/// the flag is absent — i.e. all packages (the default).
+let internal targetPackages (flags: ReleaseFlag list) : string list =
+    flags
+    |> List.tryPick (function
+        | Only names -> Some names
+        | _ -> None)
+    |> Option.map (fun names ->
+        names.Split(',')
+        |> Array.map (fun s -> s.Trim())
+        |> Array.filter (fun s -> s <> "")
+        |> Array.toList)
+    |> Option.defaultValue []
 
 type Command =
     | [<Cmd("Initialize semantic-tagger.json by scanning for packable .fsproj files")>] Init
@@ -89,6 +105,7 @@ let internal runReleaseWith
                   Config = config
                   Command = releaseCmd
                   Mode = releaseMode flags
+                  TargetPackages = targetPackages flags
                   ExtractPreviousApi = extractPreviousApi
                   ExtractCurrentApi = extractCurrentApi
                   CiPollIntervalMs = 15000
@@ -214,6 +231,11 @@ Flags:
   --skip-nuget-wait  after pushing tags, exit immediately instead of
                      polling NuGet until the published package(s) are
                      restorable (the poll never changes the exit code)
+  --only <names>     restrict the run to specific package(s) by name
+                     (comma-separated, e.g. --only Foo,Bar). Names match
+                     the "name" field in semantic-tagger.json. Absent =
+                     all packages. An unknown name is an error listing the
+                     valid names.
 """
     | _ -> None
 

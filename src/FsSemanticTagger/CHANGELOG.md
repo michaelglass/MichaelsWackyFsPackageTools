@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: add `--only <names>` to `release`/`alpha`/`beta`/`rc`/`stable` (and `--dry-run`) to scope a run to specific package(s) by name (comma-separated; names match the `name` field in `semantic-tagger.json`). When omitted, all packages are processed as before. Scoped runs only consider the selected packages for version computation and tagging; the rest are out of scope entirely. An unknown name aborts with a clear error listing the valid names instead of silently no-opping.
+
 ## 0.13.0-alpha.7 - 2026-06-02
 
 - feat: after pushing tags in the default PushTags mode, `release`/`alpha`/`beta`/`rc`/`stable` now poll NuGet until each newly-released package version is restorable (indexed) before exiting, so the command only returns once the release is actually live. The poll never changes the exit code — tags are already pushed, so a timeout prints a warning and still exits 0. Pass `--skip-nuget-wait` to exit immediately after pushing tags instead.
