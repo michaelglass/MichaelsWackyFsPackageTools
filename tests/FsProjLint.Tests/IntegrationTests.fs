@@ -177,6 +177,14 @@ let ``Program.main returns 1 for unknown flag`` () =
     test <@ result = 1 @>
 
 [<Fact>]
+let ``Program.main returns 0 for --version`` () =
+    let printed, result =
+        withCapturedConsole (fun () -> FsProjLint.Program.main [| "--version" |])
+
+    test <@ result = 0 @>
+    test <@ printed.Contains "fsprojlint" @>
+
+[<Fact>]
 let ``Program.main returns 0 for -h`` () =
     let result = FsProjLint.Program.main [| "-h" |]
 

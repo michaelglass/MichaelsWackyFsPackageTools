@@ -79,6 +79,9 @@ let main argv =
             printfn "%s" rootHelpExtras
 
         0
+    | Error VersionRequested ->
+        printfn "%s" (CommandTree.renderVersion "fsprojlint")
+        0
     | Error e ->
-        eprintfn "%A" e
-        1
+        eprintfn "%s" (CommandTree.renderParseError tree e "fsprojlint")
+        if CommandTree.isError e then 1 else 0
