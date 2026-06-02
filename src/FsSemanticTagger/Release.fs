@@ -27,7 +27,11 @@ type ReleaseInput =
       ExtractPreviousApi: string -> string -> ApiSignature list option
       ExtractCurrentApi: string -> ApiSignature list
       CiPollIntervalMs: int
-      CiMaxAttempts: int }
+      CiMaxAttempts: int
+      CheckPublished: string -> string -> bool
+      WaitForNuGet: bool
+      NuGetPollIntervalMs: int
+      NuGetMaxAttempts: int }
 
 type ReleaseState =
     | FirstRelease
@@ -118,19 +122,58 @@ let internal waitForCi (run: string -> string -> CommandResult) (pollIntervalMs:
 
     poll 0
 
-let private waitForCiAndPushTags
-    (run: string -> string -> CommandResult)
-    (ciPollIntervalMs: int)
-    (ciMaxAttempts: int)
-    (tags: string list)
-    : int =
+/// Poll NuGet until every (packageId, version) is restorable, or until
+/// `maxAttempts` rounds elapse. Returns true when all packages are available,
+/// false on timeout. `maxAttempts = 1` does exactly one check then times out.
+/// Convenience only — callers MUST NOT fail the release on a false result, the
+/// tags are already pushed.
+let internal waitForNuGet
+    (checkPublished: string -> string -> bool)
+    (pollIntervalMs: int)
+    (maxAttempts: int)
+    (packages: (string * string) list)
+    : bool =
+    let rec poll attempt pending =
+        let stillPending =
+            pending |> List.filter (fun (id, ver) -> not (checkPublished id ver))
+
+        if List.isEmpty stillPending then
+            true
+        elif attempt + 1 >= maxAttempts then
+            for id, ver in stillPending do
+                printfn "Timed out waiting for %s %s on NuGet after %d attempts" id ver maxAttempts
+
+            false
+        else
+            for id, ver in stillPending do
+                printfn "Waiting for %s %s on NuGet..." id ver
+
+            System.Threading.Thread.Sleep(pollIntervalMs)
+            poll (attempt + 1) stillPending
+
+    poll 0 packages
+
+let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * Version) list) : int =
+    let run = input.Run
+
+    let tags = bumps |> List.map (fun (pkg, version) -> toTag pkg.TagPrefix version)
+
+    let pkgVersions = bumps |> List.map (fun (pkg, version) -> pkg.Name, format version)
+
     printfn "Waiting for CI on version bump commit..."
-    let ciStatus = waitForCi run ciPollIntervalMs ciMaxAttempts
+    let ciStatus = waitForCi run input.CiPollIntervalMs input.CiMaxAttempts
 
     match ciStatus with
     | Passed ->
         pushTags run tags
         printfn "Tags pushed. GitHub Actions will handle the release."
+
+        if input.WaitForNuGet then
+            printfn "Waiting for NuGet to index the published package(s)..."
+
+            waitForNuGet input.CheckPublished input.NuGetPollIntervalMs input.NuGetMaxAttempts pkgVersions
+            |> ignore
+
         0
     | Failed runs ->
         printfn "Error: CI failed on version bump commit. Not pushing tags."
@@ -304,17 +347,13 @@ let private resumeAlreadyBumped (input: ReleaseInput) (alreadyBumped: (PackageCo
     match input.Mode with
     | DryRun -> 0
     | PushTags ->
-        let tags =
-            alreadyBumped
-            |> List.map (fun (pkg, version) ->
-                let tag = toTag pkg.TagPrefix version
+        for (pkg, version) in alreadyBumped do
+            let tag = toTag pkg.TagPrefix version
 
-                if not (tagExists input.Run tag) then
-                    tagRevision input.Run tag "main"
+            if not (tagExists input.Run tag) then
+                tagRevision input.Run tag "main"
 
-                tag)
-
-        waitForCiAndPushTags input.Run input.CiPollIntervalMs input.CiMaxAttempts tags
+        waitForCiAndPushTags input alreadyBumped
     | LocalPublish -> packLocally input.Run alreadyBumped
 
 let private executeBumps
@@ -376,15 +415,12 @@ let private executeBumps
 
         match mode with
         | PushTags ->
-            let tags =
-                allBumps
-                |> List.map (fun (pkg, version) ->
-                    let tag = toTag pkg.TagPrefix version
-                    tagRevision input.Run tag "main"
-                    tag)
+            for (pkg, version) in allBumps do
+                let tag = toTag pkg.TagPrefix version
+                tagRevision input.Run tag "main"
 
             pushMain input.Run
-            waitForCiAndPushTags input.Run input.CiPollIntervalMs input.CiMaxAttempts tags
+            waitForCiAndPushTags input allBumps
         | LocalPublish -> packLocally input.Run allBumps
         | DryRun -> 0
 
