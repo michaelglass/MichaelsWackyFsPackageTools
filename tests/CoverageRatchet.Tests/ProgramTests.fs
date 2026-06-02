@@ -646,6 +646,18 @@ let ``main with unknown flag returns 1`` () =
     test <@ result = 1 @>
 
 [<Fact>]
+let ``main with --version returns 0`` () =
+    let result = main [| "--version" |]
+
+    test <@ result = 0 @>
+
+[<Fact>]
+let ``main with version returns 0`` () =
+    let result = main [| "version" |]
+
+    test <@ result = 0 @>
+
+[<Fact>]
 let ``main with loosen-from-ci --help returns 0`` () =
     let result = main [| "loosen-from-ci"; "--help" |]
 
