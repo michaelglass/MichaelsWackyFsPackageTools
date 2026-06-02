@@ -745,6 +745,9 @@ let main argv =
         | Error(HelpRequested path) ->
             printHelp path
             0
+        | Error VersionRequested ->
+            printfn "%s" (CommandTree.renderVersion "coverageratchet")
+            0
         | Error err ->
-            eprintfn "Error: %A" err
-            1
+            eprintfn "%s" (CommandTree.renderParseError tree err "coverageratchet")
+            if CommandTree.isError err then 1 else 0
