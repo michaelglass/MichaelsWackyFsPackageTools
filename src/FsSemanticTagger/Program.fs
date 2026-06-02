@@ -279,7 +279,10 @@ let run (rawArgv: string array) : Result<int, string> =
         | Error(HelpRequested path) ->
             printHelp path
             Ok 0
-        | Error err -> Error(sprintf "%A" err)
+        | Error VersionRequested ->
+            printfn "%s" (CommandTree.renderVersion "fssemantictagger")
+            Ok 0
+        | Error err -> Error(CommandTree.renderParseError tree err "fssemantictagger")
 
 [<EntryPoint>]
 let main argv =

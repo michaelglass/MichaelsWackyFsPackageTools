@@ -298,6 +298,33 @@ let ``run - stable with unknown flag returns Error`` () =
         @>
 
 [<Fact>]
+let ``run - --version flag returns Ok 0`` () =
+    let result = run [| "--version" |]
+    test <@ result = Ok 0 @>
+
+[<Fact>]
+let ``run - version subcommand returns Ok 0`` () =
+    let result = run [| "version" |]
+    test <@ result = Ok 0 @>
+
+[<Fact>]
+let ``main - --version flag returns 0`` () =
+    let result = main [| "--version" |]
+    test <@ result = 0 @>
+
+[<Fact>]
+let ``run - unknown command returns Error rendering help`` () =
+    // Exercises CommandTree.renderParseError for a genuine parse error
+    let result = run [| "bogus" |]
+
+    test
+        <@
+            match result with
+            | Error msg -> msg.Contains("fssemantictagger")
+            | Ok _ -> false
+        @>
+
+[<Fact>]
 let ``run - init subcommand help returns Ok 0`` () =
     let result = run [| "init"; "--help" |]
     test <@ result = Ok 0 @>
