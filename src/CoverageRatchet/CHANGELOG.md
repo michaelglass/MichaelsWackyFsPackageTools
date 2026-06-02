@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- feat: add a `--version` flag that prints the installed tool version.
+- fix: invalid CLI arguments now print a readable error message instead of the raw parser output.
+- chore: bump CommandTree 0.5.1 → 0.6.1.
+
 ## 0.15.0-alpha.4 - 2026-05-28
 
 - chore: bump CommandTree 0.5.0 → 0.5.1.
