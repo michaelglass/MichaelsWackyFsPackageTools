@@ -361,6 +361,13 @@ let internal probeRestoreArgs (nugetConfig: string option) (proj: string) : stri
     | Some cfg -> sprintf "restore \"%s\" --configfile \"%s\"" proj cfg
     | None -> sprintf "restore \"%s\"" proj
 
+/// Append `--no-http-cache` to the probe restore args so a version published
+/// seconds ago isn't masked by NuGet's HTTP cache. Used by the post-release
+/// availability poll (a freshly pushed package must be seen as soon as it
+/// indexes, not after the HTTP cache expires).
+let internal probeAvailabilityArgs (nugetConfig: string option) (proj: string) : string =
+    probeRestoreArgs nugetConfig proj + " --no-http-cache"
+
 /// The repo's nuget.config in the current working directory, if any.
 let private currentNuGetConfig () : string option =
     let cwd = Directory.GetCurrentDirectory()
@@ -369,11 +376,11 @@ let private currentNuGetConfig () : string option =
     |> List.map (fun n -> Path.Combine(cwd, n))
     |> List.tryFind File.Exists
 
-/// Best-effort: pull a published package version into the local NuGet cache by
-/// restoring a throwaway project that references it. Used when the previous
-/// release isn't already cached (e.g. a clean machine or CI runner). Returns
-/// true if the restore command succeeded.
-let downloadToCache (run: string -> string -> Shell.CommandResult) (packageId: string) (version: string) : bool =
+/// Create a throwaway probe project in a temp dir that references
+/// `packageId`/`version`, run `f` against the project path, and clean up the
+/// temp dir afterwards. Shared by the cache-download and availability-probe
+/// paths so both reference the same package the same way.
+let private withProbeProject (packageId: string) (version: string) (f: string -> 'a) : 'a =
     let tmpDir =
         Path.Combine(Path.GetTempPath(), "fsst-probe-" + Guid.NewGuid().ToString("N"))
 
@@ -397,14 +404,32 @@ let downloadToCache (run: string -> string -> Shell.CommandResult) (packageId: s
                 version
         )
 
-        match run "dotnet" (probeRestoreArgs (currentNuGetConfig ()) proj) with
-        | Shell.Success _ -> true
-        | Shell.Failure _ -> false
+        f proj
     finally
         try
             Directory.Delete(tmpDir, true)
         with _ ->
             ()
+
+/// Best-effort: pull a published package version into the local NuGet cache by
+/// restoring a throwaway project that references it. Used when the previous
+/// release isn't already cached (e.g. a clean machine or CI runner). Returns
+/// true if the restore command succeeded.
+let downloadToCache (run: string -> string -> Shell.CommandResult) (packageId: string) (version: string) : bool =
+    withProbeProject packageId version (fun proj ->
+        match run "dotnet" (probeRestoreArgs (currentNuGetConfig ()) proj) with
+        | Shell.Success _ -> true
+        | Shell.Failure _ -> false)
+
+/// Is this exact package version restorable right now? Restores a throwaway
+/// project that references `packageId`/`version` with `--no-http-cache`, so a
+/// just-published release is reported as available as soon as NuGet indexes it.
+/// Used after pushing tags to confirm the new release is live on NuGet.
+let isPublished (run: string -> string -> Shell.CommandResult) (packageId: string) (version: string) : bool =
+    withProbeProject packageId version (fun proj ->
+        match run "dotnet" (probeAvailabilityArgs (currentNuGetConfig ()) proj) with
+        | Shell.Success _ -> true
+        | Shell.Failure _ -> false)
 
 /// Extract the previous release's API: try the local NuGet cache first, then
 /// fall back to downloading the published package into the cache. Returns None

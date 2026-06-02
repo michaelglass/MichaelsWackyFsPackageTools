@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: after pushing tags in the default PushTags mode, `release`/`alpha`/`beta`/`rc`/`stable` now poll NuGet until each newly-released package version is restorable (indexed) before exiting, so the command only returns once the release is actually live. The poll never changes the exit code — tags are already pushed, so a timeout prints a warning and still exits 0. Pass `--skip-nuget-wait` to exit immediately after pushing tags instead.
+
 ## 0.13.0-alpha.6 - 2026-05-28
 
 - chore: bump CommandTree 0.5.0 → 0.5.1.

@@ -34,7 +34,11 @@ let private runRelease run config cmd mode prev cur poll max =
           ExtractPreviousApi = prev
           ExtractCurrentApi = cur
           CiPollIntervalMs = poll
-          CiMaxAttempts = max }
+          CiMaxAttempts = max
+          CheckPublished = (fun _ _ -> true)
+          WaitForNuGet = false
+          NuGetPollIntervalMs = 0
+          NuGetMaxAttempts = 1 }
 
 [<Fact>]
 let ``updateFsprojVersion - updates Version element in fsproj`` () =
@@ -1499,7 +1503,11 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
                   ExtractPreviousApi = noPreviousApi
                   ExtractCurrentApi = noCurrentApi
                   CiPollIntervalMs = 0
-                  CiMaxAttempts = 10 }
+                  CiMaxAttempts = 10
+                  CheckPublished = (fun _ _ -> true)
+                  WaitForNuGet = false
+                  NuGetPollIntervalMs = 0
+                  NuGetMaxAttempts = 1 }
 
         test <@ result = 1 @>
         // fsproj untouched
@@ -1596,7 +1604,11 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
                       ExtractPreviousApi = noPreviousApi
                       ExtractCurrentApi = noCurrentApi
                       CiPollIntervalMs = 0
-                      CiMaxAttempts = 10 })
+                      CiMaxAttempts = 10
+                      CheckPublished = (fun _ _ -> true)
+                      WaitForNuGet = false
+                      NuGetPollIntervalMs = 0
+                      NuGetMaxAttempts = 1 })
 
         test <@ result = 0 @>
 
@@ -1708,5 +1720,133 @@ let ``release - resume with LocalPublish packs without pushing`` () =
             @>
         // LocalPublish resume must NOT push tags.
         test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``waitForNuGet - returns true when all packages already published`` () =
+    let mutable checks = 0
+
+    let checkPublished (_id: string) (_ver: string) =
+        checks <- checks + 1
+        true
+
+    let result = waitForNuGet checkPublished 0 5 [ "PkgA", "1.0.0"; "PkgB", "2.0.0" ]
+
+    test <@ result = true @>
+    // One check per package, no polling rounds beyond the first.
+    test <@ checks = 2 @>
+
+[<Fact>]
+let ``waitForNuGet - polls until a package becomes available`` () =
+    let mutable attempts = 0
+
+    // Not published for the first two checks, then available.
+    let checkPublished (_id: string) (_ver: string) =
+        attempts <- attempts + 1
+        attempts >= 3
+
+    let result = waitForNuGet checkPublished 0 10 [ "PkgA", "1.0.0" ]
+
+    test <@ result = true @>
+    test <@ attempts >= 3 @>
+
+[<Fact>]
+let ``waitForNuGet - returns false when never published (times out)`` () =
+    let checkPublished (_id: string) (_ver: string) = false
+    let result = waitForNuGet checkPublished 0 3 [ "PkgA", "1.0.0" ]
+    test <@ result = false @>
+
+[<Fact>]
+let ``waitForNuGet - maxAttempts 1 does exactly one check then times out`` () =
+    let mutable checks = 0
+
+    let checkPublished (_id: string) (_ver: string) =
+        checks <- checks + 1
+        false
+
+    let result = waitForNuGet checkPublished 0 1 [ "PkgA", "1.0.0" ]
+    test <@ result = false @>
+    test <@ checks = 1 @>
+
+/// Like runRelease but lets the caller drive the NuGet-availability wait.
+let private runReleaseWithNuGetWait run config cmd checkPublished maxAttempts =
+    seedTmpChangelog ()
+
+    release
+        { Run = run
+          Config =
+            { config with
+                RootDir = Path.GetTempPath() }
+          Command = cmd
+          Mode = PushTags
+          ExtractPreviousApi = noPreviousApi
+          ExtractCurrentApi = noCurrentApi
+          CiPollIntervalMs = 0
+          CiMaxAttempts = 10
+          CheckPublished = checkPublished
+          WaitForNuGet = true
+          NuGetPollIntervalMs = 0
+          NuGetMaxAttempts = maxAttempts }
+
+[<Fact>]
+let ``release - waits for NuGet after pushing tags and checks the published package`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        let (fakeRun, _getCalls) = passingCiRun []
+
+        let mutable checked' = []
+
+        let checkPublished (id: string) (ver: string) =
+            checked' <- checked' @ [ (id, ver) ]
+            true
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkPublished 5
+
+        test <@ result = 0 @>
+        // The just-released package id + version were polled on NuGet.
+        test <@ checked' |> List.contains ("MyLib", "0.1.0-alpha.1") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - NuGet wait timeout does not change the exit code`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        let (fakeRun, _getCalls) = passingCiRun []
+
+        // Never published -> waitForNuGet times out, but release already pushed tags.
+        let checkPublished (_id: string) (_ver: string) = false
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkPublished 2
+
+        // Timeout is a convenience-wait failure; the release succeeded.
+        test <@ result = 0 @>
     finally
         File.Delete(tmpFile)
