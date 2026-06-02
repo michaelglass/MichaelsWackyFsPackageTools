@@ -31,6 +31,7 @@ let private runRelease run config cmd mode prev cur poll max =
                 RootDir = Path.GetTempPath() }
           Command = cmd
           Mode = mode
+          TargetPackages = []
           ExtractPreviousApi = prev
           ExtractCurrentApi = cur
           CiPollIntervalMs = poll
@@ -1500,6 +1501,7 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
                   Config = config
                   Command = StartAlpha
                   Mode = PushTags
+                  TargetPackages = []
                   ExtractPreviousApi = noPreviousApi
                   ExtractCurrentApi = noCurrentApi
                   CiPollIntervalMs = 0
@@ -1601,6 +1603,7 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
                       Config = config
                       Command = StartAlpha
                       Mode = DryRun
+                      TargetPackages = []
                       ExtractPreviousApi = noPreviousApi
                       ExtractCurrentApi = noCurrentApi
                       CiPollIntervalMs = 0
@@ -1780,6 +1783,7 @@ let private runReleaseWithNuGetWait run config cmd checkPublished maxAttempts =
                 RootDir = Path.GetTempPath() }
           Command = cmd
           Mode = PushTags
+          TargetPackages = []
           ExtractPreviousApi = noPreviousApi
           ExtractCurrentApi = noCurrentApi
           CiPollIntervalMs = 0
@@ -1850,3 +1854,223 @@ let ``release - NuGet wait timeout does not change the exit code`` () =
         test <@ result = 0 @>
     finally
         File.Delete(tmpFile)
+
+// ---------------------------------------------------------------------------
+// --only / selectPackages: scope a run to specific packages by name
+// ---------------------------------------------------------------------------
+
+let private pkg name fsproj prefix : PackageConfig =
+    { Name = name
+      Fsproj = fsproj
+      DllPath = sprintf "%s.dll" name
+      TagPrefix = prefix
+      FsProjsSharingSameTag = [] }
+
+[<Fact>]
+let ``selectPackages - empty target returns all packages unchanged`` () =
+    let pkgs = [ pkg "A" "a.fsproj" "a-v"; pkg "B" "b.fsproj" "b-v" ]
+    test <@ selectPackages [] pkgs = Ok pkgs @>
+
+[<Fact>]
+let ``selectPackages - single name returns only that package`` () =
+    let a = pkg "A" "a.fsproj" "a-v"
+    let b = pkg "B" "b.fsproj" "b-v"
+    test <@ selectPackages [ "B" ] [ a; b ] = Ok [ b ] @>
+
+[<Fact>]
+let ``selectPackages - multiple names return those packages preserving order`` () =
+    let a = pkg "A" "a.fsproj" "a-v"
+    let b = pkg "B" "b.fsproj" "b-v"
+    let c = pkg "C" "c.fsproj" "c-v"
+    test <@ selectPackages [ "A"; "C" ] [ a; b; c ] = Ok [ a; c ] @>
+
+[<Fact>]
+let ``selectPackages - unknown name errors listing valid names`` () =
+    let a = pkg "A" "a.fsproj" "a-v"
+    let b = pkg "B" "b.fsproj" "b-v"
+
+    match selectPackages [ "Nope" ] [ a; b ] with
+    | Error msg ->
+        test <@ msg.Contains("Nope") @>
+        test <@ msg.Contains("A") && msg.Contains("B") @>
+    | Ok _ -> failwith "expected an error for an unknown package name"
+
+[<Fact>]
+let ``selectPackages - one unknown among known names still errors`` () =
+    let a = pkg "A" "a.fsproj" "a-v"
+    let b = pkg "B" "b.fsproj" "b-v"
+
+    match selectPackages [ "A"; "Nope" ] [ a; b ] with
+    | Error msg -> test <@ msg.Contains("Nope") @>
+    | Ok _ -> failwith "expected an error when any name is unknown"
+
+/// Like runRelease, but threads a `--only`-style target-package list.
+let private runReleaseTargeting run config cmd mode targets =
+    seedTmpChangelog ()
+
+    release
+        { Run = run
+          Config =
+            { config with
+                RootDir = Path.GetTempPath() }
+          Command = cmd
+          Mode = mode
+          TargetPackages = targets
+          ExtractPreviousApi = noPreviousApi
+          ExtractCurrentApi = noCurrentApi
+          CiPollIntervalMs = 0
+          CiMaxAttempts = 10
+          CheckPublished = (fun _ _ -> true)
+          WaitForNuGet = false
+          NuGetPollIntervalMs = 0
+          NuGetMaxAttempts = 1 }
+
+[<Fact>]
+let ``release - scoped to one package only tags that package`` () =
+    let tmpFileA = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFileA, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        let (fakeRun, getCalls) = passingCiRun []
+
+        let config =
+            { Packages =
+                [ { Name = "LibA"
+                    Fsproj = tmpFileA
+                    DllPath = "src/LibA/bin/Release/net10.0/LibA.dll"
+                    TagPrefix = "liba-v"
+                    FsProjsSharingSameTag = [] }
+                  // LibB's fsproj does not exist on disk; if it were processed the
+                  // run would crash reading its version, so this also proves LibB
+                  // is fully out of scope.
+                  { Name = "LibB"
+                    Fsproj = "/no/such/LibB.fsproj"
+                    DllPath = "src/LibB/bin/Release/net10.0/LibB.dll"
+                    TagPrefix = "libb-v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let result = runReleaseTargeting fakeRun config StartAlpha PushTags [ "LibA" ]
+
+        let calls = getCalls ()
+        test <@ result = 0 @>
+        // LibA tagged
+        test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set liba-v")) @>
+        // LibB never tagged or touched
+        test <@ not (calls |> List.exists (fun (_, a) -> a.Contains("libb-v"))) @>
+    finally
+        File.Delete(tmpFileA)
+
+[<Fact>]
+let ``release - scoped to multiple packages tags exactly those`` () =
+    let tmpA = Path.GetTempFileName()
+    let tmpC = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpA, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        File.WriteAllText(tmpC, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        let (fakeRun, getCalls) = passingCiRun []
+
+        let config =
+            { Packages =
+                [ { Name = "LibA"
+                    Fsproj = tmpA
+                    DllPath = "a.dll"
+                    TagPrefix = "liba-v"
+                    FsProjsSharingSameTag = [] }
+                  { Name = "LibB"
+                    Fsproj = "/no/such/LibB.fsproj"
+                    DllPath = "b.dll"
+                    TagPrefix = "libb-v"
+                    FsProjsSharingSameTag = [] }
+                  { Name = "LibC"
+                    Fsproj = tmpC
+                    DllPath = "c.dll"
+                    TagPrefix = "libc-v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let result =
+            runReleaseTargeting fakeRun config StartAlpha PushTags [ "LibA"; "LibC" ]
+
+        let calls = getCalls ()
+        test <@ result = 0 @>
+        test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set liba-v")) @>
+        test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set libc-v")) @>
+        test <@ not (calls |> List.exists (fun (_, a) -> a.Contains("libb-v"))) @>
+    finally
+        File.Delete(tmpA)
+        File.Delete(tmpC)
+
+[<Fact>]
+let ``release - unknown target package aborts with exit 1 before any work`` () =
+    let mutable calls = []
+
+    let fakeRun (cmd: string) (args: string) : CommandResult =
+        calls <- calls @ [ (cmd, args) ]
+        Failure(sprintf "unexpected call: %s %s" cmd args)
+
+    let config =
+        { Packages =
+            [ { Name = "LibA"
+                Fsproj = "a.fsproj"
+                DllPath = "a.dll"
+                TagPrefix = "liba-v"
+                FsProjsSharingSameTag = [] } ]
+          ReservedVersions = Set.empty
+          PreBuildCmds = []
+          RootDir = "" }
+
+    let output, result =
+        withCapturedConsole (fun () -> runReleaseTargeting fakeRun config StartAlpha PushTags [ "Nope" ])
+
+    test <@ result = 1 @>
+    // Lists the valid name and the bad one; never ran the working-copy/CI checks.
+    test <@ output.Contains("Nope") && output.Contains("LibA") @>
+    test <@ List.isEmpty calls @>
+
+[<Fact>]
+let ``release - scoping composes with dry-run (only target previewed)`` () =
+    let tmpA = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpA, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
+
+        // Dry-run StartAlpha skips build/CI; only a tag-list lookup happens.
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            match cmd, args with
+            | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            | "jj", a when a.Contains("tag list") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "LibA"
+                    Fsproj = tmpA
+                    DllPath = "a.dll"
+                    TagPrefix = "liba-v"
+                    FsProjsSharingSameTag = [] }
+                  { Name = "LibB"
+                    Fsproj = "/no/such/LibB.fsproj"
+                    DllPath = "b.dll"
+                    TagPrefix = "libb-v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let output, result =
+            withCapturedConsole (fun () -> runReleaseTargeting fakeRun config StartAlpha DryRun [ "LibA" ])
+
+        test <@ result = 0 @>
+        // Targeting line names only LibA; LibB is out of scope (not even mentioned).
+        test <@ output.Contains("Targeting: LibA") @>
+        test <@ not (output.Contains("LibB")) @>
+        // fsproj untouched in dry-run
+        test <@ File.ReadAllText(tmpA).Contains("<Version>1.0.0</Version>") @>
+    finally
+        File.Delete(tmpA)

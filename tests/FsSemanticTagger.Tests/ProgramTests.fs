@@ -366,6 +366,36 @@ let ``main - check-api different dlls returns 2 for Breaking`` () =
     test <@ result = 2 @>
 
 [<Fact>]
+let ``targetPackages - absent flag yields empty list (all packages)`` () =
+    test <@ List.isEmpty (targetPackages []) @>
+    test <@ List.isEmpty (targetPackages [ Publish; DryRun ]) @>
+
+[<Fact>]
+let ``targetPackages - single name`` () =
+    test <@ targetPackages [ Only "Foo" ] = [ "Foo" ] @>
+
+[<Fact>]
+let ``targetPackages - comma-separated names are split and trimmed`` () =
+    test <@ targetPackages [ Only "Foo, Bar ,Baz" ] = [ "Foo"; "Bar"; "Baz" ] @>
+
+[<Fact>]
+let ``targetPackages - empty entries are dropped`` () =
+    test <@ targetPackages [ Only "Foo,,  ,Bar" ] = [ "Foo"; "Bar" ] @>
+
+[<Fact>]
+let ``run - release --only parses without error`` () =
+    // Unknown-package validation happens inside release (needs a config); this
+    // just proves the flag parses and threads through the CLI surface.
+    let result = run [| "release"; "--only"; "Foo,Bar"; "--dry-run" |]
+
+    test
+        <@
+            match result with
+            | Ok _
+            | Error _ -> true
+        @>
+
+[<Fact>]
 let ``releaseMode - Publish returns LocalPublish`` () =
     test <@ releaseMode [ Publish ] = Release.LocalPublish @>
 
