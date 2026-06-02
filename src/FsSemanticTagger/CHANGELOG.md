@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.13.0-alpha.7 - 2026-06-02
+
 - feat: after pushing tags in the default PushTags mode, `release`/`alpha`/`beta`/`rc`/`stable` now poll NuGet until each newly-released package version is restorable (indexed) before exiting, so the command only returns once the release is actually live. The poll never changes the exit code — tags are already pushed, so a timeout prints a warning and still exits 0. Pass `--skip-nuget-wait` to exit immediately after pushing tags instead.
 - feat: add a `--version` flag that prints the installed tool version.
 - fix: invalid CLI arguments now print a readable error message instead of the raw parser output.
