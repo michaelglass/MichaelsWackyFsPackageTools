@@ -223,6 +223,47 @@ let ``downloadToCache returns false when restore fails`` () =
     test <@ downloadToCache fakeRun "SomePackage" "1.2.3" = false @>
 
 [<Fact>]
+let ``isPublished returns true and probes with --no-http-cache when restore succeeds`` () =
+    let mutable invoked = []
+
+    let fakeRun (cmd: string) (args: string) : FsSemanticTagger.Shell.CommandResult =
+        invoked <- invoked @ [ (cmd, args) ]
+        FsSemanticTagger.Shell.Success ""
+
+    let ok = isPublished fakeRun "SomePackage" "1.2.3"
+    test <@ ok = true @>
+    // It restores a throwaway .csproj with the HTTP cache bypassed so a
+    // just-published version isn't masked by a stale cache.
+    test
+        <@
+            invoked
+            |> List.exists (fun (c, a) ->
+                c = "dotnet"
+                && a.StartsWith("restore")
+                && a.Contains(".csproj")
+                && a.Contains("--no-http-cache"))
+        @>
+
+[<Fact>]
+let ``isPublished returns false when restore fails`` () =
+    let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        FsSemanticTagger.Shell.Failure "no such package"
+
+    test <@ isPublished fakeRun "SomePackage" "1.2.3" = false @>
+
+[<Fact>]
+let ``probeAvailabilityArgs appends --no-http-cache and keeps --configfile when present`` () =
+    let args = probeAvailabilityArgs (Some "/repo/nuget.config") "/tmp/probe.csproj"
+    test <@ args.StartsWith("restore \"/tmp/probe.csproj\"") @>
+    test <@ args.Contains("--configfile \"/repo/nuget.config\"") @>
+    test <@ args.Contains("--no-http-cache") @>
+
+[<Fact>]
+let ``probeAvailabilityArgs appends --no-http-cache when no repo nuget.config`` () =
+    let args = probeAvailabilityArgs None "/tmp/probe.csproj"
+    test <@ args = "restore \"/tmp/probe.csproj\" --no-http-cache" @>
+
+[<Fact>]
 let ``probeRestoreArgs pins repo nuget.config via --configfile when present`` () =
     let args = probeRestoreArgs (Some "/repo/nuget.config") "/tmp/probe.csproj"
     test <@ args.StartsWith("restore \"/tmp/probe.csproj\"") @>
