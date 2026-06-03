@@ -86,7 +86,18 @@ jobs:
           for proj in $(find tests -name '*.Tests.fsproj' | sort); do
             project_name=$(basename "$(dirname "$proj")" | sed 's/\.Tests$//')
             echo "Testing $proj (coverage -> coverage/$project_name/)"
+            # --no-build/--no-restore: the Build step above already compiled the
+            # whole solution (test projects included). Without these flags each
+            # `dotnet test` re-runs restore + an MSBuild up-to-date evaluation
+            # over the test project's full ProjectReference graph (and an
+            # incremental recompile whenever that up-to-date check misses).
+            # Skipping that redundant pass saves ~1s+ per test project on a warm
+            # tree, scaling with graph size. Coverage is a runtime collector, so
+            # skipping the build does not affect it (verified: cobertura still
+            # emitted with --no-build).
             dotnet test --project "$proj" \
+              --no-build \
+              --no-restore \
               --coverage \
               --coverage-output-format cobertura \
               --coverage-output "${{ github.workspace }}/coverage/$project_name/coverage.cobertura.xml" \
