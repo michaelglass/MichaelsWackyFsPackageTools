@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- chore: bump CommandTree 0.6.1 -> 0.6.2 (revision-stamping target fix; no behavior change).
+
 ## 0.10.0-alpha.6 - 2026-06-02
 
 - feat: add a `--version` flag that prints the installed tool version.
