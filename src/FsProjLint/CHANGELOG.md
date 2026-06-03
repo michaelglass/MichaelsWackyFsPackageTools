@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.10.0-alpha.7 - 2026-06-03
+
 - chore: bump CommandTree 0.6.1 -> 0.6.2 (revision-stamping target fix; no behavior change).
 
 ## 0.10.0-alpha.6 - 2026-06-02
