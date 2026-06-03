@@ -10,7 +10,7 @@
   </PropertyGroup>
   <PropertyGroup>
     <PackageId>CoverageRatchet.Core</PackageId>
-    <Version>0.1.0-alpha.2</Version>
+    <Version>0.1.0-alpha.3</Version>
     <Authors>michaelglass</Authors>
     <Description>Cobertura XML parsing, threshold checking, and ratcheting — library form of CoverageRatchet</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

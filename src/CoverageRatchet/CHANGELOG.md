@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.15.0-alpha.6 - 2026-06-03
+
 - fix: `loosen-from-ci` now only **lowers** coverage floors, never raises them (picks up the `CoverageRatchet.Core` `mergeFromCi` fix) — a transiently-higher CI measurement no longer raises a floor above what CI stably hits, which had made the ratchet anti-converging on noisy CI runners.
 - chore: bump CommandTree 0.6.1 -> 0.6.2 (revision-stamping target fix; no behavior change).
 
