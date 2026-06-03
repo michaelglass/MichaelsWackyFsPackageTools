@@ -442,7 +442,7 @@ let ``mergeFromCi - adds ci-platform entry splitting existing non-platform overr
     test <@ ciEntry.Branch = 23.0 @>
 
 [<Fact>]
-let ``mergeFromCi - updates existing linux platform entry`` () =
+let ``mergeFromCi - lowers existing linux platform entry toward CI when CI is lower`` () =
     let raw: RawConfig =
         { DefaultLine = 100.0
           DefaultBranch = 100.0
@@ -453,21 +453,110 @@ let ``mergeFromCi - updates existing linux platform entry`` () =
                       Branch = 31.0
                       Reason = Some "legacy"
                       Platform = Some MacOS }
-                    { Line = 55.0
-                      Branch = 20.0
+                    { Line = 65.0
+                      Branch = 40.0
                       Reason = Some "ci"
                       Platform = Some Linux } ] ] }
 
+    // CI measured below the existing linux floor -> floor lowers to CI.
     let ciResults = Map.ofList [ "Program.fs", { Line = 59.0; Branch = 23.0 } ]
     let result = mergeFromCi raw Linux ciResults
     let entries = result.RawOverrides.["Program.fs"]
     test <@ entries.Length = 2 @>
     let macosEntry = entries |> List.find (fun o -> o.Platform = Some MacOS)
     let linuxEntry = entries |> List.find (fun o -> o.Platform = Some Linux)
+    // macOS section is untouched (platform isolation).
     test <@ macosEntry.Line = 49.0 @>
     test <@ macosEntry.Branch = 31.0 @>
     test <@ linuxEntry.Line = 59.0 @>
     test <@ linuxEntry.Branch = 23.0 @>
+    // The existing reason is preserved when lowering.
+    test <@ linuxEntry.Reason = Some "ci" @>
+
+[<Fact>]
+let ``mergeFromCi - never raises an existing platform floor above CI-measured value`` () =
+    // Regression: loosen-from-ci is supposed to reconcile floors DOWN to what CI
+    // measured so CI stops failing. A floor already at/below the CI-measured value
+    // must be left unchanged - raising it above what CI stably measures is
+    // anti-converging and guarantees the next CI run fails. Mirrors the FsHotWatch
+    // Daemon.fs case: floor line=75/branch=72, CI stably measures 75.3/72.6 -> stays.
+    let raw: RawConfig =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides =
+            Map.ofList
+                [ "Daemon.fs",
+                  [ { Line = 75.0
+                      Branch = 72.0
+                      Reason = Some "macos"
+                      Platform = Some MacOS }
+                    { Line = 75.0
+                      Branch = 72.0
+                      Reason = Some "lower coverage on Linux CI"
+                      Platform = Some Linux } ] ] }
+
+    // CI measured slightly ABOVE the floor -> floor must NOT be raised.
+    let ciResults = Map.ofList [ "Daemon.fs", { Line = 75.3; Branch = 72.6 } ]
+    let result = mergeFromCi raw Linux ciResults
+    let entries = result.RawOverrides.["Daemon.fs"]
+    let linuxEntry = entries |> List.find (fun o -> o.Platform = Some Linux)
+    let macosEntry = entries |> List.find (fun o -> o.Platform = Some MacOS)
+    // Linux floor stays put (not raised to 75.3/72.6).
+    test <@ linuxEntry.Line = 75.0 @>
+    test <@ linuxEntry.Branch = 72.0 @>
+    test <@ linuxEntry.Reason = Some "lower coverage on Linux CI" @>
+    // macOS section untouched - no cross-platform contamination.
+    test <@ macosEntry.Line = 75.0 @>
+    test <@ macosEntry.Branch = 72.0 @>
+    test <@ macosEntry.Reason = Some "macos" @>
+
+[<Fact>]
+let ``mergeFromCi - lowers each metric independently and never raises the other`` () =
+    // Line is below the floor (should lower) but branch is above (must not raise).
+    let raw: RawConfig =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides =
+            Map.ofList
+                [ "CheckPipeline.fs",
+                  [ { Line = 90.0
+                      Branch = 64.0
+                      Reason = Some "linux"
+                      Platform = Some Linux } ] ] }
+
+    // CI: line dropped to 85 (lower -> lower the floor), branch rose to 71 (must stay 64).
+    let ciResults = Map.ofList [ "CheckPipeline.fs", { Line = 85.0; Branch = 71.0 } ]
+    let result = mergeFromCi raw Linux ciResults
+    let linuxEntry = result.RawOverrides.["CheckPipeline.fs"] |> List.exactlyOne
+    test <@ linuxEntry.Line = 85.0 @>
+    test <@ linuxEntry.Branch = 64.0 @>
+
+[<Fact>]
+let ``mergeFromCi - does not cross-write one platform's CI value into another platform`` () =
+    // Only the entry matching the CI platform may change; sibling platform entries
+    // must remain byte-for-byte the same even when the CI value would raise them.
+    let raw: RawConfig =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides =
+            Map.ofList
+                [ "PluginHost.fs",
+                  [ { Line = 87.0
+                      Branch = 80.0
+                      Reason = Some "macos"
+                      Platform = Some MacOS }
+                    { Line = 88.0
+                      Branch = 81.0
+                      Reason = Some "linux"
+                      Platform = Some Linux } ] ] }
+
+    // A linux CI run measuring high values must not bleed into the macOS floor.
+    let ciResults = Map.ofList [ "PluginHost.fs", { Line = 99.0; Branch = 99.0 } ]
+    let result = mergeFromCi raw Linux ciResults
+    let entries = result.RawOverrides.["PluginHost.fs"]
+    let macosEntry = entries |> List.find (fun o -> o.Platform = Some MacOS)
+    test <@ macosEntry.Line = 87.0 @>
+    test <@ macosEntry.Branch = 80.0 @>
 
 [<Fact>]
 let ``mergeFromCi - adds new file override when CI has file below defaults`` () =

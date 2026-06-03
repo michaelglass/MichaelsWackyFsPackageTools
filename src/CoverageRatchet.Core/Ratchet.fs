@@ -212,12 +212,18 @@ let mergeFromCi (raw: RawConfig) (ciPlatform: Platform) (ciResults: Map<string, 
                         existingEntries |> List.exists (fun e -> e.Platform = Some ciPlatform)
 
                     if existsForCi then
+                        // loosen-from-ci must be monotonically non-raising: a floor for a given
+                        // file+platform is only ever LOWERED toward the CI-measured value, never
+                        // raised above it. Taking min per-metric prevents an anti-converging update
+                        // (raising a floor above what CI stably measures, which guarantees the next
+                        // CI run fails). Only the matching platform entry is touched, so platform
+                        // sections stay isolated.
                         existingEntries
                         |> List.map (fun e ->
                             if e.Platform = Some ciPlatform then
                                 { e with
-                                    Line = ciLine
-                                    Branch = ciBranch }
+                                    Line = min e.Line ciLine
+                                    Branch = min e.Branch ciBranch }
                             else
                                 e)
                     else
