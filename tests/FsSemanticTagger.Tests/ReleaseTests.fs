@@ -2074,3 +2074,298 @@ let ``release - scoping composes with dry-run (only target previewed)`` () =
         test <@ File.ReadAllText(tmpA).Contains("<Version>1.0.0</Version>") @>
     finally
         File.Delete(tmpA)
+
+// ---------------------------------------------------------------------------
+// Resume of a bumped-but-untagged release, detected from the end state
+// (fsproj version ahead of the latest tag, no tag at that version) rather than
+// from work-remaining. These mirror the real "release wedged after a CI flake
+// on the bump commit" reproduction.
+// ---------------------------------------------------------------------------
+
+[<Fact>]
+let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that version (even if previous API unreadable)``
+    ()
+    =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        // Mid-release: last tag is alpha.16, fsproj already bumped to alpha.17,
+        // no core-v0.8.0-alpha.17 tag yet. This is the wedged dogfood state.
+        File.WriteAllText(
+            tmpFile,
+            "<Project><PropertyGroup><Version>0.8.0-alpha.17</Version></PropertyGroup></Project>"
+        )
+
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            // Latest tag is alpha.16
+            | "jj", a when a.Contains("tag list") && a.Contains("\"glob:core-v") -> Success "core-v0.8.0-alpha.16"
+            // No tag yet at the fsproj's alpha.17 version
+            | "jj", "tag list core-v0.8.0-alpha.17" -> Success ""
+            | "git", "tag -l core-v0.8.0-alpha.17" -> Success ""
+            // Resume tags + pushes
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", "git export" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "FsHotWatch"
+                    Fsproj = tmpFile
+                    DllPath = "src/FsHotWatch/bin/Release/net10.0/FsHotWatch.dll"
+                    TagPrefix = "core-v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        // Auto mode with previous API unreadable: the normal path would abort
+        // (CannotDetermine) — but resume must short-circuit before that.
+        let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
+
+        test <@ result = 0 @>
+        // Resumed: tagged at the fsproj version and pushed.
+        test
+            <@
+                calls
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set core-v0.8.0-alpha.17"))
+            @>
+
+        test <@ calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin")) @>
+        // Did NOT re-bump: no commit, no bookmark advance.
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("commit"))) @>
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("bookmark set"))) @>
+        // fsproj version untouched.
+        test <@ File.ReadAllText(tmpFile).Contains("<Version>0.8.0-alpha.17</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - Auto dry-run reports the resume plan instead of 'No packages to release'`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(
+            tmpFile,
+            "<Project><PropertyGroup><Version>0.8.0-alpha.17</Version></PropertyGroup></Project>"
+        )
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            match cmd, args with
+            | "jj", a when a.Contains("tag list") && a.Contains("\"glob:core-v") -> Success "core-v0.8.0-alpha.16"
+            | "jj", "tag list core-v0.8.0-alpha.17" -> Success ""
+            | "git", "tag -l core-v0.8.0-alpha.17" -> Success ""
+            // Auto dry-run still builds (needsBuild) before deciding.
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "FsHotWatch"
+                    Fsproj = tmpFile
+                    DllPath = "x.dll"
+                    TagPrefix = "core-v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let output, result =
+            withCapturedConsole (fun () -> runRelease fakeRun config Auto DryRun noPreviousApi noCurrentApi 0 10)
+
+        test <@ result = 0 @>
+        test <@ not (output.Contains("No packages to release")) @>
+        test <@ output.Contains("FsHotWatch: resuming in-progress release -> tag core-v0.8.0-alpha.17") @>
+        // Dry-run does nothing destructive.
+        test <@ File.ReadAllText(tmpFile).Contains("<Version>0.8.0-alpha.17</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - Auto with fsproj equal to last tag has nothing to do (not a resume)`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        // Fully released: fsproj == latest tag. Not ahead => not in-progress.
+        File.WriteAllText(
+            tmpFile,
+            "<Project><PropertyGroup><Version>0.8.0-alpha.16</Version></PropertyGroup></Project>"
+        )
+
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "jj", a when a.Contains("tag list") && a.Contains("\"glob:core-v") -> Success "core-v0.8.0-alpha.16"
+            // No changes since the latest tag => normal "no changes" skip.
+            | "jj", a when a.Contains("--from core-v0.8.0-alpha.16") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "FsHotWatch"
+                    Fsproj = tmpFile
+                    DllPath = "x.dll"
+                    TagPrefix = "core-v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let output, result =
+            withCapturedConsole (fun () -> runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10)
+
+        test <@ result = 0 @>
+        test <@ output.Contains("No packages to release") @>
+        // Nothing tagged or pushed.
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - fresh changes still bump normally (not treated as resume)`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        // fsproj == latest tag; real source changes since the tag => fresh bump.
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
+                  ("jj",
+                   "diff --from v1.0.0 --to @ --summary \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
+                   Success "1 file changed") ]
+
+        let oldApi = [ ApiSignature "type Foo" ]
+
+        let currentApi =
+            [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+
+        let extractPreviousApi (_tag: string) (_dllPath: string) = Some oldApi
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "fake.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let result =
+            runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
+
+        test <@ result = 0 @>
+        // Addition on v1+ => minor bump => 1.1.0 (fresh bump, not a resume-as-is).
+        test <@ File.ReadAllText(tmpFile).Contains("<Version>1.1.0</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - multi-package mixed: one mid-release resumes, one fresh bumps`` () =
+    let tmpResume = Path.GetTempFileName()
+    let tmpFresh = Path.GetTempFileName()
+
+    try
+        // LibA: mid-release (ahead of its tag, no tag at fsproj version).
+        File.WriteAllText(
+            tmpResume,
+            "<Project><PropertyGroup><Version>0.2.0-alpha.2</Version></PropertyGroup></Project>"
+        )
+        // LibB: up-to-date with its tag, but has fresh source changes => fresh bump.
+        File.WriteAllText(
+            tmpFresh,
+            "<Project><PropertyGroup><Version>0.5.0-alpha.1</Version></PropertyGroup></Project>"
+        )
+
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            // LibA: latest tag alpha.1, fsproj alpha.2, no tag at alpha.2 => resume.
+            | "jj", a when a.Contains("tag list") && a.Contains("\"glob:liba-v") -> Success "liba-v0.2.0-alpha.1"
+            | "jj", "tag list liba-v0.2.0-alpha.2" -> Success ""
+            | "git", "tag -l liba-v0.2.0-alpha.2" -> Success ""
+            // LibB: latest tag == fsproj alpha.1 (not ahead), with changes => fresh bump.
+            | "jj", a when a.Contains("tag list") && a.Contains("\"glob:libb-v") -> Success "libb-v0.5.0-alpha.1"
+            | "jj", a when a.Contains("--from libb-v0.5.0-alpha.1") -> Success "1 file changed"
+            // tag/commit/push plumbing
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", a when a.StartsWith("commit") -> Success ""
+            | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git push" -> Success ""
+            | "jj", "git export" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "LibA"
+                    Fsproj = tmpResume
+                    DllPath = "a.dll"
+                    TagPrefix = "liba-v"
+                    FsProjsSharingSameTag = [] }
+                  { Name = "LibB"
+                    Fsproj = tmpFresh
+                    DllPath = "b.dll"
+                    TagPrefix = "libb-v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        // LibB is a pre-release alpha: StartAlpha-style auto bump = bumpPreRelease.
+        let result =
+            runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
+
+        test <@ result = 0 @>
+        // LibA resumed at alpha.2 (not re-bumped).
+        test
+            <@
+                calls
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set liba-v0.2.0-alpha.2"))
+            @>
+        // LibB freshly bumped: StartAlpha on a prior release starts a new alpha
+        // cycle => nextAlphaCycle(0.5.0-alpha.1) = 0.6.0-alpha.1.
+        test <@ File.ReadAllText(tmpFresh).Contains("<Version>0.6.0-alpha.1</Version>") @>
+
+        test
+            <@
+                calls
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set libb-v0.6.0-alpha.1"))
+            @>
+        // LibA's fsproj was NOT re-bumped (still alpha.2).
+        test <@ File.ReadAllText(tmpResume).Contains("<Version>0.2.0-alpha.2</Version>") @>
+    finally
+        File.Delete(tmpResume)
+        File.Delete(tmpFresh)

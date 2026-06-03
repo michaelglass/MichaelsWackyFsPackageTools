@@ -305,6 +305,44 @@ let private runPreBuild (input: ReleaseInput) : unit =
     printfn "Building in Release mode..."
     runOrFail input.Run "dotnet" "build -c Release" |> ignore
 
+/// Detect a release that was bumped but never tagged (a mid-release failure
+/// between the version-bump commit and the CI-poll/tag step).
+///
+/// This is decided purely from the *desired end state*, never from
+/// work-remaining (a half-rolled changelog, the latest-tag-to-HEAD diff, or an
+/// API comparison): the version recorded in the fsproj is the intended release
+/// version, and a release is finished only once its tag exists. So a release is
+/// IN PROGRESS exactly when the fsproj `<Version>` is strictly ahead of the
+/// latest published tag AND no tag yet exists at `<prefix><fsprojVersion>`.
+///
+/// When that holds we return the fsproj version so the caller resumes from the
+/// CI-poll + tag step (idempotent finish) instead of recomputing a fresh bump,
+/// re-rolling the changelog, or aborting on an unreadable previous API. A fully
+/// released repo (fsproj == latest tag) and a fresh repo (fsproj == the next
+/// computed bump, no intermediate bump-but-untag) both fall through to the
+/// normal path.
+let private inProgressResumeVersion (input: ReleaseInput) (state: ReleaseState) (pkg: PackageConfig) : Version option =
+    match state with
+    | FirstRelease -> None
+    | HasPreviousRelease latestTagVersion ->
+        // Read the fsproj lazily and tolerantly: a missing/unreadable/unversioned
+        // fsproj is not a resume — defer to the normal path (which surfaces the
+        // real error or skips the package). Only an existing version strictly
+        // ahead of the latest tag, with no tag at that version, is in-progress.
+        let fsprojVersion =
+            if System.IO.File.Exists pkg.Fsproj then
+                readFsprojVersion pkg.Fsproj
+            else
+                None
+
+        match fsprojVersion with
+        | Some v when
+            sortKey v > sortKey latestTagVersion
+            && not (tagExists input.Run (toTag pkg.TagPrefix v))
+            ->
+            Some v
+        | _ -> None
+
 let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision option =
     let state =
         match getLatestTag input.Run pkg.TagPrefix with
@@ -315,66 +353,74 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
 
     let srcDir = System.IO.Path.GetDirectoryName(pkg.Fsproj)
 
-    match state with
-    | HasPreviousRelease currentVersion when
-        not (hasChangesSinceTag input.Run (toTag pkg.TagPrefix currentVersion) srcDir)
-        ->
-        printfn "Skipping %s: no changes since %s" pkg.Name (toTag pkg.TagPrefix currentVersion)
-        None
-    | _ ->
-        let toDecision (newVersion: Version) =
-            if readFsprojVersion pkg.Fsproj = Some newVersion then
-                AlreadyBumped(pkg, newVersion)
-            else
-                NeedsBump(pkg, newVersion)
+    match inProgressResumeVersion input state pkg with
+    | Some resumeVersion ->
+        // Bumped-but-untagged: finish the existing release rather than starting a
+        // new one. Skips the "no changes since tag" no-op, the Auto API recompute,
+        // and the changelog re-roll — all of which assume work still to be done.
+        AlreadyBumped(pkg, resumeVersion) |> Some
+    | None ->
 
-        match input.Command with
-        | Auto ->
-            match state with
-            | FirstRelease -> None // Need explicit command for first release
-            | HasPreviousRelease currentVersion ->
-                match input.ExtractPreviousApi pkg.Name (format currentVersion) with
-                | None ->
-                    // The previous release's API couldn't be read. Treating this as
-                    // "no change" would let a breaking release ship as a patch (the
-                    // very bug this guards against), so refuse to guess.
-                    Some(
-                        CannotDetermine(
-                            pkg,
-                            sprintf
-                                "could not read the public API of the previous release %s (package not in the NuGet cache and download failed — check network/feed access). Refusing to guess the version bump; re-run once the package is reachable, or use an explicit alpha/beta/rc/stable command."
-                                (toTag pkg.TagPrefix currentVersion)
-                        )
-                    )
-                | Some oldApi ->
-                    let currentApi = input.ExtractCurrentApi pkg.DllPath
-                    let change = compare oldApi currentApi
-                    let newVersion = determineBump currentVersion change
-
-                    let newVersion =
-                        if input.Config.ReservedVersions.Contains(format newVersion) then
-                            bumpPatch newVersion
-                        else
-                            newVersion
-
-                    Some(toDecision newVersion)
+        match state with
+        | HasPreviousRelease currentVersion when
+            not (hasChangesSinceTag input.Run (toTag pkg.TagPrefix currentVersion) srcDir)
+            ->
+            printfn "Skipping %s: no changes since %s" pkg.Name (toTag pkg.TagPrefix currentVersion)
+            None
         | _ ->
-            match forCommand state input.Command with
-            | Ok v ->
-                if input.Config.ReservedVersions.Contains(format v) then
-                    printfn "Warning: version %s is reserved, skipping" (format v)
-                    None
+            let toDecision (newVersion: Version) =
+                if readFsprojVersion pkg.Fsproj = Some newVersion then
+                    AlreadyBumped(pkg, newVersion)
                 else
-                    Some(toDecision v)
-            | Error msg ->
-                printfn "%s for %s" msg pkg.Name
-                None
+                    NeedsBump(pkg, newVersion)
+
+            match input.Command with
+            | Auto ->
+                match state with
+                | FirstRelease -> None // Need explicit command for first release
+                | HasPreviousRelease currentVersion ->
+                    match input.ExtractPreviousApi pkg.Name (format currentVersion) with
+                    | None ->
+                        // The previous release's API couldn't be read. Treating this as
+                        // "no change" would let a breaking release ship as a patch (the
+                        // very bug this guards against), so refuse to guess.
+                        Some(
+                            CannotDetermine(
+                                pkg,
+                                sprintf
+                                    "could not read the public API of the previous release %s (package not in the NuGet cache and download failed — check network/feed access). Refusing to guess the version bump; re-run once the package is reachable, or use an explicit alpha/beta/rc/stable command."
+                                    (toTag pkg.TagPrefix currentVersion)
+                            )
+                        )
+                    | Some oldApi ->
+                        let currentApi = input.ExtractCurrentApi pkg.DllPath
+                        let change = compare oldApi currentApi
+                        let newVersion = determineBump currentVersion change
+
+                        let newVersion =
+                            if input.Config.ReservedVersions.Contains(format newVersion) then
+                                bumpPatch newVersion
+                            else
+                                newVersion
+
+                        Some(toDecision newVersion)
+            | _ ->
+                match forCommand state input.Command with
+                | Ok v ->
+                    if input.Config.ReservedVersions.Contains(format v) then
+                        printfn "Warning: version %s is reserved, skipping" (format v)
+                        None
+                    else
+                        Some(toDecision v)
+                | Error msg ->
+                    printfn "%s for %s" msg pkg.Name
+                    None
 
 let private resumeAlreadyBumped (input: ReleaseInput) (alreadyBumped: (PackageConfig * Version) list) : int =
-    printfn "\nResuming release (versions already bumped):"
+    printfn "\nResuming in-progress release (versions already bumped, tags not yet pushed):"
 
     for (pkg, version) in alreadyBumped do
-        printfn "  %s -> %s (tag: %s)" pkg.Name (format version) (toTag pkg.TagPrefix version)
+        printfn "  %s: resuming in-progress release -> tag %s" pkg.Name (toTag pkg.TagPrefix version)
 
     match input.Mode with
     | DryRun -> 0
