@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: `loosen-from-ci` now only **lowers** coverage floors, never raises them (picks up the `CoverageRatchet.Core` `mergeFromCi` fix) — a transiently-higher CI measurement no longer raises a floor above what CI stably hits, which had made the ratchet anti-converging on noisy CI runners.
+
 ## 0.15.0-alpha.5 - 2026-06-02
 
 - feat: add a `--version` flag that prints the installed tool version.
