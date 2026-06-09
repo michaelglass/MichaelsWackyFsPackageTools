@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.13.0-alpha.10 - 2026-06-09
+
 - fix: dependency-aware rebundle now fires only for bundled references (PackAsTool or non-published helpers), not separately-published NuGet dependencies. A library's transitive `<ProjectReference>` closure is now pruned at every reference that is itself a separately-released package (configured in `semantic-tagger.json`): such a reference is consumed as a NuGet `<dependency>` rather than physically bundled, so a change to its source no longer triggers a pointless byte-identical republish of the library. A `PackAsTool` package still bundles its entire closure and rebundles on any transitive change; a non-published helper project is still bundled (and recursed through). Previously every transitive reference triggered a rebundle, over-republishing libraries whenever a separately-published dependency's source changed.
 
 ## 0.13.0-alpha.9 - 2026-06-09
