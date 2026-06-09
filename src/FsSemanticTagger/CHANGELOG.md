@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: dependency-aware rebundle now fires only for bundled references (PackAsTool or non-published helpers), not separately-published NuGet dependencies. A library's transitive `<ProjectReference>` closure is now pruned at every reference that is itself a separately-released package (configured in `semantic-tagger.json`): such a reference is consumed as a NuGet `<dependency>` rather than physically bundled, so a change to its source no longer triggers a pointless byte-identical republish of the library. A `PackAsTool` package still bundles its entire closure and rebundles on any transitive change; a non-published helper project is still bundled (and recursed through). Previously every transitive reference triggered a rebundle, over-republishing libraries whenever a separately-published dependency's source changed.
+
 ## 0.13.0-alpha.9 - 2026-06-09
 
 - feat: dependency-aware version bump. A package's change-detection now also considers its transitive `<ProjectReference>` closure (auto-derived from the fsproj — no config field). A bundling package (e.g. a `PackAsTool` CLI that physically ships its referenced DLLs) is now re-released ("rebundle" bump) when a bundled dependency's source changes since its last tag, even if the package's own source is unchanged. A rebundle is a `NoChange`-style bump that skips API extraction (a bundled tool/exe has no meaningful public API) and, when the package's own `## Unreleased` section is missing or empty, auto-inserts a `- chore: rebuild to bundle updated dependencies` changelog entry. Normal own-source bumps keep the strict changelog validation and API-diff behavior unchanged.
