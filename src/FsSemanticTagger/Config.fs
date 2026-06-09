@@ -33,6 +33,15 @@ let private projectReferenceIncludeRegex =
 let private isPackableFalseRegex =
     Regex(@"<IsPackable>\s*false\s*</IsPackable>", RegexOptions.Compiled ||| RegexOptions.IgnoreCase)
 
+let private packAsToolRegex =
+    Regex(@"<PackAsTool>\s*true\s*</PackAsTool>", RegexOptions.Compiled ||| RegexOptions.IgnoreCase)
+
+/// True when the fsproj content marks the project `<PackAsTool>true</PackAsTool>`.
+/// A pack-as-tool project physically bundles its entire transitive
+/// `<ProjectReference>` closure into the published artifact, so a change to any
+/// referenced project genuinely changes what ships.
+let isPackAsTool (content: string) : bool = packAsToolRegex.IsMatch(content)
+
 /// Derive the DLL output path from an fsproj path and its content.
 let deriveDllPathFromContent (fsprojPath: string) (content: string) : string =
     let dir = Path.GetDirectoryName(fsprojPath)
@@ -69,30 +78,51 @@ let private toRepoRelativeDir (rootDir: string) (absolutePath: string) : string 
 
     Path.GetRelativePath(Path.GetFullPath(rootDir), dir).Replace('\\', '/').TrimEnd('/')
 
+/// Normalise an arbitrary fsproj path to a repo-root-relative path using
+/// forward slashes (e.g. `src/Foo/Foo.fsproj`). `rootDir` and `absolutePath`
+/// are both resolved to full paths first so the relative result is stable. This
+/// is the form the `isSeparatelyReleased` predicate of `transitiveBundledRefDirs`
+/// receives, so it matches the `Fsproj` values from `semantic-tagger.json`.
+let private toRepoRelativeFsproj (rootDir: string) (absolutePath: string) : string =
+    let full = Path.GetFullPath(absolutePath)
+    Path.GetRelativePath(Path.GetFullPath(rootDir), full).Replace('\\', '/')
+
 /// Resolve the transitive `<ProjectReference>` closure of `fsprojRelPath`
-/// (relative to `rootDir`), returned as repo-root-relative directory paths
+/// (relative to `rootDir`) restricted to the references whose DLL actually
+/// *ships inside* the package, returned as repo-root-relative directory paths
 /// (forward slashes, no trailing slash).
 ///
-/// Each Include is resolved relative to the *referencing* fsproj's directory,
-/// then normalised against `rootDir`. Traversal is transitive (a referenced
-/// project's own ProjectReferences are followed too), de-duplicated, and
-/// cycle-safe (each fsproj is visited at most once). A referenced fsproj that
-/// does not exist on disk is skipped silently rather than throwing. The
-/// package's *own* directory is excluded — change-detection for the package
-/// itself is handled separately by the caller. Results are returned in a
-/// stable de-duplicated order (breadth-first discovery order: a project's
-/// direct references before their transitive ones).
+/// `isSeparatelyReleased` is given a referenced project's repo-root-relative
+/// fsproj path (forward slashes) and returns true when that project is a
+/// separately-published NuGet package — i.e. a dependency boundary that is
+/// consumed via a `PackageReference`/`<dependency>` rather than bundled.
 ///
-/// Note: this treats EVERY ProjectReference as change-relevant. That is exact
-/// for a package that *bundles* its references (a `PackAsTool` ships their
-/// DLLs, so a dependency change genuinely changes the published artifact). A
-/// non-tool library that ProjectReferences a separately-published packable
-/// dependency (consumed by its own NuGet PackageReference, not bundled) will
-/// over-trigger a redundant — but harmless — rebundle; better that than miss a
-/// real change.
-let transitiveProjectRefDirs (rootDir: string) (fsprojRelPath: string) : string list =
+/// Bundling rule (decided once at the root): if the root fsproj is
+/// `<PackAsTool>true</PackAsTool>` it physically ships its ENTIRE transitive
+/// closure, so every reference is bundled regardless of the predicate.
+/// Otherwise (a library) a referenced project `R` is bundled iff it is NOT
+/// separately released: a separately-released `R` is excluded AND not recursed
+/// past (its own transitive deps are its concern); a non-published helper `R` is
+/// included and recursed through (same rule).
+///
+/// Each Include is resolved relative to the *referencing* fsproj's directory,
+/// then normalised against `rootDir`. Traversal is de-duplicated and cycle-safe
+/// (each fsproj is visited at most once). A referenced fsproj that does not
+/// exist on disk is skipped silently rather than throwing. The package's *own*
+/// directory is excluded — change-detection for the package itself is handled
+/// separately by the caller. Results are returned in a stable de-duplicated
+/// order (breadth-first discovery order: a project's direct references before
+/// their transitive ones).
+let transitiveBundledRefDirs
+    (rootDir: string)
+    (fsprojRelPath: string)
+    (isSeparatelyReleased: string -> bool)
+    : string list =
     let rootFsprojFull = Path.GetFullPath(Path.Combine(rootDir, fsprojRelPath))
     let ownDir = toRepoRelativeDir rootDir rootFsprojFull
+
+    let rootIsTool =
+        File.Exists(rootFsprojFull) && isPackAsTool (File.ReadAllText(rootFsprojFull))
 
     let visited = System.Collections.Generic.HashSet<string>()
     let ordered = ResizeArray<string>()
@@ -116,13 +146,28 @@ let transitiveProjectRefDirs (rootDir: string) (fsprojRelPath: string) : string 
                 let normalisedIncl = incl.Replace('\\', '/')
                 let refFull = Path.GetFullPath(Path.Combine(referencingDir, normalisedIncl))
                 let refDir = toRepoRelativeDir rootDir refFull
+                let refRel = toRepoRelativeFsproj rootDir refFull
 
-                if refDir <> ownDir && seenDirs.Add(refDir) then
-                    ordered.Add(refDir)
+                // A reference ships inside the package iff the root is a tool
+                // (bundles everything) or the reference is not separately
+                // published. A separately-published reference is a NuGet-dependency
+                // boundary: skip it and do not recurse past it.
+                let bundled = rootIsTool || not (isSeparatelyReleased refRel)
 
-                queue.Enqueue(refFull)
+                if bundled then
+                    if refDir <> ownDir && seenDirs.Add(refDir) then
+                        ordered.Add(refDir)
+
+                    queue.Enqueue(refFull)
 
     List.ofSeq ordered
+
+/// Resolve the FULL transitive `<ProjectReference>` closure of `fsprojRelPath`
+/// (relative to `rootDir`), with no dependency boundaries. Equivalent to
+/// `transitiveBundledRefDirs rootDir fsprojRelPath (fun _ -> false)`. See that
+/// function for traversal semantics.
+let transitiveProjectRefDirs (rootDir: string) (fsprojRelPath: string) : string list =
+    transitiveBundledRefDirs rootDir fsprojRelPath (fun _ -> false)
 
 /// Find all packable fsproj files, returning (packageName, relativePath) list
 let findPackableProjects (rootDir: string) : (string * string) list =

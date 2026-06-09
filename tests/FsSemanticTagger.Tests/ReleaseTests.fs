@@ -2671,3 +2671,290 @@ let ``release - dependency-only rebundle skips a reserved explicit version`` () 
         // No tag, version untouched.
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
         test <@ File.ReadAllText(toolFsproj).Contains("<Version>0.1.0-alpha.3</Version>") @>)
+
+// --- bundled-vs-separately-published dependency boundary ---
+
+/// Build a temp repo where a LIBRARY package `src/Lib/Lib.fsproj` (NOT
+/// PackAsTool) ProjectReferences `src/Core/Core.fsproj`. Core is configured as a
+/// separately-released package (a NuGet-dependency boundary), so Lib does NOT
+/// bundle it. Returns the absolute path of the Lib fsproj. Lib uses a per-dir
+/// CHANGELOG (multi-package repo).
+let private writeLibraryRepo (root: string) (libVersion: string) =
+    let libDir = Path.Combine(root, "src", "Lib")
+    let coreDir = Path.Combine(root, "src", "Core")
+    Directory.CreateDirectory(libDir) |> ignore
+    Directory.CreateDirectory(coreDir) |> ignore
+    let libFsproj = Path.Combine(libDir, "Lib.fsproj")
+
+    // A plain library (no PackAsTool) that ProjectReferences Core.
+    File.WriteAllText(
+        libFsproj,
+        sprintf
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup><Version>%s</Version></PropertyGroup>\n  <ItemGroup>\n    <ProjectReference Include=\"../Core/Core.fsproj\" />\n  </ItemGroup>\n</Project>"
+            libVersion
+    )
+
+    File.WriteAllText(
+        Path.Combine(coreDir, "Core.fsproj"),
+        "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><Version>2.0.0</Version></PropertyGroup></Project>"
+    )
+
+    File.WriteAllText(Path.Combine(libDir, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n## 1.0.0 - 2026-01-01\n")
+    File.WriteAllText(Path.Combine(coreDir, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n## 2.0.0 - 2026-01-01\n")
+    libFsproj
+
+[<Fact>]
+let ``release - library does NOT rebundle when only a separately-published dependency changed`` () =
+    withTempDir (fun root ->
+        let libFsproj = writeLibraryRepo root "1.0.0"
+        let libDir = Path.Combine(root, "src", "Lib")
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            // Both packages have tags. Core itself is unchanged (its own
+            // release is a no-op), so the run only concerns Lib.
+            | "git", arg when arg.StartsWith("tag -l") && arg.Contains("lib-v") -> Success "lib-v1.0.0"
+            | "git", arg when arg.StartsWith("tag -l") && arg.Contains("core-v") -> Success "core-v2.0.0"
+            // Lib's own dir — no change.
+            | "jj", a when a.Contains("--from lib-v1.0.0") && a.Contains(libDir) -> Success ""
+            // Core's own dir vs Core's own tag — no change (Core release no-op).
+            | "jj", a when a.Contains("--from core-v2.0.0") -> Success ""
+            // Lib's closure must NOT include Core (separately published). Any
+            // remaining --from lib-v query (i.e. against Core's dir) returning
+            // "changed" would surface a regression as a visible rebundle below.
+            | "jj", a when a.Contains("--from lib-v1.0.0") -> Success "1 file changed"
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        // Both Lib and Core are configured packages (Core repo-relative so it
+        // matches the predicate). Full run; Core is unchanged so only Lib matters.
+        let config =
+            { Packages =
+                [ { Name = "Lib"
+                    Fsproj = libFsproj
+                    DllPath = "fake.dll"
+                    TagPrefix = "lib-v"
+                    FsProjsSharingSameTag = [] }
+                  { Name = "Core"
+                    Fsproj = "src/Core/Core.fsproj"
+                    DllPath = "fake.dll"
+                    TagPrefix = "core-v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = root }
+
+        let result =
+            release
+                { Run = fakeRun
+                  Config = config
+                  Command = Auto
+                  Mode = PushTags
+                  TargetPackages = []
+                  ExtractPreviousApi = noPreviousApi
+                  ExtractCurrentApi = noCurrentApi
+                  CiPollIntervalMs = 0
+                  CiMaxAttempts = 10
+                  CheckPublished = (fun _ _ -> true)
+                  WaitForNuGet = false
+                  NuGetPollIntervalMs = 0
+                  NuGetMaxAttempts = 1 }
+
+        test <@ result = 0 @>
+        // Lib's closure excludes Core (separately published) => no dep change =>
+        // no rebundle, no tag, version untouched.
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
+        test <@ File.ReadAllText(libFsproj).Contains("<Version>1.0.0</Version>") @>)
+
+[<Fact>]
+let ``release - PackAsTool rebundles when a separately-published bundled dependency changed`` () =
+    withTempDir (fun root ->
+        // Same shape as the library case, but the package IS PackAsTool, so it
+        // bundles Core even though Core is separately published => rebundle.
+        let cliDir = Path.Combine(root, "src", "Cli")
+        let coreDir = Path.Combine(root, "src", "Core")
+        Directory.CreateDirectory(cliDir) |> ignore
+        Directory.CreateDirectory(coreDir) |> ignore
+        let cliFsproj = Path.Combine(cliDir, "Cli.fsproj")
+
+        File.WriteAllText(
+            cliFsproj,
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup><Version>1.0.0</Version><PackAsTool>true</PackAsTool></PropertyGroup>\n  <ItemGroup>\n    <ProjectReference Include=\"../Core/Core.fsproj\" />\n  </ItemGroup>\n</Project>"
+        )
+
+        File.WriteAllText(
+            Path.Combine(coreDir, "Core.fsproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><Version>2.0.0</Version></PropertyGroup></Project>"
+        )
+
+        File.WriteAllText(
+            Path.Combine(cliDir, "CHANGELOG.md"),
+            "# Changelog\n\n## Unreleased\n\n## 1.0.0 - 2026-01-01\n"
+        )
+
+        File.WriteAllText(
+            Path.Combine(coreDir, "CHANGELOG.md"),
+            "# Changelog\n\n## Unreleased\n\n## 2.0.0 - 2026-01-01\n"
+        )
+
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") && arg.Contains("cli-v") -> Success "cli-v1.0.0"
+            | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            // Cli's own dir — no change.
+            | "jj", a when a.Contains("--from cli-v1.0.0") && a.Contains(cliDir) -> Success ""
+            // Core dir — changed (and IS in Cli's bundled closure).
+            | "jj", a when a.Contains("--from cli-v1.0.0") && a.Contains("src/Core") -> Success "1 file changed"
+            | "jj", a when a.Contains("--from cli-v1.0.0") -> Success ""
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", a when a.StartsWith("commit") -> Success ""
+            | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git push" -> Success ""
+            | "jj", "git export" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "Cli"
+                    Fsproj = cliFsproj
+                    DllPath = "fake.dll"
+                    TagPrefix = "cli-v"
+                    FsProjsSharingSameTag = [] }
+                  { Name = "Core"
+                    Fsproj = "src/Core/Core.fsproj"
+                    DllPath = "fake.dll"
+                    TagPrefix = "core-v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = root }
+
+        let result =
+            release
+                { Run = fakeRun
+                  Config = config
+                  Command = Auto
+                  Mode = PushTags
+                  TargetPackages = [ "Cli" ]
+                  ExtractPreviousApi = noPreviousApi
+                  ExtractCurrentApi = noCurrentApi
+                  CiPollIntervalMs = 0
+                  CiMaxAttempts = 10
+                  CheckPublished = (fun _ _ -> true)
+                  WaitForNuGet = false
+                  NuGetPollIntervalMs = 0
+                  NuGetMaxAttempts = 1 }
+
+        test <@ result = 0 @>
+        // PackAsTool bundles Core => Core's change triggers a rebundle patch bump.
+        test <@ File.ReadAllText(cliFsproj).Contains("<Version>1.0.1</Version>") @>
+
+        test
+            <@
+                calls
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set cli-v1.0.1"))
+            @>)
+
+[<Fact>]
+let ``release - library rebundles when a non-configured helper dependency changed`` () =
+    withTempDir (fun root ->
+        // Lib (library) -> Helper (NOT configured => bundled). Helper's change
+        // triggers a rebundle even though Lib is not PackAsTool.
+        let libDir = Path.Combine(root, "src", "Lib")
+        let helperDir = Path.Combine(root, "src", "Helper")
+        Directory.CreateDirectory(libDir) |> ignore
+        Directory.CreateDirectory(helperDir) |> ignore
+        let libFsproj = Path.Combine(libDir, "Lib.fsproj")
+
+        File.WriteAllText(
+            libFsproj,
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup><Version>1.0.0</Version></PropertyGroup>\n  <ItemGroup>\n    <ProjectReference Include=\"../Helper/Helper.fsproj\" />\n  </ItemGroup>\n</Project>"
+        )
+
+        File.WriteAllText(
+            Path.Combine(helperDir, "Helper.fsproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>"
+        )
+
+        File.WriteAllText(
+            Path.Combine(libDir, "CHANGELOG.md"),
+            "# Changelog\n\n## Unreleased\n\n## 1.0.0 - 2026-01-01\n"
+        )
+
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") -> Success "lib-v1.0.0"
+            // Lib's own dir — no change.
+            | "jj", a when a.Contains("--from lib-v1.0.0") && a.Contains(libDir) -> Success ""
+            // Helper dir — changed (bundled, non-configured helper).
+            | "jj", a when a.Contains("--from lib-v1.0.0") && a.Contains("src/Helper") -> Success "1 file changed"
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", a when a.StartsWith("commit") -> Success ""
+            | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git push" -> Success ""
+            | "jj", "git export" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "Lib"
+                    Fsproj = libFsproj
+                    DllPath = "fake.dll"
+                    TagPrefix = "lib-v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = root }
+
+        let result =
+            release
+                { Run = fakeRun
+                  Config = config
+                  Command = Auto
+                  Mode = PushTags
+                  TargetPackages = []
+                  ExtractPreviousApi = noPreviousApi
+                  ExtractCurrentApi = noCurrentApi
+                  CiPollIntervalMs = 0
+                  CiMaxAttempts = 10
+                  CheckPublished = (fun _ _ -> true)
+                  WaitForNuGet = false
+                  NuGetPollIntervalMs = 0
+                  NuGetMaxAttempts = 1 }
+
+        test <@ result = 0 @>
+        // Helper is bundled (not separately published) => rebundle patch bump.
+        test <@ File.ReadAllText(libFsproj).Contains("<Version>1.0.1</Version>") @>
+
+        test
+            <@
+                calls
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set lib-v1.0.1"))
+            @>)

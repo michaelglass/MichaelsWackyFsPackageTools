@@ -363,7 +363,23 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
         | None -> FirstRelease
 
     let ownSrcDir = System.IO.Path.GetDirectoryName(pkg.Fsproj)
-    let depDirs = transitiveProjectRefDirs input.Config.RootDir pkg.Fsproj
+
+    // A referenced project contributes to this package's change-detection
+    // closure only if its DLL actually ships inside the package. The set of
+    // separately-released packages comes from the configured `Packages`: each
+    // such project is consumed as a NuGet `<dependency>` (not bundled) by a
+    // library, so it's a dependency boundary. (PackAsTool packages bundle
+    // everything regardless — handled inside `transitiveBundledRefDirs`.)
+    let separatelyReleased =
+        input.Config.Packages
+        |> List.map (fun p -> p.Fsproj.Replace('\\', '/'))
+        |> Set.ofList
+
+    let isSeparatelyReleased (fsprojRel: string) =
+        separatelyReleased.Contains(fsprojRel.Replace('\\', '/'))
+
+    let depDirs =
+        transitiveBundledRefDirs input.Config.RootDir pkg.Fsproj isSeparatelyReleased
 
     match inProgressResumeVersion input state pkg with
     | Some resumeVersion ->

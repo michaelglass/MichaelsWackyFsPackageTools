@@ -868,3 +868,128 @@ let ``transitiveProjectRefDirs skips missing referenced fsproj`` () =
         // into it doesn't throw and yields nothing further.
         test <@ List.contains "src/B" result @>
         test <@ List.contains "src/Ghost" result @>)
+
+// --- isPackAsTool (pure) ---
+
+[<Fact>]
+let ``isPackAsTool is true for a PackAsTool true project`` () =
+    let content =
+        """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><PackAsTool>true</PackAsTool></PropertyGroup>
+</Project>"""
+
+    test <@ isPackAsTool content @>
+
+[<Fact>]
+let ``isPackAsTool tolerates whitespace and case`` () =
+    let content =
+        "<Project>\n  <PropertyGroup><PackAsTool>  True  </PackAsTool></PropertyGroup>\n</Project>"
+
+    test <@ isPackAsTool content @>
+
+[<Fact>]
+let ``isPackAsTool is false when absent or false`` () =
+    test <@ not (isPackAsTool "<Project><PropertyGroup></PropertyGroup></Project>") @>
+    test <@ not (isPackAsTool "<Project><PropertyGroup><PackAsTool>false</PackAsTool></PropertyGroup></Project>") @>
+
+// --- transitiveBundledRefDirs (I/O against a temp tree) ---
+
+let private writeFsprojWith (root: string) (relPath: string) (packAsTool: bool) (refs: string list) =
+    let full = Path.Combine(root, relPath)
+    Directory.CreateDirectory(Path.GetDirectoryName(full)) |> ignore
+
+    let refLines =
+        refs
+        |> List.map (fun r -> sprintf "    <ProjectReference Include=\"%s\" />" r)
+        |> String.concat "\n"
+
+    let toolProp =
+        if packAsTool then
+            "  <PropertyGroup><PackAsTool>true</PackAsTool></PropertyGroup>\n"
+        else
+            ""
+
+    let content =
+        sprintf "<Project Sdk=\"Microsoft.NET.Sdk\">\n%s  <ItemGroup>\n%s\n  </ItemGroup>\n</Project>" toolProp refLines
+
+    File.WriteAllText(full, content)
+
+[<Fact>]
+let ``transitiveBundledRefDirs - PackAsTool root includes a separately-released ref (full closure)`` () =
+    withTempDir (fun root ->
+        // Tool bundles everything: even though Core is "separately released",
+        // a PackAsTool ships it, so it (and its transitive ref) must be included.
+        writeFsprojWith root "src/Cli/Cli.fsproj" true [ "../Core/Core.fsproj" ]
+        writeFsprojWith root "src/Core/Core.fsproj" false [ "../Helper/Helper.fsproj" ]
+        writeFsprojWith root "src/Helper/Helper.fsproj" false []
+
+        let isSep = (fun p -> p = "src/Core/Core.fsproj")
+        let result = transitiveBundledRefDirs root "src/Cli/Cli.fsproj" isSep
+        test <@ result = [ "src/Core"; "src/Helper" ] @>)
+
+[<Fact>]
+let ``transitiveBundledRefDirs - library root EXCLUDES a separately-released ref and stops recursing`` () =
+    withTempDir (fun root ->
+        // Analyzers (library) -> Core (separately released) -> Helper.
+        // Core is a NuGet-dependency boundary: excluded, and Helper (reachable
+        // only through Core) is NOT pulled in.
+        writeFsprojWith root "src/Analyzers/Analyzers.fsproj" false [ "../Core/Core.fsproj" ]
+        writeFsprojWith root "src/Core/Core.fsproj" false [ "../Helper/Helper.fsproj" ]
+        writeFsprojWith root "src/Helper/Helper.fsproj" false []
+
+        let isSep = (fun p -> p = "src/Core/Core.fsproj")
+        let result = transitiveBundledRefDirs root "src/Analyzers/Analyzers.fsproj" isSep
+        test <@ List.isEmpty result @>)
+
+[<Fact>]
+let ``transitiveBundledRefDirs - library root INCLUDES a non-released helper and recurses through it`` () =
+    withTempDir (fun root ->
+        // Lib (library) -> Helper (not released) -> Deep (not released).
+        // Helper is bundled and recursed through, reaching Deep.
+        writeFsprojWith root "src/Lib/Lib.fsproj" false [ "../Helper/Helper.fsproj" ]
+        writeFsprojWith root "src/Helper/Helper.fsproj" false [ "../Deep/Deep.fsproj" ]
+        writeFsprojWith root "src/Deep/Deep.fsproj" false []
+
+        // Only some unrelated package is separately released.
+        let isSep = (fun p -> p = "src/Other/Other.fsproj")
+        let result = transitiveBundledRefDirs root "src/Lib/Lib.fsproj" isSep
+        test <@ result = [ "src/Helper"; "src/Deep" ] @>)
+
+[<Fact>]
+let ``transitiveBundledRefDirs - library root mixes a bundled helper and an excluded released ref`` () =
+    withTempDir (fun root ->
+        // Lib -> {Helper (bundled), Core (released boundary)}; Helper -> Deep.
+        writeFsprojWith root "src/Lib/Lib.fsproj" false [ "../Helper/Helper.fsproj"; "../Core/Core.fsproj" ]
+        writeFsprojWith root "src/Helper/Helper.fsproj" false [ "../Deep/Deep.fsproj" ]
+        writeFsprojWith root "src/Core/Core.fsproj" false [ "../Deep/Deep.fsproj" ]
+        writeFsprojWith root "src/Deep/Deep.fsproj" false []
+
+        let isSep = (fun p -> p = "src/Core/Core.fsproj")
+        let result = transitiveBundledRefDirs root "src/Lib/Lib.fsproj" isSep
+        // Core excluded + not recursed; Deep reached via Helper (not via Core).
+        test <@ result = [ "src/Helper"; "src/Deep" ] @>)
+
+[<Fact>]
+let ``transitiveBundledRefDirs - cycle-safe and dedups with a library boundary`` () =
+    withTempDir (fun root ->
+        // A -> B -> A (cycle); B also -> Core (released). Must terminate, dedup,
+        // exclude own dir and the released boundary.
+        writeFsprojWith root "src/A/A.fsproj" false [ "../B/B.fsproj" ]
+        writeFsprojWith root "src/B/B.fsproj" false [ "../A/A.fsproj"; "../Core/Core.fsproj" ]
+        writeFsprojWith root "src/Core/Core.fsproj" false []
+
+        let isSep = (fun p -> p = "src/Core/Core.fsproj")
+        let result = transitiveBundledRefDirs root "src/A/A.fsproj" isSep
+        test <@ result = [ "src/B" ] @>)
+
+[<Fact>]
+let ``transitiveBundledRefDirs - skips a missing referenced fsproj`` () =
+    withTempDir (fun root ->
+        writeFsprojWith root "src/A/A.fsproj" false [ "../B/B.fsproj"; "../Ghost/Ghost.fsproj" ]
+        writeFsprojWith root "src/B/B.fsproj" false []
+
+        let result = transitiveBundledRefDirs root "src/A/A.fsproj" (fun _ -> false)
+        // Ghost's dir is still listed (declared, bundled), traversal into the
+        // missing file yields nothing further and does not throw.
+        test <@ List.contains "src/B" result @>
+        test <@ List.contains "src/Ghost" result @>)
