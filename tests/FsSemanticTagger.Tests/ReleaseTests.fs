@@ -2369,3 +2369,305 @@ let ``release - multi-package mixed: one mid-release resumes, one fresh bumps`` 
     finally
         File.Delete(tmpResume)
         File.Delete(tmpFresh)
+
+// --- dependency-aware (rebundle) bumps ---
+
+/// Build a temp repo tree: a bundling tool `src/Tool/Tool.fsproj` that
+/// ProjectReferences a library `src/Dep/Dep.fsproj`. The tool's fsproj is the
+/// only package, so `changelogPathsFor` uses the repo-root CHANGELOG. Returns
+/// the absolute path of the tool fsproj.
+let private writeBundlingRepo (root: string) (toolVersion: string) =
+    let toolDir = Path.Combine(root, "src", "Tool")
+    let depDir = Path.Combine(root, "src", "Dep")
+    Directory.CreateDirectory(toolDir) |> ignore
+    Directory.CreateDirectory(depDir) |> ignore
+    let toolFsproj = Path.Combine(toolDir, "Tool.fsproj")
+
+    File.WriteAllText(
+        toolFsproj,
+        sprintf
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup><Version>%s</Version></PropertyGroup>\n  <ItemGroup>\n    <ProjectReference Include=\"../Dep/Dep.fsproj\" />\n  </ItemGroup>\n</Project>"
+            toolVersion
+    )
+
+    File.WriteAllText(
+        Path.Combine(depDir, "Dep.fsproj"),
+        "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>"
+    )
+
+    File.WriteAllText(
+        Path.Combine(root, "CHANGELOG.md"),
+        "# Changelog\n\n## Unreleased\n\n## 1.0.0 - 2026-01-01\n\n- old\n"
+    )
+
+    toolFsproj
+
+let private runReleaseInRoot run config cmd =
+    release
+        { Run = run
+          Config = config
+          Command = cmd
+          Mode = PushTags
+          TargetPackages = []
+          ExtractPreviousApi = noPreviousApi
+          ExtractCurrentApi = noCurrentApi
+          CiPollIntervalMs = 0
+          CiMaxAttempts = 10
+          CheckPublished = (fun _ _ -> true)
+          WaitForNuGet = false
+          NuGetPollIntervalMs = 0
+          NuGetMaxAttempts = 1 }
+
+[<Fact>]
+let ``release - Auto rebundles when only a bundled dependency changed`` () =
+    withTempDir (fun root ->
+        let toolFsproj = writeBundlingRepo root "1.0.0"
+        let ownSrcDir = Path.Combine(root, "src", "Tool")
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") -> Success "v1.0.0"
+            // own dir (absolute) — no change
+            | "jj", a when a.Contains("--from v1.0.0") && a.Contains(ownSrcDir) -> Success ""
+            // dep dir (repo-relative src/Dep) — changed
+            | "jj", a when a.Contains("--from v1.0.0") && a.Contains("src/Dep") -> Success "1 file changed"
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", a when a.StartsWith("commit") -> Success ""
+            | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git push" -> Success ""
+            | "jj", "git export" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "Tool"
+                    Fsproj = toolFsproj
+                    DllPath = "src/Tool/bin/Release/net10.0/Tool.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = root }
+
+        let result = runReleaseInRoot fakeRun config Auto
+
+        test <@ result = 0 @>
+        // NoChange-style patch bump 1.0.0 -> 1.0.1, despite ExtractPreviousApi = None
+        // (no API diff performed for a rebundle).
+        let content = File.ReadAllText toolFsproj
+        test <@ content.Contains("<Version>1.0.1</Version>") @>
+        test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set v1.0.1")) @>
+        // CHANGELOG had an empty Unreleased; rebundle auto-inserts the default bullet.
+        let changelog = File.ReadAllText(Path.Combine(root, "CHANGELOG.md"))
+        test <@ changelog.Contains "- chore: rebuild to bundle updated dependencies" @>
+        test <@ changelog.Contains "## 1.0.1 -" @>)
+
+[<Fact>]
+let ``release - Auto skips when neither own nor dependency changed`` () =
+    withTempDir (fun root ->
+        let toolFsproj = writeBundlingRepo root "1.0.0"
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") -> Success "v1.0.0"
+            // neither own nor dep dir changed
+            | "jj", a when a.Contains("--from v1.0.0") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "Tool"
+                    Fsproj = toolFsproj
+                    DllPath = "src/Tool/bin/Release/net10.0/Tool.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = root }
+
+        let result = runReleaseInRoot fakeRun config Auto
+
+        test <@ result = 0 @>
+        // No tag, no version bump.
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
+        test <@ File.ReadAllText(toolFsproj).Contains("<Version>1.0.0</Version>") @>)
+
+[<Fact>]
+let ``release - own change still uses API diff, ignoring dependency`` () =
+    withTempDir (fun root ->
+        let toolFsproj = writeBundlingRepo root "1.0.0"
+        // Give it real Unreleased content so strict validation passes.
+        File.WriteAllText(
+            Path.Combine(root, "CHANGELOG.md"),
+            "# Changelog\n\n## Unreleased\n\n- feat: own work\n\n## 1.0.0 - 2026-01-01\n"
+        )
+
+        let ownSrcDir = Path.Combine(root, "src", "Tool")
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") -> Success "v1.0.0"
+            | "jj", a when a.Contains("--from v1.0.0") && a.Contains(ownSrcDir) -> Success "1 file changed"
+            | "jj", a when a.Contains("--from v1.0.0") -> Success "1 file changed"
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", a when a.StartsWith("commit") -> Success ""
+            | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git push" -> Success ""
+            | "jj", "git export" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        // Addition in the API => minor bump (proves the API-diff path ran, not a
+        // NoChange-style rebundle which would only bump patch).
+        let oldApi = [ ApiSignature "type Foo" ]
+        let currentApi = [ ApiSignature "type Foo"; ApiSignature "  Foo::New(): String" ]
+
+        let config =
+            { Packages =
+                [ { Name = "Tool"
+                    Fsproj = toolFsproj
+                    DllPath = "fake.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = root }
+
+        let result =
+            release
+                { Run = fakeRun
+                  Config = config
+                  Command = Auto
+                  Mode = PushTags
+                  TargetPackages = []
+                  ExtractPreviousApi = (fun _ _ -> Some oldApi)
+                  ExtractCurrentApi = (fun _ -> currentApi)
+                  CiPollIntervalMs = 0
+                  CiMaxAttempts = 10
+                  CheckPublished = (fun _ _ -> true)
+                  WaitForNuGet = false
+                  NuGetPollIntervalMs = 0
+                  NuGetMaxAttempts = 1 }
+
+        test <@ result = 0 @>
+        test <@ File.ReadAllText(toolFsproj).Contains("<Version>1.1.0</Version>") @>)
+
+[<Fact>]
+let ``release - explicit command rebundles on dependency-only change`` () =
+    withTempDir (fun root ->
+        let toolFsproj = writeBundlingRepo root "0.1.0-alpha.3"
+        let ownSrcDir = Path.Combine(root, "src", "Tool")
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") -> Success "v0.1.0-alpha.3"
+            // own dir — no change
+            | "jj", a when a.Contains("--from v0.1.0-alpha.3") && a.Contains(ownSrcDir) -> Success ""
+            // dep dir — changed
+            | "jj", a when a.Contains("--from v0.1.0-alpha.3") && a.Contains("src/Dep") -> Success "1 file changed"
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", a when a.StartsWith("commit") -> Success ""
+            | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git push" -> Success ""
+            | "jj", "git export" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "Tool"
+                    Fsproj = toolFsproj
+                    DllPath = "fake.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = root }
+
+        // PromoteToBeta requested, but only the bundled dependency changed: the
+        // explicit stage transition still applies (alpha.3 -> beta.1), with no API
+        // diff. The own CHANGELOG has an empty Unreleased; the rebundle bullet is
+        // auto-inserted.
+        let result = runReleaseInRoot fakeRun config PromoteToBeta
+
+        test <@ result = 0 @>
+        test <@ File.ReadAllText(toolFsproj).Contains("<Version>0.1.0-beta.1</Version>") @>
+
+        test
+            <@
+                calls
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set v0.1.0-beta.1"))
+            @>
+
+        let changelog = File.ReadAllText(Path.Combine(root, "CHANGELOG.md"))
+        test <@ changelog.Contains "- chore: rebuild to bundle updated dependencies" @>)
+
+[<Fact>]
+let ``release - dependency-only rebundle skips a reserved explicit version`` () =
+    withTempDir (fun root ->
+        let toolFsproj = writeBundlingRepo root "0.1.0-alpha.3"
+        let ownSrcDir = Path.Combine(root, "src", "Tool")
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") -> Success "v0.1.0-alpha.3"
+            | "jj", a when a.Contains("--from v0.1.0-alpha.3") && a.Contains(ownSrcDir) -> Success ""
+            | "jj", a when a.Contains("--from v0.1.0-alpha.3") && a.Contains("src/Dep") -> Success "1 file changed"
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "Tool"
+                    Fsproj = toolFsproj
+                    DllPath = "fake.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              // The would-be explicit beta target is reserved => the package is skipped.
+              ReservedVersions = Set.ofList [ "0.1.0-beta.1" ]
+              PreBuildCmds = []
+              RootDir = root }
+
+        let result = runReleaseInRoot fakeRun config PromoteToBeta
+
+        test <@ result = 0 @>
+        // No tag, version untouched.
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
+        test <@ File.ReadAllText(toolFsproj).Contains("<Version>0.1.0-alpha.3</Version>") @>)

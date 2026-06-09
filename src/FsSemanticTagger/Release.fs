@@ -232,8 +232,19 @@ let private packLocally (run: string -> string -> CommandResult) (bumps: (Packag
 
     0
 
+/// What caused a bump, so downstream changelog handling can adapt.
+/// `OwnChange` is the normal case (the package's own source changed, strict
+/// CHANGELOG validation applies). `DependencyChange` is a "rebundle" bump
+/// triggered solely because a transitive `<ProjectReference>` of a bundling
+/// package (e.g. a `PackAsTool` CLI that physically ships the referenced DLLs)
+/// changed; its real change is documented in the dependency's changelog, so the
+/// package's own `## Unreleased` may legitimately be missing/empty.
+type BumpTrigger =
+    | OwnChange
+    | DependencyChange
+
 type BumpDecision =
-    | NeedsBump of PackageConfig * Version
+    | NeedsBump of PackageConfig * Version * BumpTrigger
     | AlreadyBumped of PackageConfig * Version
     /// Auto mode couldn't read the previous release's API, so the bump can't be
     /// computed. We refuse to guess (a breaking change must not ship as a patch).
@@ -351,7 +362,8 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
             HasPreviousRelease(parse versionStr)
         | None -> FirstRelease
 
-    let srcDir = System.IO.Path.GetDirectoryName(pkg.Fsproj)
+    let ownSrcDir = System.IO.Path.GetDirectoryName(pkg.Fsproj)
+    let depDirs = transitiveProjectRefDirs input.Config.RootDir pkg.Fsproj
 
     match inProgressResumeVersion input state pkg with
     | Some resumeVersion ->
@@ -360,25 +372,67 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
         // and the changelog re-roll — all of which assume work still to be done.
         AlreadyBumped(pkg, resumeVersion) |> Some
     | None ->
+        let toDecision (trigger: BumpTrigger) (newVersion: Version) =
+            if readFsprojVersion pkg.Fsproj = Some newVersion then
+                AlreadyBumped(pkg, newVersion)
+            else
+                NeedsBump(pkg, newVersion, trigger)
+
+        // Apply an explicit (non-Auto) command's stage transition. Explicit
+        // commands bypass API diffing entirely, so the resulting version comes
+        // straight from `forCommand`; the reserved-version skip and the
+        // forCommand error are handled once here for every explicit path
+        // (own-changed, dep-only, and first-release). `trigger` records whether
+        // this was an own-source bump or a dependency-only rebundle.
+        let explicitBump (trigger: BumpTrigger) =
+            match forCommand state input.Command with
+            | Ok v ->
+                if input.Config.ReservedVersions.Contains(format v) then
+                    printfn "Warning: version %s is reserved, skipping" (format v)
+                    None
+                else
+                    Some(toDecision trigger v)
+            | Error msg ->
+                printfn "%s for %s" msg pkg.Name
+                None
+
+        // A dependency-triggered "rebundle" bump: the package's own source is
+        // unchanged but a bundled `<ProjectReference>` changed. A bundled tool/exe
+        // has no meaningful public API to diff (and ExtractPreviousApi would fail
+        // -> CannotDetermine), so treat it as a NoChange-style bump, honouring the
+        // existing reserved-version patch-skip.
+        let depBumpAuto (currentVersion: Version) (tag: string) =
+            let newVersion = determineBump currentVersion NoChange
+
+            let newVersion =
+                if input.Config.ReservedVersions.Contains(format newVersion) then
+                    bumpPatch newVersion
+                else
+                    newVersion
+
+            printfn "Bumping %s: bundled dependency changed since %s (rebundle)" pkg.Name tag
+            Some(toDecision DependencyChange newVersion)
 
         match state with
-        | HasPreviousRelease currentVersion when
-            not (hasChangesSinceTag input.Run (toTag pkg.TagPrefix currentVersion) srcDir)
-            ->
-            printfn "Skipping %s: no changes since %s" pkg.Name (toTag pkg.TagPrefix currentVersion)
-            None
-        | _ ->
-            let toDecision (newVersion: Version) =
-                if readFsprojVersion pkg.Fsproj = Some newVersion then
-                    AlreadyBumped(pkg, newVersion)
-                else
-                    NeedsBump(pkg, newVersion)
+        | HasPreviousRelease currentVersion ->
+            let tag = toTag pkg.TagPrefix currentVersion
+            let ownChanged = hasChangesSinceTag input.Run tag ownSrcDir
+            let depChanged = depDirs |> List.exists (hasChangesSinceTag input.Run tag)
 
-            match input.Command with
-            | Auto ->
-                match state with
-                | FirstRelease -> None // Need explicit command for first release
-                | HasPreviousRelease currentVersion ->
+            match ownChanged, depChanged with
+            | false, false ->
+                printfn "Skipping %s: no changes since %s" pkg.Name tag
+                None
+            | false, true ->
+                match input.Command with
+                | Auto -> depBumpAuto currentVersion tag
+                | _ ->
+                    printfn "Bumping %s: bundled dependency changed since %s (rebundle)" pkg.Name tag
+                    explicitBump DependencyChange
+            | true, _ ->
+                // The package's own source changed — existing behaviour unchanged.
+                match input.Command with
+                | Auto ->
                     match input.ExtractPreviousApi pkg.Name (format currentVersion) with
                     | None ->
                         // The previous release's API couldn't be read. Treating this as
@@ -389,7 +443,7 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                                 pkg,
                                 sprintf
                                     "could not read the public API of the previous release %s (package not in the NuGet cache and download failed — check network/feed access). Refusing to guess the version bump; re-run once the package is reachable, or use an explicit alpha/beta/rc/stable command."
-                                    (toTag pkg.TagPrefix currentVersion)
+                                    tag
                             )
                         )
                     | Some oldApi ->
@@ -403,18 +457,12 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                             else
                                 newVersion
 
-                        Some(toDecision newVersion)
-            | _ ->
-                match forCommand state input.Command with
-                | Ok v ->
-                    if input.Config.ReservedVersions.Contains(format v) then
-                        printfn "Warning: version %s is reserved, skipping" (format v)
-                        None
-                    else
-                        Some(toDecision v)
-                | Error msg ->
-                    printfn "%s for %s" msg pkg.Name
-                    None
+                        Some(toDecision OwnChange newVersion)
+                | _ -> explicitBump OwnChange
+        | FirstRelease ->
+            match input.Command with
+            | Auto -> None // Need explicit command for first release
+            | _ -> explicitBump OwnChange
 
 let private resumeAlreadyBumped (input: ReleaseInput) (alreadyBumped: (PackageConfig * Version) list) : int =
     printfn "\nResuming in-progress release (versions already bumped, tags not yet pushed):"
@@ -434,12 +482,17 @@ let private resumeAlreadyBumped (input: ReleaseInput) (alreadyBumped: (PackageCo
         waitForCiAndPushTags input alreadyBumped
     | LocalPublish -> packLocally input.Run alreadyBumped
 
+/// The changelog bullet auto-inserted for a dependency-triggered rebundle bump
+/// whose own `## Unreleased` section is missing or empty.
+let internal rebundleChangelogBullet =
+    "- chore: rebuild to bundle updated dependencies"
+
 let private executeBumps
     (input: ReleaseInput)
-    (needsBump: (PackageConfig * Version) list)
+    (needsBump: (PackageConfig * Version * BumpTrigger) list)
     (alreadyBumped: (PackageConfig * Version) list)
     : int =
-    let allBumps = needsBump @ alreadyBumped
+    let allBumps = (needsBump |> List.map (fun (pkg, v, _) -> pkg, v)) @ alreadyBumped
 
     printfn "\nRelease plan:"
 
@@ -448,11 +501,16 @@ let private executeBumps
 
     let bumpsWithChangelogs =
         needsBump
-        |> List.map (fun (pkg, v) -> pkg, v, changelogPathsFor input.Config pkg)
+        |> List.map (fun (pkg, v, trigger) -> pkg, v, trigger, changelogPathsFor input.Config pkg)
 
+    // Only OwnChange bumps are subject to strict `## Unreleased` validation. A
+    // DependencyChange (rebundle) bump's real change lives in the dependency's
+    // changelog, so a missing/empty own section is fine — it's auto-filled at
+    // promote time.
     let changelogErrors =
         bumpsWithChangelogs
-        |> List.collect (fun (_, _, paths) -> paths)
+        |> List.filter (fun (_, _, trigger, _) -> trigger = OwnChange)
+        |> List.collect (fun (_, _, _, paths) -> paths)
         |> List.choose (fun (pkgName, path) ->
             match Changelog.validateUnreleased path with
             | Ok() -> None
@@ -472,7 +530,7 @@ let private executeBumps
 
         1
     | mode ->
-        for (pkg, version) in needsBump do
+        for (pkg, version, _) in needsBump do
             updateFsprojVersion pkg.Fsproj version
 
             for extra in pkg.FsProjsSharingSameTag do
@@ -480,9 +538,11 @@ let private executeBumps
 
         let today = System.DateTime.Today
 
-        for (_, version, paths) in bumpsWithChangelogs do
+        for (_, version, trigger, paths) in bumpsWithChangelogs do
             for (_, path) in paths do
-                Changelog.promoteUnreleased path version today
+                match trigger with
+                | OwnChange -> Changelog.promoteUnreleased path version today
+                | DependencyChange -> Changelog.promoteOrInsert path version today rebundleChangelogBullet
 
         let versionSummary =
             allBumps
@@ -543,7 +603,7 @@ let release (input: ReleaseInput) : int =
             let needsBump =
                 decisions
                 |> List.choose (function
-                    | NeedsBump(p, v) -> Some(p, v)
+                    | NeedsBump(p, v, trigger) -> Some(p, v, trigger)
                     | _ -> None)
 
             let alreadyBumped =
