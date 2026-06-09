@@ -141,6 +141,108 @@ let ``validate rejects bracketed non-Unreleased heading`` () =
         File.WriteAllText(path, "# Changelog\n\n## [0.1.0]\n\n- thing\n")
         test <@ validateUnreleased path = Error(NoUnreleasedSection path) @>)
 
+// --- promoteOrInsert ---
+
+[<Fact>]
+let ``promoteOrInsert behaves like promote when Unreleased has content`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        File.WriteAllText(path, "# Changelog\n\n## Unreleased\n\n- feat: real thing\n\n## 0.1.0 - 2026-01-01\n")
+        promoteOrInsert path (v "0.2.0-alpha.1") sampleDate "- chore: rebundle"
+        let updated = File.ReadAllText path
+        test <@ updated.Contains "## 0.2.0-alpha.1 - 2026-04-22" @>
+        test <@ updated.Contains "- feat: real thing" @>
+        // The default bullet is NOT used when there is real content.
+        test <@ not (updated.Contains "- chore: rebundle") @>)
+
+[<Fact>]
+let ``promoteOrInsert inserts heading and default bullet when section missing`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        File.WriteAllText(path, "# Changelog\n\n## 0.1.0 - 2026-01-01\n\n- old\n")
+        promoteOrInsert path (v "0.1.1") sampleDate "- chore: rebundle"
+        let updated = File.ReadAllText path
+        test <@ updated.Contains "## 0.1.1 - 2026-04-22" @>
+        test <@ updated.Contains "- chore: rebundle" @>
+        // Older content preserved.
+        test <@ updated.Contains "## 0.1.0 - 2026-01-01" @>
+        test <@ updated.Contains "- old" @>)
+
+[<Fact>]
+let ``promoteOrInsert inserts when Unreleased present but empty`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        File.WriteAllText(path, "# Changelog\n\n## Unreleased\n\n## 0.1.0 - 2026-01-01\n\n- old\n")
+        promoteOrInsert path (v "0.1.1") sampleDate "- chore: rebundle"
+        let updated = File.ReadAllText path
+        test <@ updated.Contains "## 0.1.1 - 2026-04-22" @>
+        test <@ updated.Contains "- chore: rebundle" @>
+        // Exactly one Unreleased heading remains (no stray empty one left behind).
+        let lines = File.ReadAllLines path
+        test <@ lines |> Array.filter isUnreleasedHeading |> Array.length = 1 @>)
+
+[<Fact>]
+let ``promoteOrInsert after insert keeps a fresh empty Unreleased above the version`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        File.WriteAllText(path, "# Changelog\n\n## 0.1.0 - 2026-01-01\n")
+        promoteOrInsert path (v "0.1.1") sampleDate "- chore: rebundle"
+        let lines = File.ReadAllLines path
+        let unreleasedIdx = lines |> Array.findIndex isUnreleasedHeading
+
+        let versionIdx =
+            lines |> Array.findIndex (fun l -> l.Trim() = "## 0.1.1 - 2026-04-22")
+
+        test <@ unreleasedIdx < versionIdx @>
+        // The freshly-inserted Unreleased is empty -> validate reports it empty.
+        test <@ validateUnreleased path = Error(EmptyUnreleasedSection path) @>)
+
+[<Fact>]
+let ``promoteOrInsert creates file with header when missing`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        promoteOrInsert path (v "0.1.1") sampleDate "- chore: rebundle"
+        test <@ File.Exists path @>
+        let updated = File.ReadAllText path
+        test <@ updated.Contains "## 0.1.1 - 2026-04-22" @>
+        test <@ updated.Contains "- chore: rebundle" @>)
+
+[<Fact>]
+let ``promoteOrInsert inserts at top when no level-1 title present`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        // No `# ` title — the fresh section must be inserted at the very top.
+        File.WriteAllText(path, "## 0.1.0 - 2026-01-01\n\n- old\n")
+        promoteOrInsert path (v "0.1.1") sampleDate "- chore: rebundle"
+        let lines = File.ReadAllLines path
+
+        let versionIdx =
+            lines |> Array.findIndex (fun l -> l.Trim() = "## 0.1.1 - 2026-04-22")
+
+        let oldIdx = lines |> Array.findIndex (fun l -> l.Trim() = "## 0.1.0 - 2026-01-01")
+        // New section precedes the previously-top section.
+        test <@ versionIdx < oldIdx @>
+        let updated = File.ReadAllText path
+        test <@ updated.Contains "- chore: rebundle" @>
+        test <@ updated.Contains "- old" @>)
+
+[<Fact>]
+let ``promoteOrInsert handles empty Unreleased with no trailing blank line`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        // `## Unreleased` immediately followed by another heading (no blank between).
+        File.WriteAllText(path, "# Changelog\n\n## Unreleased\n## 0.1.0 - 2026-01-01\n\n- old\n")
+        promoteOrInsert path (v "0.1.1") sampleDate "- chore: rebundle"
+        let lines = File.ReadAllLines path
+        // Exactly one Unreleased heading (the stale empty one was dropped) and the
+        // previous version content is preserved.
+        test <@ lines |> Array.filter isUnreleasedHeading |> Array.length = 1 @>
+        let updated = File.ReadAllText path
+        test <@ updated.Contains "## 0.1.1 - 2026-04-22" @>
+        test <@ updated.Contains "- chore: rebundle" @>
+        test <@ updated.Contains "## 0.1.0 - 2026-01-01" @>
+        test <@ updated.Contains "- old" @>)
+
 [<Fact>]
 let ``formatError - NoFile`` () =
     test <@ formatError (NoFile "x.md") = "x.md: CHANGELOG.md not found" @>

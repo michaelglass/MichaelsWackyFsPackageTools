@@ -63,10 +63,72 @@ let promoteUnreleased (changelogPath: string) (version: Version) (today: DateTim
     let versionHeader =
         sprintf "## %s - %s" (format version) (today.ToString("yyyy-MM-dd"))
 
-    let before = if idx = 0 then [||] else lines[.. idx - 1]
-    let after = lines[idx + 1 ..]
+    let before = lines |> Array.take idx
+    let after = lines |> Array.skip (idx + 1)
 
     let freshBlock = [| "## Unreleased"; ""; versionHeader |]
     let rebuilt = Array.concat [ before; freshBlock; after ]
 
     File.WriteAllLines(changelogPath, rebuilt)
+
+/// Promote `## Unreleased` to a version heading like `promoteUnreleased`, but
+/// tolerate a missing or empty `## Unreleased` section: in that case a fresh
+/// `## <version> - <date>` heading is inserted (with `defaultBullet` as its only
+/// entry) and a new empty `## Unreleased` placed above it. Used for
+/// dependency-triggered "rebundle" bumps whose real change lives in a
+/// dependency's changelog, so the package's own changelog has nothing to
+/// promote. When the section exists with usable content this behaves exactly
+/// like `promoteUnreleased` and `defaultBullet` is ignored.
+///
+/// A missing CHANGELOG.md file is created with a minimal `# Changelog` header.
+let promoteOrInsert (changelogPath: string) (version: Version) (today: DateTime) (defaultBullet: string) : unit =
+    let hasUsableUnreleased =
+        match validateUnreleased changelogPath with
+        | Ok() -> true
+        | Error _ -> false
+
+    if hasUsableUnreleased then
+        promoteUnreleased changelogPath version today
+    else
+        let versionHeader =
+            sprintf "## %s - %s" (format version) (today.ToString("yyyy-MM-dd"))
+
+        let existing =
+            if File.Exists changelogPath then
+                File.ReadAllLines changelogPath
+            else
+                [| "# Changelog"; "" |]
+
+        // Drop an existing empty `## Unreleased` heading (and a single blank
+        // line after it) so we don't leave a stray empty section behind the
+        // fresh one we insert.
+        let withoutEmptyUnreleased =
+            match existing |> Array.tryFindIndex isUnreleasedHeading with
+            | Some idx ->
+                let hasTrailingBlank =
+                    idx + 1 < existing.Length && String.IsNullOrWhiteSpace existing[idx + 1]
+
+                let dropCount = if hasTrailingBlank then 2 else 1
+                Array.append (existing |> Array.take idx) (existing |> Array.skip (idx + dropCount))
+            | None -> existing
+
+        // Insert the new section directly after the top-level `# ` title if
+        // present, otherwise at the very top.
+        let titleIdx =
+            withoutEmptyUnreleased
+            |> Array.tryFindIndex (fun l -> l.TrimStart().StartsWith("# ") && not (l.TrimStart().StartsWith("## ")))
+
+        let insertAt =
+            match titleIdx with
+            | Some i -> i + 1
+            | None -> 0
+
+        let freshBlock = [| ""; "## Unreleased"; ""; versionHeader; ""; defaultBullet; "" |]
+
+        let rebuilt =
+            Array.concat
+                [ withoutEmptyUnreleased |> Array.take insertAt
+                  freshBlock
+                  withoutEmptyUnreleased |> Array.skip insertAt ]
+
+        File.WriteAllLines(changelogPath, rebuilt)

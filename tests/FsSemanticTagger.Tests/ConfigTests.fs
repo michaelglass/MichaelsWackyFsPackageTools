@@ -760,3 +760,111 @@ let ``deriveDllPathFromContent uses correct output path structure`` () =
 
     let result = deriveDllPathFromContent fsprojPath content
     test <@ result = Path.Combine("/repo/src/MyLib", "bin", "Release", "net10.0", "MyLib.dll") @>
+
+// --- parseProjectReferenceIncludes (pure) ---
+
+[<Fact>]
+let ``parseProjectReferenceIncludes parses self-closing references`` () =
+    let content =
+        """<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Core/Core.fsproj" />
+    <ProjectReference Include="../Shared/Shared.fsproj"/>
+  </ItemGroup>
+</Project>"""
+
+    let result = parseProjectReferenceIncludes content
+    test <@ result = [ "../Core/Core.fsproj"; "../Shared/Shared.fsproj" ] @>
+
+[<Fact>]
+let ``parseProjectReferenceIncludes parses open-close references`` () =
+    let content =
+        """<Project>
+  <ItemGroup>
+    <ProjectReference Include="../Core/Core.fsproj">
+      <PrivateAssets>all</PrivateAssets>
+    </ProjectReference>
+  </ItemGroup>
+</Project>"""
+
+    let result = parseProjectReferenceIncludes content
+    test <@ result = [ "../Core/Core.fsproj" ] @>
+
+[<Fact>]
+let ``parseProjectReferenceIncludes handles single quotes and extra whitespace`` () =
+    let content =
+        "<Project>\n  <ItemGroup>\n    <ProjectReference   Include = '..\\Core\\Core.fsproj'  />\n  </ItemGroup>\n</Project>"
+
+    let result = parseProjectReferenceIncludes content
+    test <@ result = [ "..\\Core\\Core.fsproj" ] @>
+
+[<Fact>]
+let ``parseProjectReferenceIncludes returns empty when none present`` () =
+    let content =
+        """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><PackageId>X</PackageId></PropertyGroup>
+</Project>"""
+
+    test <@ List.isEmpty (parseProjectReferenceIncludes content) @>
+
+// --- transitiveProjectRefDirs (I/O against a temp tree) ---
+
+let private writeFsproj (root: string) (relPath: string) (refs: string list) =
+    let full = Path.Combine(root, relPath)
+    Directory.CreateDirectory(Path.GetDirectoryName(full)) |> ignore
+
+    let refLines =
+        refs
+        |> List.map (fun r -> sprintf "    <ProjectReference Include=\"%s\" />" r)
+        |> String.concat "\n"
+
+    let content =
+        sprintf "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <ItemGroup>\n%s\n  </ItemGroup>\n</Project>" refLines
+
+    File.WriteAllText(full, content)
+
+[<Fact>]
+let ``transitiveProjectRefDirs follows a linear chain A -> B -> C`` () =
+    withTempDir (fun root ->
+        writeFsproj root "src/A/A.fsproj" [ "../B/B.fsproj" ]
+        writeFsproj root "src/B/B.fsproj" [ "../C/C.fsproj" ]
+        writeFsproj root "src/C/C.fsproj" []
+
+        let result = transitiveProjectRefDirs root "src/A/A.fsproj"
+        test <@ result = [ "src/B"; "src/C" ] @>)
+
+[<Fact>]
+let ``transitiveProjectRefDirs dedups a diamond A -> {B,C} -> D`` () =
+    withTempDir (fun root ->
+        writeFsproj root "src/A/A.fsproj" [ "../B/B.fsproj"; "../C/C.fsproj" ]
+        writeFsproj root "src/B/B.fsproj" [ "../D/D.fsproj" ]
+        writeFsproj root "src/C/C.fsproj" [ "../D/D.fsproj" ]
+        writeFsproj root "src/D/D.fsproj" []
+
+        let result = transitiveProjectRefDirs root "src/A/A.fsproj"
+        // D appears once despite two paths to it; own dir (src/A) excluded.
+        test <@ result = [ "src/B"; "src/C"; "src/D" ] @>
+        test <@ result |> List.filter ((=) "src/D") |> List.length = 1 @>
+        test <@ not (List.contains "src/A" result) @>)
+
+[<Fact>]
+let ``transitiveProjectRefDirs is cycle-safe A -> B -> A`` () =
+    withTempDir (fun root ->
+        writeFsproj root "src/A/A.fsproj" [ "../B/B.fsproj" ]
+        writeFsproj root "src/B/B.fsproj" [ "../A/A.fsproj" ]
+
+        let result = transitiveProjectRefDirs root "src/A/A.fsproj"
+        // Terminates; own dir excluded, B included once.
+        test <@ result = [ "src/B" ] @>)
+
+[<Fact>]
+let ``transitiveProjectRefDirs skips missing referenced fsproj`` () =
+    withTempDir (fun root ->
+        writeFsproj root "src/A/A.fsproj" [ "../B/B.fsproj"; "../Ghost/Ghost.fsproj" ]
+        writeFsproj root "src/B/B.fsproj" []
+
+        let result = transitiveProjectRefDirs root "src/A/A.fsproj"
+        // Ghost's dir is still listed (it's a declared reference), but traversal
+        // into it doesn't throw and yields nothing further.
+        test <@ List.contains "src/B" result @>
+        test <@ List.contains "src/Ghost" result @>)

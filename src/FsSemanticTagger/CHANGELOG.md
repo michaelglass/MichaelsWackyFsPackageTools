@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: dependency-aware version bump. A package's change-detection now also considers its transitive `<ProjectReference>` closure (auto-derived from the fsproj — no config field). A bundling package (e.g. a `PackAsTool` CLI that physically ships its referenced DLLs) is now re-released ("rebundle" bump) when a bundled dependency's source changes since its last tag, even if the package's own source is unchanged. A rebundle is a `NoChange`-style bump that skips API extraction (a bundled tool/exe has no meaningful public API) and, when the package's own `## Unreleased` section is missing or empty, auto-inserts a `- chore: rebuild to bundle updated dependencies` changelog entry. Normal own-source bumps keep the strict changelog validation and API-diff behavior unchanged.
+
 ## 0.13.0-alpha.8 - 2026-06-03
 
 - feat: `release`/`alpha`/`beta`/`rc`/`stable` now **resume a bumped-but-untagged release** on re-run. If a package's fsproj `<Version>` is ahead of its latest tag and no tag exists at that version (e.g. a prior run bumped the version and rolled the changelog but the tag push failed because CI flaked), the tool detects the in-progress release, verifies the commit's CI is green, and pushes the missing tag — instead of reporting "No packages to release". Decided off desired end-state (version vs tag), not work-remaining, so a mid-release failure self-heals on the next run.

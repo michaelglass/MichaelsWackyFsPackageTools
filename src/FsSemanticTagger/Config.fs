@@ -24,6 +24,12 @@ let private assemblyNameRegex =
 let private packageIdRegex =
     Regex(@"<PackageId>([^<]+)</PackageId>", RegexOptions.Compiled)
 
+let private projectReferenceIncludeRegex =
+    Regex(
+        """<ProjectReference\b[^>]*?\bInclude\s*=\s*["']([^"']+)["']""",
+        RegexOptions.Compiled ||| RegexOptions.IgnoreCase
+    )
+
 let private isPackableFalseRegex =
     Regex(@"<IsPackable>\s*false\s*</IsPackable>", RegexOptions.Compiled ||| RegexOptions.IgnoreCase)
 
@@ -43,6 +49,80 @@ let deriveDllPathFromContent (fsprojPath: string) (content: string) : string =
 /// Derive the DLL path from an fsproj file path (reads the file).
 let deriveDllPath (fsprojPath: string) : string =
     deriveDllPathFromContent fsprojPath (File.ReadAllText(fsprojPath))
+
+/// Parse the `Include` values of every `<ProjectReference>` from fsproj XML
+/// content. Pure (no I/O). Handles both self-closing
+/// (`<ProjectReference Include="..." />`) and open/close
+/// (`<ProjectReference Include="...">...</ProjectReference>`) forms,
+/// single- or double-quoted attribute values, and arbitrary surrounding
+/// whitespace. The raw Include string is returned verbatim (back- or
+/// forward-slashes preserved); path normalisation is the caller's job.
+let parseProjectReferenceIncludes (content: string) : string list =
+    [ for m in projectReferenceIncludeRegex.Matches(content) -> m.Groups[1].Value ]
+
+/// Normalise an arbitrary path to a repo-root-relative directory using forward
+/// slashes and no trailing slash. `rootDir` and `absolutePath` are both
+/// resolved to full paths first so the relative result is stable.
+let private toRepoRelativeDir (rootDir: string) (absolutePath: string) : string =
+    let full = Path.GetFullPath(absolutePath)
+    let dir = Path.GetDirectoryName(full)
+
+    Path.GetRelativePath(Path.GetFullPath(rootDir), dir).Replace('\\', '/').TrimEnd('/')
+
+/// Resolve the transitive `<ProjectReference>` closure of `fsprojRelPath`
+/// (relative to `rootDir`), returned as repo-root-relative directory paths
+/// (forward slashes, no trailing slash).
+///
+/// Each Include is resolved relative to the *referencing* fsproj's directory,
+/// then normalised against `rootDir`. Traversal is transitive (a referenced
+/// project's own ProjectReferences are followed too), de-duplicated, and
+/// cycle-safe (each fsproj is visited at most once). A referenced fsproj that
+/// does not exist on disk is skipped silently rather than throwing. The
+/// package's *own* directory is excluded — change-detection for the package
+/// itself is handled separately by the caller. Results are returned in a
+/// stable de-duplicated order (breadth-first discovery order: a project's
+/// direct references before their transitive ones).
+///
+/// Note: this treats EVERY ProjectReference as change-relevant. That is exact
+/// for a package that *bundles* its references (a `PackAsTool` ships their
+/// DLLs, so a dependency change genuinely changes the published artifact). A
+/// non-tool library that ProjectReferences a separately-published packable
+/// dependency (consumed by its own NuGet PackageReference, not bundled) will
+/// over-trigger a redundant — but harmless — rebundle; better that than miss a
+/// real change.
+let transitiveProjectRefDirs (rootDir: string) (fsprojRelPath: string) : string list =
+    let rootFsprojFull = Path.GetFullPath(Path.Combine(rootDir, fsprojRelPath))
+    let ownDir = toRepoRelativeDir rootDir rootFsprojFull
+
+    let visited = System.Collections.Generic.HashSet<string>()
+    let ordered = ResizeArray<string>()
+    let seenDirs = System.Collections.Generic.HashSet<string>()
+
+    // Breadth-first traversal: a project's *direct* references are recorded (in
+    // declaration order) before descending into any of them. This yields a
+    // stable "siblings before descendants" order — e.g. the diamond
+    // A -> {B, C} -> D lists [B; C; D] rather than the depth-first [B; D; C].
+    let queue = System.Collections.Generic.Queue<string>()
+    queue.Enqueue(rootFsprojFull)
+
+    while queue.Count > 0 do
+        let key = Path.GetFullPath(queue.Dequeue())
+
+        if visited.Add(key) && File.Exists(key) then
+            let content = File.ReadAllText(key)
+            let referencingDir = Path.GetDirectoryName(key)
+
+            for incl in parseProjectReferenceIncludes content do
+                let normalisedIncl = incl.Replace('\\', '/')
+                let refFull = Path.GetFullPath(Path.Combine(referencingDir, normalisedIncl))
+                let refDir = toRepoRelativeDir rootDir refFull
+
+                if refDir <> ownDir && seenDirs.Add(refDir) then
+                    ordered.Add(refDir)
+
+                queue.Enqueue(refFull)
+
+    List.ofSeq ordered
 
 /// Find all packable fsproj files, returning (packageName, relativePath) list
 let findPackableProjects (rootDir: string) : (string * string) list =
