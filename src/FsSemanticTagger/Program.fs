@@ -110,7 +110,7 @@ let internal runReleaseWith
                   ExtractCurrentApi = extractCurrentApi
                   CiPollIntervalMs = 15000
                   CiMaxAttempts = 60
-                  CheckPublished = Api.isPublished run
+                  CheckPublished = Api.isPublished Api.httpGet run
                   WaitForNuGet = not (flags |> List.contains SkipNugetWait)
                   NuGetPollIntervalMs = 15000
                   NuGetMaxAttempts = 40 }

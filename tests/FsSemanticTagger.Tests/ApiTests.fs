@@ -222,15 +222,105 @@ let ``downloadToCache returns false when restore fails`` () =
 
     test <@ downloadToCache fakeRun "SomePackage" "1.2.3" = false @>
 
+// --- Flat-container availability poll ---
+// The post-push poll checks the nuget.org flat container (fast-updating publish
+// surface) first, falling back to the restore probe only when it hasn't indexed
+// yet. These guard the bug where the package was already live on the CDN but the
+// restore-resolved registration index lagged, so the poll timed out spuriously.
+
 [<Fact>]
-let ``isPublished returns true and probes with --no-http-cache when restore succeeds`` () =
+let ``flatContainerIndexUrl lower-cases the id and targets nuget.org`` () =
+    test
+        <@
+            flatContainerIndexUrl "FsSemanticTagger" = "https://api.nuget.org/v3-flatcontainer/fssemantictagger/index.json"
+        @>
+
+[<Fact>]
+let ``flatContainerHasVersion finds the version case-insensitively`` () =
+    let body = """{"versions":["0.13.0-alpha.10","0.13.0-ALPHA.11"]}"""
+    test <@ flatContainerHasVersion body "0.13.0-alpha.11" = true @>
+    test <@ flatContainerHasVersion body "0.13.0-alpha.10" = true @>
+
+[<Fact>]
+let ``flatContainerHasVersion is false when version absent or body malformed`` () =
+    let body = """{"versions":["0.13.0-alpha.10"]}"""
+    test <@ flatContainerHasVersion body "0.13.0-alpha.11" = false @>
+    test <@ flatContainerHasVersion "not json" "1.0.0" = false @>
+    test <@ flatContainerHasVersion """{"other":[]}""" "1.0.0" = false @>
+
+[<Fact>]
+let ``isPublishedViaFlatContainer true when version present, fetched from the id index url`` () =
+    let mutable fetched = []
+
+    let fakeFetch (url: string) : Result<string, string> =
+        fetched <- fetched @ [ url ]
+        Ok """{"versions":["1.2.3"]}"""
+
+    test <@ isPublishedViaFlatContainer fakeFetch "SomePackage" "1.2.3" = true @>
+    test <@ fetched = [ "https://api.nuget.org/v3-flatcontainer/somepackage/index.json" ] @>
+
+[<Fact>]
+let ``isPublishedViaFlatContainer false when fetch errors (offline or non-2xx)`` () =
+    let fakeFetch (_url: string) : Result<string, string> = Error "HTTP 404"
+    test <@ isPublishedViaFlatContainer fakeFetch "SomePackage" "1.2.3" = false @>
+
+[<Fact>]
+let ``isPublished succeeds on the FIRST attempt via flat container without ever probing restore`` () =
+    // This is the regression: previously isPublished only ran a dotnet restore,
+    // which timed out while the flat container already had the package. Now the
+    // flat-container hit short-circuits and the restore probe is never invoked.
+    let mutable restored = false
+
+    let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        restored <- true
+        FsSemanticTagger.Shell.Failure "registration index lagging"
+
+    let fakeFetch (_url: string) : Result<string, string> = Ok """{"versions":["1.2.3"]}"""
+
+    test <@ isPublished fakeFetch fakeRun "SomePackage" "1.2.3" = true @>
+    test <@ restored = false @>
+
+[<Fact>]
+let ``isPublished falls back to the restore probe when flat container has not indexed yet`` () =
+    // Private-feed case (or genuinely not-yet-on-nuget.org): flat container can't
+    // see it, so the restore probe — which honours the repo nuget.config — decides.
     let mutable invoked = []
 
     let fakeRun (cmd: string) (args: string) : FsSemanticTagger.Shell.CommandResult =
         invoked <- invoked @ [ (cmd, args) ]
         FsSemanticTagger.Shell.Success ""
 
-    let ok = isPublished fakeRun "SomePackage" "1.2.3"
+    let fakeFetch (_url: string) : Result<string, string> = Ok """{"versions":[]}"""
+
+    test <@ isPublished fakeFetch fakeRun "SomePackage" "1.2.3" = true @>
+    // The fallback probes a throwaway .csproj with the HTTP cache bypassed.
+    test
+        <@
+            invoked
+            |> List.exists (fun (c, a) ->
+                c = "dotnet"
+                && a.StartsWith("restore")
+                && a.Contains(".csproj")
+                && a.Contains("--no-http-cache"))
+        @>
+
+[<Fact>]
+let ``isPublished false when neither flat container nor restore find the version`` () =
+    let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        FsSemanticTagger.Shell.Failure "no such package"
+
+    let fakeFetch (_url: string) : Result<string, string> = Error "offline"
+    test <@ isPublished fakeFetch fakeRun "SomePackage" "1.2.3" = false @>
+
+[<Fact>]
+let ``isPublishedViaRestore returns true and probes with --no-http-cache when restore succeeds`` () =
+    let mutable invoked = []
+
+    let fakeRun (cmd: string) (args: string) : FsSemanticTagger.Shell.CommandResult =
+        invoked <- invoked @ [ (cmd, args) ]
+        FsSemanticTagger.Shell.Success ""
+
+    let ok = isPublishedViaRestore fakeRun "SomePackage" "1.2.3"
     test <@ ok = true @>
     // It restores a throwaway .csproj with the HTTP cache bypassed so a
     // just-published version isn't masked by a stale cache.
@@ -245,11 +335,11 @@ let ``isPublished returns true and probes with --no-http-cache when restore succ
         @>
 
 [<Fact>]
-let ``isPublished returns false when restore fails`` () =
+let ``isPublishedViaRestore returns false when restore fails`` () =
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         FsSemanticTagger.Shell.Failure "no such package"
 
-    test <@ isPublished fakeRun "SomePackage" "1.2.3" = false @>
+    test <@ isPublishedViaRestore fakeRun "SomePackage" "1.2.3" = false @>
 
 [<Fact>]
 let ``probeAvailabilityArgs appends --no-http-cache and keeps --configfile when present`` () =
