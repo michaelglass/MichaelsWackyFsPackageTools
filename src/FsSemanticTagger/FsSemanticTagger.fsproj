@@ -33,7 +33,7 @@
     <PackageReference Include="CommandTree" Version="0.6.2" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.300" PrivateAssets="All" />
     <PackageReference Include="System.Reflection.MetadataLoadContext" Version="10.0.8" />
-    <PackageReference Update="FSharp.Core" Version="10.1.300" />
+    <PackageReference Update="FSharp.Core" Version="10.1.*" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Shell.fs" />
