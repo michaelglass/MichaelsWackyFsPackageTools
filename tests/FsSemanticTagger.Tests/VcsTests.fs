@@ -1,11 +1,13 @@
 module FsSemanticTagger.Tests.VcsTests
 
+open System.IO
 open Xunit
 open Tests.Common
 open Swensen.Unquote
 open FsSemanticTagger.Shell
 open FsSemanticTagger.Vcs
 open FsSemanticTagger.Version
+open Tests.Common.TestHelpers
 
 let fakeRun (responses: (string * string * CommandResult) list) : string -> string -> CommandResult =
     let mutable calls = []
@@ -17,6 +19,45 @@ let fakeRun (responses: (string * string * CommandResult) list) : string -> stri
         |> List.tryFind (fun (c, a, _) -> c = cmd && a = args)
         |> Option.map (fun (_, _, r) -> r)
         |> Option.defaultValue (Failure(sprintf "unexpected call: %s %s" cmd args))
+
+// resolveGitDir
+
+[<Fact>]
+let ``resolveGitDir - default jj checkout (.jj/repo is a dir) targets the jj git store`` () =
+    withTempDir (fun tmpDir ->
+        let jjGitDir = Path.Combine(tmpDir, ".jj", "repo", "store", "git")
+        Directory.CreateDirectory(jjGitDir) |> ignore
+
+        let result = resolveGitDir tmpDir
+
+        test <@ result = Some(Path.GetFullPath jjGitDir) @>)
+
+[<Fact>]
+let ``resolveGitDir - secondary workspace (.jj/repo is a pointer file) targets the real jj git store`` () =
+    withTempDir (fun tmpDir ->
+        // Real repo: <tmp>/realrepo/.jj/repo/store/git is a directory.
+        let realRepoStore = Path.Combine(tmpDir, "realrepo", ".jj", "repo", "store", "git")
+
+        Directory.CreateDirectory(realRepoStore) |> ignore
+
+        // Secondary workspace: <tmp>/ws/.jj/repo is a FILE containing the relative path
+        // (resolved relative to <tmp>/ws/.jj/) to <tmp>/realrepo/.jj/repo.
+        let wsJj = Path.Combine(tmpDir, "ws", ".jj")
+        Directory.CreateDirectory(wsJj) |> ignore
+        File.WriteAllText(Path.Combine(wsJj, "repo"), "../../realrepo/.jj/repo\n")
+
+        let result = resolveGitDir (Path.Combine(tmpDir, "ws"))
+
+        test <@ result = Some(Path.GetFullPath realRepoStore) @>)
+
+[<Fact>]
+let ``resolveGitDir - native .git checkout returns None`` () =
+    withTempDir (fun tmpDir ->
+        Directory.CreateDirectory(Path.Combine(tmpDir, ".git")) |> ignore
+
+        let result = resolveGitDir tmpDir
+
+        test <@ result = None @>)
 
 // hasUncommittedChanges
 
