@@ -6,3 +6,5 @@ coverage/
 .fsdocs/
 .claude/settings.local.json
 docs/plans/
+# jj workspaces — destination for parallel agent workspaces
+.workspaces/
