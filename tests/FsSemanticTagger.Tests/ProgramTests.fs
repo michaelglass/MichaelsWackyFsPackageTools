@@ -415,7 +415,7 @@ let ``releaseMode - DryRun takes precedence over Publish`` () =
 let ``runReleaseWith - returns Error when config missing`` () =
     withTempDir (fun tmpDir ->
         let fakeRun _ _ = Shell.Failure "should not be called"
-        let fakeExtractPrev _ _ = None
+        let fakeExtractPrev _ _ = Api.FetchError "should not be called"
         let fakeExtractCur _ = []
 
         let result =
@@ -502,7 +502,7 @@ let ``runReleaseWith - returns Ok 0 for empty-package config when CI passes`` ()
             | "dotnet", "build -c Release" -> Shell.Success ""
             | _ -> Shell.Failure(sprintf "unexpected call: %s %s" cmd args)
 
-        let extractPrev _ _ = None
+        let extractPrev _ _ = Api.FetchError "should not be called"
         let extractCur _ = []
 
         let result = runReleaseWith tmpDir fakeRun extractPrev extractCur Release.Auto []
@@ -524,7 +524,7 @@ let ``runReleaseWith - returns Ok when config loads (release aborts on uncommitt
 
         // run returns Failure so hasUncommittedChanges => true, release returns 1
         let fakeRun _ _ = Shell.Failure "not a repo"
-        let fakeExtractPrev _ _ = None
+        let fakeExtractPrev _ _ = Api.FetchError "should not be called"
         let fakeExtractCur _ = []
 
         let result =

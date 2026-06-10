@@ -3,7 +3,7 @@
     "Api.fs": [
       {
         "line": 97,
-        "branch": 82,
+        "branch": 83,
         "reason": "Assembly path resolution depends on runtime environment; reflection branches from compiler",
         "platform": "macos"
       },
@@ -97,8 +97,8 @@
     ],
     "Vcs.fs": [
       {
-        "line": 95,
-        "branch": 88,
+        "line": 96,
+        "branch": 92,
         "reason": "All functions call jj/git processes",
         "platform": "macos"
       },

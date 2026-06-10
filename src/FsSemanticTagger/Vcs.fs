@@ -35,7 +35,11 @@ let tagExists (run: string -> string -> CommandResult) (tag: string) : bool =
         | Success output -> output.Trim() = tag
         | Failure _ -> false
 
-let getLatestTag (run: string -> string -> CommandResult) (prefix: string) : string option =
+/// All tags matching `prefix`, parsed and sorted newest-first as (tag, version)
+/// pairs. The single newest tag is `getLatestTag`; the full list is the seam for
+/// walking back past an orphan tag (one whose package never landed on the feed)
+/// to the most recent release that is actually published.
+let getSortedTags (run: string -> string -> CommandResult) (prefix: string) : (string * Version) list =
     // Try jj first, fall back to git
     let output =
         match runSilent run "jj" (sprintf "tag list \"glob:%s*\" -T \"name ++ \\\"\\n\\\"\"" prefix) with
@@ -46,15 +50,17 @@ let getLatestTag (run: string -> string -> CommandResult) (prefix: string) : str
             | None -> ""
 
     if output = "" then
-        None
+        []
     else
         splitLines output
         |> Array.choose (fun tag ->
             let versionStr = tag.Substring(prefix.Length)
             tryParse versionStr |> Result.toOption |> Option.map (fun v -> (tag, v)))
         |> Array.sortByDescending (fun (_, v) -> sortKey v)
-        |> Array.tryHead
-        |> Option.map fst
+        |> Array.toList
+
+let getLatestTag (run: string -> string -> CommandResult) (prefix: string) : string option =
+    getSortedTags run prefix |> List.tryHead |> Option.map fst
 
 let tagRevision (run: string -> string -> CommandResult) (tag: string) (revision: string) : unit =
     match run "jj" (sprintf "tag set %s -r %s" tag revision) with
@@ -92,12 +98,28 @@ let internal resolveGitDir (repoRoot: string) : string option =
     if System.IO.Directory.Exists(dotGit) || System.IO.File.Exists(dotGit) then
         None
     else
-        let jjGitDir = System.IO.Path.Combine(repoRoot, ".jj", "repo", "store", "git")
+        // `<root>/.jj/repo` is either a directory (default checkout) or a small ASCII
+        // FILE whose contents are a path (usually relative to `<root>/.jj/`) pointing at
+        // the real repo dir (secondary workspace created by `jj workspace add`).
+        let jjDir = System.IO.Path.Combine(repoRoot, ".jj")
+        let jjRepo = System.IO.Path.Combine(jjDir, "repo")
 
-        if System.IO.Directory.Exists(jjGitDir) then
-            Some(System.IO.Path.GetFullPath(jjGitDir))
-        else
-            None
+        let realRepo =
+            if System.IO.Directory.Exists(jjRepo) then
+                Some jjRepo
+            elif System.IO.File.Exists(jjRepo) then
+                let pointer = System.IO.File.ReadAllText(jjRepo).Trim()
+
+                if System.IO.Path.IsPathRooted(pointer) then
+                    Some pointer
+                else
+                    Some(System.IO.Path.Combine(jjDir, pointer))
+            else
+                None
+
+        realRepo
+        |> Option.map (fun repo -> System.IO.Path.GetFullPath(System.IO.Path.Combine(repo, "store", "git")))
+        |> Option.filter System.IO.Directory.Exists
 
 let private withJjGitDir (f: unit -> 'a) : 'a =
     let gitDir = resolveGitDir (System.IO.Directory.GetCurrentDirectory())

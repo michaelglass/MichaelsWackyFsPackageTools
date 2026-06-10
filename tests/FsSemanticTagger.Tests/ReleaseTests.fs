@@ -12,7 +12,11 @@ open FsSemanticTagger.Release
 open FsSemanticTagger.Api
 open FsSemanticTagger.Vcs
 
-let private noPreviousApi (_tag: string) (_dll: string) : ApiSignature list option = None
+/// Default prior-API stub for tests that never reach the fetch (no prior tag, or
+/// a non-Auto command). When a test *does* reach it in Auto mode, a FetchError
+/// makes it abort rather than silently bump — the conservative default.
+let private noPreviousApi (_pkg: string) (_version: string) : PreviousApiResult = FetchError "previous API unavailable"
+
 let private noCurrentApi (_dll: string) : ApiSignature list = []
 
 /// Release tests put fsproj files in the system temp dir, so CHANGELOG.md
@@ -349,7 +353,7 @@ let ``release - Auto with reserved version bumps past it`` () =
 
         // Identical old/new API => NoChange => patch bump path (exercises reserved-version skip)
         let sameApi = [ ApiSignature "type Foo" ]
-        let extractPreviousApi (_tag: string) (_dllPath: string) = Some sameApi
+        let extractPreviousApi (_pkg: string) (_version: string) = Found sameApi
 
         let config =
             { Packages =
@@ -601,7 +605,7 @@ let ``release - Auto detects breaking API change and bumps major`` () =
         // Current API removed Bar (breaking)
         let currentApi = [ ApiSignature "type Foo" ]
 
-        let extractPreviousApi (_tag: string) (_dllPath: string) = Some oldApi
+        let extractPreviousApi (_pkg: string) (_version: string) = Found oldApi
 
         let config =
             { Packages =
@@ -646,7 +650,7 @@ let ``release - Auto detects addition and bumps minor`` () =
         let currentApi =
             [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
 
-        let extractPreviousApi (_tag: string) (_dllPath: string) = Some oldApi
+        let extractPreviousApi (_pkg: string) (_version: string) = Found oldApi
 
         let config =
             { Packages =
@@ -685,8 +689,8 @@ let ``release - Auto aborts (no bump) when previous API cannot be read`` () =
                    + "/**\"",
                    Success "1 file changed") ]
 
-        // Previous API unavailable (e.g. package not cached and download failed).
-        let extractPreviousApi (_tag: string) (_dllPath: string) = None
+        // Previous API unreadable due to a transient/network fault (FetchError).
+        let extractPreviousApi (_pkg: string) (_version: string) = FetchError "feed unreachable"
 
         let currentApi =
             [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
@@ -710,6 +714,195 @@ let ``release - Auto aborts (no bump) when previous API cannot be read`` () =
         test <@ result = 1 @>
         let content = File.ReadAllText(tmpFile)
         test <@ content.Contains("<Version>1.0.0</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - Auto skips an orphan tag and diffs against the last published prior`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.2.0</Version></PropertyGroup></Project>")
+
+        // Three release tags newest-first. The newest (v1.2.0) is an orphan: its
+        // package never landed on NuGet, so we must skip it and diff against v1.1.0.
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.1.0\nv1.2.0")
+                  ("jj",
+                   "diff --from v1.2.0 --to @ --summary \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
+                   Success "1 file changed") ]
+
+        let oldApi = [ ApiSignature "type Foo" ]
+
+        // Current build adds a member relative to v1.1.0 => additive => minor bump.
+        let currentApi =
+            [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+
+        let extractPreviousApi (_pkg: string) (version: string) =
+            match version with
+            | "1.2.0" -> AbsentOnFeed // orphan tag — never published
+            | "1.1.0" -> Found oldApi // the last published prior
+            | other -> failwithf "unexpected version fetch: %s" other
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "fake.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let output, result =
+            withCapturedConsole (fun () ->
+                runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10)
+
+        test <@ result = 0 @>
+        // A warning naming the skipped orphan tag must be emitted.
+        test <@ output.Contains("v1.2.0") && output.Contains("orphan") @>
+        // Bump computed off the latest tag's version (1.2.0) with the v1.1.0 API
+        // diff (addition) => minor bump => 1.3.0.
+        let content = File.ReadAllText(tmpFile)
+        test <@ content.Contains("<Version>1.3.0</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - Auto still aborts on a transient fetch error (does not skip)`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.2.0</Version></PropertyGroup></Project>")
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.1.0\nv1.2.0")
+                  ("jj",
+                   "diff --from v1.2.0 --to @ --summary \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
+                   Success "1 file changed") ]
+
+        let currentApi =
+            [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+
+        // The newest tag's fetch is a transient error — we must abort, NOT walk back
+        // to an older tag (a genuine outage could otherwise under-bump a breaking change).
+        let extractPreviousApi (_pkg: string) (version: string) =
+            match version with
+            | "1.2.0" -> FetchError "connection timed out"
+            | other -> failwithf "must not walk past a transient error; got fetch for %s" other
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "fake.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let result =
+            runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
+
+        test <@ result = 1 @>
+        // fsproj <Version> left untouched.
+        let content = File.ReadAllText(tmpFile)
+        test <@ content.Contains("<Version>1.2.0</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - Auto when every prior tag is absent on feed bumps conservatively`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.2.0</Version></PropertyGroup></Project>")
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.1.0\nv1.2.0")
+                  ("jj",
+                   "diff --from v1.2.0 --to @ --summary \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
+                   Success "1 file changed") ]
+
+        // Every prior tag is an orphan: nothing was ever published to diff against.
+        let extractPreviousApi (_pkg: string) (_version: string) = AbsentOnFeed
+
+        let currentApi =
+            [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "fake.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let result =
+            runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
+
+        // No published prior to diff against => conservative NoChange bump off 1.2.0
+        // => patch 1.2.1 (treated like a first release; does not abort).
+        test <@ result = 0 @>
+        let content = File.ReadAllText(tmpFile)
+        test <@ content.Contains("<Version>1.2.1</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - Auto every prior tag absent honours the reserved-version skip`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.2.0</Version></PropertyGroup></Project>")
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.1.0\nv1.2.0")
+                  ("jj",
+                   "diff --from v1.2.0 --to @ --summary \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
+                   Success "1 file changed") ]
+
+        let extractPreviousApi (_pkg: string) (_version: string) = AbsentOnFeed
+
+        let currentApi =
+            [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "fake.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              // The conservative NoChange bump (1.2.1) is reserved, so the skip
+              // applies and it bumps past it to 1.2.2.
+              ReservedVersions = Set.ofList [ "1.2.1" ]
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let result =
+            runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
+
+        test <@ result = 0 @>
+        let content = File.ReadAllText(tmpFile)
+        test <@ content.Contains("<Version>1.2.2</Version>") @>
     finally
         File.Delete(tmpFile)
 
@@ -739,7 +932,7 @@ let ``release - Auto pre-1.0 breaking change bumps minor (UnionConfig 0.3.0 -> 0
             [ ApiSignature "type ConfigVarKind"
               ApiSignature "  ConfigVarKind+AutoGenerated" ]
 
-        let extractPreviousApi (_tag: string) (_dllPath: string) = Some oldApi
+        let extractPreviousApi (_pkg: string) (_version: string) = Found oldApi
 
         let config =
             { Packages =
@@ -2262,7 +2455,7 @@ let ``release - fresh changes still bump normally (not treated as resume)`` () =
         let currentApi =
             [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
 
-        let extractPreviousApi (_tag: string) (_dllPath: string) = Some oldApi
+        let extractPreviousApi (_pkg: string) (_version: string) = Found oldApi
 
         let config =
             { Packages =
@@ -2461,8 +2654,8 @@ let ``release - Auto rebundles when only a bundled dependency changed`` () =
         let result = runReleaseInRoot fakeRun config Auto
 
         test <@ result = 0 @>
-        // NoChange-style patch bump 1.0.0 -> 1.0.1, despite ExtractPreviousApi = None
-        // (no API diff performed for a rebundle).
+        // NoChange-style patch bump 1.0.0 -> 1.0.1, despite ExtractPreviousApi failing
+        // (no API diff is performed for a rebundle, so the prior API is never fetched).
         let content = File.ReadAllText toolFsproj
         test <@ content.Contains("<Version>1.0.1</Version>") @>
         test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set v1.0.1")) @>
@@ -2562,7 +2755,7 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
                   Command = Auto
                   Mode = PushTags
                   TargetPackages = []
-                  ExtractPreviousApi = (fun _ _ -> Some oldApi)
+                  ExtractPreviousApi = (fun _ _ -> Found oldApi)
                   ExtractCurrentApi = (fun _ -> currentApi)
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
