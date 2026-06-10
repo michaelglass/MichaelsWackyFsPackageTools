@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.15.0-alpha.7 - 2026-06-10
+
 - fix: `loosen-from-ci` (and all `gh`-backed CI polling) now works from a jj secondary workspace — `resolveGitDir` follows the `.jj/repo` pointer file to the real git store instead of returning nothing when `.jj/repo` is not a directory.
 
 ## 0.15.0-alpha.6 - 2026-06-03

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.13.0-alpha.11 - 2026-06-10
+
 - fix: `release` Auto now auto-recovers from an orphan tag (tag exists but the package never reached NuGet). The previous-release fetch is classified — package absent on the feed (NU1101/NU1102) vs transient fetch error — and absent orphans are skipped with a warning, computing the bump against the most recent *published* prior. Transient/network errors still abort (never guess a bump). If every prior tag is orphaned, the release bumps conservatively (NoChange, like the rebundle path) since no consumer ever received those versions.
 - fix: `release` now works from a jj secondary workspace — `resolveGitDir` follows the `.jj/repo` pointer file to the real git store, so the tag push and `gh` CI queries get a valid `GIT_DIR` outside the default checkout (was: exit 134 `fatal: not a git repository` after the bump commit had already been pushed).
 
