@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- chore: float the FSharp.Core pin to `10.1.*` (was literal `10.1.300`; newer SDKs imply `10.1.301`, which tripped NU1605 on CI). No behavior change.
+
 ## 0.10.0-alpha.7 - 2026-06-03
 
 - chore: bump CommandTree 0.6.1 -> 0.6.2 (revision-stamping target fix; no behavior change).
