@@ -454,15 +454,95 @@ let downloadToCache (run: string -> string -> Shell.CommandResult) (packageId: s
         | Shell.Success _ -> true
         | Shell.Failure _ -> false)
 
+/// A best-effort HTTP GET seam, injected so the availability poll is unit
+/// testable without real network. `Ok body` is a 2xx response body; `Error msg`
+/// is any non-success (non-2xx status, timeout, DNS/connection failure). Mirrors
+/// the `run` shell seam: a real default is provided, tests pass a fake.
+let httpGet (url: string) : Result<string, string> =
+    use client = new System.Net.Http.HttpClient()
+    client.Timeout <- System.TimeSpan.FromSeconds(10.0)
+
+    try
+        let resp = client.GetAsync(url).GetAwaiter().GetResult()
+        let body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+
+        if resp.IsSuccessStatusCode then
+            Ok body
+        else
+            Error(sprintf "HTTP %d for %s" (int resp.StatusCode) url)
+    with ex ->
+        Error ex.Message
+
+/// The nuget.org v3 flat-container index URL for a package id. The flat container
+/// is the lowest-level, fastest-updating publish surface (it's where `restore`
+/// downloads the .nupkg from); `index.json` lists every published version of the
+/// id under a `"versions"` array, so one cheap GET answers availability for any
+/// version of that id. Ids and versions are always lower-cased in these URLs.
+let internal flatContainerIndexUrl (packageId: string) : string =
+    sprintf "https://api.nuget.org/v3-flatcontainer/%s/index.json" (packageId.ToLowerInvariant())
+
+/// Is `version` present in a flat-container `index.json` body? Parses the
+/// `versions` array and matches case-insensitively (the feed stores normalised
+/// lower-case versions). A malformed/empty body simply yields false (treated as
+/// "not yet" by the caller, which then falls back to the restore probe).
+let internal flatContainerHasVersion (indexJson: string) (version: string) : bool =
+    try
+        let doc = System.Text.Json.JsonDocument.Parse(indexJson)
+
+        match doc.RootElement.TryGetProperty("versions") with
+        | true, versions when versions.ValueKind = System.Text.Json.JsonValueKind.Array ->
+            versions.EnumerateArray()
+            |> Seq.exists (fun v ->
+                v.ValueKind = System.Text.Json.JsonValueKind.String
+                && String.Equals(v.GetString(), version, StringComparison.OrdinalIgnoreCase))
+        | _ -> false
+    with _ ->
+        false
+
+/// Is this exact package version live on the nuget.org flat container right now?
+/// GETs the id's `index.json` via the injected `fetch` and looks for `version` in
+/// its `versions` array. The flat container is the fastest-updating publish
+/// surface, so a just-pushed release shows here well before the registration
+/// index that `dotnet restore` resolves against — the gap that made the old
+/// restore-only poll time out while the package was already downloadable.
+/// A fetch error (offline, non-2xx, private-feed-only package) yields false so
+/// the caller can fall back to the restore probe.
+let internal isPublishedViaFlatContainer
+    (fetch: string -> Result<string, string>)
+    (packageId: string)
+    (version: string)
+    : bool =
+    match fetch (flatContainerIndexUrl packageId) with
+    | Ok body -> flatContainerHasVersion body version
+    | Error _ -> false
+
 /// Is this exact package version restorable right now? Restores a throwaway
 /// project that references `packageId`/`version` with `--no-http-cache`, so a
 /// just-published release is reported as available as soon as NuGet indexes it.
-/// Used after pushing tags to confirm the new release is live on NuGet.
-let isPublished (run: string -> string -> Shell.CommandResult) (packageId: string) (version: string) : bool =
+/// This honours the repo's `nuget.config`, so it is the authority for private
+/// feeds (where the nuget.org flat container can't see the package).
+let isPublishedViaRestore (run: string -> string -> Shell.CommandResult) (packageId: string) (version: string) : bool =
     withProbeProject packageId version (fun proj ->
         match run "dotnet" (probeAvailabilityArgs (currentNuGetConfig ()) proj) with
         | Shell.Success _ -> true
         | Shell.Failure _ -> false)
+
+/// Is this exact package version live right now? Used by the post-push poll to
+/// confirm the new release is actually available. Checks the nuget.org flat
+/// container first (the fast-updating publish target for this tool's users) and
+/// only falls back to the `dotnet restore` probe when the flat container hasn't
+/// indexed it yet — which is also exactly the private-feed case, where the
+/// restore probe (honouring the repo `nuget.config`) is the real authority. The
+/// flat-container check fixes the timeout where the package was already on the
+/// CDN but the restore-resolved registration index still lagged.
+let isPublished
+    (fetch: string -> Result<string, string>)
+    (run: string -> string -> Shell.CommandResult)
+    (packageId: string)
+    (version: string)
+    : bool =
+    isPublishedViaFlatContainer fetch packageId version
+    || isPublishedViaRestore run packageId version
 
 /// Extract the previous release's API: try the local NuGet cache first, then
 /// fall back to downloading the published package into the cache. Distinguishes

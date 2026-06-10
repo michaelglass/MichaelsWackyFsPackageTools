@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: the post-push NuGet availability poll now checks the nuget.org flat-container `index.json` first, falling back to the `dotnet restore` probe only when the flat container hasn't indexed the version yet. The flat container is the fastest-updating publish surface (it's where `restore` downloads the `.nupkg` from), so a just-pushed release shows there well before the registration index that a restore resolves against. Previously the poll only ran a restore, which repeatedly timed out ("Timed out waiting for `<Pkg>` `<ver>` on NuGet") while the package was already live on the CDN and downloadable — a misleading warning that forced manual verification. Private feeds are unaffected: the flat-container check can't see a private-only package, so the poll falls through to the restore probe, which still honours the repo `nuget.config`. The poll still never changes the exit code, and `--skip-nuget-wait` is unchanged.
+
 ## 0.13.0-alpha.11 - 2026-06-10
 
 - fix: `release` Auto now auto-recovers from an orphan tag (tag exists but the package never reached NuGet). The previous-release fetch is classified — package absent on the feed (NU1101/NU1102) vs transient fetch error — and absent orphans are skipped with a warning, computing the bump against the most recent *published* prior. Transient/network errors still abort (never guess a bump). If every prior tag is orphaned, the release bumps conservatively (NoChange, like the rebundle path) since no consumer ever received those versions.

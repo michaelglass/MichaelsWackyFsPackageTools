@@ -2,9 +2,9 @@
   "overrides": {
     "Api.fs": [
       {
-        "line": 97,
+        "line": 94,
         "branch": 83,
-        "reason": "Assembly path resolution depends on runtime environment; reflection branches from compiler",
+        "reason": "Assembly path resolution depends on runtime environment; reflection branches from compiler; httpGet is a live HttpClient network call exercised only via the injected fetch seam in tests",
         "platform": "macos"
       },
       {
