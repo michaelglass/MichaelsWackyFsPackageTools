@@ -8,8 +8,9 @@
         "platform": "macos"
       },
       {
-        "line": 97,
+        "line": 94,
         "branch": 77,
+        "reason": "settled to the CI-measured linux actual (line 94) after httpGet's network-call line; loosen-from-ci's platform-merge failed to apply the artifact's lower value",
         "platform": "linux"
       }
     ],
