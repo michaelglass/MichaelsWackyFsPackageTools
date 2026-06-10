@@ -316,6 +316,50 @@ let ``extractPreviousFromNuGet returns cached API without downloading when alrea
     test <@ Option.isSome result @>
     test <@ not downloadAttempted @>
 
+// classifyRestoreFailure — orphan (AbsentOnFeed) vs transient (FetchError)
+// classification of a `dotnet restore` failure. This is what lets the release
+// walk back past an orphan tag but still abort on an outage.
+
+[<Fact>]
+let ``classifyRestoreFailure - NU1101 package-not-found is AbsentOnFeed`` () =
+    test <@ classifyRestoreFailure "error NU1101: Unable to find package Foo. No packages exist." = AbsentOnFeed @>
+
+[<Fact>]
+let ``classifyRestoreFailure - NU1102 version-not-found is AbsentOnFeed`` () =
+    test <@ classifyRestoreFailure "error NU1102: Unable to find package Foo with version (= 9.9.9)" = AbsentOnFeed @>
+
+[<Fact>]
+let ``classifyRestoreFailure - service-index/connection failure is FetchError`` () =
+    let msg =
+        "error : Unable to load the service index for source https://feed. connection timed out"
+
+    test <@ classifyRestoreFailure msg = FetchError msg @>
+
+[<Fact>]
+let ``classifyRestoreFailure - NU1301 service-index 404 is FetchError not AbsentOnFeed`` () =
+    // NU1301 wraps a feed outage as "...404 (Not Found)". A bare "not found" match
+    // would mis-classify this as absence and walk past a genuinely published prior.
+    let msg =
+        "error NU1301: Unable to load the service index for source https://api.nuget.org/v3/index.json. Response status code does not indicate success: 404 (Not Found)."
+
+    test <@ classifyRestoreFailure msg = FetchError msg @>
+
+[<Fact>]
+let ``extractPreviousFromNuGetResult - AbsentOnFeed when uncached and restore reports package absent`` () =
+    let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        FsSemanticTagger.Shell.Failure "error NU1101: Unable to find package ThisPackageDoesNotExist12345"
+
+    test <@ extractPreviousFromNuGetResult fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = AbsentOnFeed @>
+
+[<Fact>]
+let ``extractPreviousFromNuGetResult - FetchError when uncached and feed unreachable`` () =
+    let msg = "Unable to load the service index ... connection timed out"
+
+    let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        FsSemanticTagger.Shell.Failure msg
+
+    test <@ extractPreviousFromNuGetResult fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = FetchError msg @>
+
 // ApiChange.toList
 
 [<Fact>]

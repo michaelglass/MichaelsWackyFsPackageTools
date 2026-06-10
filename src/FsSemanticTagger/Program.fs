@@ -91,7 +91,7 @@ let internal releaseMode (flags: ReleaseFlag list) : Release.ReleaseMode =
 let internal runReleaseWith
     (cwd: string)
     (run: string -> string -> Shell.CommandResult)
-    (extractPreviousApi: string -> string -> Api.ApiSignature list option)
+    (extractPreviousApi: string -> string -> Api.PreviousApiResult)
     (extractCurrentApi: string -> Api.ApiSignature list)
     (releaseCmd: Release.ReleaseCommand)
     (flags: ReleaseFlag list)
@@ -120,7 +120,7 @@ let private runRelease (releaseCmd: Release.ReleaseCommand) (flags: ReleaseFlag 
     runReleaseWith
         (Directory.GetCurrentDirectory())
         Shell.run
-        (Api.extractPreviousFromNuGet Shell.run)
+        (Api.extractPreviousFromNuGetResult Shell.run)
         Api.extractFromAssembly
         releaseCmd
         flags
