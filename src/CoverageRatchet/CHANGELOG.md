@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: `loosen-from-ci` (and all `gh`-backed CI polling) now works from a jj secondary workspace — `resolveGitDir` follows the `.jj/repo` pointer file to the real git store instead of returning nothing when `.jj/repo` is not a directory.
+
 ## 0.15.0-alpha.6 - 2026-06-03
 
 - fix: `loosen-from-ci` now only **lowers** coverage floors, never raises them (picks up the `CoverageRatchet.Core` `mergeFromCi` fix) — a transiently-higher CI measurement no longer raises a floor above what CI stably hits, which had made the ratchet anti-converging on noisy CI runners.

@@ -411,6 +411,39 @@ let private withProbeProject (packageId: string) (version: string) (f: string ->
         with _ ->
             ()
 
+/// Why a previous-release package couldn't be turned into an API surface, kept
+/// distinct so callers can react differently. `Found` carries the API. The two
+/// failure cases differ in blame: `AbsentOnFeed` means the feed answered and the
+/// package/version genuinely isn't there (an orphan tag whose CI publish never
+/// landed — safe to skip and diff against an older published release);
+/// `FetchError` is a transient/network/auth fault where the truth is unknown
+/// (callers MUST abort rather than guess the bump).
+type PreviousApiResult =
+    | Found of ApiSignature list
+    | AbsentOnFeed
+    | FetchError of string
+
+/// Classify a `dotnet restore` failure message into "the package genuinely isn't
+/// on the feed" vs "we couldn't reach the feed to find out". NuGet emits NU1101
+/// (package not found) / NU1102 (version not found) and the offline/source code
+/// paths say "Unable to find package" — those are AbsentOnFeed. Anything else
+/// (HTTP errors, "Unable to load the service index ... 404 (Not Found)",
+/// connection timeouts, auth failures) is a FetchError we must not treat as
+/// absence. We deliberately do NOT match a bare "not found": NU1301 wraps a feed
+/// outage as "...404 (Not Found)", and treating that as absence would walk past a
+/// genuinely published prior — the exact under-bump the FetchError arm prevents.
+let internal classifyRestoreFailure (msg: string) : PreviousApiResult =
+    let m = msg.ToLowerInvariant()
+
+    if
+        m.Contains("nu1101")
+        || m.Contains("nu1102")
+        || m.Contains("unable to find package")
+    then
+        AbsentOnFeed
+    else
+        FetchError msg
+
 /// Best-effort: pull a published package version into the local NuGet cache by
 /// restoring a throwaway project that references it. Used when the previous
 /// release isn't already cached (e.g. a clean machine or CI runner). Returns
@@ -432,6 +465,35 @@ let isPublished (run: string -> string -> Shell.CommandResult) (packageId: strin
         | Shell.Failure _ -> false)
 
 /// Extract the previous release's API: try the local NuGet cache first, then
+/// fall back to downloading the published package into the cache. Distinguishes
+/// the orphan-tag case (`AbsentOnFeed` — the feed has no such package/version, so
+/// a caller may walk back to an older published release) from a transient
+/// `FetchError` (offline, feed unreachable, or a private feed without
+/// credentials — callers MUST NOT guess the bump). Callers MUST NOT treat either
+/// failure as "no API change", or a breaking release would ship as a patch.
+let extractPreviousFromNuGetResult
+    (run: string -> string -> Shell.CommandResult)
+    (packageId: string)
+    (version: string)
+    : PreviousApiResult =
+    match extractFromNuGetCache packageId version with
+    | Some api -> Found api
+    | None ->
+        // Not cached — restore a throwaway project that references it to pull it
+        // in, then classify. On a restore failure, distinguish an orphan tag
+        // (AbsentOnFeed — walk back to an older published release) from a transient
+        // FetchError (abort rather than under-bump). On restore success, re-read
+        // the now-cached package; success that still yields nothing readable is
+        // AbsentOnFeed (the version simply isn't materialisable), not a FetchError.
+        withProbeProject packageId version (fun proj ->
+            match run "dotnet" (probeRestoreArgs (currentNuGetConfig ()) proj) with
+            | Shell.Failure msg -> classifyRestoreFailure msg
+            | Shell.Success _ ->
+                match extractFromNuGetCache packageId version with
+                | Some api -> Found api
+                | None -> AbsentOnFeed)
+
+/// Extract the previous release's API: try the local NuGet cache first, then
 /// fall back to downloading the published package into the cache. Returns None
 /// only when the package genuinely can't be obtained (offline, unpublished, or
 /// a private feed without credentials) — callers MUST NOT treat None as
@@ -441,13 +503,10 @@ let extractPreviousFromNuGet
     (packageId: string)
     (version: string)
     : ApiSignature list option =
-    match extractFromNuGetCache packageId version with
-    | Some api -> Some api
-    | None ->
-        if downloadToCache run packageId version then
-            extractFromNuGetCache packageId version
-        else
-            None
+    match extractPreviousFromNuGetResult run packageId version with
+    | Found api -> Some api
+    | AbsentOnFeed
+    | FetchError _ -> None
 
 /// Compare two API surfaces
 let compare (baseline: ApiSignature list) (current: ApiSignature list) : ApiChange =

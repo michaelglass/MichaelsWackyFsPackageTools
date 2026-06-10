@@ -28,7 +28,11 @@ type ReleaseInput =
         /// When non-empty, restrict the run to packages whose `Name` is in this
         /// list (the `--only` filter). Empty = all packages (the default).
         TargetPackages: string list
-        ExtractPreviousApi: string -> string -> ApiSignature list option
+        /// Fetch a prior release's public API by (packageName, version). The
+        /// tri-state lets Auto distinguish an orphan tag (`AbsentOnFeed` — walk
+        /// back to an older published release) from a transient `FetchError`
+        /// (abort rather than under-bump).
+        ExtractPreviousApi: string -> string -> PreviousApiResult
         ExtractCurrentApi: string -> ApiSignature list
         CiPollIntervalMs: int
         CiMaxAttempts: int
@@ -354,13 +358,56 @@ let private inProgressResumeVersion (input: ReleaseInput) (state: ReleaseState) 
             Some v
         | _ -> None
 
+/// The baseline API to diff the current build against, having walked the release
+/// tags newest-first looking for one whose package is actually published.
+type private BaselineApi =
+    /// Found a published prior release to diff against (its API surface).
+    | BaselineFound of ApiSignature list
+    /// Every prior tag's package is genuinely absent on the feed (all orphan
+    /// tags). There is no published prior to diff against, so the caller falls
+    /// back to first-release handling rather than guessing or aborting.
+    | NoPublishedPrior
+    /// A transient/network/auth fetch error — the truth is unknown, so the caller
+    /// MUST abort rather than risk under-bumping a breaking change. Carries the
+    /// underlying restore-failure message so the abort can surface *why*.
+    | BaselineFetchError of fetchError: string
+
+/// Resolve the API surface to diff against in Auto mode. Walks `sortedTags`
+/// (newest-first); for each tag whose package is `Found` we diff against it. When
+/// the newest tag's package is `AbsentOnFeed` it is an orphan (the release's CI
+/// publish never landed on NuGet) — log a warning naming it and walk to the
+/// next-newest published tag. Any `FetchError` aborts immediately (a genuine
+/// outage must never be silently skipped). Exhausting the list with only orphans
+/// yields `NoPublishedPrior`.
+let private resolveBaselineApi
+    (input: ReleaseInput)
+    (pkg: PackageConfig)
+    (sortedTags: (string * Version) list)
+    : BaselineApi =
+    // tryPick stops at the first tag that resolves to a verdict (Found or a fetch
+    // error); an AbsentOnFeed orphan warns and yields None so the walk continues.
+    // Exhausting the list with only orphans leaves NoPublishedPrior.
+    sortedTags
+    |> List.tryPick (fun (tag, version) ->
+        match input.ExtractPreviousApi pkg.Name (format version) with
+        | Found api -> Some(BaselineFound api)
+        | FetchError msg -> Some(BaselineFetchError msg)
+        | AbsentOnFeed ->
+            printfn
+                "Warning: %s package for tag %s is not on the feed (orphan tag — its release publish never landed on NuGet). Skipping it and diffing against the previous published release."
+                pkg.Name
+                tag
+
+            None)
+    |> Option.defaultValue NoPublishedPrior
+
 let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision option =
+    let sortedTags = getSortedTags input.Run pkg.TagPrefix
+
     let state =
-        match getLatestTag input.Run pkg.TagPrefix with
-        | Some tag ->
-            let versionStr = tag.Substring(pkg.TagPrefix.Length)
-            HasPreviousRelease(parse versionStr)
-        | None -> FirstRelease
+        match sortedTags with
+        | (_, version) :: _ -> HasPreviousRelease version
+        | [] -> FirstRelease
 
     let ownSrcDir = System.IO.Path.GetDirectoryName(pkg.Fsproj)
 
@@ -412,20 +459,22 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                 printfn "%s for %s" msg pkg.Name
                 None
 
+        // Apply the reserved-version patch-skip: if a computed bump lands on a
+        // reserved version, step past it with a patch bump. Shared by every Auto
+        // bump path (dependency rebundle, all-orphan fallback, own-change diff).
+        let skipReserved (v: Version) =
+            if input.Config.ReservedVersions.Contains(format v) then
+                bumpPatch v
+            else
+                v
+
         // A dependency-triggered "rebundle" bump: the package's own source is
         // unchanged but a bundled `<ProjectReference>` changed. A bundled tool/exe
         // has no meaningful public API to diff (and ExtractPreviousApi would fail
         // -> CannotDetermine), so treat it as a NoChange-style bump, honouring the
         // existing reserved-version patch-skip.
         let depBumpAuto (currentVersion: Version) (tag: string) =
-            let newVersion = determineBump currentVersion NoChange
-
-            let newVersion =
-                if input.Config.ReservedVersions.Contains(format newVersion) then
-                    bumpPatch newVersion
-                else
-                    newVersion
-
+            let newVersion = skipReserved (determineBump currentVersion NoChange)
             printfn "Bumping %s: bundled dependency changed since %s (rebundle)" pkg.Name tag
             Some(toDecision DependencyChange newVersion)
 
@@ -449,31 +498,37 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                 // The package's own source changed — existing behaviour unchanged.
                 match input.Command with
                 | Auto ->
-                    match input.ExtractPreviousApi pkg.Name (format currentVersion) with
-                    | None ->
-                        // The previous release's API couldn't be read. Treating this as
-                        // "no change" would let a breaking release ship as a patch (the
-                        // very bug this guards against), so refuse to guess.
+                    // Diff against the most recent *published* prior release,
+                    // walking back past any orphan tags (whose package never landed
+                    // on NuGet) so a missed publish doesn't block the next release.
+                    match resolveBaselineApi input pkg sortedTags with
+                    | BaselineFetchError msg ->
+                        // The previous release's API couldn't be read because the feed
+                        // was unreachable. Treating this as "no change" would let a
+                        // breaking release ship as a patch (the very bug this guards
+                        // against), so refuse to guess — and surface the underlying
+                        // restore error so the cause is visible.
                         Some(
                             CannotDetermine(
                                 pkg,
                                 sprintf
-                                    "could not read the public API of the previous release %s (package not in the NuGet cache and download failed — check network/feed access). Refusing to guess the version bump; re-run once the package is reachable, or use an explicit alpha/beta/rc/stable command."
+                                    "could not read the public API of the previous release %s (package not in the NuGet cache and download failed — check network/feed access). Refusing to guess the version bump; re-run once the package is reachable, or use an explicit alpha/beta/rc/stable command. (fetch error: %s)"
                                     tag
+                                    msg
                             )
                         )
-                    | Some oldApi ->
+                    | NoPublishedPrior ->
+                        // Every prior tag is an orphan: nothing published to diff
+                        // against. There is no breaking-change risk to guard (no
+                        // consumer ever received those releases), so auto-bump
+                        // conservatively (NoChange) off the latest tag's version,
+                        // exactly as the dependency-rebundle terminal (`depBumpAuto`)
+                        // does, rather than aborting or demanding an explicit command.
+                        Some(toDecision OwnChange (skipReserved (determineBump currentVersion NoChange)))
+                    | BaselineFound oldApi ->
                         let currentApi = input.ExtractCurrentApi pkg.DllPath
                         let change = compare oldApi currentApi
-                        let newVersion = determineBump currentVersion change
-
-                        let newVersion =
-                            if input.Config.ReservedVersions.Contains(format newVersion) then
-                                bumpPatch newVersion
-                            else
-                                newVersion
-
-                        Some(toDecision OwnChange newVersion)
+                        Some(toDecision OwnChange (skipReserved (determineBump currentVersion change)))
                 | _ -> explicitBump OwnChange
         | FirstRelease ->
             match input.Command with
