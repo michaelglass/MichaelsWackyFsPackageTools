@@ -3,6 +3,13 @@ module FsSemanticTagger.Shell
 open System.Diagnostics
 open System.Threading.Tasks
 
+// TODO: CommandResult diverges from CoverageRatchet.Shell, whose Failure case
+// carries the process exit code (`Failure of string * exitCode: int`). Unifying
+// on the exit-code-carrying shape (ideally a single linked Shell.fs) was deferred:
+// no FsSemanticTagger consumer reads an exit code (every match site uses only the
+// message), and switching would force ~42 mechanical edits to test construction
+// sites for no behavioral gain. Revisit if FsSemanticTagger needs exit-code-aware
+// branching, and unify the two Shell.fs definitions then.
 type CommandResult =
     | Success of string
     | Failure of string
