@@ -59,6 +59,32 @@ let ``resolveGitDir - native .git checkout returns None`` () =
 
         test <@ result = None @>)
 
+[<Fact>]
+let ``resolveGitDir - walks up from a nested subdir to the jj git store`` () =
+    withTempDir (fun tmpDir ->
+        // Repo root has the jj store; resolve from a deeply nested subdir.
+        let jjGitDir = Path.Combine(tmpDir, ".jj", "repo", "store", "git")
+        Directory.CreateDirectory(jjGitDir) |> ignore
+
+        let nested = Path.Combine(tmpDir, "coverage", "FsSemanticTagger")
+        Directory.CreateDirectory(nested) |> ignore
+
+        let result = resolveGitDir nested
+
+        test <@ result = Some(Path.GetFullPath jjGitDir) @>)
+
+[<Fact>]
+let ``resolveGitDir - walks up from a nested subdir and stops at a native git root`` () =
+    withTempDir (fun tmpDir ->
+        Directory.CreateDirectory(Path.Combine(tmpDir, ".git")) |> ignore
+
+        let nested = Path.Combine(tmpDir, "src", "Tool")
+        Directory.CreateDirectory(nested) |> ignore
+
+        let result = resolveGitDir nested
+
+        test <@ result = None @>)
+
 // hasUncommittedChanges
 
 [<Fact>]

@@ -92,34 +92,9 @@ let getCurrentCommitSha (run: string -> string -> CommandResult) : string option
         | Some sha -> nonEmpty sha
         | None -> None
 
-let internal resolveGitDir (repoRoot: string) : string option =
-    let dotGit = System.IO.Path.Combine(repoRoot, ".git")
-
-    if System.IO.Directory.Exists(dotGit) || System.IO.File.Exists(dotGit) then
-        None
-    else
-        // `<root>/.jj/repo` is either a directory (default checkout) or a small ASCII
-        // FILE whose contents are a path (usually relative to `<root>/.jj/`) pointing at
-        // the real repo dir (secondary workspace created by `jj workspace add`).
-        let jjDir = System.IO.Path.Combine(repoRoot, ".jj")
-        let jjRepo = System.IO.Path.Combine(jjDir, "repo")
-
-        let realRepo =
-            if System.IO.Directory.Exists(jjRepo) then
-                Some jjRepo
-            elif System.IO.File.Exists(jjRepo) then
-                let pointer = System.IO.File.ReadAllText(jjRepo).Trim()
-
-                if System.IO.Path.IsPathRooted(pointer) then
-                    Some pointer
-                else
-                    Some(System.IO.Path.Combine(jjDir, pointer))
-            else
-                None
-
-        realRepo
-        |> Option.map (fun repo -> System.IO.Path.GetFullPath(System.IO.Path.Combine(repo, "store", "git")))
-        |> Option.filter System.IO.Directory.Exists
+// Shared with CoverageRatchet via the linked Shared/GitDir.fs compile item;
+// walks up from any nested subdir to the repo root.
+let internal resolveGitDir (startDir: string) : string option = Shared.GitDir.resolveGitDir startDir
 
 let private withJjGitDir (f: unit -> 'a) : 'a =
     let gitDir = resolveGitDir (System.IO.Directory.GetCurrentDirectory())

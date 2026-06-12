@@ -205,34 +205,9 @@ type CiResult =
     | CiOtherFailure
     | CiCoverageFailure of artifactDir: string
 
-let internal resolveGitDir (repoRoot: string) : string option =
-    let dotGit = Path.Combine(repoRoot, ".git")
-
-    if Directory.Exists(dotGit) || File.Exists(dotGit) then
-        None
-    else
-        // `<root>/.jj/repo` is either a directory (default checkout) or a small ASCII
-        // FILE whose contents are a path (usually relative to `<root>/.jj/`) pointing at
-        // the real repo dir (secondary workspace created by `jj workspace add`).
-        let jjDir = Path.Combine(repoRoot, ".jj")
-        let jjRepo = Path.Combine(jjDir, "repo")
-
-        let realRepo =
-            if Directory.Exists(jjRepo) then
-                Some jjRepo
-            elif File.Exists(jjRepo) then
-                let pointer = File.ReadAllText(jjRepo).Trim()
-
-                if Path.IsPathRooted(pointer) then
-                    Some pointer
-                else
-                    Some(Path.Combine(jjDir, pointer))
-            else
-                None
-
-        realRepo
-        |> Option.map (fun repo -> Path.GetFullPath(Path.Combine(repo, "store", "git")))
-        |> Option.filter Directory.Exists
+// Shared with FsSemanticTagger via the linked Shared/GitDir.fs compile item;
+// walks up from any nested subdir to the repo root.
+let internal resolveGitDir (startDir: string) : string option = Shared.GitDir.resolveGitDir startDir
 
 let private withJjGitDir (f: unit -> 'a) : 'a =
     let gitDir = resolveGitDir (Directory.GetCurrentDirectory())
