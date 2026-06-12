@@ -544,6 +544,13 @@ let private resumeAlreadyBumped (input: ReleaseInput) (alreadyBumped: (PackageCo
     match input.Mode with
     | DryRun -> 0
     | PushTags ->
+        // Re-push main first: if the original run failed at `pushMain` (after the
+        // bump commit was made locally but before it reached the remote), the bump
+        // commit is still local-only here. `jj git push` is idempotent — a no-op
+        // when main is already pushed (the CI-flake-after-push case) — so pushing
+        // again is safe and closes the partial-failure window before tagging.
+        pushMain input.Run
+
         for (pkg, version) in alreadyBumped do
             let tag = toTag pkg.TagPrefix version
 
@@ -624,11 +631,18 @@ let private executeBumps
 
         match mode with
         | PushTags ->
+            // Push the bump commit BEFORE creating any local tag. If the push
+            // fails, no tag exists yet, so the next run's resume logic
+            // (`inProgressResumeVersion`, which keys off "no tag at the fsproj
+            // version") still fires and finishes the release. Tagging first would
+            // leave an orphan local tag pointing at a commit that never reached the
+            // remote, which the resume path treats as "already done".
+            pushMain input.Run
+
             for (pkg, version) in allBumps do
                 let tag = toTag pkg.TagPrefix version
                 tagRevision input.Run tag "main"
 
-            pushMain input.Run
             waitForCiAndPushTags input allBumps
         | LocalPublish -> packLocally input.Run allBumps
         | DryRun -> 0
