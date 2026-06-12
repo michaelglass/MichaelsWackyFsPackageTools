@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.15.0-alpha.8 - 2026-06-12
+
 - fix: `loosen-from-ci` (and all `gh`-backed CI polling) now resolves the git store by walking up from any nested subdirectory, not just the repo root. The coverage tasks `cd` into the per-project `coverage/<Project>/` dir before invoking the tool; previously `resolveGitDir` only inspected that single directory, found no `.jj`/`.git`, and gave up — so `GIT_DIR` was never set and `gh` polling failed. It now ascends to the first ancestor that is a repo root (jj or native git), so the tool works from wherever it is launched.
 - deps: bump CommandTree 0.6.2 -> 0.6.3.
 
