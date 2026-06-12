@@ -89,25 +89,24 @@ let ``resolveGitDir - walks up from a nested subdir and stops at a native git ro
 
 [<Fact>]
 let ``hasUncommittedChanges - clean working copy returns false`` () =
-    let run = fakeRun [ ("jj", "status", Success "The working copy is clean") ]
+    let run = fakeRun [ ("jj", "diff --summary", Success "") ]
     test <@ hasUncommittedChanges run = false @>
 
 [<Fact>]
 let ``hasUncommittedChanges - no changes message returns false`` () =
-    let run = fakeRun [ ("jj", "status", Success "The working copy has no changes.") ]
+    let run = fakeRun [ ("jj", "diff --summary", Success "") ]
 
     test <@ hasUncommittedChanges run = false @>
 
 [<Fact>]
 let ``hasUncommittedChanges - dirty working copy returns true`` () =
-    let run =
-        fakeRun [ ("jj", "status", Success "Working copy changes:\nM src/Foo.fs") ]
+    let run = fakeRun [ ("jj", "diff --summary", Success "M src/Foo.fs") ]
 
     test <@ hasUncommittedChanges run = true @>
 
 [<Fact>]
 let ``hasUncommittedChanges - jj failure returns true`` () =
-    let run = fakeRun [ ("jj", "status", Failure "not a jj repo") ]
+    let run = fakeRun [ ("jj", "diff --summary", Failure "not a jj repo") ]
     test <@ hasUncommittedChanges run = true @>
 
 // tagExists
@@ -471,7 +470,7 @@ let ``getCiStatus - falls back to parent when working copy clean and current has
         fakeRun
             [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
               ("gh", ghCiArgs "abc123", Success "[]")
-              ("jj", "status", Success "The working copy is clean")
+              ("jj", "diff --summary", Success "")
               ("jj", "log -r @- --no-graph -T commit_id", Success "def456")
               ("gh", ghCiArgs "def456", Success json) ]
 
@@ -592,7 +591,7 @@ let ``getCiStatus - NoRuns with dirty working copy does not fall back to parent`
         fakeRun
             [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
               ("gh", ghCiArgs "abc123", Success "[]")
-              ("jj", "status", Success "Working copy changes:\nM src/Foo.fs") ]
+              ("jj", "diff --summary", Success "M src/Foo.fs") ]
 
     test <@ getCiStatus run = NoRuns @>
 
@@ -678,7 +677,7 @@ let ``getCiStatus - NoRuns clean copy but parent sha empty returns NoRuns`` () =
         fakeRun
             [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
               ("gh", ghCiArgs "abc123", Success "[]")
-              ("jj", "status", Success "The working copy is clean")
+              ("jj", "diff --summary", Success "")
               ("jj", "log -r @- --no-graph -T commit_id", Success "") ]
 
     test <@ getCiStatus run = NoRuns @>
@@ -691,7 +690,7 @@ let ``getCiStatus - NoRuns clean copy but parent log fails returns NoRuns`` () =
         fakeRun
             [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
               ("gh", ghCiArgs "abc123", Success "[]")
-              ("jj", "status", Success "The working copy is clean")
+              ("jj", "diff --summary", Success "")
               ("jj", "log -r @- --no-graph -T commit_id", Failure "no parent") ]
 
     test <@ getCiStatus run = NoRuns @>
@@ -815,7 +814,7 @@ let ``getCiStatus - NoRuns with no changes message falls back to parent`` () =
         fakeRun
             [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
               ("gh", ghCiArgs "abc123", Success "[]")
-              ("jj", "status", Success "The working copy has no changes")
+              ("jj", "diff --summary", Success "")
               ("jj", "log -r @- --no-graph -T commit_id", Success "def456")
               ("gh", ghCiArgs "def456", Success json) ]
 

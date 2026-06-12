@@ -19,12 +19,12 @@ let private splitLines (output: string) : string array =
     |> Array.filter (fun s -> s <> "")
 
 let hasUncommittedChanges (run: string -> string -> CommandResult) : bool =
-    match run "jj" "status" with
-    | Success output ->
-        not (
-            output.Contains("The working copy is clean")
-            || output.Contains("The working copy has no changes")
-        )
+    // Use `jj diff --summary` rather than parsing the English `jj status` banner:
+    // its output is one line per changed path (`M`/`A`/`D ...`) and empty when the
+    // working copy is clean, so the check is locale-independent and unaffected by
+    // wording changes to the status template.
+    match run "jj" "diff --summary" with
+    | Success output -> output.Trim() <> ""
     | Failure _ -> true
 
 let tagExists (run: string -> string -> CommandResult) (tag: string) : bool =

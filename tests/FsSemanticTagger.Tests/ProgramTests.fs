@@ -495,7 +495,7 @@ let ``runReleaseWith - returns Ok 0 for empty-package config when CI passes`` ()
 
         let fakeRun (cmd: string) (args: string) : Shell.CommandResult =
             match cmd, args with
-            | "jj", "status" -> Shell.Success "The working copy is clean"
+            | "jj", "diff --summary" -> Shell.Success ""
             | "dotnet", "tool list" -> Shell.Success ""
             | "jj", a when a.StartsWith("log -r @ ") -> Shell.Success "deadbeef"
             | "gh", a when a.StartsWith("run list") -> Shell.Success ghPassed

@@ -142,7 +142,7 @@ let ``readFsprojVersion - returns None when no Version element`` () =
 let ``release - returns 1 when uncommitted changes`` () =
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
-        | "jj", "status" -> Success "Working copy changes:\nM src/Foo.fs"
+        | "jj", "diff --summary" -> Success "M src/Foo.fs"
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
 
     let config =
@@ -159,7 +159,7 @@ let ``release - returns 1 when uncommitted changes`` () =
 let ``release - returns 1 when CI not passing`` () =
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
-        | "jj", "status" -> Success "The working copy is clean"
+        | "jj", "diff --summary" -> Success ""
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
         | "gh", a when a.Contains("run list") ->
             Success """[{"status":"completed","conclusion":"failure","name":"CI","url":"https://example.com/1"}]"""
@@ -179,7 +179,7 @@ let ``release - returns 1 when CI not passing`` () =
 let ``release - Auto with no previous tags returns 0 with no packages`` () =
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
-        | "jj", "status" -> Success "The working copy is clean"
+        | "jj", "diff --summary" -> Success ""
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
         | "gh", a when a.Contains("run list") ->
             Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -220,7 +220,7 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -282,7 +282,7 @@ let private passingCiRun (extraResponses: (string * string * CommandResult) list
         | Some(_, _, r) -> r
         | None ->
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -534,7 +534,7 @@ let ``release - skips packages with no changes since last tag`` () =
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -968,7 +968,7 @@ let ``release - does not push tags when post-push CI fails`` () =
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 ghCallCount <- ghCallCount + 1
@@ -1024,7 +1024,7 @@ let ``release - does not push tags when post-push CI times out`` () =
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 ghCallCount <- ghCallCount + 1
@@ -1074,7 +1074,7 @@ let ``release - does not push tags when post-push CI has no runs`` () =
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 ghCallCount <- ghCallCount + 1
@@ -1123,7 +1123,7 @@ let ``release - uses coverageratchet loosen-from-ci when available`` () =
         calls <- calls @ [ (cmd, args) ]
 
         match cmd, args with
-        | "jj", "status" -> Success "The working copy is clean"
+        | "jj", "diff --summary" -> Success ""
         | "dotnet", "tool list" -> Success "coverageratchet    0.8.0-alpha.4    coverageratchet"
         | "dotnet", a when a.StartsWith("tool run coverageratchet loosen-from-ci") -> Success ""
         | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -1157,7 +1157,7 @@ let ``release - returns 1 when coverageratchet loosen-from-ci fails`` () =
         calls <- calls @ [ (cmd, args) ]
 
         match cmd, args with
-        | "jj", "status" -> Success "The working copy is clean"
+        | "jj", "diff --summary" -> Success ""
         | "dotnet", "tool list" -> Success "coverageratchet    0.8.0-alpha.4    coverageratchet"
         | "dotnet", a when a.StartsWith("tool run coverageratchet loosen-from-ci") -> Failure "CI not green"
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
@@ -1176,7 +1176,7 @@ let ``release - returns 1 when coverageratchet loosen-from-ci fails`` () =
 let ``release - prints coverageratchet error message when loosen-from-ci fails`` () =
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
-        | "jj", "status" -> Success "The working copy is clean"
+        | "jj", "diff --summary" -> Success ""
         | "dotnet", "tool list" -> Success "coverageratchet    0.8.0-alpha.4    coverageratchet"
         | "dotnet", a when a.StartsWith("tool run coverageratchet loosen-from-ci") ->
             Failure "CI failed for non-coverage reasons."
@@ -1198,7 +1198,7 @@ let ``release - prints coverageratchet error message when loosen-from-ci fails``
 let ``release - returns 1 when CI has no runs`` () =
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
-        | "jj", "status" -> Success "The working copy is clean"
+        | "jj", "diff --summary" -> Success ""
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
         | "gh", a when a.Contains("run list") -> Success "[]"
         | "jj", "log -r @- --no-graph -T commit_id" -> Success "def456"
@@ -1218,7 +1218,7 @@ let ``release - returns 1 when CI has no runs`` () =
 let ``release - returns 1 when CI status is Unknown`` () =
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
-        | "jj", "status" -> Success "The working copy is clean"
+        | "jj", "diff --summary" -> Success ""
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
         | "gh", a when a.Contains("run list") -> Failure "gh not installed"
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
@@ -1237,7 +1237,7 @@ let ``release - returns 1 when CI status is Unknown`` () =
 let ``release - returns 1 when CI times out still in progress`` () =
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
-        | "jj", "status" -> Success "The working copy is clean"
+        | "jj", "diff --summary" -> Success ""
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
         | "gh", a when a.Contains("run list") ->
             Success """[{"status":"in_progress","conclusion":null,"name":"CI","url":"https://example.com/1"}]"""
@@ -1384,7 +1384,7 @@ let ``waitForCi - returns NoRuns immediately`` () =
         match cmd, args with
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
         | "gh", a when a.Contains("run list") -> Success "[]"
-        | "jj", "status" -> Success "Working copy changes:\nM src/Foo.fs"
+        | "jj", "diff --summary" -> Success "M src/Foo.fs"
         | _ -> Failure(sprintf "unexpected: %s %s" cmd args)
 
     let result = waitForCi run 0 10
@@ -1451,7 +1451,7 @@ let ``release - resumes when fsproj already has target version (idempotent)`` ()
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -1511,7 +1511,7 @@ let ``release - fails fast when resuming and CI has failed`` () =
 
         let fakeRun (cmd: string) (args: string) : CommandResult =
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 ghCallCount <- ghCallCount + 1
@@ -1564,7 +1564,7 @@ let ``release - resumes and polls when CI is in progress`` () =
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 ghCallCount <- ghCallCount + 1
@@ -1626,7 +1626,7 @@ let ``release - second run after successful first run produces no changes`` () =
 
         let fakeRun (cmd: string) (args: string) : CommandResult =
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -1675,7 +1675,7 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
 
         let fakeRun (cmd: string) (args: string) : CommandResult =
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -1839,7 +1839,7 @@ let ``release - resume in DryRun mode takes no actions and returns 0`` () =
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -1885,7 +1885,7 @@ let ``release - resume with LocalPublish packs without pushing`` () =
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -2301,7 +2301,7 @@ let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -2408,7 +2408,7 @@ let ``release - Auto with fsproj equal to last tag has nothing to do (not a resu
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -2507,7 +2507,7 @@ let ``release - multi-package mixed: one mid-release resumes, one fresh bumps`` 
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -2629,7 +2629,7 @@ let ``release - Auto rebundles when only a bundled dependency changed`` () =
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -2681,7 +2681,7 @@ let ``release - Auto skips when neither own nor dependency changed`` () =
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -2723,7 +2723,7 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
 
         let fakeRun (cmd: string) (args: string) : CommandResult =
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -2785,7 +2785,7 @@ let ``release - explicit command rebundles on dependency-only change`` () =
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -2843,7 +2843,7 @@ let ``release - dependency-only rebundle skips a reserved explicit version`` () 
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -2914,7 +2914,7 @@ let ``release - library does NOT rebundle when only a separately-published depen
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -3010,7 +3010,7 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -3104,7 +3104,7 @@ let ``release - library rebundles when a non-configured helper dependency change
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -3180,7 +3180,7 @@ let ``release - pushes main before creating tags so a push failure leaves no orp
             calls <- calls @ [ (cmd, args) ]
 
             match cmd, args with
-            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
