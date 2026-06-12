@@ -36,6 +36,9 @@ let private isPackableFalseRegex =
 let private packAsToolRegex =
     Regex(@"<PackAsTool>\s*true\s*</PackAsTool>", RegexOptions.Compiled ||| RegexOptions.IgnoreCase)
 
+let private outputTypeExeRegex =
+    Regex(@"<OutputType>\s*Exe\s*</OutputType>", RegexOptions.Compiled ||| RegexOptions.IgnoreCase)
+
 /// True when the fsproj content marks the project `<PackAsTool>true</PackAsTool>`.
 /// A pack-as-tool project physically bundles its entire transitive
 /// `<ProjectReference>` closure into the published artifact, so a change to any
@@ -169,14 +172,25 @@ let transitiveBundledRefDirs
 let transitiveProjectRefDirs (rootDir: string) (fsprojRelPath: string) : string list =
     transitiveBundledRefDirs rootDir fsprojRelPath (fun _ -> false)
 
-/// Find all packable fsproj files, returning (packageName, relativePath) list
+/// Find all packable fsproj files, returning (packageName, relativePath) list.
+///
+/// A project counts as a release candidate when it has a `<PackageId>`, is not
+/// `<IsPackable>false</IsPackable>`, and is not an executable example app: an
+/// `<OutputType>Exe</OutputType>` project that lacks `<PackAsTool>true</PackAsTool>`
+/// is treated as a runnable example (not something published to NuGet) and
+/// excluded. Real dotnet tools (Exe + PackAsTool) and libraries with a PackageId
+/// are kept.
 let findPackableProjects (rootDir: string) : (string * string) list =
     Directory.GetFiles(rootDir, "*.fsproj", SearchOption.AllDirectories)
     |> Array.choose (fun path ->
         let content = File.ReadAllText(path)
         let m = packageIdRegex.Match(content)
 
-        if m.Success && not (isPackableFalseRegex.IsMatch(content)) then
+        // An Exe without PackAsTool is an example/demo app, not a published package.
+        let isExampleExe =
+            outputTypeExeRegex.IsMatch(content) && not (packAsToolRegex.IsMatch(content))
+
+        if m.Success && not (isPackableFalseRegex.IsMatch(content)) && not isExampleExe then
             let relativePath = Path.GetRelativePath(rootDir, path)
             Some(m.Groups[1].Value, relativePath)
         else
