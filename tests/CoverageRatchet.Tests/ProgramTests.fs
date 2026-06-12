@@ -51,6 +51,22 @@ let ``resolveGitDir - secondary workspace (.jj/repo is a pointer file) targets t
         test <@ result = Some(Path.GetFullPath realRepoStore) @>)
 
 [<Fact>]
+let ``resolveGitDir - secondary workspace pointer file with an absolute path targets the real jj git store`` () =
+    withTempDir (fun tmpDir ->
+        let realRepoStore = Path.Combine(tmpDir, "realrepo", ".jj", "repo", "store", "git")
+        Directory.CreateDirectory(realRepoStore) |> ignore
+
+        // Pointer file holds an ABSOLUTE path (the rooted branch), not a relative one.
+        let wsJj = Path.Combine(tmpDir, "ws", ".jj")
+        Directory.CreateDirectory(wsJj) |> ignore
+        let absoluteRepo = Path.GetFullPath(Path.Combine(tmpDir, "realrepo", ".jj", "repo"))
+        File.WriteAllText(Path.Combine(wsJj, "repo"), absoluteRepo + "\n")
+
+        let result = resolveGitDir (Path.Combine(tmpDir, "ws"))
+
+        test <@ result = Some(Path.GetFullPath realRepoStore) @>)
+
+[<Fact>]
 let ``resolveGitDir - prefers git over jj when both exist`` () =
     withTempDir (fun tmpDir ->
         Directory.CreateDirectory(Path.Combine(tmpDir, ".git")) |> ignore

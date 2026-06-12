@@ -51,11 +51,39 @@ let ``resolveGitDir - secondary workspace (.jj/repo is a pointer file) targets t
         test <@ result = Some(Path.GetFullPath realRepoStore) @>)
 
 [<Fact>]
+let ``resolveGitDir - secondary workspace pointer file with an absolute path targets the real jj git store`` () =
+    withTempDir (fun tmpDir ->
+        let realRepoStore = Path.Combine(tmpDir, "realrepo", ".jj", "repo", "store", "git")
+        Directory.CreateDirectory(realRepoStore) |> ignore
+
+        // Pointer file holds an ABSOLUTE path (the rooted branch), not a relative one.
+        let wsJj = Path.Combine(tmpDir, "ws", ".jj")
+        Directory.CreateDirectory(wsJj) |> ignore
+        let absoluteRepo = Path.GetFullPath(Path.Combine(tmpDir, "realrepo", ".jj", "repo"))
+        File.WriteAllText(Path.Combine(wsJj, "repo"), absoluteRepo + "\n")
+
+        let result = resolveGitDir (Path.Combine(tmpDir, "ws"))
+
+        test <@ result = Some(Path.GetFullPath realRepoStore) @>)
+
+[<Fact>]
 let ``resolveGitDir - native .git checkout returns None`` () =
     withTempDir (fun tmpDir ->
         Directory.CreateDirectory(Path.Combine(tmpDir, ".git")) |> ignore
 
         let result = resolveGitDir tmpDir
+
+        test <@ result = None @>)
+
+[<Fact>]
+let ``resolveGitDir - no repo anywhere up to the filesystem root returns None`` () =
+    withTempDir (fun tmpDir ->
+        // Neither .git nor .jj in tmpDir or any ancestor: the walk reaches the
+        // filesystem root (GetParent -> null) and returns None.
+        let nested = Path.Combine(tmpDir, "a", "b")
+        Directory.CreateDirectory(nested) |> ignore
+
+        let result = resolveGitDir nested
 
         test <@ result = None @>)
 
