@@ -69,6 +69,33 @@ let ``resolveGitDir - returns None when neither git nor jj exists`` () =
 
         test <@ result = None @>)
 
+[<Fact>]
+let ``resolveGitDir - walks up from a nested subdir to the jj git store`` () =
+    withTempDir (fun tmpDir ->
+        // Repo root has the jj store; we resolve from a deeply nested subdir.
+        let jjGitDir = Path.Combine(tmpDir, ".jj", "repo", "store", "git")
+        Directory.CreateDirectory(jjGitDir) |> ignore
+
+        let nested = Path.Combine(tmpDir, "coverage", "CoverageRatchet")
+        Directory.CreateDirectory(nested) |> ignore
+
+        let result = resolveGitDir nested
+
+        test <@ result = Some jjGitDir @>)
+
+[<Fact>]
+let ``resolveGitDir - walks up from a nested subdir and stops at a native git root`` () =
+    withTempDir (fun tmpDir ->
+        // Native git repo root; resolution from a subdir must stop there and return None.
+        Directory.CreateDirectory(Path.Combine(tmpDir, ".git")) |> ignore
+
+        let nested = Path.Combine(tmpDir, "src", "Tool")
+        Directory.CreateDirectory(nested) |> ignore
+
+        let result = resolveGitDir nested
+
+        test <@ result = None @>)
+
 // --- formatFileResult tests ---
 
 [<Fact>]
