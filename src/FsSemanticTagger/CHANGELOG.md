@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix: `release` now pushes the version-bump commit (`jj git push`) **before** creating any tag, and the resume path re-pushes main (idempotently) before tagging. Previously tags were created at local `main` and only then was the commit pushed; if that push failed, an orphan local tag pointed at a commit that never reached the remote, and the resume logic — which keys off "no tag at the fsproj version" — treated the wedged release as already done and never recovered it. Pushing main first closes that partial-failure window: a failed push leaves no tag, so the next run resumes cleanly.
 - fix: `discover`/`findPackableProjects` no longer counts executable example apps as release candidates. A project with `<OutputType>Exe</OutputType>` but no `<PackAsTool>true</PackAsTool>` is now treated as a runnable example (not a NuGet package) and excluded; real dotnet tools (`Exe` + `PackAsTool`) and libraries with a `<PackageId>` are still kept. Previously any non-test fsproj with a `<PackageId>` was packable, so an example exe showed up as a phantom candidate. **Behavior change for `discover` consumers:** repos that worked around this with a `semantic-tagger.json` are unaffected; repos with an exe example and no config will stop seeing the phantom candidate (the intended fix) — a single-package repo that previously reported "multiple packable fsprojs" may now resolve cleanly.
 
 ## 0.13.0-alpha.12 - 2026-06-11

@@ -1528,6 +1528,8 @@ let ``release - fails fast when resuming and CI has failed`` () =
             | "jj", "tag list v0.2.0-alpha.1" -> Success ""
             | "git", "tag -l v0.2.0-alpha.1" -> Success ""
             | "jj", a when a.StartsWith("tag set") -> Success ""
+            // Resume re-pushes main first (idempotent) before tagging.
+            | "jj", "git push" -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
 
         let config =
@@ -1584,6 +1586,8 @@ let ``release - resumes and polls when CI is in progress`` () =
             | "jj", "tag list v0.2.0-alpha.1" -> Success ""
             | "git", "tag -l v0.2.0-alpha.1" -> Success ""
             | "jj", a when a.StartsWith("tag set") -> Success ""
+            // Resume re-pushes main first (idempotent) before tagging.
+            | "jj", "git push" -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
@@ -1605,6 +1609,8 @@ let ``release - resumes and polls when CI is in progress`` () =
         test <@ result = 0 @>
         // Polled multiple times (1 pre-release + 2 in-progress + 1 success = 4)
         test <@ ghCallCount = 4 @>
+        // Resume re-pushed main (idempotent) before pushing tags.
+        test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push") @>
         // Tags were pushed
         test <@ calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin")) @>
     finally
@@ -2305,7 +2311,8 @@ let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that
             // No tag yet at the fsproj's alpha.17 version
             | "jj", "tag list core-v0.8.0-alpha.17" -> Success ""
             | "git", "tag -l core-v0.8.0-alpha.17" -> Success ""
-            // Resume tags + pushes
+            // Resume re-pushes main (idempotent), then tags + pushes
+            | "jj", "git push" -> Success ""
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
@@ -3151,3 +3158,72 @@ let ``release - library rebundles when a non-configured helper dependency change
                 calls
                 |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set lib-v1.0.1"))
             @>)
+
+// ---------------------------------------------------------------------------
+// pushMain-before-tagging: if pushing the bump commit fails, no local tag may
+// have been created. A local tag at the bumped version with the commit NOT on
+// the remote is an unrecoverable wedge: resume keys off "no tag at the fsproj
+// version" (`inProgressResumeVersion`), so an orphan local tag makes the resume
+// path believe the release is done while neither the commit nor the tag ever
+// reached the remote.
+// ---------------------------------------------------------------------------
+
+[<Fact>]
+let ``release - pushes main before creating tags so a push failure leaves no orphan local tag`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "status" -> Success "The working copy is clean"
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", a when a.StartsWith("commit") -> Success ""
+            | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            // Pushing the bump commit fails (e.g. remote rejected / network).
+            | "jj", "git push" -> Failure "push failed: remote rejected"
+            | "jj", "git export" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args)
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        // pushMain uses runOrFail, which throws on failure; the release aborts.
+        let threw =
+            try
+                runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
+                |> ignore
+
+                false
+            with _ ->
+                true
+
+        test <@ threw @>
+
+        // The push of the bump commit was attempted.
+        test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push") @>
+        // But because the push failed, NO local tag was created — resume can fire.
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
+        // And tags were certainly not exported/pushed to the remote.
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a = "git export")) @>
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
+    finally
+        File.Delete(tmpFile)
