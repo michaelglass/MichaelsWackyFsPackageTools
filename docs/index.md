@@ -1,13 +1,14 @@
 # MichaelsWackyFsPackageTools
 
 <!-- sync:intro -->
-A collection of three dotnet CLI tools that help me maintain my F# open-source projects. They might be useful for yours too!
+A collection of four dotnet CLI tools that help me maintain my F# open-source projects. They might be useful for yours too!
 
 | Tool | What it does |
 |------|-------------|
 | [CoverageRatchet](src/CoverageRatchet/) | Enforces per-file code coverage thresholds that automatically ratchet upward -- coverage can improve but shouldn't regress |
 | [FsSemanticTagger](src/FsSemanticTagger/) | Detects API changes in your compiled DLL and determines the correct semantic version bump |
 | [SyncDocs](src/SyncDocs/) | Helps keep sections of your README in sync with your docs site |
+| [FsProjLint](src/FsProjLint/) | Validates repo and project structure for NuGet-publishable F# projects (fsproj metadata, SourceLink, LICENSE, and more) |
 <!-- sync:intro:end -->
 
 <!-- sync:getting-started -->
@@ -30,6 +31,9 @@ dotnet tool install -g FsSemanticTagger
 
 # README-to-docs syncing
 dotnet tool install -g SyncDocs
+
+# Repo/project structure validation for NuGet-publishable F# projects
+dotnet tool install -g FsProjLint
 ```
 
 ### Quick verification
@@ -40,6 +44,7 @@ After installing, verify each tool works:
 coverageratchet --help
 fssemantictagger --help
 syncdocs --help
+fsprojlint --help
 ```
 <!-- sync:getting-started:end -->
 
@@ -100,4 +105,15 @@ syncdocs sync
 ```
 
 See the [SyncDocs README](src/SyncDocs/) for the full marker format and conventions.
+
+### FsProjLint
+
+FsProjLint is an opinionated validator for F# projects that are meant to be published to NuGet. Run it from your repo root and it discovers every `.fsproj` under `src/` and checks each one — plus repo-level requirements — for OSS readiness: fsproj package metadata, SourceLink, a LICENSE, and more. Exit code 0 means everything passed; exit code 1 means at least one check failed.
+
+```bash
+# Validate repo and project structure (use in CI)
+fsprojlint
+```
+
+See the [FsProjLint README](src/FsProjLint/) for the full list of checks.
 <!-- sync:tool-overviews:end -->
