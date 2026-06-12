@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.10.0-alpha.9 - 2026-06-12
+
 - deps: bump CommandTree 0.6.2 -> 0.6.3.
 
 ## 0.10.0-alpha.8 - 2026-06-10
