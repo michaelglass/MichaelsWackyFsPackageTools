@@ -365,6 +365,62 @@ let ``findPackableProjects skips non-packable`` () =
         test <@ projects[0] |> fst = "MyLib" @>)
 
 [<Fact>]
+let ``findPackableProjects excludes example exe without PackAsTool but keeps tool exe and library`` () =
+    withTempDir (fun tmpDir ->
+        let exampleDir = Path.Combine(tmpDir, "examples", "Demo")
+        let toolDir = Path.Combine(tmpDir, "src", "MyTool")
+        let libDir = Path.Combine(tmpDir, "src", "MyLib")
+        let isPackableFalseDir = Path.Combine(tmpDir, "tests", "MyLib.Tests")
+
+        for d in [ exampleDir; toolDir; libDir; isPackableFalseDir ] do
+            Directory.CreateDirectory(d) |> ignore
+
+        // Example app: OutputType=Exe with a PackageId but NO PackAsTool -> must be excluded.
+        File.WriteAllText(
+            Path.Combine(exampleDir, "Demo.fsproj"),
+            """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>Demo</PackageId>
+  </PropertyGroup>
+</Project>"""
+        )
+
+        // Real dotnet tool: OutputType=Exe WITH PackAsTool -> kept.
+        File.WriteAllText(
+            Path.Combine(toolDir, "MyTool.fsproj"),
+            """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackAsTool>true</PackAsTool>
+    <PackageId>MyTool</PackageId>
+  </PropertyGroup>
+</Project>"""
+        )
+
+        // Library with a PackageId (no OutputType) -> kept.
+        File.WriteAllText(Path.Combine(libDir, "MyLib.fsproj"), packableFsproj "MyLib")
+
+        // IsPackable=false -> excluded (already handled).
+        File.WriteAllText(
+            Path.Combine(isPackableFalseDir, "MyLib.Tests.fsproj"),
+            """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>MyLib.Tests</PackageId>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>"""
+        )
+
+        let projects = findPackableProjects tmpDir
+        let names = projects |> List.map fst |> List.sort
+        test <@ names = [ "MyLib"; "MyTool" ] @>)
+
+[<Fact>]
 let ``toJson roundtrips through parseJson`` () =
     let config =
         { Packages =
