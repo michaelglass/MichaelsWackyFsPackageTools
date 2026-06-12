@@ -10,7 +10,7 @@
       {
         "line": 94,
         "branch": 77,
-        "reason": "settled to the CI-measured linux actual (line 94) after httpGet's network-call line; loosen-from-ci's platform-merge failed to apply the artifact's lower value",
+        "reason": "settled to the CI-measured linux actual (line 94) after httpGet\u0027s network-call line; loosen-from-ci\u0027s platform-merge failed to apply the artifact\u0027s lower value",
         "platform": "linux"
       }
     ],
@@ -99,7 +99,7 @@
     "Vcs.fs": [
       {
         "line": 96,
-        "branch": 92,
+        "branch": 91,
         "reason": "All functions call jj/git processes",
         "platform": "macos"
       },
