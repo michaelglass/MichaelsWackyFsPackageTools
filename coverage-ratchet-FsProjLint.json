@@ -2,8 +2,8 @@
   "overrides": {
     "Checks.fs": [
       {
-        "line": 95,
-        "branch": 92,
+        "line": 94,
+        "branch": 89,
         "reason": "loosened: defensive git-subprocess error branches (Process.Start null, launch exception, command-failure None paths) are not reachable without removing git or a process-mock seam",
         "platform": "macos"
       },
