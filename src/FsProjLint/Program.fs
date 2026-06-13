@@ -19,6 +19,11 @@ Repo-level checks (run once per repo):
   - README.md exists at the repo root
   - .editorconfig exists at the repo root
   - docs/index.md exists (only when the repo has packable projects)
+  - No gitignored files in git history: no file matching the repo's
+    .gitignore was ever committed (current-tracked OR history-only).
+    A gitignored file in history leaks into the published history and
+    needs an untrack (current) or a history rewrite (history-only).
+    Skipped (passes) when the directory is not a git/jj repo.
 
 Project-level checks (run for every .fsproj under src/):
   - TreatWarningsAsErrors is true
