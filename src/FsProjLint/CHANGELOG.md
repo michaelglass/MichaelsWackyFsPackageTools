@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.10.0-alpha.11 - 2026-06-13
+
 - change: the "No gitignored files in git history" check now scans only the **current branch's** ancestry, not `--branches --remotes`. A gitignored file that leaks only on an unrelated experiment branch no longer fails the gate on `main` — you only care about the history you'll publish from the branch you're on. The current commit is resolved per-repo: for jj-backed repos via `jj log --no-graph --ignore-working-copy -r @- -T commit_id` (git `HEAD` is unreliable under jj — it points at `refs/jj/root` or a stale detached commit, not the branch you're on), and for plain-git repos via `HEAD`. When no current commit resolves (unborn branch / jj root) the check passes. The tracked-vs-history-only split and `git check-ignore --no-index` filtering are unchanged.
 
 ## 0.10.0-alpha.10 - 2026-06-13
