@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- refactor: `Shell.CommandResult.Failure` now carries the process exit code (`Failure of string * exitCode: int`), unifying it with `CoverageRatchet.Shell`'s shape so the two tools' Shell modules no longer diverge. No behavioral change today — every current match site reads only the message — but the exit code is now available, so a process that exits 1 ("nothing to do") can be told apart from one that exits 128 (e.g. a git/jj auth failure) without a future breaking change. `run` populates it from `Process.ExitCode`.
+
 ## 0.13.0-alpha.13 - 2026-06-12
 
 - fix: the uncommitted-changes check (which guards `release`) now uses `jj diff --summary` emptiness instead of matching the English `jj status` banner ("The working copy is clean" / "...has no changes"). The check is now locale-independent and won't break if jj reworks its status wording. `getCiStatus`'s clean-working-copy parent fallback uses the same check, so it benefits too.
