@@ -107,7 +107,9 @@ let ``runLint with no projects found`` () =
         let result = runLint dir
 
         test <@ List.isEmpty result.ProjectChecks @>
-        test <@ result.RepoChecks.Length = 3 @>)
+        // 3 base repo checks (LICENSE, README, .editorconfig) + the
+        // gitignore-leak check (passes: temp dir is not a git repo).
+        test <@ result.RepoChecks.Length = 4 @>)
 
 [<Fact>]
 let ``runLint with mixed passing and failing projects`` () =

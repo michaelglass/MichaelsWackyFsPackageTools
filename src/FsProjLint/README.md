@@ -28,6 +28,7 @@ FsProjLint discovers all `.fsproj` files under `src/` and checks them alongside 
 | README.md exists | `README.md` at repo root |
 | .editorconfig exists | `.editorconfig` at repo root |
 | docs/index.md exists | Only required when at least one project is packable |
+| No gitignored files in git history | No file matching the repo's `.gitignore` was ever committed — currently tracked **or** history-only. A gitignored file in history leaks into the published history (and any clone/SourceLink), so it needs an untrack (currently tracked) or a history rewrite (history-only). Works for both jj-backed and plain-git repos; passes when the directory is not a repo. |
 
 ### Project-level checks (all projects)
 

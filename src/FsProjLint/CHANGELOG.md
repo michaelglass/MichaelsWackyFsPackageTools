@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: new repo-level check "No gitignored files in git history" — fails when any file matching the repo's `.gitignore` was ever committed (currently tracked or history-only), so gitignore leaks into the published history are caught and fixed (untrack for current, history rewrite for history-only). Default and flagless like every other check. Uses a single efficient pass (`git log --branches --remotes --diff-filter=A --name-only` ∩ `git check-ignore --no-index`) over the resolved git store, works for both jj-backed and plain-git repos, and passes when the directory is not a repo. This supersedes the bespoke `scripts/check-gitignore-leaks.fsx` for detection (the script's `--fix` untrack helper stays for remediation).
+
 ## 0.10.0-alpha.9 - 2026-06-12
 
 - deps: bump CommandTree 0.6.2 -> 0.6.3.
