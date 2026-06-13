@@ -169,6 +169,70 @@ let ``fails for a leak on the current branch even when other branches exist`` ()
         test <@ isFailed result @>
         test <@ (failureReason result).Contains ".secret" @>)
 
+// --- fake-jj-store fixture (no jj binary needed) ----------------------------
+//
+// A jj-backed repo is recognised purely by the `<root>/.jj/repo/store/git`
+// directory that GitDir.resolveGitDir resolves to — a real git store that jj
+// keeps. We can stand that store up with plain git (no `jj` binary) to exercise
+// the jj-store *resolution* path (gitContextFor's jj branch + the --git-dir
+// store invocation) on every platform, including CI where jj is not installed.
+//
+// Such a fake store has no jj operation log, so `jj log -r @-` cannot resolve a
+// current commit (jj errors / is absent) -> resolveCurrentCommit returns None
+// -> the check passes without scanning. That's the assertion here: the jj-store
+// path is reached and handled gracefully. The real-jj fixtures below cover the
+// actual @- ancestry scan when a jj binary is available.
+
+/// Run git against an explicit fake jj store (`<root>/.jj/repo/store/git`) the
+/// way jj itself does: history under the store, work-tree at the root.
+let private gitStore (store: string) (workTree: string) (args: string list) =
+    let psi = ProcessStartInfo("git")
+    psi.WorkingDirectory <- workTree
+    psi.RedirectStandardOutput <- true
+    psi.RedirectStandardError <- true
+    psi.UseShellExecute <- false
+    psi.CreateNoWindow <- true
+    psi.ArgumentList.Add("--git-dir")
+    psi.ArgumentList.Add(store)
+    psi.ArgumentList.Add("--work-tree")
+    psi.ArgumentList.Add(workTree)
+    psi.ArgumentList.Add("-c")
+    psi.ArgumentList.Add("user.name=test")
+    psi.ArgumentList.Add("-c")
+    psi.ArgumentList.Add("user.email=test@example.com")
+    psi.ArgumentList.Add("-c")
+    psi.ArgumentList.Add("commit.gpgsign=false")
+
+    for a in args do
+        psi.ArgumentList.Add(a)
+
+    use p = Process.Start(psi)
+    p.WaitForExit()
+    p.ExitCode
+
+[<Fact>]
+let ``resolves the jj store path and passes when no jj op-log can name a current commit`` () =
+    // Exercises GitDir.resolveGitDir's jj-store branch and gitContextFor's jj
+    // branch on all platforms (no jj binary). With no jj op-log the current
+    // commit can't be resolved, so the check passes gracefully rather than
+    // scanning git HEAD (which under jj is unreliable).
+    withTempDir (fun root ->
+        let store = Path.Combine(root, ".jj", "repo", "store", "git")
+        Directory.CreateDirectory(store) |> ignore
+        gitStore store root [ "init"; "-q"; "-b"; "main" ] |> ignore
+
+        writeFile root ".gitignore" ".secret\n"
+        writeFile root "README.md" "hello"
+        writeFile root ".secret" "token"
+        gitStore store root [ "add"; "README.md"; ".gitignore" ] |> ignore
+        gitStore store root [ "add"; "-f"; ".secret" ] |> ignore
+        gitStore store root [ "commit"; "-q"; "-m"; "leak" ] |> ignore
+
+        // The store resolves (jj-backed) but no jj op-log exists, so @- cannot be
+        // resolved and the check passes without scanning.
+        let result = checkGitignoreLeaks root
+        test <@ isPassed result @>)
+
 // --- jj-backed fixtures -----------------------------------------------------
 //
 // These use a REAL jj repo (`jj git init --no-colocate`, which lays down the
