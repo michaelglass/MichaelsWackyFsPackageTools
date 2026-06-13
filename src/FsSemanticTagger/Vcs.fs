@@ -6,7 +6,7 @@ open FsSemanticTagger.Version
 let internal runOrFail (run: string -> string -> CommandResult) (cmd: string) (args: string) : string =
     match run cmd args with
     | Success output -> output
-    | Failure error -> failwithf "%s %s failed: %s" cmd args error
+    | Failure(error, _) -> failwithf "%s %s failed: %s" cmd args error
 
 let private runSilent (run: string -> string -> CommandResult) (cmd: string) (args: string) : string option =
     match run cmd args with

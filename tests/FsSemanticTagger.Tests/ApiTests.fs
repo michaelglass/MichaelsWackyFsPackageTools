@@ -218,7 +218,7 @@ let ``downloadToCache returns true and runs dotnet restore on a probe project wh
 [<Fact>]
 let ``downloadToCache returns false when restore fails`` () =
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
-        FsSemanticTagger.Shell.Failure "no such package"
+        FsSemanticTagger.Shell.Failure("no such package", 1)
 
     test <@ downloadToCache fakeRun "SomePackage" "1.2.3" = false @>
 
@@ -273,7 +273,7 @@ let ``isPublished succeeds on the FIRST attempt via flat container without ever 
 
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         restored <- true
-        FsSemanticTagger.Shell.Failure "registration index lagging"
+        FsSemanticTagger.Shell.Failure("registration index lagging", 1)
 
     let fakeFetch (_url: string) : Result<string, string> = Ok """{"versions":["1.2.3"]}"""
 
@@ -307,7 +307,7 @@ let ``isPublished falls back to the restore probe when flat container has not in
 [<Fact>]
 let ``isPublished false when neither flat container nor restore find the version`` () =
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
-        FsSemanticTagger.Shell.Failure "no such package"
+        FsSemanticTagger.Shell.Failure("no such package", 1)
 
     let fakeFetch (_url: string) : Result<string, string> = Error "offline"
     test <@ isPublished fakeFetch fakeRun "SomePackage" "1.2.3" = false @>
@@ -337,7 +337,7 @@ let ``isPublishedViaRestore returns true and probes with --no-http-cache when re
 [<Fact>]
 let ``isPublishedViaRestore returns false when restore fails`` () =
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
-        FsSemanticTagger.Shell.Failure "no such package"
+        FsSemanticTagger.Shell.Failure("no such package", 1)
 
     test <@ isPublishedViaRestore fakeRun "SomePackage" "1.2.3" = false @>
 
@@ -368,7 +368,7 @@ let ``probeRestoreArgs omits --configfile when no repo nuget.config`` () =
 [<Fact>]
 let ``extractPreviousFromNuGet returns None when uncached and download fails`` () =
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
-        FsSemanticTagger.Shell.Failure "restore failed"
+        FsSemanticTagger.Shell.Failure("restore failed", 1)
 
     test <@ extractPreviousFromNuGet fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = None @>
 
@@ -400,7 +400,7 @@ let ``extractPreviousFromNuGet returns cached API without downloading when alrea
 
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         downloadAttempted <- true
-        FsSemanticTagger.Shell.Failure "should not be called on a cache hit"
+        FsSemanticTagger.Shell.Failure("should not be called on a cache hit", 1)
 
     let result = extractPreviousFromNuGet fakeRun "FSharp.Core" cachedVersion
     test <@ Option.isSome result @>
@@ -437,7 +437,7 @@ let ``classifyRestoreFailure - NU1301 service-index 404 is FetchError not Absent
 [<Fact>]
 let ``extractPreviousFromNuGetResult - AbsentOnFeed when uncached and restore reports package absent`` () =
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
-        FsSemanticTagger.Shell.Failure "error NU1101: Unable to find package ThisPackageDoesNotExist12345"
+        FsSemanticTagger.Shell.Failure("error NU1101: Unable to find package ThisPackageDoesNotExist12345", 1)
 
     test <@ extractPreviousFromNuGetResult fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = AbsentOnFeed @>
 
@@ -446,7 +446,7 @@ let ``extractPreviousFromNuGetResult - FetchError when uncached and feed unreach
     let msg = "Unable to load the service index ... connection timed out"
 
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
-        FsSemanticTagger.Shell.Failure msg
+        FsSemanticTagger.Shell.Failure(msg, 1)
 
     test <@ extractPreviousFromNuGetResult fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = FetchError msg @>
 

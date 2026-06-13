@@ -3,16 +3,9 @@ module FsSemanticTagger.Shell
 open System.Diagnostics
 open System.Threading.Tasks
 
-// TODO: CommandResult diverges from CoverageRatchet.Shell, whose Failure case
-// carries the process exit code (`Failure of string * exitCode: int`). Unifying
-// on the exit-code-carrying shape (ideally a single linked Shell.fs) was deferred:
-// no FsSemanticTagger consumer reads an exit code (every match site uses only the
-// message), and switching would force ~42 mechanical edits to test construction
-// sites for no behavioral gain. Revisit if FsSemanticTagger needs exit-code-aware
-// branching, and unify the two Shell.fs definitions then.
 type CommandResult =
     | Success of string
-    | Failure of string
+    | Failure of string * exitCode: int
 
 let run (cmd: string) (args: string) : CommandResult =
     let psi = ProcessStartInfo(cmd, args)
@@ -37,12 +30,12 @@ let run (cmd: string) (args: string) : CommandResult =
             else
                 stdout.TrimEnd()
 
-        Failure msg
+        Failure(msg, p.ExitCode)
 
 let runOrFail (cmd: string) (args: string) : string =
     match run cmd args with
     | Success output -> output
-    | Failure error -> failwithf "%s %s failed: %s" cmd args error
+    | Failure(error, _) -> failwithf "%s %s failed: %s" cmd args error
 
 let runSilent (cmd: string) (args: string) : string option =
     match run cmd args with
