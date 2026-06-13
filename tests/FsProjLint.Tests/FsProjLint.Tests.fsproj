@@ -21,6 +21,7 @@
     <Compile Include="TestFixtures.fs" />
     <Compile Include="RepoCheckTests.fs" />
     <Compile Include="ProjectCheckTests.fs" />
+    <Compile Include="GitignoreLeakTests.fs" />
     <Compile Include="IntegrationTests.fs" />
   </ItemGroup>
   <ItemGroup>
