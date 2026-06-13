@@ -414,7 +414,9 @@ let ``releaseMode - DryRun takes precedence over Publish`` () =
 [<Fact>]
 let ``runReleaseWith - returns Error when config missing`` () =
     withTempDir (fun tmpDir ->
-        let fakeRun _ _ = Shell.Failure "should not be called"
+        let fakeRun _ _ =
+            Shell.Failure("should not be called", 1)
+
         let fakeExtractPrev _ _ = Api.FetchError "should not be called"
         let fakeExtractCur _ = []
 
@@ -500,7 +502,7 @@ let ``runReleaseWith - returns Ok 0 for empty-package config when CI passes`` ()
             | "jj", a when a.StartsWith("log -r @ ") -> Shell.Success "deadbeef"
             | "gh", a when a.StartsWith("run list") -> Shell.Success ghPassed
             | "dotnet", "build -c Release" -> Shell.Success ""
-            | _ -> Shell.Failure(sprintf "unexpected call: %s %s" cmd args)
+            | _ -> Shell.Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let extractPrev _ _ = Api.FetchError "should not be called"
         let extractCur _ = []
@@ -523,7 +525,7 @@ let ``runReleaseWith - returns Ok when config loads (release aborts on uncommitt
         File.WriteAllText(Path.Combine(tmpDir, "semantic-tagger.json"), cfg)
 
         // run returns Failure so hasUncommittedChanges => true, release returns 1
-        let fakeRun _ _ = Shell.Failure "not a repo"
+        let fakeRun _ _ = Shell.Failure("not a repo", 1)
         let fakeExtractPrev _ _ = Api.FetchError "should not be called"
         let fakeExtractCur _ = []
 

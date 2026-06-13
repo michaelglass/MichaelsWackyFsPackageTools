@@ -271,7 +271,7 @@ let private runCiCheck (input: ReleaseInput) : Result<unit, int> =
 
         match input.Run "dotnet" "tool run coverageratchet loosen-from-ci" with
         | Success _ -> Ok()
-        | Failure msg ->
+        | Failure(msg, _) ->
             printfn "Error: coverageratchet loosen-from-ci failed"
 
             if msg <> "" then

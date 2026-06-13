@@ -41,5 +41,11 @@ let ``runSilent - returns None for failing command`` () =
 [<Fact>]
 let ``run - returns stdout in Failure when stderr is empty`` () =
     match run "bash" "-c \"printf 'stdout-only-error'; exit 1\"" with
-    | Failure msg -> test <@ msg = "stdout-only-error" @>
+    | Failure(msg, _) -> test <@ msg = "stdout-only-error" @>
+    | Success _ -> failwith "Expected Failure"
+
+[<Fact>]
+let ``run - carries the process exit code in Failure`` () =
+    match run "sh" "-c \"exit 3\"" with
+    | Failure(_, exitCode) -> test <@ exitCode = 3 @>
     | Success _ -> failwith "Expected Failure"

@@ -567,7 +567,7 @@ let extractPreviousFromNuGetResult
         // AbsentOnFeed (the version simply isn't materialisable), not a FetchError.
         withProbeProject packageId version (fun proj ->
             match run "dotnet" (probeRestoreArgs (currentNuGetConfig ()) proj) with
-            | Shell.Failure msg -> classifyRestoreFailure msg
+            | Shell.Failure(msg, _) -> classifyRestoreFailure msg
             | Shell.Success _ ->
                 match extractFromNuGetCache packageId version with
                 | Some api -> Found api
