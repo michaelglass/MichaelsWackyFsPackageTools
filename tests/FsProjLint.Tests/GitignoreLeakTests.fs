@@ -51,6 +51,12 @@ let private writeFile (dir: string) (relativePath: string) (content: string) =
     Directory.CreateDirectory(Path.GetDirectoryName(full)) |> ignore
     File.WriteAllText(full, content)
 
+let private deleteFile (dir: string) (relativePath: string) =
+    let full = Path.Combine(dir, relativePath)
+
+    if File.Exists(full) then
+        File.Delete(full)
+
 let private initRepo (dir: string) =
     git dir [ "init"; "-q"; "-b"; "main" ] |> ignore
 
@@ -112,74 +118,171 @@ let ``fails when a gitignored file is history-only (no longer tracked)`` () =
         test <@ (failureReason result).Contains ".secret" @>
         test <@ (failureReason result).Contains "history-only" @>)
 
-/// Run git against an explicit GIT_DIR + work-tree (used to populate a fake jj
-/// store the way jj itself does — the real git history lives under
-/// `<root>/.jj/repo/store/git`, while the work-tree is `<root>`).
-let private gitStore (store: string) (workTree: string) (args: string list) =
-    let psi = ProcessStartInfo("git")
-    psi.WorkingDirectory <- workTree
-    psi.RedirectStandardOutput <- true
-    psi.RedirectStandardError <- true
-    psi.UseShellExecute <- false
-    psi.CreateNoWindow <- true
-    psi.ArgumentList.Add("--git-dir")
-    psi.ArgumentList.Add(store)
-    psi.ArgumentList.Add("--work-tree")
-    psi.ArgumentList.Add(workTree)
-    psi.ArgumentList.Add("-c")
-    psi.ArgumentList.Add("user.name=test")
-    psi.ArgumentList.Add("-c")
-    psi.ArgumentList.Add("user.email=test@example.com")
-    psi.ArgumentList.Add("-c")
-    psi.ArgumentList.Add("commit.gpgsign=false")
+[<Fact>]
+let ``passes when the leak lives only on a different branch (not current ancestry)`` () =
+    // The new scoping: the check scans the CURRENT branch's ancestry only. A
+    // gitignored file committed on an unrelated branch that is NOT an ancestor
+    // of HEAD must NOT fail the gate on the branch we publish from.
+    withTempDir (fun dir ->
+        initRepo dir
+        writeFile dir ".gitignore" ".secret\n"
+        writeFile dir "README.md" "hello"
+        commitAll dir "base"
 
-    for a in args do
-        psi.ArgumentList.Add(a)
+        // Experiment branch off base, WITH a force-added leak.
+        git dir [ "checkout"; "-q"; "-b"; "experiment" ] |> ignore
+        writeFile dir ".secret" "token"
+        git dir [ "add"; "-f"; ".secret" ] |> ignore
+        commitAll dir "leak on experiment"
 
-    use p = Process.Start(psi)
-    p.WaitForExit()
-    p.ExitCode
+        // Back to main, advance it with clean work. The leak is on a sibling
+        // branch, not in main's ancestry.
+        git dir [ "checkout"; "-q"; "main" ] |> ignore
+        writeFile dir "src/Main.fs" "let x = 1"
+        commitAll dir "clean work on main"
+
+        let result = checkGitignoreLeaks dir
+        test <@ isPassed result @>)
 
 [<Fact>]
-let ``resolves the jj store and fails on a leak in a jj-backed repo`` () =
-    withTempDir (fun root ->
-        // jj keeps the real git history under <root>/.jj/repo/store/git, with a
-        // `.jj/repo` directory present so GitDir.resolveGitDir walks to it.
-        let store = Path.Combine(root, ".jj", "repo", "store", "git")
-        Directory.CreateDirectory(store) |> ignore
-        gitStore store root [ "init"; "-q"; "-b"; "main" ] |> ignore
+let ``fails for a leak on the current branch even when other branches exist`` () =
+    // Mirror of the above: the leak IS in the current branch's ancestry, so it
+    // fails — having other (clean) branches around does not mask it.
+    withTempDir (fun dir ->
+        initRepo dir
+        writeFile dir ".gitignore" ".secret\n"
+        writeFile dir "README.md" "hello"
+        commitAll dir "base"
 
-        writeFile root ".gitignore" ".secret\n"
-        writeFile root "README.md" "hello"
-        writeFile root ".secret" "token"
-        gitStore store root [ "add"; "README.md"; ".gitignore" ] |> ignore
-        gitStore store root [ "add"; "-f"; ".secret" ] |> ignore
-        gitStore store root [ "commit"; "-q"; "-m"; "leak" ] |> ignore
+        // A clean sibling branch that should be irrelevant.
+        git dir [ "checkout"; "-q"; "-b"; "other" ] |> ignore
+        writeFile dir "src/Other.fs" "let y = 2"
+        commitAll dir "clean other"
 
-        let result = checkGitignoreLeaks root
+        // Current branch (main) carries the leak.
+        git dir [ "checkout"; "-q"; "main" ] |> ignore
+        writeFile dir ".secret" "token"
+        git dir [ "add"; "-f"; ".secret" ] |> ignore
+        commitAll dir "leak on main"
+
+        let result = checkGitignoreLeaks dir
         test <@ isFailed result @>
         test <@ (failureReason result).Contains ".secret" @>)
 
+// --- jj-backed fixtures -----------------------------------------------------
+//
+// These use a REAL jj repo (`jj git init --no-colocate`, which lays down the
+// `<root>/.jj/repo/store/git` directory that GitDir.resolveGitDir resolves to)
+// so they exercise the jj-specific "current commit" resolution: the check asks
+// `jj log -r @-` for the working-copy parent's commit_id rather than git HEAD
+// (which is unreliable under jj). If jj is not installed the fixture cannot be
+// built and the test is a no-op pass.
+
+/// Run a jj command in `dir`. Returns exit code; -1 if jj is not installed.
+let private jj (dir: string) (args: string list) : int =
+    try
+        let psi = ProcessStartInfo("jj")
+        psi.WorkingDirectory <- dir
+        psi.RedirectStandardOutput <- true
+        psi.RedirectStandardError <- true
+        psi.UseShellExecute <- false
+        psi.CreateNoWindow <- true
+
+        for a in args do
+            psi.ArgumentList.Add(a)
+
+        match Process.Start(psi) with
+        | null -> -1
+        | p ->
+            p.StandardOutput.ReadToEnd() |> ignore
+            p.StandardError.ReadToEnd() |> ignore
+            p.WaitForExit()
+            p.ExitCode
+    with _ ->
+        -1
+
+/// Initialise a real, non-colocated jj repo with a deterministic identity.
+/// Returns false (skip the test) if jj is unavailable.
+let private initJjRepo (dir: string) : bool =
+    if jj dir [ "git"; "init"; "--no-colocate" ] <> 0 then
+        false
+    else
+        jj dir [ "config"; "set"; "--repo"; "user.name"; "test" ] |> ignore
+        jj dir [ "config"; "set"; "--repo"; "user.email"; "test@example.com" ] |> ignore
+        true
+
 [<Fact>]
-let ``passes for a jj-backed repo with no leaks`` () =
+let ``resolves the jj store and fails on a leak on the current branch`` () =
     withTempDir (fun root ->
-        let store = Path.Combine(root, ".jj", "repo", "store", "git")
-        Directory.CreateDirectory(store) |> ignore
-        gitStore store root [ "init"; "-q"; "-b"; "main" ] |> ignore
+        if initJjRepo root then
+            // jj respects .gitignore for auto-tracking, so to plant a leak we
+            // commit the secret BEFORE adding the ignore rule, then add the rule
+            // in a later commit. The secret is now in the @- ancestry but is
+            // currently gitignored.
+            writeFile root ".secret" "token"
+            writeFile root "README.md" "hello"
+            jj root [ "describe"; "-m"; "commit secret" ] |> ignore
 
-        writeFile root ".gitignore" ".secret\n"
-        writeFile root "README.md" "hello"
-        gitStore store root [ "add"; "README.md"; ".gitignore" ] |> ignore
-        gitStore store root [ "commit"; "-q"; "-m"; "clean" ] |> ignore
+            jj root [ "new"; "-m"; "add gitignore" ] |> ignore
+            writeFile root ".gitignore" ".secret\n"
+            jj root [ "describe"; "-m"; "add gitignore" ] |> ignore
 
-        let result = checkGitignoreLeaks root
-        test <@ isPassed result @>)
+            // Advance the working copy so @- is the gitignore commit (the branch
+            // tip we'd publish), with @ an empty working copy on top.
+            jj root [ "new"; "-m"; "wc" ] |> ignore
+
+            let result = checkGitignoreLeaks root
+            test <@ isFailed result @>
+            test <@ (failureReason result).Contains ".secret" @>)
+
+[<Fact>]
+let ``passes for a clean jj-backed repo`` () =
+    withTempDir (fun root ->
+        if initJjRepo root then
+            writeFile root ".gitignore" ".secret\n"
+            writeFile root "README.md" "hello"
+            jj root [ "describe"; "-m"; "clean" ] |> ignore
+            jj root [ "new"; "-m"; "wc" ] |> ignore
+
+            let result = checkGitignoreLeaks root
+            test <@ isPassed result @>)
+
+[<Fact>]
+let ``passes for a jj repo when the leak lives only on a different branch`` () =
+    // The jj counterpart of the cross-branch scoping test: a leak on a sibling
+    // jj commit that is NOT an ancestor of @- must not fail the gate.
+    withTempDir (fun root ->
+        if initJjRepo root then
+            writeFile root ".gitignore" ".secret\n"
+            writeFile root "README.md" "hello"
+            jj root [ "describe"; "-m"; "base" ] |> ignore
+            jj root [ "bookmark"; "create"; "base"; "-r"; "@" ] |> ignore
+
+            // Experiment branch off base, carrying the leak. Remove the ignore
+            // on this branch so jj tracks .secret into the experiment commit.
+            jj root [ "new"; "base"; "-m"; "experiment" ] |> ignore
+            deleteFile root ".gitignore"
+            writeFile root ".secret" "token"
+            jj root [ "describe"; "-m"; "experiment" ] |> ignore
+            jj root [ "bookmark"; "create"; "experiment"; "-r"; "@" ] |> ignore
+
+            // Clean main-work branch off base (keeps the ignore, no secret).
+            jj root [ "new"; "base"; "-m"; "mainwork" ] |> ignore
+            writeFile root "src/Main.fs" "let x = 1"
+            jj root [ "bookmark"; "create"; "mainwork"; "-r"; "@" ] |> ignore
+
+            // Working copy on top of main-work -> @- is the clean branch tip.
+            jj root [ "new"; "mainwork"; "-m"; "wc" ] |> ignore
+
+            let result = checkGitignoreLeaks root
+            test <@ isPassed result @>)
 
 [<Fact>]
 let ``passes for a git repo with no commits`` () =
     withTempDir (fun dir ->
         // An initialized repo with no history: nothing was ever added, so there
-        // is nothing to scan and the check passes.
+        // is nothing to scan and the check passes (unborn HEAD -> no current
+        // commit resolves).
         initRepo dir
         writeFile dir ".gitignore" ".secret\n"
 

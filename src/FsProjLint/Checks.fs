@@ -67,20 +67,34 @@ let checkRepo (dir: string) (hasPackableProjects: bool) : CheckResult list =
 
 // --- gitignore-leak check ---------------------------------------------------
 //
-// Fails when any file matching the repo's .gitignore appears anywhere in git
-// history (currently tracked OR history-only). A gitignored file that was ever
-// committed leaks into the published history (and any clone/SourceLink), so the
-// repo needs an untrack (current) or a history rewrite (history-only).
+// Fails when any file matching the repo's .gitignore appears in the CURRENT
+// BRANCH's history (currently tracked OR history-only). A gitignored file that
+// was ever committed on the history you publish from here leaks into the
+// published history (and any clone/SourceLink), so the repo needs an untrack
+// (current) or a history rewrite (history-only).
+//
+// Scope is the ancestry of the CURRENT commit ONLY — not every branch/remote.
+// A leak that exists only on some other (experiment) branch which is not an
+// ancestor of where you are does not fail the gate here; you only care about
+// the history you'll publish from this branch.
 //
 // One efficient pass, NOT a per-revision loop:
-//   1. `git log --branches --remotes --diff-filter=A --name-only` -> every path
-//      ever added across all real branches/remotes. We deliberately do NOT use
-//      `--all`: against a jj-backed store that also walks `refs/jj/keep/*`
-//      (every abandoned/conflict/operation-log commit jj retains, full of build
-//      artifacts) which is not the published history.
-//   2. `git check-ignore --no-index --stdin` as the gitignore oracle (never
+//   1. Resolve the current commit:
+//        * jj-backed repo (`.jj/` present): `git HEAD` is unreliable (it points
+//          at refs/jj/root or a stale detached commit, NOT the branch you are
+//          on), so we ask jj for the working-copy parent —
+//          `jj log --no-graph --ignore-working-copy -r @- -T commit_id`.
+//          @- is the real checked-out commit (@ is usually an empty working
+//          copy); that sha is a git object in the store.
+//        * plain-git repo: `HEAD`.
+//      If resolution yields no commit (unborn/root), the check passes.
+//   2. `git log <commit> --diff-filter=A --name-only` -> every path ever added
+//      along that commit's ancestry. We deliberately do NOT use `--branches
+//      --remotes`/`--all`: those walk experiment branches and (on a jj store)
+//      `refs/jj/keep/*` — neither is the history published from here.
+//   3. `git check-ignore --no-index --stdin` as the gitignore oracle (never
 //      hand-roll glob matching) -> the subset currently gitignored.
-// Leaks = (ever-added) ∩ (currently gitignored).
+// Leaks = (ever-added-on-current-ancestry) ∩ (currently gitignored).
 
 type private GitContext =
     {
@@ -89,8 +103,13 @@ type private GitContext =
         PrefixArgs: string list
         /// The directory to launch git in. Pinned to the resolved repo root so
         /// the check is independent of the host process's current directory
-        /// (which other code — or parallel tests — may have changed).
+        /// (which other code — or parallel tests — may have changed). Also the
+        /// directory `jj` is invoked in when resolving the current commit.
         WorkingDir: string
+        /// True when this is a jj-backed repo (`.jj/` present). The current
+        /// commit is then resolved via `jj log @-` (git HEAD is unreliable under
+        /// jj); false means a plain-git checkout where `HEAD` is authoritative.
+        IsJj: bool
     }
 
 /// Run a git command with the given prefix args + subcommand args, optionally
@@ -128,31 +147,86 @@ let private runGit (ctx: GitContext) (subArgs: string list) (stdin: string optio
     with _ ->
         None
 
+/// Run a `jj` command in `workingDir`. Returns (exitCode, stdout) or None if jj
+/// could not be launched at all (e.g. not installed). `--ignore-working-copy`
+/// keeps this a pure read: jj does not snapshot or mutate the operation log.
+let private runJj (workingDir: string) (args: string list) : (int * string) option =
+    try
+        let psi = ProcessStartInfo("jj")
+        psi.WorkingDirectory <- workingDir
+        psi.RedirectStandardOutput <- true
+        psi.RedirectStandardError <- true
+        psi.UseShellExecute <- false
+        psi.CreateNoWindow <- true
+
+        for a in args do
+            psi.ArgumentList.Add(a)
+
+        match Process.Start(psi) with
+        | null -> None
+        | p ->
+            let stdoutTask = Task.Run(fun () -> p.StandardOutput.ReadToEnd())
+            let stderrTask = Task.Run(fun () -> p.StandardError.ReadToEnd())
+            let out = stdoutTask.Result
+            stderrTask.Result |> ignore
+            p.WaitForExit()
+            Some(p.ExitCode, out)
+    with _ ->
+        None
+
 let private splitLines (s: string) : string list =
     s.Split([| '\n'; '\r' |], System.StringSplitOptions.RemoveEmptyEntries)
     |> Array.toList
 
 /// Resolve how to invoke git for `dir`, distinguishing:
-///   * a jj-backed repo  -> Some { --git-dir=<store> --work-tree=<root> }
-///   * a plain-git repo   -> Some { -C <root> } (git's own discovery)
+///   * a jj-backed repo  -> Some { --git-dir=<store> --work-tree=<root>; IsJj=true }
+///   * a plain-git repo   -> Some { -C <root> (git's own discovery); IsJj=false }
 ///   * not a repo at all  -> None (the check passes; nothing to scan)
 let private gitContextFor (dir: string) : GitContext option =
     match Shared.GitDir.resolveGitDir dir with
     | Some store ->
         Some
             { PrefixArgs = [ "--git-dir"; store; "--work-tree"; dir ]
-              WorkingDir = dir }
+              WorkingDir = dir
+              IsJj = true }
     | None ->
         // resolveGitDir returns None for a native git checkout (it defers to
         // git's discovery) AND for a non-repo. Probe with rev-parse from `dir`
         // itself: a real checkout answers, a bare directory does not.
-        let probe = { PrefixArgs = []; WorkingDir = dir }
+        let probe =
+            { PrefixArgs = []
+              WorkingDir = dir
+              IsJj = false }
 
         match runGit probe [ "rev-parse"; "--is-inside-work-tree" ] None with
         | Some(0, out) when out.Trim() = "true" -> Some probe
         | _ -> None
 
-/// Repo-level check: no gitignored file appears anywhere in git history.
+/// Resolve the commit whose ancestry defines "the history we publish from
+/// here". Returns a git revision string to pass to `git log`, or None when no
+/// usable commit exists (unborn branch / jj root) — the caller then passes.
+///   * jj-backed: ask jj for the working-copy parent commit_id (`@-`). git HEAD
+///     under jj points at refs/jj/root or a stale detached commit, so we never
+///     use it. A blank/`0000…` result (root, unborn) yields None.
+///   * plain-git: `HEAD`, but only if it resolves (a repo with no commits has
+///     an unborn HEAD -> rev-parse fails -> None).
+let private resolveCurrentCommit (ctx: GitContext) : string option =
+    if ctx.IsJj then
+        match runJj ctx.WorkingDir [ "log"; "--no-graph"; "--ignore-working-copy"; "-r"; "@-"; "-T"; "commit_id" ] with
+        | Some(0, out) ->
+            let sha = out.Trim()
+
+            if sha.Length = 0 || sha |> Seq.forall (fun c -> c = '0') then
+                None
+            else
+                Some sha
+        | _ -> None
+    else
+        match runGit ctx [ "rev-parse"; "--verify"; "--quiet"; "HEAD" ] None with
+        | Some(0, out) when out.Trim().Length > 0 -> Some(out.Trim())
+        | _ -> None
+
+/// Repo-level check: no gitignored file appears in the current branch's history.
 let checkGitignoreLeaks (dir: string) : CheckResult =
     let name = "No gitignored files in git history"
 
@@ -162,21 +236,19 @@ let checkGitignoreLeaks (dir: string) : CheckResult =
             // Not a git repo (or git unavailable) — nothing to scan.
             Passed
         | Some ctx ->
-            // 1. Every path ever added across real branches/remotes.
+            // 1. Every path ever added along the CURRENT commit's ancestry.
+            //    Scope is this branch only (not --branches --remotes), so a leak
+            //    that lives solely on an unrelated experiment branch does not
+            //    fail the gate here.
             let everAdded =
-                match
-                    runGit
-                        ctx
-                        [ "log"
-                          "--branches"
-                          "--remotes"
-                          "--diff-filter=A"
-                          "--name-only"
-                          "--pretty=format:" ]
-                        None
-                with
-                | Some(_, out) -> splitLines out |> List.distinct
-                | None -> []
+                match resolveCurrentCommit ctx with
+                | None ->
+                    // No current commit (unborn branch / jj root) — nothing to scan.
+                    []
+                | Some commit ->
+                    match runGit ctx [ "log"; commit; "--diff-filter=A"; "--name-only"; "--pretty=format:" ] None with
+                    | Some(_, out) -> splitLines out |> List.distinct
+                    | None -> []
 
             if List.isEmpty everAdded then
                 Passed

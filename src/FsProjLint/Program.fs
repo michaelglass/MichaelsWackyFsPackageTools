@@ -20,10 +20,13 @@ Repo-level checks (run once per repo):
   - .editorconfig exists at the repo root
   - docs/index.md exists (only when the repo has packable projects)
   - No gitignored files in git history: no file matching the repo's
-    .gitignore was ever committed (current-tracked OR history-only).
-    A gitignored file in history leaks into the published history and
-    needs an untrack (current) or a history rewrite (history-only).
-    Skipped (passes) when the directory is not a git/jj repo.
+    .gitignore was ever committed on the CURRENT branch's ancestry
+    (current-tracked OR history-only). Scope is the branch you're on,
+    not every branch/remote — a leak that lives only on an unrelated
+    experiment branch does not fail the gate here. A gitignored file in
+    this branch's history leaks into the published history and needs an
+    untrack (current) or a history rewrite (history-only). Skipped
+    (passes) when the directory is not a git/jj repo.
 
 Project-level checks (run for every .fsproj under src/):
   - TreatWarningsAsErrors is true
