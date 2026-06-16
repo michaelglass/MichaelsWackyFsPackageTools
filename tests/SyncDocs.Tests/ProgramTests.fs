@@ -249,3 +249,91 @@ let ``run - sync prints in sync message for already synced pair`` () =
 
         let printed, _ = withCapturedConsole (fun () -> run [| "sync" |] tmpDir)
         test <@ printed.Contains "in sync" @>)
+
+// --- code-sourced block integration tests ---
+
+let private write dir relPath (content: string) =
+    let full = Path.Combine(dir, relPath)
+    Directory.CreateDirectory(Path.GetDirectoryName(full)) |> ignore
+    File.WriteAllText(full, content)
+
+[<Fact>]
+let ``run - check returns Ok 1 when README code block drifted from source file`` () =
+    withTempDir (fun tmpDir ->
+        write tmpDir "code/Snippets.fs" "// sync:demo:start\nlet x = 2\n// sync:demo:end\n"
+
+        write
+            tmpDir
+            "README.md"
+            "<!-- sync:demo:start src=code/Snippets.fs -->\n```fsharp\nlet x = 1\n```\n<!-- sync:demo:end -->\n"
+
+        write tmpDir "docs/index.md" "placeholder"
+
+        let result = run [| "check" |] tmpDir
+        test <@ result = Ok 1 @>)
+
+[<Fact>]
+let ``run - check returns Ok 0 when README code block matches source file`` () =
+    withTempDir (fun tmpDir ->
+        write tmpDir "code/Snippets.fs" "// sync:demo:start\nlet x = 1\n// sync:demo:end\n"
+
+        write
+            tmpDir
+            "README.md"
+            "<!-- sync:demo:start src=code/Snippets.fs -->\n```fsharp\nlet x = 1\n```\n<!-- sync:demo:end -->\n"
+
+        write tmpDir "docs/index.md" "placeholder"
+
+        let result = run [| "check" |] tmpDir
+        test <@ result = Ok 0 @>)
+
+[<Fact>]
+let ``run - check returns Ok 1 when a code source file is missing`` () =
+    withTempDir (fun tmpDir ->
+        write tmpDir "README.md" "<!-- sync:demo:start src=code/Gone.fs -->\nold\n<!-- sync:demo:end -->\n"
+        write tmpDir "docs/index.md" "placeholder"
+
+        let printed, result = withCapturedConsole (fun () -> run [| "check" |] tmpDir)
+        test <@ result = Ok 1 @>
+        test <@ printed.Contains "Gone.fs" @>)
+
+[<Fact>]
+let ``run - sync refreshes README code block then propagates to docs`` () =
+    withTempDir (fun tmpDir ->
+        write tmpDir "code/Snippets.fs" "// sync:demo:start\nlet answer = 42\n// sync:demo:end\n"
+
+        // README's code block is stale; the text block is also mirrored to docs
+        write
+            tmpDir
+            "README.md"
+            ("<!-- sync:demo:start src=code/Snippets.fs -->\n```fsharp\nlet answer = 0\n```\n<!-- sync:demo:end -->\n"
+             + "<!-- sync:guide:start -->\nhow to use\n<!-- sync:guide:end -->\n")
+
+        write
+            tmpDir
+            "docs/index.md"
+            ("<!-- sync:demo -->\nstale docs\n<!-- sync:demo:end -->\n"
+             + "<!-- sync:guide -->\nstale docs\n<!-- sync:guide:end -->\n")
+
+        let result = run [| "sync" |] tmpDir
+
+        let readme = File.ReadAllText(Path.Combine(tmpDir, "README.md"))
+        let docs = File.ReadAllText(Path.Combine(tmpDir, "docs", "index.md"))
+
+        test <@ result = Ok 0 @>
+        // README code block refreshed from the file
+        test <@ readme.Contains "let answer = 42" @>
+        test <@ not (readme.Contains "let answer = 0") @>
+        // docs picked up BOTH the refreshed code block and the text block
+        test <@ docs.Contains "let answer = 42" @>
+        test <@ docs.Contains "how to use" @>)
+
+[<Fact>]
+let ``run - check passes when only ordinary text sections present (no regression)`` () =
+    withTempDir (fun tmpDir ->
+        write tmpDir "README.md" "<!-- sync:intro:start -->\nhello\n<!-- sync:intro:end -->\n"
+
+        write tmpDir "docs/index.md" "<!-- sync:intro -->\nhello\n<!-- sync:intro:end -->\n"
+
+        let result = run [| "check" |] tmpDir
+        test <@ result = Ok 0 @>)

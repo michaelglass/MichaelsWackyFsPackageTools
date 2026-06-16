@@ -75,7 +75,29 @@ let run (argv: string array) (rootDir: string) : Result<int, string> =
             printfn "No README.md -> docs/ pairs found"
             Ok 0
         else
-            let results =
+            // Stage 1: refresh code-sourced README blocks from their .fs/.fsx
+            // regions BEFORE propagating README -> docs, so docs pick up the
+            // refreshed snippet within a single run.
+            let codeResults =
+                discovery.Pairs
+                |> List.map (fun p -> p.Source)
+                |> List.distinct
+                |> List.map (fun source ->
+                    let shortSource = System.IO.Path.GetRelativePath(rootDir, source)
+                    let result = syncCodeRegions mode rootDir source
+
+                    match result with
+                    | Ok InSync -> ()
+                    | Ok Updated -> printfn "  %s: code regions updated" shortSource
+                    | Ok OutOfSync -> printfn "  %s: code regions OUT OF SYNC" shortSource
+                    | Error(CodeFileMissing path) -> printfn "  %s: code source missing: %s" shortSource path
+                    | Error(CodeRegionError(path, regionErr)) ->
+                        printfn "  %s: code region error in %s: %A" shortSource path regionErr
+
+                    result)
+
+            // Stage 2: propagate README sources -> docs targets.
+            let pairResults =
                 discovery.Pairs
                 |> List.map (fun pair ->
                     let shortSource = System.IO.Path.GetRelativePath(rootDir, pair.Source)
@@ -91,15 +113,23 @@ let run (argv: string array) (rootDir: string) : Result<int, string> =
 
                     result)
 
-            let hasFailure =
-                results
+            let codeFailure =
+                codeResults
                 |> List.exists (fun r ->
                     match r with
                     | Ok OutOfSync -> true
                     | Error _ -> true
                     | _ -> false)
 
-            Ok(if hasFailure then 1 else 0)
+            let pairFailure =
+                pairResults
+                |> List.exists (fun r ->
+                    match r with
+                    | Ok OutOfSync -> true
+                    | Error _ -> true
+                    | _ -> false)
+
+            Ok(if codeFailure || pairFailure then 1 else 0)
 
 let private isHelpFlag a = a = "--help" || a = "-h" || a = "help"
 
