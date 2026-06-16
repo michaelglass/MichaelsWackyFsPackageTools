@@ -130,9 +130,15 @@ type SyncOutcome =
 ```
 <!-- sync:outcome-types:end -->
 
+### Standalone docs (guides, not just READMEs)
+
+Code-sourced blocks aren't limited to README pair-sources. Any markdown file under the repo root that carries a `src=` block — a guide like `docs/writing-plugins.md`, say — is refreshed and verified **in place**, with no `docs/` target needed. So a hand-written guide can embed a snippet straight from compiled code and `syncdocs check` will fail the moment it drifts.
+
+The scan skips build, VCS, and vendor directories (`bin`, `obj`, `.git`, `.jj`, `node_modules`, `.workspaces`, `output`, `artifacts`, `.fsdocs`), and a file that is already a pair source (such as `README.md`) is processed once, never twice.
+
 ### How it fits the sync chain
 
-`syncdocs sync` runs in two stages: first it refreshes each code-sourced README block from its file region, **then** it propagates the README to `docs/` as usual — so docs pick up the refreshed snippet in a single run. `syncdocs check` reports drift (non-zero exit) if any code-sourced block is stale, and fails loudly on a missing file, a missing/duplicated region marker, or an unterminated region.
+`syncdocs sync` runs in two stages: first it refreshes each code-sourced block from its file region — for a README pair-source this happens **before** the README is propagated to `docs/`, so docs pick up the refreshed snippet in a single run; standalone docs are refreshed directly. Then it propagates README sources to `docs/` as usual. `syncdocs check` reports drift (non-zero exit) if any code-sourced block is stale, and fails loudly on a missing file, a missing/duplicated region marker, or an unterminated region.
 
 Blocks **without** a `src=` attribute behave exactly as before.
 
