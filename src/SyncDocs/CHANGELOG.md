@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: source a README fenced code block from a region of a real `.fs`/`.fsx` file via a `src=` attribute on the start marker (`<!-- sync:name:start src=path -->`), delimited in the file by `// sync:name:start` / `// sync:name:end` comment markers — the region defaults to the block name (override with `#region`), common leading indentation is normalized, and the block is wrapped in an `fsharp` fence. Integrated into `sync` and `check` (refreshed before README -> docs propagation) so drift, a missing file, or a missing/duplicated/unterminated region breaks `check`
+
 ## 0.13.0-alpha.2 - 2026-05-27
 
 - deps: bump Microsoft.SourceLink.GitHub 10.0.201 -> 10.0.300

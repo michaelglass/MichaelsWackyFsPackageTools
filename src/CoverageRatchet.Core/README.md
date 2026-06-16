@@ -4,6 +4,8 @@ Core library for Cobertura XML coverage parsing, per-file threshold checking, ra
 
 Use this package to integrate coverage ratcheting directly into your own tools, scripts, or build systems without taking a dependency on the CLI entry point.
 
+> **Status: early alpha, and substantially AI-written.** Runs the author's own F# OSS repos daily, but the API shifts between versions and rough edges are expected — your mileage may vary. Issues and PRs welcome.
+
 ## Installation
 
 ```bash
