@@ -737,12 +737,14 @@ let release (input: ReleaseInput) : int =
         1
     | Ok selectedPackages ->
 
-        let input =
-            { input with
-                Config =
-                    { input.Config with
-                        Packages = selectedPackages } }
-
+        // NB: we deliberately do NOT narrow `input.Config.Packages` to
+        // `selectedPackages`. `Config.Packages` is the repo's *structural* package
+        // set — it answers "is this a single-package repo?" (changelog at root vs.
+        // per-fsproj-dir, see `changelogPathsFor`) and "which projects are
+        // separately-released dependency boundaries?" (see `separatelyReleased`).
+        // `--only` is a *runtime selection* of which packages to release; it must
+        // not rewrite repo structure. So the selection is applied at the release
+        // iteration below, and `Config.Packages` stays the full set throughout.
         if not input.TargetPackages.IsEmpty then
             printfn "Targeting: %s" (selectedPackages |> List.map (fun p -> p.Name) |> String.concat ", ")
 
@@ -756,7 +758,7 @@ let release (input: ReleaseInput) : int =
             if needsBuild then
                 runPreBuild input
 
-            let decisions = input.Config.Packages |> List.choose (decideBump input)
+            let decisions = selectedPackages |> List.choose (decideBump input)
 
             let cannotDetermine =
                 decisions

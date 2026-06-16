@@ -2381,6 +2381,73 @@ let ``release - scoped to one package only tags that package`` () =
         File.Delete(tmpFileA)
 
 [<Fact>]
+let ``release - --only on a multi-package repo uses the per-package CHANGELOG, not repo root`` () =
+    // Regression: `--only` selects which packages are *released*; it must not rewrite
+    // repo *structure*. A multi-package repo keeps per-fsproj-dir CHANGELOGs. If the
+    // single-vs-multi-package decision were taken from the post-`--only` (length-1)
+    // package list, the selected package's changelog would be looked up at the repo
+    // ROOT and the run would abort "CHANGELOG.md not found". Here the root has NO
+    // CHANGELOG.md, so the run can only succeed via the per-package lookup.
+    let pkgDir = createTempDir ()
+    let rootDir = createTempDir ()
+
+    try
+        let fsprojA = Path.Combine(pkgDir, "LibA.fsproj")
+        File.WriteAllText(fsprojA, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        // Valid per-package changelog right next to LibA's fsproj.
+        File.WriteAllText(
+            Path.Combine(pkgDir, "CHANGELOG.md"),
+            "# Changelog\n\n## Unreleased\n\n- feat: a real change\n"
+        )
+
+        let (fakeRun, getCalls) = passingCiRun []
+
+        let config =
+            { Packages =
+                [ { Name = "LibA"
+                    Fsproj = fsprojA
+                    DllPath = "a.dll"
+                    TagPrefix = "liba-v"
+                    FsProjsSharingSameTag = [] }
+                  // A second package makes this a multi-package repo; `--only LibA`
+                  // keeps it out of scope (its fsproj doesn't even exist on disk).
+                  { Name = "LibB"
+                    Fsproj = "/no/such/LibB.fsproj"
+                    DllPath = "b.dll"
+                    TagPrefix = "libb-v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = rootDir }
+
+        let result =
+            release
+                { Run = fakeRun
+                  Config = config
+                  Command = StartAlpha
+                  Mode = PushTags
+                  TargetPackages = [ "LibA" ]
+                  ExtractPreviousApi = noPreviousApi
+                  ExtractCurrentApi = noCurrentApi
+                  CiPollIntervalMs = 0
+                  CiMaxAttempts = 10
+                  CheckPublished = (fun _ _ -> true)
+                  WaitForNuGet = false
+                  NuGetPollIntervalMs = 0
+                  NuGetMaxAttempts = 1
+                  Push = false }
+
+        let calls = getCalls ()
+        // Per-package changelog found + validated → release proceeded and tagged LibA.
+        test <@ result = 0 @>
+        test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set liba-v")) @>
+        // LibB stayed fully out of scope.
+        test <@ not (calls |> List.exists (fun (_, a) -> a.Contains("libb-v"))) @>
+    finally
+        cleanupDir pkgDir
+        cleanupDir rootDir
+
+[<Fact>]
 let ``release - scoped to multiple packages tags exactly those`` () =
     let tmpA = Path.GetTempFileName()
     let tmpC = Path.GetTempFileName()
