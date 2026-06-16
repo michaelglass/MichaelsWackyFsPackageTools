@@ -83,6 +83,57 @@ You can have as many synced sections as you like in a single file. Content betwe
 
 If your README has **no** sync markers at all, SyncDocs copies the entire file content to the target. This is useful for per-project READMEs that should be mirrored exactly in docs.
 
+## Code-Sourced Blocks (drift-proof snippets)
+
+A README code block can be sourced from a region of a real, compiled `.fs`/`.fsx` file. The snippet then can't reference a non-existent API without breaking your build, and `syncdocs check` fails CI the moment the rendered snippet stops matching the code.
+
+### In your README (source)
+
+Add a `src=` attribute to the start marker, pointing at a file (relative to the repo root). The region defaults to the block name; append `#region-name` to override it. For example, replacing `START` / `END` below with real `<!-- -->` HTML comment markers:
+
+````
+[START] sync:plugin-example:start src=examples/Foo/Snippets.fs [END]
+```fsharp
+(this gets regenerated from the file)
+```
+[START] sync:plugin-example:end [END]
+````
+
+### In your `.fs`/`.fsx` file (the region)
+
+Delimit the region with comment markers that reuse the same vocabulary:
+
+```fsharp
+// sync:plugin-example:start
+let example = Foo.create "hello"
+// sync:plugin-example:end
+```
+
+The lines **between** the markers (the marker lines themselves are excluded) become the block body, with the common leading indentation stripped, wrapped in a ` ```fsharp ` fence.
+
+### Live example (dogfooded)
+
+SyncDocs uses this feature on its own README. The block below is sourced from a region of `src/SyncDocs/Sync.fs`, so it can never drift from the real type definitions:
+
+<!-- sync:outcome-types:start src=src/SyncDocs/Sync.fs -->
+```fsharp
+type SyncMode =
+    | Check
+    | Apply
+
+type SyncOutcome =
+    | InSync
+    | OutOfSync
+    | Updated
+```
+<!-- sync:outcome-types:end -->
+
+### How it fits the sync chain
+
+`syncdocs sync` runs in two stages: first it refreshes each code-sourced README block from its file region, **then** it propagates the README to `docs/` as usual — so docs pick up the refreshed snippet in a single run. `syncdocs check` reports drift (non-zero exit) if any code-sourced block is stale, and fails loudly on a missing file, a missing/duplicated region marker, or an unterminated region.
+
+Blocks **without** a `src=` attribute behave exactly as before.
+
 ## Pair Discovery Convention
 
 SyncDocs automatically finds sync pairs based on file location:
