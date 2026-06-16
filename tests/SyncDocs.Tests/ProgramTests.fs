@@ -337,3 +337,147 @@ let ``run - check passes when only ordinary text sections present (no regression
 
         let result = run [| "check" |] tmpDir
         test <@ result = Ok 0 @>)
+
+// --- standalone-doc code-region integration tests ---
+
+[<Fact>]
+let ``run - check returns Ok 0 when a standalone doc code block matches its source`` () =
+    withTempDir (fun tmpDir ->
+        write tmpDir "code/Snippets.fs" "// sync:demo:start\nlet x = 1\n// sync:demo:end\n"
+
+        write
+            tmpDir
+            "docs/writing-plugins.md"
+            "<!-- sync:demo:start src=code/Snippets.fs -->\n```fsharp\nlet x = 1\n```\n<!-- sync:demo:end -->\n"
+
+        let result = run [| "check" |] tmpDir
+        test <@ result = Ok 0 @>)
+
+[<Fact>]
+let ``run - check returns Ok 1 when a standalone doc code block drifted from its source`` () =
+    withTempDir (fun tmpDir ->
+        write tmpDir "code/Snippets.fs" "// sync:demo:start\nlet x = 2\n// sync:demo:end\n"
+
+        write
+            tmpDir
+            "docs/writing-plugins.md"
+            "<!-- sync:demo:start src=code/Snippets.fs -->\n```fsharp\nlet x = 1\n```\n<!-- sync:demo:end -->\n"
+
+        let printed, result = withCapturedConsole (fun () -> run [| "check" |] tmpDir)
+        test <@ result = Ok 1 @>
+        test <@ printed.Contains "writing-plugins.md" @>)
+
+[<Fact>]
+let ``run - sync refreshes a standalone doc code block in place`` () =
+    withTempDir (fun tmpDir ->
+        write tmpDir "code/Snippets.fs" "// sync:demo:start\nlet answer = 42\n// sync:demo:end\n"
+
+        write
+            tmpDir
+            "docs/writing-plugins.md"
+            "<!-- sync:demo:start src=code/Snippets.fs -->\n```fsharp\nlet answer = 0\n```\n<!-- sync:demo:end -->\n"
+
+        let result = run [| "sync" |] tmpDir
+        let doc = File.ReadAllText(Path.Combine(tmpDir, "docs", "writing-plugins.md"))
+
+        test <@ result = Ok 0 @>
+        test <@ doc.Contains "let answer = 42" @>
+        test <@ not (doc.Contains "let answer = 0") @>)
+
+[<Fact>]
+let ``run - check returns Ok 1 when a standalone doc references a missing source file`` () =
+    withTempDir (fun tmpDir ->
+        write
+            tmpDir
+            "docs/writing-plugins.md"
+            "<!-- sync:demo:start src=code/Gone.fs -->\nold\n<!-- sync:demo:end -->\n"
+
+        let printed, result = withCapturedConsole (fun () -> run [| "check" |] tmpDir)
+        test <@ result = Ok 1 @>
+        test <@ printed.Contains "Gone.fs" @>)
+
+[<Fact>]
+let ``run - check returns Ok 1 when a standalone doc references a missing region`` () =
+    withTempDir (fun tmpDir ->
+        write tmpDir "code/Snippets.fs" "let unrelated = 1\n"
+
+        write
+            tmpDir
+            "docs/writing-plugins.md"
+            "<!-- sync:demo:start src=code/Snippets.fs -->\nold\n<!-- sync:demo:end -->\n"
+
+        let result = run [| "check" |] tmpDir
+        test <@ result = Ok 1 @>)
+
+[<Fact>]
+let ``run - check handles a standalone doc and a README pair together`` () =
+    withTempDir (fun tmpDir ->
+        // README pair: code block IN SYNC
+        write tmpDir "code/Snippets.fs" "// sync:demo:start\nlet x = 1\n// sync:demo:end\n"
+
+        write
+            tmpDir
+            "README.md"
+            "<!-- sync:demo:start src=code/Snippets.fs -->\n```fsharp\nlet x = 1\n```\n<!-- sync:demo:end -->\n"
+
+        write tmpDir "docs/index.md" "placeholder"
+
+        // Standalone guide: code block DRIFTED -> whole check must fail
+        write tmpDir "guide/Other.fs" "// sync:g:start\nlet y = 9\n// sync:g:end\n"
+
+        write
+            tmpDir
+            "docs/writing-plugins.md"
+            "<!-- sync:g:start src=guide/Other.fs -->\n```fsharp\nlet y = 0\n```\n<!-- sync:g:end -->\n"
+
+        let result = run [| "check" |] tmpDir
+        test <@ result = Ok 1 @>)
+
+[<Fact>]
+let ``run - sync does not double-process a path that is both a pair source and a src= carrier`` () =
+    withTempDir (fun tmpDir ->
+        // README is a pair source AND carries a src= block. It must be processed
+        // exactly once (as the pair source), never again as a standalone doc.
+        write tmpDir "code/Snippets.fs" "// sync:demo:start\nlet x = 7\n// sync:demo:end\n"
+
+        write
+            tmpDir
+            "README.md"
+            "<!-- sync:demo:start src=code/Snippets.fs -->\n```fsharp\nlet x = 0\n```\n<!-- sync:demo:end -->\n"
+
+        write tmpDir "docs/index.md" "placeholder"
+
+        let printed, result = withCapturedConsole (fun () -> run [| "sync" |] tmpDir)
+        let readme = File.ReadAllText(Path.Combine(tmpDir, "README.md"))
+
+        test <@ result = Ok 0 @>
+        test <@ readme.Contains "let x = 7" @>
+        // README appears only once in the "code regions updated" output (single processing)
+        let occurrences =
+            (printed.Length - printed.Replace("README.md: code regions updated", "").Length)
+            / "README.md: code regions updated".Length
+
+        test <@ occurrences = 1 @>)
+
+[<Fact>]
+let ``run - check is Ok 0 in a repo with a pair but no standalone src= docs`` () =
+    withTempDir (fun tmpDir ->
+        write tmpDir "README.md" "<!-- sync:intro:start -->\nhi\n<!-- sync:intro:end -->\n"
+        write tmpDir "docs/index.md" "<!-- sync:intro -->\nhi\n<!-- sync:intro:end -->\n"
+
+        let result = run [| "check" |] tmpDir
+        test <@ result = Ok 0 @>)
+
+[<Fact>]
+let ``run - check processes a standalone doc even when there are no pairs`` () =
+    withTempDir (fun tmpDir ->
+        // No README.md / docs/index.md pair at all, only a standalone guide.
+        write tmpDir "code/Snippets.fs" "// sync:demo:start\nlet x = 2\n// sync:demo:end\n"
+
+        write
+            tmpDir
+            "docs/writing-plugins.md"
+            "<!-- sync:demo:start src=code/Snippets.fs -->\n```fsharp\nlet x = 1\n```\n<!-- sync:demo:end -->\n"
+
+        let result = run [| "check" |] tmpDir
+        test <@ result = Ok 1 @>)
