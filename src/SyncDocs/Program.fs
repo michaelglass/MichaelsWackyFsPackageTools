@@ -71,30 +71,36 @@ let run (argv: string array) (rootDir: string) : Result<int, string> =
         for w in discovery.Warnings do
             printfn "  Warning: %s" (warningMessage w)
 
-        if discovery.Pairs.IsEmpty then
+        let pairSources = discovery.Pairs |> List.map (fun p -> p.Source) |> List.distinct
+
+        // Standalone docs carry their own `src=` code blocks but have no docs/
+        // target — they are refreshed/verified in place. Dedupe against pair
+        // sources so a path that is both is processed exactly once (as a pair).
+        let standaloneDocs = discoverStandaloneCodeDocs rootDir pairSources
+
+        if discovery.Pairs.IsEmpty && standaloneDocs.IsEmpty then
             printfn "No README.md -> docs/ pairs found"
             Ok 0
         else
-            // Stage 1: refresh code-sourced README blocks from their .fs/.fsx
-            // regions BEFORE propagating README -> docs, so docs pick up the
-            // refreshed snippet within a single run.
-            let codeResults =
-                discovery.Pairs
-                |> List.map (fun p -> p.Source)
-                |> List.distinct
-                |> List.map (fun source ->
-                    let shortSource = System.IO.Path.GetRelativePath(rootDir, source)
-                    let result = syncCodeRegions mode rootDir source
+            let runCodeRegions source =
+                let shortSource = System.IO.Path.GetRelativePath(rootDir, source)
+                let result = syncCodeRegions mode rootDir source
 
-                    match result with
-                    | Ok InSync -> ()
-                    | Ok Updated -> printfn "  %s: code regions updated" shortSource
-                    | Ok OutOfSync -> printfn "  %s: code regions OUT OF SYNC" shortSource
-                    | Error(CodeFileMissing path) -> printfn "  %s: code source missing: %s" shortSource path
-                    | Error(CodeRegionError(path, regionErr)) ->
-                        printfn "  %s: code region error in %s: %A" shortSource path regionErr
+                match result with
+                | Ok InSync -> ()
+                | Ok Updated -> printfn "  %s: code regions updated" shortSource
+                | Ok OutOfSync -> printfn "  %s: code regions OUT OF SYNC" shortSource
+                | Error(CodeFileMissing path) -> printfn "  %s: code source missing: %s" shortSource path
+                | Error(CodeRegionError(path, regionErr)) ->
+                    printfn "  %s: code region error in %s: %A" shortSource path regionErr
 
-                    result)
+                result
+
+            // Stage 1: refresh code-sourced blocks from their .fs/.fsx regions.
+            // For pair sources this runs BEFORE README -> docs propagation, so
+            // docs pick up the refreshed snippet within a single run. Standalone
+            // docs are refreshed in place (no propagation step follows).
+            let codeResults = (pairSources @ standaloneDocs) |> List.map runCodeRegions
 
             // Stage 2: propagate README sources -> docs targets.
             let pairResults =

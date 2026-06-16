@@ -298,3 +298,45 @@ let discoverPairs (rootDir: string) : SyncPair list =
 
 let discoverWarnings (rootDir: string) : DiscoveryWarning list =
     (discoverPairsAndWarnings rootDir).Warnings
+
+/// Directories never descended into when scanning for standalone code-sourced
+/// docs: build output, VCS metadata, vendored deps, and parallel jj workspaces.
+let private ignoredScanDirs =
+    set
+        [ "bin"
+          "obj"
+          ".git"
+          ".jj"
+          "node_modules"
+          ".workspaces"
+          "output"
+          "artifacts"
+          ".fsdocs" ]
+
+/// True when a markdown file carries at least one code-sourced start marker
+/// (`<!-- sync:NAME:start src=... -->`).
+let private hasCodeSourcedBlock (content: string) : bool =
+    Regex.IsMatch(content, @"<!-- sync:[\w][\w-]*:start src=\S+? -->")
+
+/// Discover every markdown file under `rootDir` that carries a `src=` code block,
+/// excluding build/VCS/vendor directories and any path already handled as a pair
+/// source. These are refreshed/verified IN PLACE (they have no docs/ target).
+/// `rootDir` is always scanned; only its descendant directories are filtered by
+/// name against `ignoredScanDirs`.
+let discoverStandaloneCodeDocs (rootDir: string) (excludeSources: string list) : string list =
+    let excluded = excludeSources |> List.map Path.GetFullPath |> Set.ofList
+
+    let isCodeDoc (file: string) =
+        not (excluded.Contains(Path.GetFullPath file))
+        && hasCodeSourcedBlock (File.ReadAllText file)
+
+    let rec walk (dir: string) : string seq =
+        seq {
+            yield! Directory.GetFiles(dir, "*.md") |> Seq.filter isCodeDoc
+
+            for sub in Directory.GetDirectories dir do
+                if not (ignoredScanDirs.Contains(Path.GetFileName sub)) then
+                    yield! walk sub
+        }
+
+    walk rootDir |> Seq.sort |> Seq.toList

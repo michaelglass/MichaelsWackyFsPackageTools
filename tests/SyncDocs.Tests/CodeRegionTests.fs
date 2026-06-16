@@ -392,3 +392,77 @@ let ``syncCodeRegions Apply - block with start marker but no end is treated as e
         // Region resolves fine, current body is empty (None), so the block counts
         // as changed; nothing is rewritten because no end marker delimits it.
         test <@ result = Ok Updated @>)
+
+// --- discoverStandaloneCodeDocs tests ---
+
+[<Fact>]
+let ``discoverStandaloneCodeDocs - finds a markdown doc carrying a src= block`` () =
+    withTempDir (fun tmpDir ->
+        writeFile
+            tmpDir
+            "docs/writing-plugins.md"
+            "<!-- sync:ex:start src=code/Snippets.fs -->\nbody\n<!-- sync:ex:end -->\n"
+        |> ignore
+
+        let docs = discoverStandaloneCodeDocs tmpDir []
+
+        test <@ docs |> List.exists (fun p -> p.EndsWith "writing-plugins.md") @>)
+
+[<Fact>]
+let ``discoverStandaloneCodeDocs - ignores markdown without a src= block`` () =
+    withTempDir (fun tmpDir ->
+        writeFile tmpDir "docs/plain.md" "<!-- sync:intro:start -->\njust text\n<!-- sync:intro:end -->\n"
+        |> ignore
+
+        writeFile tmpDir "notes.md" "# heading\nno markers at all\n" |> ignore
+
+        let docs = discoverStandaloneCodeDocs tmpDir []
+
+        test <@ docs.IsEmpty @>)
+
+[<Fact>]
+let ``discoverStandaloneCodeDocs - excludes paths listed as pair sources`` () =
+    withTempDir (fun tmpDir ->
+        let readme =
+            writeFile tmpDir "README.md" "<!-- sync:ex:start src=code/Snippets.fs -->\nbody\n<!-- sync:ex:end -->\n"
+
+        let guide =
+            writeFile
+                tmpDir
+                "docs/guide.md"
+                "<!-- sync:ex:start src=code/Snippets.fs -->\nbody\n<!-- sync:ex:end -->\n"
+
+        let docs = discoverStandaloneCodeDocs tmpDir [ readme ]
+
+        // README is a pair source -> excluded; the standalone guide remains
+        test <@ not (docs |> List.exists (fun p -> p = readme)) @>
+        test <@ docs |> List.exists (fun p -> p = guide) @>)
+
+[<Fact>]
+let ``discoverStandaloneCodeDocs - skips bin obj and dot directories`` () =
+    withTempDir (fun tmpDir ->
+        writeFile tmpDir "bin/built.md" "<!-- sync:ex:start src=x.fs -->\nb\n<!-- sync:ex:end -->\n"
+        |> ignore
+
+        writeFile tmpDir "obj/gen.md" "<!-- sync:ex:start src=x.fs -->\nb\n<!-- sync:ex:end -->\n"
+        |> ignore
+
+        writeFile tmpDir ".git/hook.md" "<!-- sync:ex:start src=x.fs -->\nb\n<!-- sync:ex:end -->\n"
+        |> ignore
+
+        writeFile tmpDir ".jj/op.md" "<!-- sync:ex:start src=x.fs -->\nb\n<!-- sync:ex:end -->\n"
+        |> ignore
+
+        writeFile tmpDir "node_modules/pkg/readme.md" "<!-- sync:ex:start src=x.fs -->\nb\n<!-- sync:ex:end -->\n"
+        |> ignore
+
+        let docs = discoverStandaloneCodeDocs tmpDir []
+
+        test <@ docs.IsEmpty @>)
+
+[<Fact>]
+let ``discoverStandaloneCodeDocs - returns empty when no docs carry src= blocks`` () =
+    withTempDir (fun tmpDir ->
+        writeFile tmpDir "README.md" "# plain\n" |> ignore
+        let docs = discoverStandaloneCodeDocs tmpDir []
+        test <@ docs.IsEmpty @>)
