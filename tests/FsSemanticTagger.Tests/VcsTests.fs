@@ -881,3 +881,58 @@ let ``tagExists - jj fails git returns different tag returns false`` () =
               ("git", "tag -l v1.0.0", Success "v1.0.0-beta") ]
 
     test <@ tagExists run "v1.0.0" = false @>
+
+// isCommitPushed
+
+let private pushedQuery (sha: string) =
+    sprintf "log -r \"remote_bookmarks() & ::%s\" --no-graph -T commit_id" sha
+
+[<Fact>]
+let ``isCommitPushed - jj reports the commit is an ancestor of a remote bookmark`` () =
+    let run = fakeRun [ ("jj", pushedQuery "abc123", Success "abc123\n") ]
+    test <@ isCommitPushed run "abc123" = true @>
+
+[<Fact>]
+let ``isCommitPushed - jj reports empty ancestry so the commit is not pushed`` () =
+    let run = fakeRun [ ("jj", pushedQuery "abc123", Success "  \n") ]
+    test <@ isCommitPushed run "abc123" = false @>
+
+[<Fact>]
+let ``isCommitPushed - falls back to git branch -r --contains when jj fails`` () =
+    let run =
+        fakeRun
+            [ ("jj", pushedQuery "abc123", Failure("not a jj repo", 1))
+              ("git", "branch -r --contains abc123", Success "  origin/main\n") ]
+
+    test <@ isCommitPushed run "abc123" = true @>
+
+[<Fact>]
+let ``isCommitPushed - returns false when neither jj nor git can answer`` () =
+    let run =
+        fakeRun
+            [ ("jj", pushedQuery "abc123", Failure("no jj", 1))
+              ("git", "branch -r --contains abc123", Failure("no git", 1)) ]
+
+    test <@ isCommitPushed run "abc123" = false @>
+
+// releaseCommitSha
+
+[<Fact>]
+let ``releaseCommitSha - clean working copy reports the parent commit`` () =
+    let run =
+        fakeRun
+            [ ("jj", "diff --summary", Success "")
+              ("jj", "log -r @- --no-graph -T commit_id", Success "parentsha\n") ]
+
+    test <@ releaseCommitSha run = Some "parentsha" @>
+
+[<Fact>]
+let ``releaseCommitSha - dirty working copy reports the current commit`` () =
+    // A dirty working copy means @ itself is the commit to verify; falls through
+    // to getCurrentCommitSha (jj log -r @).
+    let run =
+        fakeRun
+            [ ("jj", "diff --summary", Success "M src/Foo.fs")
+              ("jj", "log -r @ --no-graph -T commit_id", Success "worksha\n") ]
+
+    test <@ releaseCommitSha run = Some "worksha" @>

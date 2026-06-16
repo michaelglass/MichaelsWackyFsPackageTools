@@ -25,7 +25,7 @@ let private seedTmpChangelog () =
     let p = Path.Combine(Path.GetTempPath(), "CHANGELOG.md")
     File.WriteAllText(p, "# Changelog\n\n## Unreleased\n\n- test entry\n")
 
-let private runRelease run config cmd mode prev cur poll max =
+let private runReleaseWithPush run config cmd mode prev cur poll max push =
     seedTmpChangelog ()
 
     release
@@ -43,7 +43,11 @@ let private runRelease run config cmd mode prev cur poll max =
           CheckPublished = (fun _ _ -> true)
           WaitForNuGet = false
           NuGetPollIntervalMs = 0
-          NuGetMaxAttempts = 1 }
+          NuGetMaxAttempts = 1
+          Push = push }
+
+let private runRelease run config cmd mode prev cur poll max =
+    runReleaseWithPush run config cmd mode prev cur poll max false
 
 [<Fact>]
 let ``updateFsprojVersion - updates Version element in fsproj`` () =
@@ -161,6 +165,8 @@ let ``release - returns 1 when CI not passing`` () =
         match cmd, args with
         | "jj", "diff --summary" -> Success ""
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+        | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
         | "gh", a when a.Contains("run list") ->
             Success """[{"status":"completed","conclusion":"failure","name":"CI","url":"https://example.com/1"}]"""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
@@ -181,6 +187,8 @@ let ``release - Auto with no previous tags returns 0 with no packages`` () =
         match cmd, args with
         | "jj", "diff --summary" -> Success ""
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+        | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
         | "gh", a when a.Contains("run list") ->
             Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
         | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -222,6 +230,8 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -284,6 +294,9 @@ let private passingCiRun (extraResponses: (string * string * CommandResult) list
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            // isCommitPushed: the release commit IS on the remote (non-empty result).
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -467,6 +480,8 @@ let ``waitForCi - polls until CI passes`` () =
     let run (cmd: string) (args: string) : CommandResult =
         match cmd, args with
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+        | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
         | "gh", a when a.Contains("run list") ->
             ghCallCount <- ghCallCount + 1
 
@@ -485,6 +500,8 @@ let ``waitForCi - times out when CI stays in progress`` () =
     let run (cmd: string) (args: string) : CommandResult =
         match cmd, args with
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+        | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
         | "gh", a when a.Contains("run list") ->
             Success """[{"status":"in_progress","conclusion":null,"name":"CI","url":"https://example.com/1"}]"""
         | _ -> Failure(sprintf "unexpected: %s %s" cmd args, 1)
@@ -505,6 +522,8 @@ let ``waitForCi - returns Failed immediately without polling`` () =
     let run (cmd: string) (args: string) : CommandResult =
         match cmd, args with
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+        | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
         | "gh", a when a.Contains("run list") ->
             ghCallCount <- ghCallCount + 1
 
@@ -536,6 +555,8 @@ let ``release - skips packages with no changes since last tag`` () =
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -970,6 +991,8 @@ let ``release - does not push tags when post-push CI fails`` () =
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 ghCallCount <- ghCallCount + 1
 
@@ -1026,6 +1049,8 @@ let ``release - does not push tags when post-push CI times out`` () =
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 ghCallCount <- ghCallCount + 1
 
@@ -1076,6 +1101,8 @@ let ``release - does not push tags when post-push CI has no runs`` () =
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 ghCallCount <- ghCallCount + 1
 
@@ -1091,7 +1118,6 @@ let ``release - does not push tags when post-push CI has no runs`` () =
             | "jj", a when a.StartsWith("commit") -> Success ""
             | "jj", a when a.StartsWith("bookmark set") -> Success ""
             | "jj", "git push" -> Success ""
-            | "jj", "log -r @- --no-graph -T commit_id" -> Success "def456"
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -1115,20 +1141,39 @@ let ``release - does not push tags when post-push CI has no runs`` () =
     finally
         File.Delete(tmpFile)
 
+/// A `gh run list` JSON body with a single completed+successful run — the
+/// release commit's CI is green, so the precondition lets the release proceed.
+let private greenCiJson =
+    """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+
+/// fakeRun cases that make the release commit appear PUSHED with a green CI run,
+/// so the fail-fast precondition passes and the release proceeds. Callers add
+/// their own specifics (e.g. the coverageratchet tool list / loosen result).
+let private pushedGreenCi (cmd: string) (args: string) : CommandResult option =
+    match cmd, args with
+    | "jj", "diff --summary" -> Some(Success "")
+    | "jj", "log -r @ --no-graph -T commit_id" -> Some(Success "abc123")
+    | "jj", "log -r @- --no-graph -T commit_id" -> Some(Success "parent1")
+    | "jj", a when a.Contains("remote_bookmarks()") -> Some(Success "parent1") // pushed
+    | "gh", a when a.Contains("run list") -> Some(Success greenCiJson)
+    | _ -> None
+
 [<Fact>]
-let ``release - uses coverageratchet loosen-from-ci when available`` () =
+let ``release - reconciles coverage via loosen-from-ci after CI is green`` () =
     let mutable calls = []
 
     let fakeRun (cmd: string) (args: string) : CommandResult =
         calls <- calls @ [ (cmd, args) ]
 
-        match cmd, args with
-        | "jj", "diff --summary" -> Success ""
-        | "dotnet", "tool list" -> Success "coverageratchet    0.8.0-alpha.4    coverageratchet"
-        | "dotnet", a when a.StartsWith("tool run coverageratchet loosen-from-ci") -> Success ""
-        | "dotnet", "build -c Release" -> Success "Build succeeded."
-        | "git", arg when arg.StartsWith("tag -l") -> Success ""
-        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
+        match pushedGreenCi cmd args with
+        | Some r -> r
+        | None ->
+            match cmd, args with
+            | "dotnet", "tool list" -> Success "coverageratchet    0.8.0-alpha.4    coverageratchet"
+            | "dotnet", a when a.StartsWith("tool run coverageratchet loosen-from-ci") -> Success ""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
         { Packages = []
@@ -1140,27 +1185,25 @@ let ``release - uses coverageratchet loosen-from-ci when available`` () =
 
     test <@ result = 0 @>
 
-    // Should have called coverageratchet instead of gh run list
+    // The precondition confirms CI is green (gh run list) BEFORE loosen-from-ci.
+    test <@ calls |> List.exists (fun (c, a) -> c = "gh" && a.Contains("run list")) @>
+
     test
         <@
             calls
             |> List.exists (fun (c, a) -> c = "dotnet" && a.Contains("coverageratchet loosen-from-ci"))
         @>
 
-    test <@ not (calls |> List.exists (fun (c, _) -> c = "gh")) @>
-
 [<Fact>]
 let ``release - returns 1 when coverageratchet loosen-from-ci fails`` () =
-    let mutable calls = []
-
     let fakeRun (cmd: string) (args: string) : CommandResult =
-        calls <- calls @ [ (cmd, args) ]
-
-        match cmd, args with
-        | "jj", "diff --summary" -> Success ""
-        | "dotnet", "tool list" -> Success "coverageratchet    0.8.0-alpha.4    coverageratchet"
-        | "dotnet", a when a.StartsWith("tool run coverageratchet loosen-from-ci") -> Failure("CI not green", 1)
-        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
+        match pushedGreenCi cmd args with
+        | Some r -> r
+        | None ->
+            match cmd, args with
+            | "dotnet", "tool list" -> Success "coverageratchet    0.8.0-alpha.4    coverageratchet"
+            | "dotnet", a when a.StartsWith("tool run coverageratchet loosen-from-ci") -> Failure("CI not green", 1)
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
         { Packages = []
@@ -1175,11 +1218,40 @@ let ``release - returns 1 when coverageratchet loosen-from-ci fails`` () =
 [<Fact>]
 let ``release - prints coverageratchet error message when loosen-from-ci fails`` () =
     let fakeRun (cmd: string) (args: string) : CommandResult =
+        match pushedGreenCi cmd args with
+        | Some r -> r
+        | None ->
+            match cmd, args with
+            | "dotnet", "tool list" -> Success "coverageratchet    0.8.0-alpha.4    coverageratchet"
+            | "dotnet", a when a.StartsWith("tool run coverageratchet loosen-from-ci") ->
+                Failure("coverage threshold mismatch", 1)
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
+
+    let config =
+        { Packages = []
+          ReservedVersions = Set.empty
+          PreBuildCmds = []
+          RootDir = "" }
+
+    let output, result =
+        withCapturedConsole (fun () -> runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10)
+
+    test <@ result = 1 @>
+    test <@ output.Contains("coverage threshold mismatch") @>
+
+[<Fact>]
+let ``release - fails fast with actionable push-first message when commit isn't pushed`` () =
+    let mutable calls = []
+
+    let fakeRun (cmd: string) (args: string) : CommandResult =
+        calls <- calls @ [ (cmd, args) ]
+
         match cmd, args with
         | "jj", "diff --summary" -> Success ""
-        | "dotnet", "tool list" -> Success "coverageratchet    0.8.0-alpha.4    coverageratchet"
-        | "dotnet", a when a.StartsWith("tool run coverageratchet loosen-from-ci") ->
-            Failure("CI failed for non-coverage reasons.", 1)
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+        // NOT pushed: remote_bookmarks() ancestry query is empty.
+        | "jj", a when a.Contains("remote_bookmarks()") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
@@ -1192,16 +1264,52 @@ let ``release - prints coverageratchet error message when loosen-from-ci fails``
         withCapturedConsole (fun () -> runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10)
 
     test <@ result = 1 @>
-    test <@ output.Contains("CI failed for non-coverage reasons.") @>
+
+    // Actionable: tells the user to push, mentions --push, and explains why.
+    test <@ output.Contains("hasn't been pushed") @>
+    test <@ output.Contains("--push") @>
+    test <@ output.Contains("loosen-from-ci") @>
+
+    // MUST NOT mislabel an unpushed commit as a CI failure.
+    test <@ not (output.Contains("CI failed")) @>
+
+    // Fail-fast: never polled CI, never built, never reconciled coverage.
+    test <@ not (calls |> List.exists (fun (c, a) -> c = "gh" && a.Contains("run list"))) @>
+    test <@ not (calls |> List.exists (fun (c, a) -> c = "dotnet" && a = "build -c Release")) @>
+
+    test
+        <@
+            not (
+                calls
+                |> List.exists (fun (c, a) -> c = "dotnet" && a.Contains("loosen-from-ci"))
+            )
+        @>
+
+    // Fail-fast and did NOT push implicitly.
+    test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push")) @>
 
 [<Fact>]
-let ``release - returns 1 when CI has no runs`` () =
+let ``release - with --push pushes the commit then waits for CI when not pushed`` () =
+    // First the commit isn't pushed; --push pushes it; after the push the
+    // remote_bookmarks ancestry succeeds and CI is green.
+    let mutable pushed = false
+    let mutable calls = []
+
     let fakeRun (cmd: string) (args: string) : CommandResult =
+        calls <- calls @ [ (cmd, args) ]
+
         match cmd, args with
         | "jj", "diff --summary" -> Success ""
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
-        | "gh", a when a.Contains("run list") -> Success "[]"
-        | "jj", "log -r @- --no-graph -T commit_id" -> Success "def456"
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+        | "jj", a when a.Contains("remote_bookmarks()") -> Success(if pushed then "parent1" else "")
+        | "jj", "git push" ->
+            pushed <- true
+            Success ""
+        | "gh", a when a.Contains("run list") -> Success greenCiJson
+        | "dotnet", "tool list" -> Success "" // no coverageratchet -> reconciliation no-op
+        | "dotnet", "build -c Release" -> Success "Build succeeded."
+        | "git", arg when arg.StartsWith("tag -l") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
@@ -1210,16 +1318,50 @@ let ``release - returns 1 when CI has no runs`` () =
           PreBuildCmds = []
           RootDir = "" }
 
-    let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
+    let result =
+        runReleaseWithPush fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10 true
 
-    test <@ result = 1 @>
+    test <@ result = 0 @>
+    // --push actually pushed main, then proceeded through the green CI.
+    test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push") @>
 
 [<Fact>]
-let ``release - returns 1 when CI status is Unknown`` () =
+let ``release - distinguishes a genuine CI failure from an unpushed commit`` () =
+    // Commit IS pushed and a run exists that FAILED -> "CI failed" (the real
+    // failure case), distinct from the unpushed precondition.
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
         | "jj", "diff --summary" -> Success ""
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+        | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1" // pushed
+        | "gh", a when a.Contains("run list") ->
+            Success """[{"status":"completed","conclusion":"failure","name":"CI","url":"https://example.com/9"}]"""
+        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
+
+    let config =
+        { Packages = []
+          ReservedVersions = Set.empty
+          PreBuildCmds = []
+          RootDir = "" }
+
+    let output, result =
+        withCapturedConsole (fun () -> runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10)
+
+    test <@ result = 1 @>
+    test <@ output.Contains("CI failed") @>
+    test <@ output.Contains("https://example.com/9") @>
+    test <@ not (output.Contains("hasn't been pushed")) @>
+
+[<Fact>]
+let ``release - returns 1 when CI status is Unknown`` () =
+    // Commit is pushed but gh errors -> Unknown -> error (not the unpushed path).
+    let fakeRun (cmd: string) (args: string) : CommandResult =
+        match cmd, args with
+        | "jj", "diff --summary" -> Success ""
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+        | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
         | "gh", a when a.Contains("run list") -> Failure("gh not installed", 1)
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
@@ -1234,11 +1376,14 @@ let ``release - returns 1 when CI status is Unknown`` () =
     test <@ result = 1 @>
 
 [<Fact>]
-let ``release - returns 1 when CI times out still in progress`` () =
+let ``release - waits then returns 1 when pushed CI times out still in progress`` () =
+    // Commit is pushed but CI never completes -> wait, then timeout error.
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
         | "jj", "diff --summary" -> Success ""
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+        | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
         | "gh", a when a.Contains("run list") ->
             Success """[{"status":"in_progress","conclusion":null,"name":"CI","url":"https://example.com/1"}]"""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
@@ -1252,6 +1397,55 @@ let ``release - returns 1 when CI times out still in progress`` () =
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 2
 
     test <@ result = 1 @>
+
+[<Fact>]
+let ``release - returns 1 when the release commit sha can't be determined`` () =
+    // Clean working copy but neither jj (@ and @-) nor git can yield a sha.
+    let fakeRun (cmd: string) (args: string) : CommandResult =
+        match cmd, args with
+        | "jj", "diff --summary" -> Success ""
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success ""
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success ""
+        | "git", "rev-parse HEAD" -> Failure("not a git repo", 1)
+        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
+
+    let config =
+        { Packages = []
+          ReservedVersions = Set.empty
+          PreBuildCmds = []
+          RootDir = "" }
+
+    let output, result =
+        withCapturedConsole (fun () -> runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10)
+
+    test <@ result = 1 @>
+    test <@ output.Contains("could not determine the release commit") @>
+
+[<Fact>]
+let ``release - pushed commit whose CI run never registers times out`` () =
+    // Commit is pushed but `gh run list` stays empty (no run ever registers);
+    // waitForCi polls to timeout and reports NoRuns honestly (not "CI failed").
+    let fakeRun (cmd: string) (args: string) : CommandResult =
+        match cmd, args with
+        | "jj", "diff --summary" -> Success ""
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+        | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1" // pushed
+        | "gh", a when a.Contains("run list") -> Success "[]"
+        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
+
+    let config =
+        { Packages = []
+          ReservedVersions = Set.empty
+          PreBuildCmds = []
+          RootDir = "" }
+
+    let output, result =
+        withCapturedConsole (fun () -> runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 2)
+
+    test <@ result = 1 @>
+    test <@ output.Contains("no CI run registered") @>
+    test <@ not (output.Contains("CI failed")) @>
 
 [<Fact>]
 let ``release - PromoteToRC with HasPreviousRelease succeeds`` () =
@@ -1368,6 +1562,8 @@ let ``waitForCi - returns Passed immediately when CI passes`` () =
     let run (cmd: string) (args: string) : CommandResult =
         match cmd, args with
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+        | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
         | "gh", a when a.Contains("run list") ->
             ghCallCount <- ghCallCount + 1
 
@@ -1383,6 +1579,8 @@ let ``waitForCi - returns NoRuns immediately`` () =
     let run (cmd: string) (args: string) : CommandResult =
         match cmd, args with
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+        | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
         | "gh", a when a.Contains("run list") -> Success "[]"
         | "jj", "diff --summary" -> Success "M src/Foo.fs"
         | _ -> Failure(sprintf "unexpected: %s %s" cmd args, 1)
@@ -1395,6 +1593,8 @@ let ``waitForCi - returns Unknown immediately`` () =
     let run (cmd: string) (args: string) : CommandResult =
         match cmd, args with
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+        | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
         | "gh", a when a.Contains("run list") -> Failure("gh not found", 1)
         | _ -> Failure(sprintf "unexpected: %s %s" cmd args, 1)
 
@@ -1453,6 +1653,8 @@ let ``release - resumes when fsproj already has target version (idempotent)`` ()
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -1513,6 +1715,8 @@ let ``release - fails fast when resuming and CI has failed`` () =
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 ghCallCount <- ghCallCount + 1
 
@@ -1566,6 +1770,8 @@ let ``release - resumes and polls when CI is in progress`` () =
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 ghCallCount <- ghCallCount + 1
 
@@ -1628,6 +1834,8 @@ let ``release - second run after successful first run produces no changes`` () =
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -1677,6 +1885,8 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -1708,7 +1918,8 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
                   CheckPublished = (fun _ _ -> true)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
-                  NuGetMaxAttempts = 1 }
+                  NuGetMaxAttempts = 1
+                  Push = false }
 
         test <@ result = 1 @>
         // fsproj untouched
@@ -1810,7 +2021,8 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
                       CheckPublished = (fun _ _ -> true)
                       WaitForNuGet = false
                       NuGetPollIntervalMs = 0
-                      NuGetMaxAttempts = 1 })
+                      NuGetMaxAttempts = 1
+                      Push = false })
 
         test <@ result = 0 @>
 
@@ -1841,6 +2053,8 @@ let ``release - resume in DryRun mode takes no actions and returns 0`` () =
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "jj", a when a.Contains("tag list") && a.Contains("\"glob:v") -> Success "v0.1.0-alpha.1"
@@ -1887,6 +2101,8 @@ let ``release - resume with LocalPublish packs without pushing`` () =
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -1990,7 +2206,8 @@ let private runReleaseWithNuGetWait run config cmd checkPublished maxAttempts =
           CheckPublished = checkPublished
           WaitForNuGet = true
           NuGetPollIntervalMs = 0
-          NuGetMaxAttempts = maxAttempts }
+          NuGetMaxAttempts = maxAttempts
+          Push = false }
 
 [<Fact>]
 let ``release - waits for NuGet after pushing tags and checks the published package`` () =
@@ -2122,7 +2339,8 @@ let private runReleaseTargeting run config cmd mode targets =
           CheckPublished = (fun _ _ -> true)
           WaitForNuGet = false
           NuGetPollIntervalMs = 0
-          NuGetMaxAttempts = 1 }
+          NuGetMaxAttempts = 1
+          Push = false }
 
 [<Fact>]
 let ``release - scoped to one package only tags that package`` () =
@@ -2303,6 +2521,8 @@ let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -2410,6 +2630,8 @@ let ``release - Auto with fsproj equal to last tag has nothing to do (not a resu
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -2509,6 +2731,8 @@ let ``release - multi-package mixed: one mid-release resumes, one fresh bumps`` 
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -2616,7 +2840,8 @@ let private runReleaseInRoot run config cmd =
           CheckPublished = (fun _ _ -> true)
           WaitForNuGet = false
           NuGetPollIntervalMs = 0
-          NuGetMaxAttempts = 1 }
+          NuGetMaxAttempts = 1
+          Push = false }
 
 [<Fact>]
 let ``release - Auto rebundles when only a bundled dependency changed`` () =
@@ -2631,6 +2856,8 @@ let ``release - Auto rebundles when only a bundled dependency changed`` () =
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -2683,6 +2910,8 @@ let ``release - Auto skips when neither own nor dependency changed`` () =
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -2725,6 +2954,8 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -2769,7 +3000,8 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
                   CheckPublished = (fun _ _ -> true)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
-                  NuGetMaxAttempts = 1 }
+                  NuGetMaxAttempts = 1
+                  Push = false }
 
         test <@ result = 0 @>
         test <@ File.ReadAllText(toolFsproj).Contains("<Version>1.1.0</Version>") @>)
@@ -2787,6 +3019,8 @@ let ``release - explicit command rebundles on dependency-only change`` () =
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -2845,6 +3079,8 @@ let ``release - dependency-only rebundle skips a reserved explicit version`` () 
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -2916,6 +3152,8 @@ let ``release - library does NOT rebundle when only a separately-published depen
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -2965,7 +3203,8 @@ let ``release - library does NOT rebundle when only a separately-published depen
                   CheckPublished = (fun _ _ -> true)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
-                  NuGetMaxAttempts = 1 }
+                  NuGetMaxAttempts = 1
+                  Push = false }
 
         test <@ result = 0 @>
         // Lib's closure excludes Core (separately published) => no dep change =>
@@ -3012,6 +3251,8 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -3060,7 +3301,8 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
                   CheckPublished = (fun _ _ -> true)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
-                  NuGetMaxAttempts = 1 }
+                  NuGetMaxAttempts = 1
+                  Push = false }
 
         test <@ result = 0 @>
         // PackAsTool bundles Core => Core's change triggers a rebundle patch bump.
@@ -3106,6 +3348,8 @@ let ``release - library rebundles when a non-configured helper dependency change
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -3147,7 +3391,8 @@ let ``release - library rebundles when a non-configured helper dependency change
                   CheckPublished = (fun _ _ -> true)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
-                  NuGetMaxAttempts = 1 }
+                  NuGetMaxAttempts = 1
+                  Push = false }
 
         test <@ result = 0 @>
         // Helper is bundled (not separately published) => rebundle patch bump.
@@ -3182,6 +3427,8 @@ let ``release - pushes main before creating tags so a push failure leaves no orp
             match cmd, args with
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."

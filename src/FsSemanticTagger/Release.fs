@@ -40,6 +40,11 @@ type ReleaseInput =
         WaitForNuGet: bool
         NuGetPollIntervalMs: int
         NuGetMaxAttempts: int
+        /// Opt-in (`--push`): when the release commit isn't on the remote yet,
+        /// push it and wait for its CI before proceeding, instead of failing
+        /// fast. Default `false` keeps auto-push off, because pushing to a
+        /// branch-protected / PR-gated `main` is unsafe to do implicitly.
+        Push: bool
     }
 
 /// Restrict `packages` to those whose `Name` appears in `targetNames`.
@@ -265,9 +270,94 @@ let internal changelogPathsFor (config: ToolConfig) (pkg: PackageConfig) : (stri
         |> List.distinct
         |> List.map (fun dir -> pkg.Name, System.IO.Path.Combine(dir, "CHANGELOG.md"))
 
-let private runCiCheck (input: ReleaseInput) : Result<unit, int> =
+/// The actionable error printed when the release commit isn't on the remote, so
+/// no CI run could ever exist for it. Names the fix and points at `--push` —
+/// crucially, it never mislabels a *missing* run as a *failed* one (the old
+/// behaviour, which ran the full local CI first and then reported "CI failed for
+/// non-coverage reasons"). Kept as a value so the wording is pinned by one test.
+let internal notPushedMessage: string =
+    "Error: the release commit isn't on the remote, so no CI run exists for it (it \
+     hasn't been pushed yet).\n\
+     loosen-from-ci needs the commit's CI coverage artifact (to reconcile the \
+     Linux-CI vs local coverage floors), so the commit must be pushed and its CI \
+     must finish first.\n\
+     Push the branch and wait for CI, then re-run the release — or pass --push to \
+     push and wait for CI automatically."
+
+/// Wait for the release commit's CI to complete and translate the terminal
+/// status into a release verdict. Reused for both "already pushed" and
+/// "just pushed via --push" — the single place that polls CI for the release
+/// commit and decides go / no-go:
+///
+///   * `Passed`     -> proceed.
+///   * `Failed`     -> the REAL failure case: a run exists and failed. Error
+///                     "CI failed", naming each failing run's URL.
+///   * `NoRuns`     -> polled to timeout and no run ever registered (rare on a
+///                     pushed commit). Surface it honestly, distinct from a push
+///                     precondition.
+///   * `InProgress` -> still running after the timeout; re-run later.
+///   * `Unknown`    -> couldn't read CI status (e.g. `gh` missing).
+let private waitForReleaseCi (input: ReleaseInput) : Result<unit, int> =
+    match waitForCi input.Run input.CiPollIntervalMs input.CiMaxAttempts with
+    | Passed -> Ok()
+    | Failed runs ->
+        printfn "Error: CI failed for the release commit. Fix CI before releasing."
+
+        for r in runs do
+            printfn "  FAILED: %s — %s" r.Name r.Url
+
+        Error 1
+    | NoRuns ->
+        printfn "Error: no CI run registered for the release commit before the timeout. Re-run the release."
+        Error 1
+    | InProgress _ ->
+        printfn "Error: CI still running after timeout. Re-run the release once it finishes."
+        Error 1
+    | Unknown ->
+        printfn "Error: could not determine the release commit's CI status (is `gh` installed and authenticated?)."
+        Error 1
+
+/// FAIL-FAST CI precondition, run *before* the expensive coverage reconciliation.
+/// Splits the historical "no CI run" failure into its two real causes:
+///
+///   * commit NOT on the remote  -> with `--push`, push then wait for CI;
+///                                  otherwise FAIL FAST with `notPushedMessage`
+///                                  (don't run anything expensive first).
+///   * commit on the remote      -> WAIT for its CI to register/finish and
+///                                  classify the result (`waitForReleaseCi`).
+///                                  This covers the right-after-push race where
+///                                  the run isn't registered yet — we poll for it
+///                                  rather than erroring, exactly as the bump
+///                                  commit's CI is already waited on.
+///
+/// A normal `release` after a push therefore just waits for CI itself; the user
+/// never hand-rolls a `gh run watch` loop.
+let private confirmReleaseCommitCiGreen (input: ReleaseInput) : Result<unit, int> =
+    match releaseCommitSha input.Run with
+    | None ->
+        printfn "Error: could not determine the release commit (no VCS sha). Cannot verify CI before releasing."
+        Error 1
+    | Some sha ->
+        if isCommitPushed input.Run sha then
+            // On the remote already: a run will exist or is on its way — wait for it.
+            waitForReleaseCi input
+        elif input.Push then
+            printfn "Release commit isn't pushed yet; --push given, pushing and waiting for CI..."
+            pushMain input.Run
+            waitForReleaseCi input
+        else
+            printfn "%s" notPushedMessage
+            Error 1
+
+/// Reconcile the local coverage floors against the green CI run's coverage
+/// artifact (`coverageratchet loosen-from-ci`). Runs only *after* the CI
+/// precondition has confirmed the commit is pushed and CI is green, so it can
+/// never hit loosen-from-ci's "no CI runs" path — it does the coverage
+/// reconciliation it is actually for. A no-op when coverageratchet isn't a local
+/// tool.
+let private reconcileCoverageFromCi (input: ReleaseInput) : Result<unit, int> =
     if hasCoverageRatchet input.Run then
-        printfn "Using coverageratchet loosen-from-ci for CI check..."
+        printfn "Reconciling coverage floors from the green CI run (coverageratchet loosen-from-ci)..."
 
         match input.Run "dotnet" "tool run coverageratchet loosen-from-ci" with
         | Success _ -> Ok()
@@ -279,24 +369,7 @@ let private runCiCheck (input: ReleaseInput) : Result<unit, int> =
 
             Error 1
     else
-        match waitForCi input.Run input.CiPollIntervalMs input.CiMaxAttempts with
-        | Passed -> Ok()
-        | Failed runs ->
-            printfn "Error: CI failed"
-
-            for r in runs do
-                printfn "  FAILED: %s — %s" r.Name r.Url
-
-            Error 1
-        | InProgress _ ->
-            printfn "Error: CI still running after timeout"
-            Error 1
-        | NoRuns ->
-            printfn "Error: no CI runs found for the current commit"
-            Error 1
-        | Unknown ->
-            printfn "Error: could not determine CI status"
-            Error 1
+        Ok()
 
 let private preReleaseChecks (input: ReleaseInput) : Result<unit, int> =
     match input.Mode with
@@ -304,10 +377,16 @@ let private preReleaseChecks (input: ReleaseInput) : Result<unit, int> =
     | PushTags
     | LocalPublish ->
         if hasUncommittedChanges input.Run then
-            printfn "Error: uncommitted changes detected"
+            printfn
+                "Error: uncommitted changes detected. Commit (or, in jj, describe `@`) the working copy before releasing."
+
             Error 1
         else
-            runCiCheck input
+            // Fail-fast precondition FIRST: confirm the release commit is pushed
+            // and its CI is green before any expensive coverage reconciliation.
+            // Only once green do we reconcile coverage floors from the CI artifact.
+            confirmReleaseCommitCiGreen input
+            |> Result.bind (fun () -> reconcileCoverageFromCi input)
 
 let private runPreBuild (input: ReleaseInput) : unit =
     for preBuildCmd in input.Config.PreBuildCmds do
