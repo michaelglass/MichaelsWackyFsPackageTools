@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-## 0.13.0-alpha.14 - 2026-06-13
+- feat: `--push` flag for `release`/`alpha`/`beta`/`rc`/`stable`. When the release commit isn't on the remote yet, `--push` pushes it and waits for its CI before proceeding. Off by default (auto-pushing to a branch-protected / PR-gated `main` is unsafe to do implicitly); the default behaviour is to fail fast and tell you to push.
+- fix: `release` now **fails fast** when the release commit isn't pushed, *before* the expensive build / coverage reconciliation, with an actionable message ("the release commit isn't on the remote … push it, or pass `--push`"). Previously the tool ran the full local CI / `coverageratchet loosen-from-ci` first and only then failed — and worse, mislabelled the never-pushed commit as "CI failed for non-coverage reasons". A missing CI run (commit not pushed) is now reported as a push precondition, kept strictly distinct from a CI run that genuinely *failed* (which still errors and names the failing run's URL). A commit that *is* pushed but whose CI is still running is waited on as before.
+- chore: the uncommitted-changes error now nudges jj users to `describe` `@` ("Commit (or, in jj, describe `@`) the working copy before releasing").
 
 - refactor: `Shell.CommandResult.Failure` now carries the process exit code (`Failure of string * exitCode: int`), unifying it with `CoverageRatchet.Shell`'s shape so the two tools' Shell modules no longer diverge. No behavioral change today — every current match site reads only the message — but the exit code is now available, so a process that exits 1 ("nothing to do") can be told apart from one that exits 128 (e.g. a git/jj auth failure) without a future breaking change. `run` populates it from `Process.ExitCode`.
 

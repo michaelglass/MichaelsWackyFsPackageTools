@@ -226,6 +226,50 @@ let isCiPassing (run: string -> string -> CommandResult) : bool =
     | Passed -> true
     | _ -> false
 
+/// Is the release commit present on the remote? This is the distinction the
+/// fail-fast CI precondition turns on: a commit that isn't on the remote can
+/// NEVER have a CI run (so we fail fast / offer `--push`), whereas a pushed
+/// commit whose run simply hasn't registered or finished yet must be *waited
+/// for*, not failed.
+///
+/// jj-native first: a commit is pushed iff it is an ancestor of some
+/// remote-tracking bookmark (`remote_bookmarks() & ::<sha>` is non-empty). On a
+/// plain-git repo the `jj` call fails and we fall back to
+/// `git branch -r --contains`, which answers the same question. An indeterminate
+/// result (neither VCS could answer) is treated as "not pushed" so the caller
+/// errs toward the safe, actionable "push first" message rather than waiting
+/// forever on a run that will never appear.
+let isCommitPushed (run: string -> string -> CommandResult) (sha: string) : bool =
+    let jjAnswer =
+        runSilent run "jj" (sprintf "log -r \"remote_bookmarks() & ::%s\" --no-graph -T commit_id" sha)
+        |> Option.map (fun out -> out.Trim() <> "")
+
+    match jjAnswer with
+    | Some pushed -> pushed
+    | None ->
+        withJjGitDir (fun () ->
+            match runSilent run "git" (sprintf "branch -r --contains %s" sha) with
+            | Some out -> out.Trim() <> ""
+            | None -> false)
+
+/// The release-commit sha that CI must have run on. In jj, `@` is the working
+/// copy (never itself the pushed/CI'd commit when clean) — the real commit is
+/// `@-`. So when the working copy is clean we report the parent; otherwise the
+/// current commit. Falls back to whatever `getCurrentCommitSha` yields when the
+/// parent can't be read.
+let releaseCommitSha (run: string -> string -> CommandResult) : string option =
+    let parent =
+        if hasUncommittedChanges run then
+            None
+        else
+            match runSilent run "jj" "log -r @- --no-graph -T commit_id" with
+            | Some p when p.Trim() <> "" -> Some(p.Trim())
+            | _ -> None
+
+    match parent with
+    | Some p -> Some p
+    | None -> getCurrentCommitSha run
+
 let hasCoverageRatchet (run: string -> string -> CommandResult) : bool =
     match run "dotnet" "tool list" with
     | Success output -> output.Contains("coverageratchet")

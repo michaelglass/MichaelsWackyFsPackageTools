@@ -8,6 +8,7 @@ type ReleaseFlag =
     | [<CmdFlag(Description = "Preview version bumps without modifying files or creating tags")>] DryRun
     | [<CmdFlag(Description = "Skip polling NuGet for the published package(s) after pushing tags")>] SkipNugetWait
     | [<CmdFlag(Description = "Restrict the run to specific package(s) by name (comma-separated)")>] Only of string
+    | [<CmdFlag(Description = "If the release commit isn't pushed yet, push it and wait for CI instead of failing fast")>] Push
 
 /// Parse the comma-separated value of `--only` (the `Only` flag) into a list of
 /// package names, trimming whitespace and dropping empty entries. Returns [] when
@@ -113,7 +114,8 @@ let internal runReleaseWith
                   CheckPublished = Api.isPublished Api.httpGet run
                   WaitForNuGet = not (flags |> List.contains SkipNugetWait)
                   NuGetPollIntervalMs = 15000
-                  NuGetMaxAttempts = 40 }
+                  NuGetMaxAttempts = 40
+                  Push = flags |> List.contains Push }
         )
 
 let private runRelease (releaseCmd: Release.ReleaseCommand) (flags: ReleaseFlag list) : Result<int, string> =
@@ -236,6 +238,13 @@ Flags:
                      the "name" field in semantic-tagger.json. Absent =
                      all packages. An unknown name is an error listing the
                      valid names.
+  --push             if the release commit isn't on the remote yet, push it
+                     and wait for CI to finish, then proceed. Default: fail
+                     fast with a "push first" message rather than
+                     auto-pushing (unsafe on a branch-protected / PR-gated
+                     main). A commit that IS pushed is always waited on
+                     (its CI is polled until it finishes) with or without
+                     this flag.
 """
     | _ -> None
 
