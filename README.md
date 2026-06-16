@@ -1,7 +1,7 @@
 # MichaelsWackyFsPackageTools
 
 <!-- sync:intro:start -->
-A collection of four dotnet CLI tools that help me maintain my F# open-source projects. They might be useful for yours too!
+A collection of four dotnet CLI tools that aim to make maintaining F# open-source projects a little less tedious. I build them for my own repos; they might suit yours too.
 
 | Tool | What it does |
 |------|-------------|
@@ -10,6 +10,10 @@ A collection of four dotnet CLI tools that help me maintain my F# open-source pr
 | [SyncDocs](src/SyncDocs/) | Helps keep sections of your README in sync with your docs site |
 | [FsProjLint](src/FsProjLint/) | Validates repo and project structure for NuGet-publishable F# projects (fsproj metadata, SourceLink, LICENSE, and more) |
 <!-- sync:intro:end -->
+
+> **Status: early alpha, and substantially AI-written.** These tools run the
+> author's own F# OSS repos daily, but behavior and APIs shift between versions
+> and rough edges are expected — your mileage may vary. Issues and PRs welcome.
 
 <!-- sync:getting-started:start -->
 ## Getting Started
@@ -53,7 +57,7 @@ fsprojlint --help
 
 ### CoverageRatchet
 
-CoverageRatchet reads Cobertura XML coverage reports and enforces per-file thresholds. The key idea: thresholds only go **up**. When your tests improve coverage on a file, the threshold automatically ratchets to the new level so it shouldn't drop back down.
+CoverageRatchet reads Cobertura XML coverage reports and enforces per-file thresholds. The idea: thresholds only go **up**. When your tests improve coverage on a file, the threshold ratchets to the new level so it shouldn't drift back down.
 
 ```bash
 # Ratchet thresholds upward (default command)
@@ -86,8 +90,8 @@ FsSemanticTagger inspects your compiled F# assembly to detect API changes and de
 # Compare two versions of your DLL
 fssemantictagger check-api old/MyLib.dll new/MyLib.dll
 
-# Orchestrate a full release
-fssemantictagger release auto
+# Bump the version and tag based on the API diff since the last release
+fssemantictagger release
 ```
 
 See the [FsSemanticTagger README](src/FsSemanticTagger/) for release workflows and configuration.
@@ -108,7 +112,7 @@ See the [SyncDocs README](src/SyncDocs/) for the full marker format and conventi
 
 ### FsProjLint
 
-FsProjLint is an opinionated validator for F# projects that are meant to be published to NuGet. Run it from your repo root and it discovers every `.fsproj` under `src/` and checks each one — plus repo-level requirements — for OSS readiness: fsproj package metadata, SourceLink, a LICENSE, and more. Exit code 0 means everything passed; exit code 1 means at least one check failed.
+FsProjLint is an opinionated checker for F# projects meant to be published to NuGet. Run it from your repo root and it discovers every `.fsproj` under `src/` and checks each one — plus repo-level requirements — for OSS readiness: fsproj package metadata, SourceLink, a LICENSE, and more. Exit code 0 means everything passed; exit code 1 means at least one check failed.
 
 ```bash
 # Validate repo and project structure (use in CI)
