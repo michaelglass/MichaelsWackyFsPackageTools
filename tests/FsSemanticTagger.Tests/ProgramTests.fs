@@ -499,7 +499,10 @@ let ``runReleaseWith - returns Ok 0 for empty-package config when CI passes`` ()
             match cmd, args with
             | "jj", "diff --summary" -> Shell.Success ""
             | "dotnet", "tool list" -> Shell.Success ""
+            | "jj", a when a.StartsWith("log -r @- ") -> Shell.Success "parentbeef"
             | "jj", a when a.StartsWith("log -r @ ") -> Shell.Success "deadbeef"
+            // isCommitPushed: the release commit IS on the remote.
+            | "jj", a when a.Contains("remote_bookmarks()") -> Shell.Success "parentbeef"
             | "gh", a when a.StartsWith("run list") -> Shell.Success ghPassed
             | "dotnet", "build -c Release" -> Shell.Success ""
             | _ -> Shell.Failure(sprintf "unexpected call: %s %s" cmd args, 1)
