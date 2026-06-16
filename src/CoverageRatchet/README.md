@@ -2,6 +2,8 @@
 
 Per-file code coverage enforcement that only goes up. CoverageRatchet reads your Cobertura XML coverage reports, compares each file against its threshold, and helps prevent coverage from regressing.
 
+> **Status: early alpha, and substantially AI-written.** Runs the author's own F# OSS repos daily, but behavior and flags shift between versions and rough edges are expected — your mileage may vary. Issues and PRs welcome.
+
 ## How It Works
 
 1. Your test suite generates a Cobertura XML coverage report (most .NET coverage tools support this format).
@@ -93,7 +95,7 @@ Pushes current code, polls CI, and if coverage fails:
 2. Merges CI platform thresholds into local config (splitting non-platform entries if needed)
 3. Commits, pushes, and re-polls CI
 
-Requires `gh` CLI and `jj` (or `git`).
+Requires the `gh` CLI plus Git or Jujutsu (jj).
 
 #### Artifact contract
 
@@ -282,10 +284,16 @@ coverageratchet ratchet coverage-ratchet-<project>.json
 
 ## Example Output
 
+`coverageratchet check` groups files into failed and passed, annotating any file that has a lowered threshold:
+
 ```
-  Program.fs: line 87.2% >= 85.5% PASS | branch 80.0% >= 77.0% PASS
-  Sync.fs:    line 100%  >= 100%  PASS | branch 100%  >= 100%  PASS
-  Api.fs:     line 90.0% >= 92.38% FAIL | branch 75.0% >= 73.33% PASS
+FAILED files:
+  FAIL Api.fs: line=90.0% branch=75.0% (3/4 branches) [min: line=92.4% branch=73.3%]
+Passed files:
+  PASS Program.fs: line=87.2% branch=80.0% [min: line=85.5% branch=77.0%]
+  PASS Sync.fs: line=100.0% branch=100.0%
+
+Result: 2/3 files passed
 ```
 
 ## Typical CI Setup

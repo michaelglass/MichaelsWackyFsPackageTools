@@ -2,6 +2,8 @@
 
 Automatic semantic versioning for F# NuGet packages. FsSemanticTagger inspects your compiled DLL to detect API changes and determines the correct version bump according to [Semantic Versioning](https://semver.org/).
 
+> **Status: early alpha, and substantially AI-written.** Runs the author's own F# OSS repos daily, but behavior and flags shift between versions and rough edges are expected — your mileage may vary. Issues and PRs welcome.
+
 ## How It Works
 
 FsSemanticTagger extracts the public API surface from your compiled assembly using reflection metadata. It compares the current API against the previously released version and classifies changes:
@@ -175,6 +177,7 @@ For monorepos or custom setups, create a `semantic-tagger.json`:
 | `packages[].tagPrefix` | string? | Git/jj tag prefix (default: `"v"`) |
 | `packages[].fsProjsSharingSameTag` | string[]? | Other `.fsproj` files to update with the same version |
 | `reservedVersions` | string[]? | Versions to skip |
+| `preBuildCmds` | string[]? | Commands to run before the build that produces each DLL |
 
 ## Pre-release Version Flow
 
