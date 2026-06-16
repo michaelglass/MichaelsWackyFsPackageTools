@@ -40,6 +40,18 @@ on:
         description: 'Command to run for the Lint step. Empty string uses the default `dotnet fsharplint lint <solution>`. Override to e.g. `dotnet run --project src/MyCli -- analyze --run-once` when hosting analyzers in-process.'
         type: string
         default: ''
+      failure-artifacts:
+        description: >-
+          Newline-separated glob(s) uploaded as a CI artifact when the job FAILS,
+          for post-mortem. Defaults to the fshw daemon''s per-test verdict logs +
+          run logs — the console collapses a daemon test failure to `failed: N`
+          and discards the per-test detail, so without this a CI red names no
+          test. Missing paths are ignored (a repo that produces no `.fshw/` just
+          uploads nothing). Set to "none" to disable; override to add custom paths.
+        type: string
+        default: |
+          .fshw/test-runs/**
+          .fshw/**/*.log
 
 permissions:
   contents: read
@@ -160,6 +172,19 @@ jobs:
         with:
           name: coverage-report
           path: coverage/report
+      - name: Upload failure diagnostics
+        # Runs whenever ANY prior step failed (job-level status), so a daemon
+        # `check`/test failure in the Lint step — which writes per-test verdicts
+        # to .fshw/test-runs and logs to .fshw — is captured for post-mortem even
+        # though the console only shows `failed: N`. if-no-files-found: ignore so
+        # a repo with no .fshw/ output (or failure-artifacts: none) is a no-op.
+        if: failure() && inputs.failure-artifacts != 'none'
+        uses: actions/upload-artifact@v7
+        with:
+          name: failure-diagnostics
+          path: ${{ inputs.failure-artifacts }}
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Build examples
         run: |
           if [ "${{ inputs.example-projects }}" = "none" ]; then
