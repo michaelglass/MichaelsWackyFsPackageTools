@@ -2,6 +2,8 @@
 
 Keep your README and docs site in sync automatically. SyncDocs copies marked sections from your README files into your `docs/` folder so documentation never goes stale.
 
+> **Status: early alpha, and substantially AI-written.** Runs the author's own F# OSS repos daily, but behavior and flags shift between versions and rough edges are expected — your mileage may vary. Issues and PRs welcome.
+
 ## How It Works
 
 1. You add HTML comment markers around sections in your README that should be synced.
