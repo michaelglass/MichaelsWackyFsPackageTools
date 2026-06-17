@@ -146,14 +146,14 @@ let internal waitForCi (run: string -> string -> CommandResult) (pollIntervalMs:
 
         match status with
         | NoRuns when attempt < maxAttempts ->
-            printfn "Waiting for CI to start..."
+            printfn "  ...still waiting for CI to start (this is expected — not a hang)"
             System.Threading.Thread.Sleep(pollIntervalMs)
             poll (attempt + 1)
         | InProgress runs when attempt < maxAttempts ->
             let completed =
                 runs |> List.filter (fun r -> r.Status = Vcs.Completed) |> List.length
 
-            printfn "Waiting for CI... (%d/%d runs complete)" completed runs.Length
+            printfn "  ...CI still running (%d/%d runs complete — expected, not a hang)" completed runs.Length
             System.Threading.Thread.Sleep(pollIntervalMs)
             poll (attempt + 1)
         | InProgress _ ->
@@ -201,7 +201,8 @@ let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * 
 
     let pkgVersions = bumps |> List.map (fun (pkg, version) -> pkg.Name, format version)
 
-    printfn "Waiting for CI on version bump commit..."
+    printfn "Waiting for CI on the version-bump commit to pass before pushing the tag (expected, ~1-2 min)..."
+
     let ciStatus = waitForCi run input.CiPollIntervalMs input.CiMaxAttempts
 
     match ciStatus with
@@ -298,6 +299,8 @@ let internal notPushedMessage: string =
 ///   * `InProgress` -> still running after the timeout; re-run later.
 ///   * `Unknown`    -> couldn't read CI status (e.g. `gh` missing).
 let private waitForReleaseCi (input: ReleaseInput) : Result<unit, int> =
+    printfn "Waiting for CI on the release commit to pass before releasing (expected, ~1-2 min)..."
+
     match waitForCi input.Run input.CiPollIntervalMs input.CiMaxAttempts with
     | Passed -> Ok()
     | Failed runs ->
