@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- chore(deps): bump `System.Reflection.MetadataLoadContext` 10.0.8 → 10.0.9.
+
 ## 0.13.0-alpha.16 - 2026-06-17
 
 - chore: the "waiting for CI" output during `release` now reads unmistakably as an expected wait rather than a hang. The entry messages spell out what is happening and how long it takes — "Waiting for CI on the version-bump commit to pass before pushing the tag (expected, ~1-2 min)..." (and the analogous "...on the release commit...before releasing..." on the `--push` / precondition path) — and each interim poll line is now phrased as progress ("...still waiting for CI to start (this is expected — not a hang)", "...CI still running (N/M runs complete — expected, not a hang)") instead of a bare repeated "Waiting for CI...". No behavior change; the tool still polls the bump/release commit's CI before pushing the tag.
