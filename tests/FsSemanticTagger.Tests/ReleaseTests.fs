@@ -389,6 +389,56 @@ let ``release - Auto with reserved version bumps past it`` () =
         File.Delete(tmpFile)
 
 [<Fact>]
+let ``release - Auto with own-changed PackAsTool package skips the API-diff (NU1212 guard) and bumps`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        // A PackAsTool package with a prior tag AND an own-source change (e.g. a CHANGELOG
+        // edit, which lives in the package dir) — the exact shape that flipped FsHotWatch.Cli
+        // onto the API-diff branch on cli-v0.14.0-alpha.2.
+        File.WriteAllText(
+            tmpFile,
+            "<Project><PropertyGroup><PackAsTool>true</PackAsTool><Version>0.14.0-alpha.1</Version></PropertyGroup></Project>"
+        )
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"cli-v*\"", Success "cli-v0.14.0-alpha.1")
+                  // hasChangesSinceTag: the package's own source changed since its tag.
+                  ("jj",
+                   "diff --from cli-v0.14.0-alpha.1 --to @ --summary \"glob:"
+                   + Path.GetDirectoryName(tmpFile)
+                   + "/**\"",
+                   Success "1 file changed") ]
+
+        // A tool has no library API surface — reading the previous release's API fails NU1212.
+        // WITHOUT the fix this routes to CannotDetermine and aborts the release; WITH the fix the
+        // PackAsTool package skips the API-diff entirely, so this fetch must never be reached.
+        let extractPreviousApi (_pkg: string) (_version: string) : PreviousApiResult =
+            FetchError "NU1212: DotnetToolReference project style can only contain references of the DotnetTool type"
+
+        let config =
+            { Packages =
+                [ { Name = "MyTool"
+                    Fsproj = tmpFile
+                    DllPath = "fake.dll"
+                    TagPrefix = "cli-v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let result =
+            runRelease fakeRun config Auto PushTags extractPreviousApi noCurrentApi 0 10
+
+        // Bump determined (NoChange-style alpha increment), NOT CannotDetermine.
+        test <@ result = 0 @>
+        let content = File.ReadAllText(tmpFile)
+        test <@ content.Contains("<Version>0.14.0-alpha.2</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
 let ``release - non-Auto with reserved version skips package`` () =
     let (fakeRun, _getCalls) = passingCiRun []
 
