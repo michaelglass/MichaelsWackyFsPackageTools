@@ -578,8 +578,18 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                     explicitBump DependencyChange
             | true, _ ->
                 // The package's own source changed — existing behaviour unchanged.
-                match input.Command with
-                | Auto ->
+                match input.Command, isPackAsTool (System.IO.File.ReadAllText pkg.Fsproj) with
+                | Auto, true ->
+                    // A PackAsTool package has no library API surface to diff, so an
+                    // own-source change — including a CHANGELOG edit, which lives in the
+                    // package dir and flips `ownChanged` false->true — can't be API-diffed
+                    // against the previous release: a PackageReference to a tool package
+                    // fails NU1212 -> CannotDetermine. Bump NoChange-style like the
+                    // rebundle path; a tool's version story comes from its bundled deps +
+                    // changelog, not a public-API diff.
+                    printfn "Bumping %s: own change to a PackAsTool package (no API to diff) since %s" pkg.Name tag
+                    Some(toDecision OwnChange (skipReserved (determineBump currentVersion NoChange)))
+                | Auto, false ->
                     // Diff against the most recent *published* prior release,
                     // walking back past any orphan tags (whose package never landed
                     // on NuGet) so a missed publish doesn't block the next release.
