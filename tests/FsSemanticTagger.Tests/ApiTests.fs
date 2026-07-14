@@ -6,33 +6,123 @@ open Swensen.Unquote
 open FsSemanticTagger.Api
 
 [<Fact>]
-let ``formatTypeName handles simple types`` () =
-    test <@ formatTypeName typeof<string> = "String" @>
-    test <@ formatTypeName typeof<int> = "Int32" @>
-    test <@ formatTypeName typeof<bool> = "Boolean" @>
+let ``formatTypeName qualifies simple types by full name and assembly`` () =
+    // The comparison key is assembly-qualified: <full name> [<assembly name>].
+    test <@ formatTypeName typeof<string> = "System.String [System.Private.CoreLib]" @>
+    test <@ formatTypeName typeof<int> = "System.Int32 [System.Private.CoreLib]" @>
+    test <@ formatTypeName typeof<bool> = "System.Boolean [System.Private.CoreLib]" @>
 
 [<Fact>]
 let ``formatTypeName handles generic types`` () =
     let resultType = typeof<Result<int, string>>
     let formatted = formatTypeName resultType
-    test <@ formatted <> "FSharpResult`2<Int32, String>" @>
-    // Generic types strip the arity suffix
-    test <@ formatted = "FSharpResult<Int32, String>" @>
+    // The `n arity marker never leaks into the key.
+    test <@ not (formatted.Contains("`")) @>
+    // Arity stripped; the type and every argument carry assembly-qualified full names.
+    test
+        <@
+            formatted = "Microsoft.FSharp.Core.FSharpResult<System.Int32 [System.Private.CoreLib], System.String [System.Private.CoreLib]> [FSharp.Core]"
+        @>
 
 [<Fact>]
 let ``formatTypeName handles FSharpFunc`` () =
     let funcType = typeof<int -> string>
     let formatted = formatTypeName funcType
-    test <@ formatted = "FSharpFunc<Int32, String>" @>
+
+    test
+        <@
+            formatted = "Microsoft.FSharp.Core.FSharpFunc<System.Int32 [System.Private.CoreLib], System.String [System.Private.CoreLib]> [FSharp.Core]"
+        @>
 
 [<Fact>]
 let ``formatTypeName handles arrays`` () =
-    test <@ formatTypeName typeof<string[]> = "String[]" @>
-    test <@ formatTypeName typeof<int[]> = "Int32[]" @>
+    test <@ formatTypeName typeof<string[]> = "System.String [System.Private.CoreLib][]" @>
+    test <@ formatTypeName typeof<int[]> = "System.Int32 [System.Private.CoreLib][]" @>
 
 [<Fact>]
 let ``formatTypeName handles nested generic arrays`` () =
-    test <@ formatTypeName typeof<Result<int, string>[]> = "FSharpResult<Int32, String>[]" @>
+    test
+        <@
+            formatTypeName typeof<Result<int, string>[]> = "Microsoft.FSharp.Core.FSharpResult<System.Int32 [System.Private.CoreLib], System.String [System.Private.CoreLib]> [FSharp.Core][]"
+        @>
+
+[<Fact>]
+let ``formatTypeName renders a generic parameter as its bare name`` () =
+    // A generic parameter ('T) has no assembly identity of its own, so it is not
+    // assembly-qualified — otherwise every generic method would diff on parameter names.
+    let genericParam =
+        typedefof<System.Collections.Generic.List<_>>.GetGenericArguments().[0]
+
+    test <@ formatTypeName genericParam = "T" @>
+
+[<Fact>]
+let ``formatTypeName renders a generic constructed over a type parameter`` () =
+    // `List<'T>` (a generic whose argument is a generic parameter, as in a generic
+    // method signature): the base name keeps its assembly qualification and the 'T
+    // argument recurses to its bare name.
+    let listDef = typedefof<System.Collections.Generic.List<_>>
+    let openList = listDef.MakeGenericType(listDef.GetGenericArguments())
+    test <@ formatTypeName openList = "System.Collections.Generic.List<T> [System.Private.CoreLib]" @>
+
+// --- Assembly-qualified type identity in the comparison key ---
+// A public member whose parameter/return type keeps its short name but moves to a
+// DIFFERENT assembly is a breaking change: a consumer passing the old type no longer
+// compiles. The comparison key must therefore identify a type by assembly + full
+// name, not by its short name. Regression that exposed this: TestPrune.Falco's
+// `FalcoRouteExtension` ctor parameter moved from TestPrune.Core's `Ports.RouteStore`
+// to Falco's own `RouteStore` — both print as "RouteStore" — so the differ saw no
+// change and under-called a MAJOR break as MINOR (2.0.4 -> 2.1.0).
+
+[<Fact>]
+let ``formatTypeName distinguishes same-short-name types from different assemblies`` () =
+    // System.Version (System.Private.CoreLib) and FsSemanticTagger.Version.Version
+    // (this tool's assembly) share the short name "Version" but are different types.
+    let bcl = formatTypeName typeof<System.Version>
+    let own = formatTypeName typeof<FsSemanticTagger.Version.Version>
+    // On the unqualified renderer both are "Version" — this is the blind spot.
+    test <@ bcl <> own @>
+
+[<Fact>]
+let ``differ reports Breaking when a ctor parameter type moves assemblies`` () =
+    // The TestPrune.Falco shape: a ctor whose single parameter kept its short name
+    // ("Version" here, standing in for "RouteStore") but changed assembly between
+    // versions. Rendered through the real formatTypeName exactly as extractFromAssembly
+    // builds a ctor signature, then diffed through the real compare.
+    let ctorSig (paramType: System.Type) =
+        ApiSignature(sprintf "  Holder::.ctor(%s)" (formatTypeName paramType))
+
+    let oldApi =
+        [ ApiSignature "type Holder"; ctorSig typeof<FsSemanticTagger.Version.Version> ]
+
+    let newApi = [ ApiSignature "type Holder"; ctorSig typeof<System.Version> ]
+
+    // On the unqualified renderer both ctor sigs read "  Holder::.ctor(Version)", so
+    // compare sees NoChange and the release under-bumps (MINOR/patch instead of MAJOR).
+    match compare oldApi newApi with
+    | Breaking _ -> ()
+    | other -> failwithf "Expected Breaking for a parameter type that moved assemblies, got %A" other
+
+[<Fact>]
+let ``formatTypeName keys on assembly NAME not assembly VERSION`` () =
+    // Over-correction guard: identity is assembly *name* + full name, never the
+    // assembly *version* — otherwise a routine dependency bump would read as a false
+    // major. The rendered key must carry the assembly's simple name but no version.
+    let rendered = formatTypeName typeof<System.Version>
+    let asmName = typeof<System.Version>.Assembly.GetName().Name
+    test <@ rendered.Contains(asmName) @>
+    test <@ not (rendered.Contains("Version=")) @>
+    test <@ not (System.Text.RegularExpressions.Regex.IsMatch(rendered, @"\d+\.\d+\.\d+")) @>
+
+[<Fact>]
+let ``differ reports NoChange when a ctor parameter type is identical across versions`` () =
+    // Converse of the break test: the same type (same assembly, same full name) on
+    // both sides must stay NoChange. The fix must not flag a stable signature.
+    let ctorSig (paramType: System.Type) =
+        ApiSignature(sprintf "  Holder::.ctor(%s)" (formatTypeName paramType))
+
+    let oldApi = [ ApiSignature "type Holder"; ctorSig typeof<System.Version> ]
+    let newApi = [ ApiSignature "type Holder"; ctorSig typeof<System.Version> ]
+    test <@ compare oldApi newApi = NoChange @>
 
 [<Fact>]
 let ``compare with identical APIs returns NoChange`` () =
@@ -510,15 +600,20 @@ let ``formatTypeName handles nested generic types`` () =
     // List<int> is a generic with one type arg
     let listType = typeof<System.Collections.Generic.List<int>>
     let formatted = formatTypeName listType
-    test <@ formatted = "List<Int32>" @>
+
+    test
+        <@ formatted = "System.Collections.Generic.List<System.Int32 [System.Private.CoreLib]> [System.Private.CoreLib]" @>
 
 [<Fact>]
 let ``formatTypeName handles multi-dimensional arrays`` () =
-    test <@ formatTypeName typeof<int[][]> = "Int32[][]" @>
+    test <@ formatTypeName typeof<int[][]> = "System.Int32 [System.Private.CoreLib][][]" @>
 
 [<Fact>]
 let ``formatTypeName handles generic array combinations`` () =
-    test <@ formatTypeName typeof<System.Collections.Generic.List<string>[]> = "List<String>[]" @>
+    test
+        <@
+            formatTypeName typeof<System.Collections.Generic.List<string>[]> = "System.Collections.Generic.List<System.String [System.Private.CoreLib]> [System.Private.CoreLib][]"
+        @>
 
 [<Fact>]
 let ``compare new DU case with no removals is Breaking`` () =

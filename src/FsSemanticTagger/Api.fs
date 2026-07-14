@@ -250,18 +250,37 @@ let createResolver (dllPath: string) : MetadataAssemblyResolver =
 
     PathAssemblyResolver(uniqueDlls)
 
-/// Format type name, handling generics and arrays
+/// Render a type as a comparison key, handling generics and arrays. A type is
+/// identified by its **assembly name + full name**, not its short name: a member
+/// whose parameter/return type keeps the same short name but moves to a *different*
+/// assembly (e.g. `RouteStore` moving from `TestPrune.Core` to `Falco`) is a breaking
+/// change, and this key makes that visible to the diff (both used to render as the
+/// bare `RouteStore` and looked identical). The assembly *name* is used, never its
+/// *version*, so a routine dependency version bump is not mistaken for a major break.
 let rec formatTypeName (t: Type) : string =
+    // Concrete types have a namespace-qualified FullName; open constructed generics
+    // (e.g. `List<'T>` in a generic method signature) do not — fall back to Name.
+    let fullOrName (ty: Type) =
+        if String.IsNullOrEmpty ty.FullName then
+            ty.Name
+        else
+            ty.FullName
+
     if t.IsArray then
         formatTypeName (t.GetElementType()) + "[]"
+    elif t.IsGenericParameter then
+        // A generic parameter (e.g. 'T) has no assembly identity of its own.
+        t.Name
     elif t.IsGenericType then
-        let baseName = t.Name.Substring(0, t.Name.IndexOf('`'))
+        // Namespace-qualified base name with the `n arity suffix stripped (Split keeps
+        // the whole name unchanged when there is no arity marker).
+        let baseName = (fullOrName t).Split('`').[0]
 
         let args = t.GetGenericArguments() |> Array.map formatTypeName |> String.concat ", "
 
-        sprintf "%s<%s>" baseName args
+        sprintf "%s<%s> [%s]" baseName args (t.Assembly.GetName().Name)
     else
-        t.Name
+        sprintf "%s [%s]" (fullOrName t) (t.Assembly.GetName().Name)
 
 let extractFromAssembly (dllPath: string) : ApiSignature list =
     let resolver = createResolver dllPath
