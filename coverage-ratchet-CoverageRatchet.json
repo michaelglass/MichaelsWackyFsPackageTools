@@ -29,7 +29,7 @@
     "Program.fs": [
       {
         "line": 86,
-        "branch": 83,
+        "branch": 84,
         "reason": "CLI entry point with untestable shell-dependent code",
         "platform": "macos"
       },
@@ -65,7 +65,7 @@
     "Thresholds.fs": [
       {
         "line": 96,
-        "branch": 93,
+        "branch": 96,
         "reason": "F# compiler generates extra branches for pattern matching; platform detection branches unreachable on non-native OS",
         "platform": "macos"
       },

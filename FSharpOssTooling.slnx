@@ -5,6 +5,7 @@
     <Project Path="src/FsSemanticTagger/FsSemanticTagger.fsproj" />
     <Project Path="src/SyncDocs/SyncDocs.fsproj" />
     <Project Path="src/FsProjLint/FsProjLint.fsproj" />
+    <Project Path="src/RefStamp/RefStamp.fsproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Tests.Common/Tests.Common.fsproj" />
@@ -13,5 +14,6 @@
     <Project Path="tests/SyncDocs.Tests/SyncDocs.Tests.fsproj" />
     <Project Path="tests/FsProjLint.Tests/FsProjLint.Tests.fsproj" />
     <Project Path="tests/CoverageRatchet.Core.Tests/CoverageRatchet.Core.Tests.fsproj" />
+    <Project Path="tests/RefStamp.Tests/RefStamp.Tests.fsproj" />
   </Folder>
 </Solution>

@@ -3,14 +3,14 @@
     "Checks.fs": [
       {
         "line": 94,
-        "branch": 89,
+        "branch": 92,
         "reason": "loosened: defensive git-subprocess error branches (Process.Start null, launch exception, command-failure None paths) are not reachable without removing git or a process-mock seam",
         "platform": "macos"
       },
       {
         "line": 83,
         "branch": 78,
-        "reason": "settled from CI coverage-thresholds artifact: the jj-backed code paths (runJj, the IsJj resolveCurrentCommit branch, jj store git-log) require the `jj` binary, which is not installed on the CI runner, so the jj fixtures no-op there and those lines/branches go uncovered on linux; plus the defensive git/jj-subprocess error branches (Process.Start null, launch exception, command-failure None paths) not reachable without a process-mock seam",
+        "reason": "settled from CI coverage-thresholds artifact: the jj-backed code paths (runJj, the IsJj resolveCurrentCommit branch, jj store git-log) require the \u0060jj\u0060 binary, which is not installed on the CI runner, so the jj fixtures no-op there and those lines/branches go uncovered on linux; plus the defensive git/jj-subprocess error branches (Process.Start null, launch exception, command-failure None paths) not reachable without a process-mock seam",
         "platform": "linux"
       }
     ],

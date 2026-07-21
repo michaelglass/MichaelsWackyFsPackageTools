@@ -24,6 +24,11 @@
       "name": "CoverageRatchet.Core",
       "fsproj": "src/CoverageRatchet.Core/CoverageRatchet.Core.fsproj",
       "tagPrefix": "coverageratchet-core-v"
+    },
+    {
+      "name": "RefStamp",
+      "fsproj": "src/RefStamp/RefStamp.fsproj",
+      "tagPrefix": "refstamp-v"
     }
   ]
 }
