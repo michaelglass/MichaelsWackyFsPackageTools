@@ -2,8 +2,8 @@
   "overrides": {
     "Api.fs": [
       {
-        "line": 94,
-        "branch": 83,
+        "line": 95,
+        "branch": 84,
         "reason": "Assembly path resolution depends on runtime environment; reflection branches from compiler; httpGet is a live HttpClient network call exercised only via the injected fetch seam in tests",
         "platform": "macos"
       },
@@ -99,7 +99,7 @@
     "Vcs.fs": [
       {
         "line": 96,
-        "branch": 91,
+        "branch": 92,
         "reason": "All functions call jj/git processes",
         "platform": "macos"
       },

@@ -1,7 +1,7 @@
 # MichaelsWackyFsPackageTools
 
 <!-- sync:intro -->
-A collection of four dotnet CLI tools that aim to make maintaining F# open-source projects a little less tedious. I build them for my own repos; they might suit yours too.
+A collection of dotnet CLI tools (and one MSBuild package) that aim to make maintaining F# open-source projects a little less tedious. I build them for my own repos; they might suit yours too.
 
 | Tool | What it does |
 |------|-------------|
@@ -9,6 +9,7 @@ A collection of four dotnet CLI tools that aim to make maintaining F# open-sourc
 | [FsSemanticTagger](src/FsSemanticTagger/) | Detects API changes in your compiled DLL and determines the correct semantic version bump |
 | [SyncDocs](src/SyncDocs/) | Helps keep sections of your README in sync with your docs site |
 | [FsProjLint](src/FsProjLint/) | Validates repo and project structure for NuGet-publishable F# projects (fsproj metadata, SourceLink, LICENSE, and more) |
+| [RefStamp](src/RefStamp/) | MSBuild guard that derives local `dotnet pack` versions from the jj/git source ref -- a dev machine cannot produce a release-shaped version |
 <!-- sync:intro:end -->
 
 <!-- sync:getting-started -->
