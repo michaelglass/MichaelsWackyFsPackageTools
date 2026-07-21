@@ -27,6 +27,14 @@ Repo-level checks (run once per repo):
     this branch's history leaks into the published history and needs an
     untrack (current) or a history rewrite (history-only). Skipped
     (passes) when the directory is not a git/jj repo.
+  - Local packs are ref-stamped (RefStamp; only when the repo has
+    packable projects): the RefStamp MSBuild guard is wired in — a
+    PackageReference to RefStamp in a root Directory.Build.props/targets
+    (one line, repo-wide), or in every packable fsproj, or a direct
+    Import of RefStamp.targets. The guard makes a local `dotnet pack`
+    derive its version from the jj/git source ref, so a dev machine
+    cannot produce a release-shaped version (never-re-extracted stale
+    NuGet cache entries die with it).
 
 Project-level checks (run for every .fsproj under src/):
   - TreatWarningsAsErrors is true

@@ -4,7 +4,7 @@ Guidance for AI coding agents working in this repo. See `CLAUDE.md` for the same
 
 ## Project
 
-Monorepo of four F# dotnet tools — CoverageRatchet, SyncDocs, FsSemanticTagger, FsProjLint — plus reusable GitHub workflows consumed by 7 sibling F# OSS repos under `/Users/michaelglass/Developer/opensource/`.
+Monorepo of four F# dotnet tools — CoverageRatchet, SyncDocs, FsSemanticTagger, FsProjLint — plus the RefStamp MSBuild package (local packs are versioned off the jj/git ref) and reusable GitHub workflows consumed by 7 sibling F# OSS repos under `/Users/michaelglass/Developer/opensource/`.
 
 ## Before you claim done
 

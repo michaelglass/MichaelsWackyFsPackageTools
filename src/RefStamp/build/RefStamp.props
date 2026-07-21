@@ -1,0 +1,10 @@
+<Project>
+  <!--
+    RefStamp — marker props. The behavior lives in RefStamp.targets (imported
+    by NuGet after the project body). This file exists so consumers and lint
+    tooling can detect the guard at evaluation time.
+  -->
+  <PropertyGroup>
+    <RefStampImported>true</RefStampImported>
+  </PropertyGroup>
+</Project>
