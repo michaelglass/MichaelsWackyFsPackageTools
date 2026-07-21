@@ -323,6 +323,67 @@ let isPackable (doc: XDocument) : bool =
 
     hasPackageId && isPackableProp
 
+// --- RefStamp local-pack guard ----------------------------------------------
+//
+// AUTOMATION-123: a repo that publishes packages must wire in the RefStamp
+// MSBuild guard, so a LOCAL `dotnet pack` derives its version from the jj/git
+// source ref and cannot produce a release-shaped version. This check is the
+// distribution's enforcement arm — sibling repos adopt the guard because
+// fsprojlint tells them to, with the exact line to add.
+//
+// Accepted wirings (any one suffices):
+//   * a root Directory.Build.props / Directory.Build.targets with a
+//     `<PackageReference Include="RefStamp" .../>` — ONE line, repo-wide;
+//   * the same root files with a direct `<Import Project=".../RefStamp.targets"/>`
+//     — how the monorepo that OWNS RefStamp dogfoods it;
+//   * every packable fsproj carrying the PackageReference itself.
+//
+// This is a lint of INTENT (the reference/import is present), not an MSBuild
+// evaluation — an unparseable root file counts as no guard, never as one.
+
+/// Check if a project XML has an `<Import>` of a RefStamp.targets file.
+let private hasRefStampImport (doc: XDocument) : bool =
+    doc.Descendants(XName.Get "Import")
+    |> Seq.exists (fun el ->
+        match el.Attribute(XName.Get "Project") with
+        | null -> false
+        | attr -> attr.Value.EndsWith("RefStamp.targets"))
+
+/// Repo-level check (packable repos only): the RefStamp local-pack guard is
+/// wired in, so `dotnet pack` on a dev machine cannot emit a release-shaped
+/// version. `packableProjects` are the parsed packable fsprojs under src/.
+let checkRefStampGuard (dir: string) (packableProjects: XDocument list) : CheckResult =
+    let hasRefStampGuard (doc: XDocument) =
+        hasPackageRef doc "RefStamp" || hasRefStampImport doc
+
+    let rootGuard =
+        [ "Directory.Build.props"; "Directory.Build.targets" ]
+        |> List.exists (fun name ->
+            let path = Path.Combine(dir, name)
+
+            File.Exists(path)
+            && (try
+                    hasRefStampGuard (XDocument.Load(path))
+                with _ ->
+                    false))
+
+    let perProjectGuard =
+        not (List.isEmpty packableProjects)
+        && packableProjects |> List.forall hasRefStampGuard
+
+    { Name = "Local packs are ref-stamped (RefStamp)"
+      Outcome =
+        if rootGuard || perProjectGuard then
+            Passed
+        else
+            Failed(
+                "Missing the RefStamp local-pack guard: add "
+                + "<PackageReference Include=\"RefStamp\" Version=\"<latest>\" PrivateAssets=\"all\" /> "
+                + "to a root Directory.Build.props (one line, applies repo-wide), so a local "
+                + "`dotnet pack` derives its version from the jj/git source ref instead of "
+                + "producing a release-shaped version"
+            ) }
+
 let private checkPropertyEquals (doc: XDocument) (propName: string) (expected: string) (checkName: string) =
     match getProperty doc propName with
     | Some v when v = expected -> { Name = checkName; Outcome = Passed }
@@ -410,14 +471,22 @@ let runLint (dir: string) : LintResult =
                  [ { Name = "XML parse"
                      Outcome = Failed(sprintf "Failed to parse %s: %s" (Path.GetFileName(p)) msg) } ]))
 
-    let hasPackable =
+    let packableDocs =
         loadResults
-        |> List.exists (fun (_, result) ->
+        |> List.choose (fun (_, result) ->
             match result with
-            | Ok doc -> isPackable doc
-            | Error _ -> false)
+            | Ok doc when isPackable doc -> Some doc
+            | _ -> None)
 
-    let repoChecks = checkRepo dir hasPackable @ [ checkGitignoreLeaks dir ]
+    let hasPackable = not (List.isEmpty packableDocs)
+
+    let repoChecks =
+        checkRepo dir hasPackable
+        @ [ checkGitignoreLeaks dir ]
+        @ (if hasPackable then
+               [ checkRefStampGuard dir packableDocs ]
+           else
+               [])
 
     { RepoChecks = repoChecks
       ProjectChecks = projectChecks }

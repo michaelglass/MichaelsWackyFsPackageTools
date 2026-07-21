@@ -1,0 +1,13 @@
+<Project>
+  <!--
+    Dogfood RefStamp from source (AUTOMATION-123): every local `dotnet pack` in
+    this repo derives its version from the jj/git ref — a release-shaped label
+    is only producible by the release pipeline (CI env, or an explicit
+    -p:ReleaseBuild=true). Consumer repos get the same behavior via ONE
+    PackageReference to the RefStamp package in their root
+    Directory.Build.props; this repo imports the very files that package ships,
+    because it cannot depend on its own unpublished package.
+  -->
+  <Import Project="$(MSBuildThisFileDirectory)src/RefStamp/build/RefStamp.props" />
+  <Import Project="$(MSBuildThisFileDirectory)src/RefStamp/build/RefStamp.targets" />
+</Project>

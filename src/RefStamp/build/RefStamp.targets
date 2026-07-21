@@ -1,0 +1,203 @@
+<Project>
+  <!--
+    RefStamp (AUTOMATION-123): a LOCAL `dotnet pack` derives its version from
+    the jj/git source ref — choosing a release-shaped label is not an available
+    action on a dev machine.
+
+      local, clean:  <Version>-ref.<jj-change-id>.g<commit-id>       (jj)
+                     <Version>-ref.g<head-sha>                       (git)
+      local, dirty:  ...same, with a trailing `.dirty` marker
+                     (git-dirty additionally hashes tracked edits via
+                      `git stash create`, so different dirty trees get
+                      different versions)
+      release:       the clean <Version>, untouched — fssemantictagger owns it.
+
+    "Release" is ONLY: an explicit -p:ReleaseBuild=true (passed by the release
+    pipeline and by fssemantictagger's local-publish path) or a CI environment
+    (GITHUB_ACTIONS / CI env vars). Everything else is a local pack and gets
+    the ref suffix. If the ref cannot be determined (not a repo, jj broken),
+    the pack FAILS — it never silently falls back to the clean version.
+
+    Why the version must track the TREE, not just the change id: NuGet never
+    re-extracts a package version it has already cached, so "same version,
+    different bits" silently runs stale code. jj snapshots edits into a new
+    commit id, so `pack → edit → repack` always yields a new version.
+
+    The `g` marker before hex hashes keeps every dot-separated identifier
+    alphanumeric — a hex-only segment like `012ab3…` could otherwise be an
+    all-digit SemVer identifier with a leading zero, which is invalid.
+
+    Note: `_IsPacking` is set by the `dotnet pack` CLI (build-then-pack and
+    no-build alike) and NOT by `dotnet build`, so the daemon/inner-loop build
+    path never runs the probe and never churns versions. It is an SDK-internal
+    property; tests/RefStamp.Tests is the tripwire for an SDK bump renaming it.
+  -->
+
+  <PropertyGroup>
+    <RefStampReleaseBuild Condition="'$(RefStampReleaseBuild)' == '' and '$(ReleaseBuild)' == 'true'">true</RefStampReleaseBuild>
+    <RefStampReleaseBuild Condition="'$(RefStampReleaseBuild)' == '' and '$(GITHUB_ACTIONS)' == 'true'">true</RefStampReleaseBuild>
+    <RefStampReleaseBuild Condition="'$(RefStampReleaseBuild)' == '' and '$(CI)' == 'true'">true</RefStampReleaseBuild>
+  </PropertyGroup>
+
+  <UsingTask TaskName="RefStampComputeSuffix"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <WorkingDirectory ParameterType="System.String" Required="true" />
+      <Suffix ParameterType="System.String" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.Diagnostics" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Linq" />
+      <Using Namespace="System.Text.RegularExpressions" />
+      <Code Type="Fragment" Language="cs">
+        <![CDATA[
+        // RoslynCodeTaskFactory compiles against netstandard2.0, which has no
+        // ProcessStartInfo.ArgumentList — quote args by hand instead.
+        string Quote(string a)
+        {
+            return "\"" + a.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+        }
+
+        // Returns { exitCode, stdout, stderr }; exitCode "127" = could not launch.
+        string[] Run(string file, string[] args)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = file,
+                    Arguments = string.Join(" ", args.Select(Quote)),
+                    WorkingDirectory = WorkingDirectory,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                using (var p = Process.Start(psi))
+                {
+                    var stdout = p.StandardOutput.ReadToEndAsync();
+                    var stderr = p.StandardError.ReadToEndAsync();
+                    p.WaitForExit();
+                    return new[] { p.ExitCode.ToString(), stdout.Result.Trim(), stderr.Result.Trim() };
+                }
+            }
+            catch (Exception ex)
+            {
+                return new[] { "127", "", ex.GetType().Name + ": " + ex.Message };
+            }
+        }
+
+        // jj first. The probe deliberately snapshots (no --ignore-working-copy):
+        // fresh edits must land in the commit id the version carries.
+        //   non-empty @, described:   ref.<change>.g<commit>          (a real commit — clean)
+        //   non-empty @, undescribed: ref.<change>.g<commit>.dirty    (work in progress)
+        //   empty @:                  the PARENT's ref (the described change you just packed)
+        string template =
+            "if(empty, "
+            + "parents.map(|c| 'ref.' ++ c.change_id().short(8) ++ '.g' ++ c.commit_id().short(12)).join('.'), "
+            + "'ref.' ++ change_id.short(8) ++ '.g' ++ commit_id.short(12) ++ if(description, '', '.dirty'))";
+        var jj = Run("jj", new[] { "log", "--no-graph", "-r", "@", "-T", template });
+        var jjShape = new Regex("^ref(\\.[k-z]{8}\\.g[0-9a-f]{12})+(\\.dirty)?$");
+
+        if (jj[0] == "0" && jjShape.IsMatch(jj[1]))
+        {
+            Suffix = jj[1];
+        }
+        else
+        {
+            // Is this a jj repo whose jj we couldn't use? Then FAIL — under jj,
+            // git HEAD is stale/unreliable (it tracks refs/jj bookkeeping, not
+            // the working copy), so falling through to git would stamp a WRONG
+            // ref, which is worse than no ref.
+            bool inJjRepo = false;
+            for (var d = new DirectoryInfo(WorkingDirectory); d != null; d = d.Parent)
+            {
+                if (Directory.Exists(Path.Combine(d.FullName, ".jj"))) { inJjRepo = true; break; }
+            }
+
+            if (inJjRepo)
+            {
+                Log.LogError(
+                    "RefStamp: this is a jj repo, but jj cannot determine the source ref "
+                    + "(jj exit {0}; stdout '{1}'; stderr '{2}'). Refusing to fall back to git HEAD "
+                    + "(stale under jj) or to a release-shaped version. Fix jj, or — ONLY from the "
+                    + "release pipeline — pass -p:ReleaseBuild=true.",
+                    jj[0], jj[1], jj[2]);
+            }
+            else
+            {
+                var head = Run("git", new[] { "rev-parse", "--verify", "--quiet", "HEAD" });
+                var sha = new Regex("^[0-9a-f]{40}");
+
+                if (head[0] == "0" && sha.IsMatch(head[1]))
+                {
+                    string head12 = head[1].Substring(0, 12);
+                    var porcelain = Run("git", new[] { "status", "--porcelain" });
+
+                    if (porcelain[0] == "0" && porcelain[1].Length == 0)
+                    {
+                        Suffix = "ref.g" + head12;
+                    }
+                    else
+                    {
+                        // `git stash create` hashes the tracked dirty state into a
+                        // (dangling, gc-able) commit — different dirty trees can't
+                        // share a version. Untracked-only dirt yields no stash; the
+                        // bare `.dirty` marker still bars a release-shaped label.
+                        var stash = Run("git", new[] { "stash", "create" });
+                        string dirtyHash =
+                            (stash[0] == "0" && sha.IsMatch(stash[1])) ? ".g" + stash[1].Substring(0, 12) : "";
+                        Suffix = "ref.g" + head12 + ".dirty" + dirtyHash;
+                    }
+                }
+                else
+                {
+                    Log.LogError(
+                        "RefStamp: cannot determine the source ref for this pack — not a jj or git "
+                        + "repository (or jj/git is unavailable) at '{0}'. A local pack must carry the "
+                        + "ref it was built from; refusing to emit a release-shaped version. "
+                        + "jj said: exit {1}, '{2}'. git said: exit {3}, '{4}'. "
+                        + "If this IS the release pipeline, pass -p:ReleaseBuild=true.",
+                        WorkingDirectory, jj[0], (jj[1] + " " + jj[2]).Trim(), head[0], (head[1] + " " + head[2]).Trim());
+                }
+            }
+        }
+        ]]>
+      </Code>
+    </Task>
+  </UsingTask>
+
+  <!--
+    Runs once per project, before the assembly version is stamped (build phase
+    of a pack) and before the nuspec is generated — so the BINARY's
+    informational version and the PACKAGE version carry the same ref.
+    PackageVersion must be re-derived here: its evaluation-time default
+    captured the pre-suffix $(Version).
+  -->
+  <Target Name="RefStampApplyVersion"
+          BeforeTargets="GetAssemblyVersion;GenerateNuspec"
+          Condition="'$(_IsPacking)' == 'true' and '$(RefStampReleaseBuild)' != 'true'">
+    <RefStampComputeSuffix WorkingDirectory="$(MSBuildProjectDirectory)">
+      <Output TaskParameter="Suffix" PropertyName="_RefStampSuffix" />
+    </RefStampComputeSuffix>
+
+    <!-- The inline task reports failure via Log.LogError but (as a code
+         fragment) still returns success — stop the target HERE so the only
+         failure the user sees is the ref-determination error, never a
+         half-stamped 'X.Y.Z-' version. -->
+    <Error Condition="'$(_RefStampSuffix)' == ''"
+           Text="RefStamp: no source ref was determined — see the error above. The pack is refused rather than allowed to produce a release-shaped version." />
+
+    <PropertyGroup Condition="'$(_RefStampSuffix)' != ''">
+      <Version>$(Version)-$(_RefStampSuffix)</Version>
+      <PackageVersion>$(Version)</PackageVersion>
+    </PropertyGroup>
+
+    <Message Importance="high"
+             Condition="'$(_RefStampSuffix)' != ''"
+             Text="RefStamp: local pack → $(PackageId) $(PackageVersion)" />
+  </Target>
+</Project>

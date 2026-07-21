@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- change: `release --publish` now packs with `-p:ReleaseBuild=true` (AUTOMATION-123). Local-publish is the release pipeline running on a dev machine — it owns the clean semver it just computed, and the explicit flag is what the RefStamp guard honors; without it, a RefStamp-guarded repo would refuse the release-shaped version.
+
 ## 0.13.0-alpha.17 - 2026-07-15
 
 - fix: the API differ now identifies a type by its **assembly name + full name**, not its short name, so a public member whose parameter/return/property type keeps the same short name but **moves to a different assembly** is correctly detected as a **breaking change**. Previously such a move was invisible — the two types rendered identically (e.g. a `RouteStore` parameter moving from `TestPrune.Core` to a package's own `Falco.RouteStore` both printed as `RouteStore`) — so the differ saw no change and computed a **minor** bump for what is actually a **major** break (a consumer passing the old type no longer compiles). **This can change the computed bump level for consumers:** an assembly-move break that previously released as minor/patch will now correctly release as major. The identity uses the assembly *name* only, never its *version*, so a routine dependency version bump is not mistaken for a breaking change. The rendered signatures (shown by `extract-api` / `check-api` and in release diff output) are now assembly-qualified, e.g. `System.String [System.Private.CoreLib]`.

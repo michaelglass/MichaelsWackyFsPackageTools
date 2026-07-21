@@ -338,10 +338,17 @@ let ``release - StartAlpha with LocalPublish calls dotnet pack`` () =
         let calls = getCalls ()
         test <@ result = 0 @>
 
+        // LocalPublish IS the release pipeline packing on a dev machine: it must
+        // carry the explicit release flag or the RefStamp guard (AUTOMATION-123)
+        // would refuse the clean, release-shaped version it just computed.
         test
             <@
                 calls
-                |> List.exists (fun (c, a) -> c = "dotnet" && a.StartsWith("pack") && a.Contains(tmpFile))
+                |> List.exists (fun (c, a) ->
+                    c = "dotnet"
+                    && a.StartsWith("pack")
+                    && a.Contains(tmpFile)
+                    && a.Contains("-p:ReleaseBuild=true"))
             @>
     finally
         File.Delete(tmpFile)

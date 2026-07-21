@@ -235,7 +235,11 @@ let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * 
 
 let private packLocally (run: string -> string -> CommandResult) (bumps: (PackageConfig * Version) list) : int =
     for (pkg, _version) in bumps do
-        runOrFail run "dotnet" (sprintf "pack %s -c Release -o artifacts/" pkg.Fsproj)
+        // -p:ReleaseBuild=true: local-publish is the RELEASE pipeline running on
+        // a dev machine — it owns the clean semver it just computed. Without the
+        // flag the RefStamp guard (AUTOMATION-123) would refuse to emit a
+        // release-shaped version from a local pack.
+        runOrFail run "dotnet" (sprintf "pack %s -c Release -p:ReleaseBuild=true -o artifacts/" pkg.Fsproj)
         |> ignore
 
         printfn "Packed: %s" pkg.Name
