@@ -31,6 +31,7 @@ FsProjLint discovers all `.fsproj` files under `src/` and checks them alongside 
 | .editorconfig exists | `.editorconfig` at repo root |
 | docs/index.md exists | Only required when at least one project is packable |
 | No gitignored files in git history | No file matching the repo's `.gitignore` was ever committed on the **current branch's** ancestry — currently tracked **or** history-only. Scope is the branch you're on, not every branch/remote: a leak that lives only on an unrelated experiment branch does not fail the gate here (you care about the history you'll publish from this branch). A gitignored file in this branch's history leaks into the published history (and any clone/SourceLink), so it needs an untrack (currently tracked) or a history rewrite (history-only). Works for both Git and Jujutsu (jj) repos; passes when the directory is not a repo. |
+| Local packs are ref-stamped (RefStamp) | Only required when the repo has packable projects. The [RefStamp](../RefStamp/) MSBuild guard must be wired in, so a local `dotnet pack` derives its version from the jj/git source ref and cannot produce a release-shaped version. Satisfied by a `<PackageReference Include="RefStamp" PrivateAssets="all" />` in a root `Directory.Build.props`/`Directory.Build.targets` (one line, repo-wide), by the same reference in every packable fsproj, or by a direct `<Import>` of `RefStamp.targets`. |
 
 ### Project-level checks (all projects)
 

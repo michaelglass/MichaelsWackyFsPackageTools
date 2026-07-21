@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningLevel>5</WarningLevel>
+    <WarnOn>3390;1104;0020;0044;0025;3391;0067;0021;1182</WarnOn>
+  </PropertyGroup>
+  <PropertyGroup>
+    <PackageId>RefStamp</PackageId>
+    <Version>0.1.0-alpha.1</Version>
+    <Authors>michaelglass</Authors>
+    <Description>MSBuild guard that derives local `dotnet pack` versions from the jj/git source ref, so a dev machine cannot produce a release-shaped version</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/michaelglass/MichaelsWackyFsPackageTools</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>msbuild;pack;versioning;jj;jujutsu;git;nuget</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- Props-only package: the payload is build/RefStamp.{props,targets}; the
+         placeholder assembly is not shipped and no dependencies flow to consumers. -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.300" PrivateAssets="All" />
+    <PackageReference Update="FSharp.Core" Version="10.1.*" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="About.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="build/RefStamp.props" Pack="true" PackagePath="build/" />
+    <None Include="build/RefStamp.targets" Pack="true" PackagePath="build/" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>
