@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- change: `release --publish` now packs with `-p:ReleaseBuild=true` (AUTOMATION-123). Local-publish is the release pipeline running on a dev machine — it owns the clean semver it just computed, and the explicit flag is what the RefStamp guard honors; without it, a RefStamp-guarded repo would refuse the release-shaped version.
 - chore(deps): bump `System.Reflection.MetadataLoadContext` 10.0.8 → 10.0.9.
 
 ## 0.13.0-alpha.16 - 2026-06-17

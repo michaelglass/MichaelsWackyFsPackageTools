@@ -76,15 +76,20 @@ jobs:
       - name: Pre-build
         if: inputs.pre-build-cmd != ''
         run: ${{ inputs.pre-build-cmd }}
-      - run: dotnet build -c Release --no-restore
+      # -p:ReleaseBuild=true is the EXPLICIT release marker the RefStamp guard
+      # honors (AUTOMATION-123): only this pipeline passes it, so only this
+      # pipeline can produce a clean, release-shaped package version. (The
+      # GITHUB_ACTIONS env var would also satisfy the guard; the flag states
+      # the intent rather than relying on where the job happens to run.)
+      - run: dotnet build -c Release --no-restore -p:ReleaseBuild=true
       - name: Pack main package
-        run: dotnet pack ${{ inputs.fsproj-path }} -c Release ${{ inputs.no-build-pack == true && '--no-build' || '' }} -o ./artifacts
+        run: dotnet pack ${{ inputs.fsproj-path }} -c Release -p:ReleaseBuild=true ${{ inputs.no-build-pack == true && '--no-build' || '' }} -o ./artifacts
       - name: Pack extra packages
         if: inputs.extra-fsproj-paths != ''
         run: |
           IFS=',' read -ra PATHS <<< "${{ inputs.extra-fsproj-paths }}"
           for path in "${PATHS[@]}"; do
-            dotnet pack "$path" -c Release ${{ inputs.no-build-pack == true && '--no-build' || '' }} -o ./artifacts
+            dotnet pack "$path" -c Release -p:ReleaseBuild=true ${{ inputs.no-build-pack == true && '--no-build' || '' }} -o ./artifacts
           done
       - name: Get version from tag
         id: version

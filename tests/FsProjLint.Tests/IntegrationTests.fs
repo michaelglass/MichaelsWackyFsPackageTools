@@ -64,6 +64,15 @@ let ``complete valid repo passes all checks`` () =
         createFile dir ".editorconfig" ""
         createFile dir "docs/index.md" ""
         createFile dir "src/MyProject/MyProject.fsproj" packableFsproj
+        // The RefStamp local-pack guard, wired the one-line-per-repo way.
+        createFile
+            dir
+            "Directory.Build.props"
+            """<Project>
+  <ItemGroup>
+    <PackageReference Include="RefStamp" Version="0.1.0" PrivateAssets="all" />
+  </ItemGroup>
+</Project>"""
 
         let result = runLint dir
         let allChecks = result.RepoChecks @ (result.ProjectChecks |> List.collect snd)
@@ -95,7 +104,9 @@ let ``repo with issues reports correct failures`` () =
         test <@ failedNames |> List.contains "README.md exists" @>
         test <@ failedNames |> List.contains ".editorconfig exists" @>
         test <@ failedNames |> List.contains "TreatWarningsAsErrors is true" @>
-        test <@ failedNames |> List.contains "Description present" @>)
+        test <@ failedNames |> List.contains "Description present" @>
+        // Packable repo with no RefStamp wiring: local packs are unguarded.
+        test <@ failedNames |> List.contains "Local packs are ref-stamped (RefStamp)" @>)
 
 [<Fact>]
 let ``runLint with no projects found`` () =
@@ -225,6 +236,15 @@ let ``Program.main returns 0 for fully passing repo`` () =
         createFile tmpDir ".editorconfig" ""
         createFile tmpDir "docs/index.md" ""
         createFile tmpDir "src/MyProject/MyProject.fsproj" packableFsproj
+        // The RefStamp local-pack guard, wired the one-line-per-repo way.
+        createFile
+            tmpDir
+            "Directory.Build.props"
+            """<Project>
+  <ItemGroup>
+    <PackageReference Include="RefStamp" Version="0.1.0" PrivateAssets="all" />
+  </ItemGroup>
+</Project>"""
 
         let prev = Directory.GetCurrentDirectory()
 

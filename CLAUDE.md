@@ -6,6 +6,9 @@ Monorepo containing four dotnet tools for F# OSS project infrastructure:
 - FsSemanticTagger — semantic versioning with API change detection
 - FsProjLint — validates repo/project structure for NuGet-publishable F# projects
 
+Plus one MSBuild package (not a CLI tool):
+- RefStamp — local `dotnet pack` versions derive from the jj/git source ref, so a dev machine cannot produce a release-shaped version (consumed via `<PackageReference Include="RefStamp" PrivateAssets="all" />` in a consumer repo's root `Directory.Build.props`; dogfooded here via `Directory.Build.targets` importing `src/RefStamp/build/RefStamp.targets`)
+
 ## Tool Distribution
 
 All tools are NuGet dotnet tools (`PackAsTool=true`), published via Trusted Publishing (OIDC) from `.github/workflows/release.yml`. Currently pre-release (alpha).
