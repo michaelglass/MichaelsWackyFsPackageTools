@@ -34,6 +34,15 @@ type ReleaseInput =
         /// (abort rather than under-bump).
         ExtractPreviousApi: string -> string -> PreviousApiResult
         ExtractCurrentApi: string -> ApiSignature list
+        /// Recover a prior release's realized CLI grammar by (packageName, version),
+        /// and the current build's grammar by DLL path. When BOTH sides yield a
+        /// `Grammar` (i.e. the package is a CommandTree consumer with an unambiguous
+        /// root command), the grammar diff is folded into the API diff (stronger bump
+        /// wins) before `determineBump`, so a `[<Cmd(Name)>]` rename or a flag arity
+        /// change bumps even though the assembly signature is unchanged. Either
+        /// seam returning `None` leaves the API diff in sole charge of the bump.
+        ExtractPreviousGrammar: string -> string -> Grammar option
+        ExtractCurrentGrammar: string -> Grammar option
         CiPollIntervalMs: int
         CiMaxAttempts: int
         CheckPublished: string -> string -> bool
@@ -447,8 +456,10 @@ let private inProgressResumeVersion (input: ReleaseInput) (state: ReleaseState) 
 /// The baseline API to diff the current build against, having walked the release
 /// tags newest-first looking for one whose package is actually published.
 type private BaselineApi =
-    /// Found a published prior release to diff against (its API surface).
-    | BaselineFound of ApiSignature list
+    /// Found a published prior release to diff against: the version it resolved to
+    /// (so the same release's grammar can be fetched at the fold point) and its API
+    /// surface.
+    | BaselineFound of version: Version * api: ApiSignature list
     /// Every prior tag's package is genuinely absent on the feed (all orphan
     /// tags). There is no published prior to diff against, so the caller falls
     /// back to first-release handling rather than guessing or aborting.
@@ -476,7 +487,7 @@ let private resolveBaselineApi
     sortedTags
     |> List.tryPick (fun (tag, version) ->
         match input.ExtractPreviousApi pkg.Name (format version) with
-        | Found api -> Some(BaselineFound api)
+        | Found api -> Some(BaselineFound(version, api))
         | FetchError msg -> Some(BaselineFetchError msg)
         | AbsentOnFeed ->
             printfn
@@ -621,9 +632,23 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                         // exactly as the dependency-rebundle terminal (`depBumpAuto`)
                         // does, rather than aborting or demanding an explicit command.
                         Some(toDecision OwnChange (skipReserved (determineBump currentVersion NoChange)))
-                    | BaselineFound oldApi ->
+                    | BaselineFound(baselineVersion, oldApi) ->
                         let currentApi = input.ExtractCurrentApi pkg.DllPath
-                        let change = compare oldApi currentApi
+                        let apiChange = compare oldApi currentApi
+
+                        // Fold the realized-CLI-grammar diff into the API diff (stronger
+                        // bump wins). Only when BOTH the prior release and the current
+                        // build yield a grammar (a CommandTree consumer with an
+                        // unambiguous root) — otherwise the API diff alone governs.
+                        let change =
+                            match
+                                input.ExtractPreviousGrammar pkg.Name (format baselineVersion),
+                                input.ExtractCurrentGrammar pkg.DllPath
+                            with
+                            | Some previousGrammar, Some currentGrammar ->
+                                Grammar.foldIntoApi apiChange (Grammar.compare previousGrammar currentGrammar)
+                            | _ -> apiChange
+
                         Some(toDecision OwnChange (skipReserved (determineBump currentVersion change)))
                 | _ -> explicitBump OwnChange
         | FirstRelease ->

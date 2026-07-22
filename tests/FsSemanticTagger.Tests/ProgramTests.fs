@@ -421,7 +421,15 @@ let ``runReleaseWith - returns Error when config missing`` () =
         let fakeExtractCur _ = []
 
         let result =
-            runReleaseWith tmpDir fakeRun fakeExtractPrev fakeExtractCur Release.Auto []
+            runReleaseWith
+                tmpDir
+                fakeRun
+                fakeExtractPrev
+                fakeExtractCur
+                (fun _ _ -> None)
+                (fun _ -> None)
+                Release.Auto
+                []
 
         test
             <@
@@ -510,7 +518,8 @@ let ``runReleaseWith - returns Ok 0 for empty-package config when CI passes`` ()
         let extractPrev _ _ = Api.FetchError "should not be called"
         let extractCur _ = []
 
-        let result = runReleaseWith tmpDir fakeRun extractPrev extractCur Release.Auto []
+        let result =
+            runReleaseWith tmpDir fakeRun extractPrev extractCur (fun _ _ -> None) (fun _ -> None) Release.Auto []
 
         test <@ result = Ok 0 @>)
 
@@ -533,6 +542,14 @@ let ``runReleaseWith - returns Ok when config loads (release aborts on uncommitt
         let fakeExtractCur _ = []
 
         let result =
-            runReleaseWith tmpDir fakeRun fakeExtractPrev fakeExtractCur Release.Auto [ Publish ]
+            runReleaseWith
+                tmpDir
+                fakeRun
+                fakeExtractPrev
+                fakeExtractCur
+                (fun _ _ -> None)
+                (fun _ -> None)
+                Release.Auto
+                [ Publish ]
 
         test <@ result = Ok 1 @>)
