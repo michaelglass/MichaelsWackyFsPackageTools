@@ -45,6 +45,12 @@ type ReleaseInput =
         /// fast. Default `false` keeps auto-push off, because pushing to a
         /// branch-protected / PR-gated `main` is unsafe to do implicitly.
         Push: bool
+        /// `--check`: run only the changelog pre-flight (does a changed package
+        /// have an authored-or-derivable `## Unreleased`?) and exit, writing
+        /// nothing and creating no tags. For `mise run ci` — catches an
+        /// unnotable change at PR time instead of at release. Skips the clean-
+        /// working-copy / CI-green preconditions and the build entirely.
+        Check: bool
     }
 
 /// Restrict `packages` to those whose `Name` appears in `targetNames`.
@@ -263,6 +269,26 @@ type BumpDecision =
     /// Auto mode couldn't read the previous release's API, so the bump can't be
     /// computed. We refuse to guess (a breaking change must not ship as a patch).
     | CannotDetermine of PackageConfig * reason: string
+
+/// The bundled-dependency directories whose changes count toward `pkg`: its
+/// transitive `<ProjectReference>` closure, pruned at every separately-released
+/// package boundary (those are NuGet `<dependency>` boundaries, not bundled).
+/// Repo-root-relative, forward slashes. Shared by change-detection and changelog
+/// derivation so both attribute commits to a package identically.
+let internal packageDepDirs (config: ToolConfig) (pkg: PackageConfig) : string list =
+    let separatelyReleased =
+        config.Packages |> List.map (fun p -> p.Fsproj.Replace('\\', '/')) |> Set.ofList
+
+    let isSeparatelyReleased (fsprojRel: string) =
+        separatelyReleased.Contains(fsprojRel.Replace('\\', '/'))
+
+    transitiveBundledRefDirs config.RootDir pkg.Fsproj isSeparatelyReleased
+
+/// Every directory whose changes are attributed to `pkg`: its own source dir
+/// plus its bundled-dependency dirs. The change/description closure used when
+/// deriving the `## Unreleased` section from commits since the last tag.
+let internal packageChangeDirs (config: ToolConfig) (pkg: PackageConfig) : string list =
+    System.IO.Path.GetDirectoryName(pkg.Fsproj) :: packageDepDirs config pkg
 
 /// Collect (packageName, changelogPath) pairs for a package.
 /// Single-package repos use repo-root CHANGELOG.md; multi-package repos use per-fsproj-dir.
@@ -498,21 +524,11 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
     let ownSrcDir = System.IO.Path.GetDirectoryName(pkg.Fsproj)
 
     // A referenced project contributes to this package's change-detection
-    // closure only if its DLL actually ships inside the package. The set of
-    // separately-released packages comes from the configured `Packages`: each
-    // such project is consumed as a NuGet `<dependency>` (not bundled) by a
-    // library, so it's a dependency boundary. (PackAsTool packages bundle
-    // everything regardless — handled inside `transitiveBundledRefDirs`.)
-    let separatelyReleased =
-        input.Config.Packages
-        |> List.map (fun p -> p.Fsproj.Replace('\\', '/'))
-        |> Set.ofList
-
-    let isSeparatelyReleased (fsprojRel: string) =
-        separatelyReleased.Contains(fsprojRel.Replace('\\', '/'))
-
-    let depDirs =
-        transitiveBundledRefDirs input.Config.RootDir pkg.Fsproj isSeparatelyReleased
+    // closure only if its DLL actually ships inside the package. `packageDepDirs`
+    // resolves the transitive `<ProjectReference>` closure pruned at every
+    // separately-released dependency boundary (PackAsTool packages bundle
+    // everything regardless — handled inside `transitiveBundledRefDirs`).
+    let depDirs = packageDepDirs input.Config pkg
 
     match inProgressResumeVersion input state pkg with
     | Some resumeVersion ->
@@ -673,22 +689,42 @@ let private executeBumps
     for (pkg, version) in allBumps do
         printfn "  %s -> %s (tag: %s)" pkg.Name (format version) (toTag pkg.TagPrefix version)
 
+    // For an OwnChange bump, the commit descriptions since the package's latest
+    // tag (over its own + bundled-dependency dirs) are the raw material the
+    // changelog is derived from when `## Unreleased` is empty. A first release
+    // (no prior tag) has no "since last release" range, so it derives nothing and
+    // falls back to requiring a hand-authored entry. DependencyChange bumps get
+    // the fixed rebundle bullet, so they need no descriptions.
+    let descriptionsFor (pkg: PackageConfig) (trigger: BumpTrigger) : string list =
+        match trigger with
+        | DependencyChange -> []
+        | OwnChange ->
+            match getSortedTags input.Run pkg.TagPrefix |> List.tryHead with
+            | Some(tag, _) -> descriptionsSinceTag input.Run tag (packageChangeDirs input.Config pkg)
+            | None -> []
+
     let bumpsWithChangelogs =
         needsBump
-        |> List.map (fun (pkg, v, trigger) -> pkg, v, trigger, changelogPathsFor input.Config pkg)
+        |> List.map (fun (pkg, v, trigger) ->
+            pkg, v, trigger, changelogPathsFor input.Config pkg, descriptionsFor pkg trigger)
 
-    // Only OwnChange bumps are subject to strict `## Unreleased` validation. A
-    // DependencyChange (rebundle) bump's real change lives in the dependency's
-    // changelog, so a missing/empty own section is fine — it's auto-filled at
-    // promote time.
+    // Only OwnChange bumps are subject to `## Unreleased` enforcement, and an
+    // empty section is an error ONLY when it also can't be derived from the
+    // commit descriptions (AUTOMATION-197). A hand-authored section always
+    // passes; a derivable one is filled in at promote time. A DependencyChange
+    // (rebundle) bump's real change lives in the dependency's changelog, so its
+    // missing/empty own section is fine — auto-filled with the rebundle bullet.
     let changelogErrors =
         bumpsWithChangelogs
-        |> List.filter (fun (_, _, trigger, _) -> trigger = OwnChange)
-        |> List.collect (fun (_, _, _, paths) -> paths)
-        |> List.choose (fun (pkgName, path) ->
-            match Changelog.validateUnreleased path with
-            | Ok() -> None
-            | Error err -> Some(pkgName, err))
+        |> List.filter (fun (_, _, trigger, _, _) -> trigger = OwnChange)
+        |> List.collect (fun (_, _, _, paths, descriptions) ->
+            let derivable = not (Changelog.deriveUnreleasedBullets descriptions |> List.isEmpty)
+
+            paths
+            |> List.choose (fun (pkgName, path) ->
+                match Changelog.validateUnreleased path with
+                | Ok() -> None
+                | Error err -> if derivable then None else Some(pkgName, err)))
 
     match input.Mode with
     | DryRun ->
@@ -712,10 +748,17 @@ let private executeBumps
 
         let today = System.DateTime.Today
 
-        for (_, version, trigger, paths) in bumpsWithChangelogs do
+        for (_, version, trigger, paths, descriptions) in bumpsWithChangelogs do
             for (_, path) in paths do
                 match trigger with
-                | OwnChange -> Changelog.promoteUnreleased path version today
+                | OwnChange ->
+                    // Never clobbers a hand-authored entry; derives from commits
+                    // when empty. Pre-validated above, so the Error (empty AND not
+                    // derivable) branch is unreachable — fall back defensively to
+                    // the rebundle placeholder rather than crash.
+                    match Changelog.promoteOrDerive path version today descriptions with
+                    | Ok() -> ()
+                    | Error _ -> Changelog.promoteOrInsert path version today rebundleChangelogBullet
                 | DependencyChange -> Changelog.promoteOrInsert path version today rebundleChangelogBullet
 
         let versionSummary =
@@ -743,6 +786,55 @@ let private executeBumps
         | LocalPublish -> packLocally input.Run allBumps
         | DryRun -> 0
 
+/// `--check`: fail (exit 1) when a package with own-source changes since its
+/// last tag has an empty/missing `## Unreleased` that ALSO can't be derived from
+/// its commit descriptions (AUTOMATION-197). A pre-flight gate for `mise run ci`
+/// so an unnotable change is caught at PR time, not at release. It never builds
+/// or diffs API — derivation needs only the commit descriptions and the
+/// changelog file — and is conservative: a package with no prior tag (nothing to
+/// diff "since"), or whose section is authored or derivable, passes. Mirrors the
+/// release-time enforcement in `executeBumps`.
+let private runChangelogCheck (input: ReleaseInput) (selectedPackages: PackageConfig list) : int =
+    let problems =
+        selectedPackages
+        |> List.collect (fun pkg ->
+            match getSortedTags input.Run pkg.TagPrefix |> List.tryHead with
+            | None -> []
+            | Some(tag, _) ->
+                let ownSrcDir = System.IO.Path.GetDirectoryName pkg.Fsproj
+
+                if not (hasChangesSinceTag input.Run tag ownSrcDir) then
+                    []
+                else
+                    let descriptions =
+                        descriptionsSinceTag input.Run tag (packageChangeDirs input.Config pkg)
+
+                    let derivable = not (Changelog.deriveUnreleasedBullets descriptions |> List.isEmpty)
+
+                    changelogPathsFor input.Config pkg
+                    |> List.choose (fun (pkgName, path) ->
+                        match Changelog.validateUnreleased path with
+                        | Ok() -> None
+                        | Error err -> if derivable then None else Some(pkgName, err)))
+
+    match problems with
+    | [] ->
+        printfn
+            "Changelog check passed: every changed package has an Unreleased entry (authored or derivable from commits)."
+
+        0
+    | ps ->
+        printfn
+            "\nError: changelog check failed — changed package(s) have an empty '## Unreleased' with no commit descriptions to derive from:"
+
+        for (pkgName, err) in ps do
+            printfn "  %s: %s" pkgName (Changelog.formatError err)
+
+        printfn
+            "Fix: add a '## Unreleased' entry, or give the commit(s) a conventional summary (feat:/fix:/chore:/...)."
+
+        1
+
 /// Main release orchestration
 let release (input: ReleaseInput) : int =
     if input.Mode = DryRun then
@@ -765,47 +857,53 @@ let release (input: ReleaseInput) : int =
         if not input.TargetPackages.IsEmpty then
             printfn "Targeting: %s" (selectedPackages |> List.map (fun p -> p.Name) |> String.concat ", ")
 
-        match preReleaseChecks input with
-        | Error code -> code
-        | Ok() ->
-            // Explicit modes (non-Auto) skip API diffing, so the build is only needed
-            // when comparing the current assembly against the previously published one.
-            let needsBuild = input.Mode <> DryRun || input.Command = Auto
+        if input.Check then
+            // `--check` is a pre-flight validation only: no clean-working-copy / CI
+            // preconditions, no build, no writes, no tags.
+            runChangelogCheck input selectedPackages
+        else
 
-            if needsBuild then
-                runPreBuild input
+            match preReleaseChecks input with
+            | Error code -> code
+            | Ok() ->
+                // Explicit modes (non-Auto) skip API diffing, so the build is only needed
+                // when comparing the current assembly against the previously published one.
+                let needsBuild = input.Mode <> DryRun || input.Command = Auto
 
-            let decisions = selectedPackages |> List.choose (decideBump input)
+                if needsBuild then
+                    runPreBuild input
 
-            let cannotDetermine =
-                decisions
-                |> List.choose (function
-                    | CannotDetermine(p, reason) -> Some(p, reason)
-                    | _ -> None)
+                let decisions = selectedPackages |> List.choose (decideBump input)
 
-            let needsBump =
-                decisions
-                |> List.choose (function
-                    | NeedsBump(p, v, trigger) -> Some(p, v, trigger)
-                    | _ -> None)
+                let cannotDetermine =
+                    decisions
+                    |> List.choose (function
+                        | CannotDetermine(p, reason) -> Some(p, reason)
+                        | _ -> None)
 
-            let alreadyBumped =
-                decisions
-                |> List.choose (function
-                    | AlreadyBumped(p, v) -> Some(p, v)
-                    | _ -> None)
+                let needsBump =
+                    decisions
+                    |> List.choose (function
+                        | NeedsBump(p, v, trigger) -> Some(p, v, trigger)
+                        | _ -> None)
 
-            if not cannotDetermine.IsEmpty then
-                printfn "\nError: cannot determine the version bump. Aborting before any writes."
+                let alreadyBumped =
+                    decisions
+                    |> List.choose (function
+                        | AlreadyBumped(p, v) -> Some(p, v)
+                        | _ -> None)
 
-                for (pkg, reason) in cannotDetermine do
-                    printfn "  %s: %s" pkg.Name reason
+                if not cannotDetermine.IsEmpty then
+                    printfn "\nError: cannot determine the version bump. Aborting before any writes."
 
-                1
-            elif needsBump.IsEmpty && alreadyBumped.IsEmpty then
-                printfn "No packages to release"
-                0
-            elif needsBump.IsEmpty then
-                resumeAlreadyBumped input alreadyBumped
-            else
-                executeBumps input needsBump alreadyBumped
+                    for (pkg, reason) in cannotDetermine do
+                        printfn "  %s: %s" pkg.Name reason
+
+                    1
+                elif needsBump.IsEmpty && alreadyBumped.IsEmpty then
+                    printfn "No packages to release"
+                    0
+                elif needsBump.IsEmpty then
+                    resumeAlreadyBumped input alreadyBumped
+                else
+                    executeBumps input needsBump alreadyBumped

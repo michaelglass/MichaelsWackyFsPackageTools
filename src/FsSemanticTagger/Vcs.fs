@@ -80,6 +80,39 @@ let hasChangesSinceTag (run: string -> string -> CommandResult) (tag: string) (p
     | Success output -> output.Trim() <> ""
     | Failure _ -> true
 
+/// Commit descriptions between `tag` (exclusive) and `@`, restricted to commits
+/// that touch any of `paths`. Feeds the `## Unreleased` changelog derivation
+/// (AUTOMATION-197): the raw, full descriptions since the last release for a
+/// package's change closure.
+///
+/// jj-native first: `jj log -r "<tag>..@"` with a `\x1e` (record-separator)
+/// delimited `description` template and the paths as positional filesets. The
+/// half-open `<tag>..@` range excludes the tag commit itself, and a jj revset
+/// yields each commit once so merges don't duplicate. Falls back to
+/// `git log <tag>..HEAD --format=%B%x1e -- <paths>`. Identical descriptions are
+/// de-duplicated (a squash/cherry-pick can repeat one) and blanks dropped;
+/// newest-first order is preserved. Empty when there are no such commits, or
+/// when neither VCS can answer.
+let descriptionsSinceTag (run: string -> string -> CommandResult) (tag: string) (paths: string list) : string list =
+    let splitRecords (output: string) : string list =
+        output.Split('\u001e')
+        |> Array.map (fun s -> s.Trim())
+        |> Array.filter (fun s -> s <> "")
+        |> Array.toList
+        |> List.distinct
+
+    let quoted = paths |> List.map (fun p -> sprintf "\"%s\"" p) |> String.concat " "
+
+    let jjArgs =
+        sprintf "log -r \"%s..@\" --no-graph -T \"description ++ \\\"\\x1e\\\"\" %s" tag quoted
+
+    match run "jj" jjArgs with
+    | Success output -> splitRecords output
+    | Failure _ ->
+        match run "git" (sprintf "log %s..HEAD --format=%%B%%x1e -- %s" tag quoted) with
+        | Success output -> splitRecords output
+        | Failure _ -> []
+
 let getCurrentCommitSha (run: string -> string -> CommandResult) : string option =
     let nonEmpty s =
         let trimmed = (s: string).Trim()

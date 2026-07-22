@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- feat: `release` no longer needs a hand-written `## Unreleased` entry (AUTOMATION-197). When a changed package's `## Unreleased` section is empty or missing, the release now **derives** it from the commit descriptions since that package's last tag: each commit's summary line becomes a bullet, grouped by conventional-commit prefix (breaking `!` first, then `feat`, `fix`, the remaining types, then un-prefixed commits), with the tool's own `Bump versions:` commits dropped and duplicates removed. A hand-authored `## Unreleased` is **never** clobbered — derivation only fills an empty section. Multi-line jj descriptions contribute just their summary line so the changelog stays readable; commits are attributed per package by path (own source + bundled-dependency dirs). A new `release --check` mode (wired into `mise run ci`) validates, without building or tagging, that every changed package has an authored-or-derivable entry, so an unnotable change is caught at PR time instead of aborting the release.
 - change: `release --publish` now packs with `-p:ReleaseBuild=true` (AUTOMATION-123). Local-publish is the release pipeline running on a dev machine — it owns the clean semver it just computed, and the explicit flag is what the RefStamp guard honors; without it, a RefStamp-guarded repo would refuse the release-shaped version.
 
 ## 0.13.0-alpha.17 - 2026-07-15
