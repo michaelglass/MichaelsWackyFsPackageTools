@@ -9,6 +9,7 @@ type ReleaseFlag =
     | [<CmdFlag(Description = "Skip polling NuGet for the published package(s) after pushing tags")>] SkipNugetWait
     | [<CmdFlag(Description = "Restrict the run to specific package(s) by name (comma-separated)")>] Only of string
     | [<CmdFlag(Description = "If the release commit isn't pushed yet, push it and wait for CI instead of failing fast")>] Push
+    | [<CmdFlag(Description = "Only check that each changed package has an authored-or-derivable Unreleased entry, then exit (for CI)")>] Check
 
 /// Parse the comma-separated value of `--only` (the `Only` flag) into a list of
 /// package names, trimming whitespace and dropping empty entries. Returns [] when
@@ -119,7 +120,8 @@ let internal runReleaseWith
                   WaitForNuGet = not (flags |> List.contains SkipNugetWait)
                   NuGetPollIntervalMs = 15000
                   NuGetMaxAttempts = 40
-                  Push = flags |> List.contains Push }
+                  Push = flags |> List.contains Push
+                  Check = flags |> List.contains Check }
         )
 
 let private runRelease (releaseCmd: Release.ReleaseCommand) (flags: ReleaseFlag list) : Result<int, string> =
@@ -259,6 +261,14 @@ Flags:
                      main). A commit that IS pushed is always waited on
                      (its CI is polled until it finishes) with or without
                      this flag.
+  --check            validate only: for every changed package, confirm its
+                     `## Unreleased` is authored OR derivable from the commit
+                     descriptions since its last tag, then exit. Writes
+                     nothing, creates no tags, and skips the clean-working-
+                     copy / CI preconditions and the build — meant for
+                     `mise run ci`. Exit 1 (naming the package) when a
+                     changed package has an empty section and no commits to
+                     derive from; exit 0 otherwise.
 """
     | _ -> None
 

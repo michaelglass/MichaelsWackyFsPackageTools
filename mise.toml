@@ -100,7 +100,7 @@ depends = ["build"]
 depends = ["format", "lint", "lint-project", "sync-docs", "docs", "coverage-ratchet", "check-docs-index"]
 
 [tasks.ci]
-depends = ["format-check", "lint", "lint-project", "sync-docs-check", "docs", "coverage-check", "check-docs-index"]
+depends = ["format-check", "lint", "lint-project", "sync-docs-check", "docs", "coverage-check", "check-docs-index", "changelog-check"]
 
 [tasks.pack]
 run = """
@@ -122,6 +122,11 @@ depends = ["build"]
 
 [tasks.release-alpha]
 run = "dotnet run --project src/FsSemanticTagger/FsSemanticTagger.fsproj --no-build -- alpha"
+depends = ["build"]
+
+[tasks.changelog-check]
+description = "Fail if a changed package has an empty '## Unreleased' that can't be derived from commits"
+run = "dotnet run --project src/FsSemanticTagger/FsSemanticTagger.fsproj --no-build -- release --check"
 depends = ["build"]
 
 [tasks.docs]

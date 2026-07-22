@@ -54,7 +54,8 @@ let private runReleaseWithPush run config cmd mode prev cur poll max push =
           WaitForNuGet = false
           NuGetPollIntervalMs = 0
           NuGetMaxAttempts = 1
-          Push = push }
+          Push = push
+          Check = false }
 
 let private runRelease run config cmd mode prev cur poll max =
     runReleaseWithPush run config cmd mode prev cur poll max false
@@ -775,7 +776,8 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
-                  Push = false }
+                  Push = false
+                  Check = false }
 
         test <@ result = 0 @>
         // Grammar break drives a major bump => 2.0.0, despite the unchanged API.
@@ -2058,7 +2060,8 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
-                  Push = false }
+                  Push = false
+                  Check = false }
 
         test <@ result = 1 @>
         // fsproj untouched
@@ -2163,7 +2166,8 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
                       WaitForNuGet = false
                       NuGetPollIntervalMs = 0
                       NuGetMaxAttempts = 1
-                      Push = false })
+                      Push = false
+                      Check = false })
 
         test <@ result = 0 @>
 
@@ -2350,7 +2354,8 @@ let private runReleaseWithNuGetWait run config cmd checkPublished maxAttempts =
           WaitForNuGet = true
           NuGetPollIntervalMs = 0
           NuGetMaxAttempts = maxAttempts
-          Push = false }
+          Push = false
+          Check = false }
 
 [<Fact>]
 let ``release - waits for NuGet after pushing tags and checks the published package`` () =
@@ -2485,7 +2490,8 @@ let private runReleaseTargeting run config cmd mode targets =
           WaitForNuGet = false
           NuGetPollIntervalMs = 0
           NuGetMaxAttempts = 1
-          Push = false }
+          Push = false
+          Check = false }
 
 [<Fact>]
 let ``release - scoped to one package only tags that package`` () =
@@ -2582,7 +2588,8 @@ let ``release - --only on a multi-package repo uses the per-package CHANGELOG, n
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
-                  Push = false }
+                  Push = false
+                  Check = false }
 
         let calls = getCalls ()
         // Per-package changelog found + validated → release proceeded and tagged LibA.
@@ -3057,7 +3064,8 @@ let private runReleaseInRoot run config cmd =
           WaitForNuGet = false
           NuGetPollIntervalMs = 0
           NuGetMaxAttempts = 1
-          Push = false }
+          Push = false
+          Check = false }
 
 [<Fact>]
 let ``release - Auto rebundles when only a bundled dependency changed`` () =
@@ -3219,7 +3227,8 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
-                  Push = false }
+                  Push = false
+                  Check = false }
 
         test <@ result = 0 @>
         test <@ File.ReadAllText(toolFsproj).Contains("<Version>1.1.0</Version>") @>)
@@ -3424,7 +3433,8 @@ let ``release - library does NOT rebundle when only a separately-published depen
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
-                  Push = false }
+                  Push = false
+                  Check = false }
 
         test <@ result = 0 @>
         // Lib's closure excludes Core (separately published) => no dep change =>
@@ -3524,7 +3534,8 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
-                  Push = false }
+                  Push = false
+                  Check = false }
 
         test <@ result = 0 @>
         // PackAsTool bundles Core => Core's change triggers a rebundle patch bump.
@@ -3616,7 +3627,8 @@ let ``release - library rebundles when a non-configured helper dependency change
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
-                  Push = false }
+                  Push = false
+                  Check = false }
 
         test <@ result = 0 @>
         // Helper is bundled (not separately published) => rebundle patch bump.
@@ -3698,3 +3710,203 @@ let ``release - pushes main before creating tags so a push failure leaves no orp
         test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
     finally
         File.Delete(tmpFile)
+
+// --- AUTOMATION-197: derive the Unreleased changelog from commits + --check ---
+
+let private rs = string (char 0x1e)
+
+/// The exact jj args descriptionsSinceTag issues for tag v1.0.0 over a single dir.
+let private descArgsFor (ownDir: string) =
+    sprintf "log -r \"v1.0.0..@\" --no-graph -T \"description ++ \\\"\\x1e\\\"\" \"%s\"" ownDir
+
+let private releaseInput run config cmd mode check : ReleaseInput =
+    { Run = run
+      Config = config
+      Command = cmd
+      Mode = mode
+      TargetPackages = []
+      ExtractPreviousApi = noPreviousApi
+      ExtractCurrentApi = noCurrentApi
+      ExtractPreviousGrammar = noPreviousGrammar
+      ExtractCurrentGrammar = noCurrentGrammar
+      CiPollIntervalMs = 0
+      CiMaxAttempts = 10
+      CheckPublished = (fun _ _ -> true)
+      WaitForNuGet = false
+      NuGetPollIntervalMs = 0
+      NuGetMaxAttempts = 1
+      Push = false
+      Check = check }
+
+/// A single-package repo rooted at `rootDir` with `<Version>1.0.0</Version>` and
+/// the given CHANGELOG body. Returns (fsproj, ownDir, changelogPath, config).
+let private seedSinglePackageRepo (rootDir: string) (changelogBody: string) =
+    let srcDir = Path.Combine(rootDir, "src", "MyLib")
+    Directory.CreateDirectory(srcDir) |> ignore
+    let fsproj = Path.Combine(srcDir, "MyLib.fsproj")
+    File.WriteAllText(fsproj, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
+    let changelog = Path.Combine(rootDir, "CHANGELOG.md")
+    File.WriteAllText(changelog, changelogBody)
+
+    let config =
+        { Packages =
+            [ { Name = "MyLib"
+                Fsproj = fsproj
+                DllPath = "fake.dll"
+                TagPrefix = "v"
+                FsProjsSharingSameTag = [] } ]
+          ReservedVersions = Set.empty
+          PreBuildCmds = []
+          RootDir = rootDir }
+
+    fsproj, Path.GetDirectoryName(fsproj), changelog, config
+
+[<Fact>]
+let ``release - derives the Unreleased section from commits when it is empty`` () =
+    withTempDir (fun rootDir ->
+        let fsproj, ownDir, changelog, config =
+            seedSinglePackageRepo rootDir "# Changelog\n\n## Unreleased\n\n## 1.0.0 - 2026-01-01\n\n- initial\n"
+
+        // feat + fix + a bump-versions noise commit; the noise must be dropped.
+        let descOut =
+            "feat: shiny new capability"
+            + rs
+            + "fix: a subtle bug\n\nlong body that is dropped"
+            + rs
+            + "Bump versions: MyLib 1.0.0"
+            + rs
+
+        let (fakeRun, _) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
+                  ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + ownDir + "/**\"", Success "1 file changed")
+                  ("jj", descArgsFor ownDir, Success descOut) ]
+
+        let result = release (releaseInput fakeRun config StartAlpha PushTags false)
+
+        test <@ result = 0 @>
+        let updated = File.ReadAllText changelog
+        // Derived bullets, feat before fix, noise dropped.
+        test <@ updated.Contains "- feat: shiny new capability" @>
+        test <@ updated.Contains "- fix: a subtle bug" @>
+        test <@ not (updated.Contains "Bump versions") @>
+        let featIdx = updated.IndexOf("- feat: shiny new capability")
+        let fixIdx = updated.IndexOf("- fix: a subtle bug")
+        test <@ featIdx < fixIdx @>
+        // fsproj bumped off 1.0.0.
+        test <@ not ((File.ReadAllText fsproj).Contains "<Version>1.0.0</Version>") @>)
+
+[<Fact>]
+let ``release - never clobbers a hand-authored Unreleased entry (derive skipped)`` () =
+    withTempDir (fun rootDir ->
+        let _fsproj, ownDir, changelog, config =
+            seedSinglePackageRepo
+                rootDir
+                "# Changelog\n\n## Unreleased\n\n- feat: hand-written note\n\n## 1.0.0 - 2026-01-01\n\n- initial\n"
+
+        let (fakeRun, _) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
+                  ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + ownDir + "/**\"", Success "1 file changed")
+                  ("jj", descArgsFor ownDir, Success("feat: derived thing that must NOT appear" + rs)) ]
+
+        let result = release (releaseInput fakeRun config StartAlpha PushTags false)
+
+        test <@ result = 0 @>
+        let updated = File.ReadAllText changelog
+        test <@ updated.Contains "- feat: hand-written note" @>
+        test <@ not (updated.Contains "derived thing") @>)
+
+[<Fact>]
+let ``release - aborts before writes when Unreleased is empty and nothing is derivable`` () =
+    withTempDir (fun rootDir ->
+        let originalChangelog =
+            "# Changelog\n\n## Unreleased\n\n## 1.0.0 - 2026-01-01\n\n- initial\n"
+
+        let fsproj, ownDir, changelog, config =
+            seedSinglePackageRepo rootDir originalChangelog
+
+        // Only bump-versions noise since the tag -> nothing to derive.
+        let (fakeRun, _) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
+                  ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + ownDir + "/**\"", Success "1 file changed")
+                  ("jj", descArgsFor ownDir, Success("Bump versions: MyLib 1.0.0" + rs)) ]
+
+        let result = release (releaseInput fakeRun config StartAlpha PushTags false)
+
+        test <@ result = 1 @>
+        // No writes: fsproj and changelog untouched.
+        test <@ (File.ReadAllText fsproj).Contains "<Version>1.0.0</Version>" @>
+        test <@ File.ReadAllText changelog = originalChangelog @>)
+
+/// fakeRun for `--check`: only the tag lookup, own-change diff, and description
+/// log are exercised (no CI/build — check skips the preconditions entirely).
+let private checkRun (diffOut: string) (logOut: string) =
+    fun (cmd: string) (args: string) ->
+        match cmd, args with
+        | "jj", a when a.StartsWith("tag list") -> Success "v1.0.0"
+        | "jj", a when a.StartsWith("diff --from v1.0.0") -> Success diffOut
+        | "jj", a when a.StartsWith("log -r \"v1.0.0..@\"") -> Success logOut
+        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
+
+[<Fact>]
+let ``release --check fails when a changed package has an empty non-derivable Unreleased`` () =
+    withTempDir (fun rootDir ->
+        let _fsproj, _ownDir, _changelog, config =
+            seedSinglePackageRepo rootDir "# Changelog\n\n## Unreleased\n\n## 1.0.0 - 2026-01-01\n\n- initial\n"
+
+        let run = checkRun "1 file changed" ("Bump versions: MyLib 1.0.0" + rs)
+        let result = release (releaseInput run config Auto PushTags true)
+        test <@ result = 1 @>)
+
+[<Fact>]
+let ``release --check passes when the empty Unreleased is derivable from commits`` () =
+    withTempDir (fun rootDir ->
+        let _fsproj, _ownDir, _changelog, config =
+            seedSinglePackageRepo rootDir "# Changelog\n\n## Unreleased\n\n## 1.0.0 - 2026-01-01\n\n- initial\n"
+
+        let run = checkRun "1 file changed" ("feat: derivable change" + rs)
+        let result = release (releaseInput run config Auto PushTags true)
+        test <@ result = 0 @>)
+
+[<Fact>]
+let ``release --check passes when the Unreleased entry is hand-authored`` () =
+    withTempDir (fun rootDir ->
+        let _fsproj, _ownDir, _changelog, config =
+            seedSinglePackageRepo
+                rootDir
+                "# Changelog\n\n## Unreleased\n\n- feat: authored\n\n## 1.0.0 - 2026-01-01\n\n- initial\n"
+
+        // Even with no derivable commits, an authored entry passes.
+        let run = checkRun "1 file changed" ("Bump versions: MyLib 1.0.0" + rs)
+        let result = release (releaseInput run config Auto PushTags true)
+        test <@ result = 0 @>)
+
+[<Fact>]
+let ``release --check passes when the changed package has no prior tag`` () =
+    withTempDir (fun rootDir ->
+        let _fsproj, _ownDir, _changelog, config =
+            seedSinglePackageRepo rootDir "# Changelog\n\n## Unreleased\n\n## 1.0.0 - 2026-01-01\n\n- initial\n"
+
+        // No tags at all -> nothing to enforce "since".
+        let run =
+            fun (cmd: string) (args: string) ->
+                match cmd, args with
+                | "jj", a when a.StartsWith("tag list") -> Success ""
+                | "git", a when a.StartsWith("tag -l") -> Success ""
+                | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
+
+        let result = release (releaseInput run config Auto PushTags true)
+        test <@ result = 0 @>)
+
+[<Fact>]
+let ``release --check passes when the package has no own-source changes since its tag`` () =
+    withTempDir (fun rootDir ->
+        let _fsproj, _ownDir, _changelog, config =
+            seedSinglePackageRepo rootDir "# Changelog\n\n## Unreleased\n\n## 1.0.0 - 2026-01-01\n\n- initial\n"
+
+        // Own dir unchanged since the tag -> not subject to the changelog gate.
+        let run = checkRun "" ""
+        let result = release (releaseInput run config Auto PushTags true)
+        test <@ result = 0 @>)
