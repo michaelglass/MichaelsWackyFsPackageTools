@@ -8,6 +8,7 @@ open Swensen.Unquote
 open FsSemanticTagger.Shell
 open FsSemanticTagger.Config
 open FsSemanticTagger.Version
+open FsSemanticTagger
 open FsSemanticTagger.Release
 open FsSemanticTagger.Api
 open FsSemanticTagger.Vcs
@@ -18,6 +19,13 @@ open FsSemanticTagger.Vcs
 let private noPreviousApi (_pkg: string) (_version: string) : PreviousApiResult = FetchError "previous API unavailable"
 
 let private noCurrentApi (_dll: string) : ApiSignature list = []
+
+/// Default grammar stubs: no CommandTree grammar to diff, so the API diff alone
+/// governs the bump (the pre-194 behaviour). Tests exercising the grammar fold
+/// pass real grammars instead.
+let private noPreviousGrammar (_pkg: string) (_version: string) : Grammar option = None
+
+let private noCurrentGrammar (_dll: string) : Grammar option = None
 
 /// Release tests put fsproj files in the system temp dir, so CHANGELOG.md
 /// also lives there. Re-seeds before every release call (promotion mutates it).
@@ -38,6 +46,8 @@ let private runReleaseWithPush run config cmd mode prev cur poll max push =
           TargetPackages = []
           ExtractPreviousApi = prev
           ExtractCurrentApi = cur
+          ExtractPreviousGrammar = noPreviousGrammar
+          ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = poll
           CiMaxAttempts = max
           CheckPublished = (fun _ _ -> true)
@@ -705,6 +715,76 @@ let ``release - Auto detects breaking API change and bumps major`` () =
         test <@ content.Contains("<Version>2.0.0</Version>") @>
     finally
         File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - Auto folds a breaking grammar change into the bump when the API is unchanged`` () =
+    // The API surface is byte-identical, so the API diff alone would bump only a
+    // patch. The realized CLI grammar renamed a command (check-api -> diff-api),
+    // which is invisible to the signature diff but breaks every old invocation.
+    // The grammar diff must fold in (stronger wins) and force a MAJOR bump.
+    // Uses a fully isolated temp dir (its own fsproj + CHANGELOG) so it never
+    // contends on the shared Path.GetTempPath()/CHANGELOG.md the other release
+    // tests seed.
+    let dir =
+        Path.Combine(Path.GetTempPath(), "fsst-grammar-fold-" + System.Guid.NewGuid().ToString("N"))
+
+    Directory.CreateDirectory(dir) |> ignore
+
+    try
+        let fsproj = Path.Combine(dir, "MyLib.fsproj")
+        File.WriteAllText(fsproj, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
+        File.WriteAllText(Path.Combine(dir, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n- test entry\n")
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
+                  ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed") ]
+
+        // Identical API surface on both sides => API diff = NoChange.
+        let api = [ ApiSignature "type Foo" ]
+
+        // Grammar renamed a top-level command => GBreaking.
+        let previousGrammar = { Roots = [ Leaf("check-api", [], []) ] }
+        let currentGrammar = { Roots = [ Leaf("diff-api", [], []) ] }
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = fsproj
+                    DllPath = "fake.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = dir }
+
+        let result =
+            release
+                { Run = fakeRun
+                  Config = config
+                  Command = Auto
+                  Mode = PushTags
+                  TargetPackages = []
+                  ExtractPreviousApi = (fun _ _ -> Found api)
+                  ExtractCurrentApi = (fun _ -> api)
+                  ExtractPreviousGrammar = (fun _ _ -> Some previousGrammar)
+                  ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
+                  CiPollIntervalMs = 0
+                  CiMaxAttempts = 10
+                  CheckPublished = (fun _ _ -> true)
+                  WaitForNuGet = false
+                  NuGetPollIntervalMs = 0
+                  NuGetMaxAttempts = 1
+                  Push = false }
+
+        test <@ result = 0 @>
+        // Grammar break drives a major bump => 2.0.0, despite the unchanged API.
+        test <@ (File.ReadAllText fsproj).Contains("<Version>2.0.0</Version>") @>
+    finally
+        try
+            Directory.Delete(dir, true)
+        with _ ->
+            ()
 
 [<Fact>]
 let ``release - Auto detects addition and bumps minor`` () =
@@ -1970,6 +2050,8 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
                   TargetPackages = []
                   ExtractPreviousApi = noPreviousApi
                   ExtractCurrentApi = noCurrentApi
+                  ExtractPreviousGrammar = noPreviousGrammar
+                  ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
                   CheckPublished = (fun _ _ -> true)
@@ -2073,6 +2155,8 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
                       TargetPackages = []
                       ExtractPreviousApi = noPreviousApi
                       ExtractCurrentApi = noCurrentApi
+                      ExtractPreviousGrammar = noPreviousGrammar
+                      ExtractCurrentGrammar = noCurrentGrammar
                       CiPollIntervalMs = 0
                       CiMaxAttempts = 10
                       CheckPublished = (fun _ _ -> true)
@@ -2258,6 +2342,8 @@ let private runReleaseWithNuGetWait run config cmd checkPublished maxAttempts =
           TargetPackages = []
           ExtractPreviousApi = noPreviousApi
           ExtractCurrentApi = noCurrentApi
+          ExtractPreviousGrammar = noPreviousGrammar
+          ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
           CiMaxAttempts = 10
           CheckPublished = checkPublished
@@ -2391,6 +2477,8 @@ let private runReleaseTargeting run config cmd mode targets =
           TargetPackages = targets
           ExtractPreviousApi = noPreviousApi
           ExtractCurrentApi = noCurrentApi
+          ExtractPreviousGrammar = noPreviousGrammar
+          ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
           CiMaxAttempts = 10
           CheckPublished = (fun _ _ -> true)
@@ -2486,6 +2574,8 @@ let ``release - --only on a multi-package repo uses the per-package CHANGELOG, n
                   TargetPackages = [ "LibA" ]
                   ExtractPreviousApi = noPreviousApi
                   ExtractCurrentApi = noCurrentApi
+                  ExtractPreviousGrammar = noPreviousGrammar
+                  ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
                   CheckPublished = (fun _ _ -> true)
@@ -2959,6 +3049,8 @@ let private runReleaseInRoot run config cmd =
           TargetPackages = []
           ExtractPreviousApi = noPreviousApi
           ExtractCurrentApi = noCurrentApi
+          ExtractPreviousGrammar = noPreviousGrammar
+          ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
           CiMaxAttempts = 10
           CheckPublished = (fun _ _ -> true)
@@ -3119,6 +3211,8 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
                   TargetPackages = []
                   ExtractPreviousApi = (fun _ _ -> Found oldApi)
                   ExtractCurrentApi = (fun _ -> currentApi)
+                  ExtractPreviousGrammar = noPreviousGrammar
+                  ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
                   CheckPublished = (fun _ _ -> true)
@@ -3322,6 +3416,8 @@ let ``release - library does NOT rebundle when only a separately-published depen
                   TargetPackages = []
                   ExtractPreviousApi = noPreviousApi
                   ExtractCurrentApi = noCurrentApi
+                  ExtractPreviousGrammar = noPreviousGrammar
+                  ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
                   CheckPublished = (fun _ _ -> true)
@@ -3420,6 +3516,8 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
                   TargetPackages = [ "Cli" ]
                   ExtractPreviousApi = noPreviousApi
                   ExtractCurrentApi = noCurrentApi
+                  ExtractPreviousGrammar = noPreviousGrammar
+                  ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
                   CheckPublished = (fun _ _ -> true)
@@ -3510,6 +3608,8 @@ let ``release - library rebundles when a non-configured helper dependency change
                   TargetPackages = []
                   ExtractPreviousApi = noPreviousApi
                   ExtractCurrentApi = noCurrentApi
+                  ExtractPreviousGrammar = noPreviousGrammar
+                  ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
                   CheckPublished = (fun _ _ -> true)

@@ -41,6 +41,7 @@
     <Compile Include="Version.fs" />
     <Compile Include="Changelog.fs" />
     <Compile Include="Api.fs" />
+    <Compile Include="Grammar.fs" />
     <Compile Include="Config.fs" />
     <Compile Include="Vcs.fs" />
     <Compile Include="Release.fs" />

@@ -26,6 +26,7 @@
     <Compile Include="ReleaseTests.fs" />
     <Compile Include="BumpTests.fs" />
     <Compile Include="ProgramTests.fs" />
+    <Compile Include="GrammarDiffSpec.fs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />

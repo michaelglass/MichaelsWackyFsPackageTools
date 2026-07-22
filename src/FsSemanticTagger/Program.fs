@@ -94,6 +94,8 @@ let internal runReleaseWith
     (run: string -> string -> Shell.CommandResult)
     (extractPreviousApi: string -> string -> Api.PreviousApiResult)
     (extractCurrentApi: string -> Api.ApiSignature list)
+    (extractPreviousGrammar: string -> string -> Grammar option)
+    (extractCurrentGrammar: string -> Grammar option)
     (releaseCmd: Release.ReleaseCommand)
     (flags: ReleaseFlag list)
     : Result<int, string> =
@@ -109,6 +111,8 @@ let internal runReleaseWith
                   TargetPackages = targetPackages flags
                   ExtractPreviousApi = extractPreviousApi
                   ExtractCurrentApi = extractCurrentApi
+                  ExtractPreviousGrammar = extractPreviousGrammar
+                  ExtractCurrentGrammar = extractCurrentGrammar
                   CiPollIntervalMs = 15000
                   CiMaxAttempts = 60
                   CheckPublished = Api.isPublished Api.httpGet run
@@ -124,6 +128,8 @@ let private runRelease (releaseCmd: Release.ReleaseCommand) (flags: ReleaseFlag 
         Shell.run
         (Api.extractPreviousFromNuGetResult Shell.run)
         Api.extractFromAssembly
+        Grammar.extractPreviousGrammarFromNuGet
+        Grammar.extractGrammarFromAssembly
         releaseCmd
         flags
 
@@ -146,7 +152,15 @@ let internal runCommandWith
     | CheckApi(oldDll, newDll) ->
         let oldApi = Api.extractFromAssembly oldDll
         let newApi = Api.extractFromAssembly newDll
-        let change = Api.compare oldApi newApi
+        let apiChange = Api.compare oldApi newApi
+
+        // Fold in the realized-CLI-grammar diff (stronger bump wins) when both DLLs
+        // are CommandTree consumers, so a command/flag rename or arity change — invisible
+        // to the assembly-signature diff — is surfaced by check-api too.
+        let change =
+            match Grammar.extractGrammarFromAssembly oldDll, Grammar.extractGrammarFromAssembly newDll with
+            | Some oldGrammar, Some newGrammar -> Grammar.foldIntoApi apiChange (Grammar.compare oldGrammar newGrammar)
+            | _ -> apiChange
 
         match change with
         | Api.Breaking _ ->

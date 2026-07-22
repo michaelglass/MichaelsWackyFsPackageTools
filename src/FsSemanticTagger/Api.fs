@@ -327,9 +327,17 @@ let extractFromAssembly (dllPath: string) : ApiSignature list =
               yield ApiSignature(sprintf "  %s::.ctor(%s)" t.Name ps) ]
     |> List.sort
 
-/// Try to extract API signatures from a previously published NuGet package
-/// under an arbitrary cache root (cacheRoot/<id>/<version>/{lib,tools}/<tfm>/).
-let extractFromCacheRoot (cacheRoot: string) (packageId: string) (version: string) : ApiSignature list option =
+/// Locate the candidate directories (newest-tfm-first) and expected DLL file name
+/// for a cached package version. Covers the `lib/<tfm>/` (library) and
+/// `tools/<tfm>[/any]/` (dotnet tool) layouts, plus the FSharp.Analyzers.SDK
+/// `analyzers/dotnet/fs/` layout (AUTOMATION-196). Returns `None` when the
+/// package-version directory isn't cached. Shared by the API and grammar
+/// cache-extraction paths so both look in exactly the same places.
+let internal packageCacheSearch
+    (cacheRoot: string)
+    (packageId: string)
+    (version: string)
+    : (string list * string) option =
     let pkgDir = Path.Combine(cacheRoot, packageId.ToLowerInvariant(), version)
 
     if not (Directory.Exists(pkgDir)) then
@@ -364,8 +372,14 @@ let extractFromCacheRoot (cacheRoot: string) (packageId: string) (version: strin
             else
                 []
 
-        let searchDirs = libToolDirs @ analyzerDirs |> List.sortDescending
+        Some(libToolDirs @ analyzerDirs |> List.sortDescending, dllName)
 
+/// Try to extract API signatures from a previously published NuGet package
+/// under an arbitrary cache root (cacheRoot/<id>/<version>/{lib,tools}/<tfm>/).
+let extractFromCacheRoot (cacheRoot: string) (packageId: string) (version: string) : ApiSignature list option =
+    match packageCacheSearch cacheRoot packageId version with
+    | None -> None
+    | Some(searchDirs, dllName) ->
         searchDirs
         |> List.tryPick (fun dir ->
             let dllPath = Path.Combine(dir, dllName)

@@ -48,6 +48,20 @@
         "platform": "linux"
       }
     ],
+    "Grammar.fs": [
+      {
+        "line": 98,
+        "branch": 84,
+        "reason": "AUTOMATION-194: the pure grammar diff is fully covered; the MetadataLoadContext structural walk's remaining gaps are defensive reflection paths that are unreachable from a test (ReflectionTypeLoadException recovery, an explicitly-null attribute named-arg, a CompilationMappingAttribute ctor arg that is not SourceConstructFlags). Floor = achieved macOS coverage.",
+        "platform": "macos"
+      },
+      {
+        "line": 95,
+        "branch": 74,
+        "reason": "Linux CI floor set conservatively below the macOS-achieved value (reflection branch coverage runs lower on Linux, as it does for Api.fs); release-time loosen-from-ci reconciles it to the actual Linux CI coverage.",
+        "platform": "linux"
+      }
+    ],
     "Program.fs": [
       {
         "line": 96,
