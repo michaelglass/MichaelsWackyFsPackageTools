@@ -291,6 +291,68 @@ let ``hasChangesSinceTag - returns true when jj command fails`` () =
 
     test <@ hasChangesSinceTag run "v1.0.0" "src/MyLib" = true @>
 
+// descriptionsSinceTag
+
+/// The exact jj args descriptionsSinceTag issues for a tag + path list.
+let private jjDescArgs (tag: string) (paths: string list) =
+    let quoted = paths |> List.map (fun p -> sprintf "\"%s\"" p) |> String.concat " "
+    sprintf "log -r \"%s..@\" --no-graph -T \"description ++ \\\"\\x1e\\\"\" %s" tag quoted
+
+let private RS = string (char 0x1e)
+
+[<Fact>]
+let ``descriptionsSinceTag - splits the RS-delimited jj output into descriptions`` () =
+    let out = "feat: one" + RS + "fix: two\n\nbody dropped later" + RS
+
+    let run = fakeRun [ ("jj", jjDescArgs "v1.0.0" [ "src/MyLib" ], Success out) ]
+
+    test <@ descriptionsSinceTag run "v1.0.0" [ "src/MyLib" ] = [ "feat: one"; "fix: two\n\nbody dropped later" ] @>
+
+[<Fact>]
+let ``descriptionsSinceTag - drops blank records and de-duplicates identical descriptions`` () =
+    // A merge can surface the same commit's description twice; blanks (e.g. the
+    // trailing empty working-copy commit) must be dropped.
+    let out = "feat: dup" + RS + "" + RS + "feat: dup" + RS + "   " + RS
+
+    let run = fakeRun [ ("jj", jjDescArgs "v1.0.0" [ "src/MyLib" ], Success out) ]
+
+    test <@ descriptionsSinceTag run "v1.0.0" [ "src/MyLib" ] = [ "feat: dup" ] @>
+
+[<Fact>]
+let ``descriptionsSinceTag - passes every path as a quoted fileset`` () =
+    let out = "feat: multi" + RS
+
+    let run =
+        fakeRun [ ("jj", jjDescArgs "v1.0.0" [ "src/MyLib"; "src/Shared" ], Success out) ]
+
+    test <@ descriptionsSinceTag run "v1.0.0" [ "src/MyLib"; "src/Shared" ] = [ "feat: multi" ] @>
+
+[<Fact>]
+let ``descriptionsSinceTag - empty range yields no descriptions`` () =
+    let run = fakeRun [ ("jj", jjDescArgs "v1.0.0" [ "src/MyLib" ], Success "") ]
+
+    test <@ List.isEmpty (descriptionsSinceTag run "v1.0.0" [ "src/MyLib" ]) @>
+
+[<Fact>]
+let ``descriptionsSinceTag - falls back to git log when jj fails`` () =
+    let out = "fix: from git" + RS
+
+    let run =
+        fakeRun
+            [ ("jj", jjDescArgs "v1.0.0" [ "src/MyLib" ], Failure("no jj", 1))
+              ("git", "log v1.0.0..HEAD --format=%B%x1e -- \"src/MyLib\"", Success out) ]
+
+    test <@ descriptionsSinceTag run "v1.0.0" [ "src/MyLib" ] = [ "fix: from git" ] @>
+
+[<Fact>]
+let ``descriptionsSinceTag - returns empty when neither jj nor git can answer`` () =
+    let run =
+        fakeRun
+            [ ("jj", jjDescArgs "v1.0.0" [ "src/MyLib" ], Failure("no jj", 1))
+              ("git", "log v1.0.0..HEAD --format=%B%x1e -- \"src/MyLib\"", Failure("no git", 1)) ]
+
+    test <@ List.isEmpty (descriptionsSinceTag run "v1.0.0" [ "src/MyLib" ]) @>
+
 // getCurrentCommitSha
 
 [<Fact>]
