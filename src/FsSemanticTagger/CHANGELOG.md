@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix: analyzer packages are now API-diffed instead of being mis-reported as orphan tags (AUTOMATION-196). The previous-release assembly resolver only looked under `lib/<tfm>/` (libraries) and `tools/<tfm>/any/` (dotnet tools). An FSharp.Analyzers.SDK analyzer package (`IncludeBuildOutput=false`, `DevelopmentDependency=true`) ships its assembly under `analyzers/dotnet/fs/<id>.dll` with **no** `lib/` folder, so the resolver never found the DLL, `extractFromNuGetCache` returned `None`, and after a successful restore that yielded nothing readable the prior release was classified `AbsentOnFeed` — a false "orphan tag" that meant every analyzer package (e.g. all of CommandTree.Analyzers' published alphas) was silently never diffed. The resolver now also searches `analyzers/**` (covering the `dotnet/fs` and `dotnet/cs` conventions and any TFM nesting), so an analyzer package's API is extracted and compared like any library. Genuinely-absent packages still classify `AbsentOnFeed` (real orphans are not masked), and `lib/`/`tools/` resolution is unchanged.
 - change: `release --publish` now packs with `-p:ReleaseBuild=true` (AUTOMATION-123). Local-publish is the release pipeline running on a dev machine — it owns the clean semver it just computed, and the explicit flag is what the RefStamp guard honors; without it, a RefStamp-guarded repo would refuse the release-shaped version.
 
 ## 0.13.0-alpha.17 - 2026-07-15

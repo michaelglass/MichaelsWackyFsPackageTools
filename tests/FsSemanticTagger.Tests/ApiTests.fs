@@ -596,6 +596,133 @@ let ``extractFromCacheRoot returns signatures for cached tool package`` () =
         System.IO.Directory.Delete(cacheRoot, true)
 
 [<Fact>]
+let ``extractFromCacheRoot finds an analyzer-packaged assembly under analyzers-dotnet-fs`` () =
+    // AUTOMATION-196: an FSharp.Analyzers.SDK analyzer package (IncludeBuildOutput=false,
+    // DevelopmentDependency=true) ships its assembly under analyzers/dotnet/fs/<id>.dll
+    // with NO lib/ folder. The resolver previously searched only lib/ and tools/, so it
+    // never found the DLL -> extractFromCacheRoot returned None -> the package was
+    // mis-reported as an orphan tag (AbsentOnFeed) and never actually API-diffed.
+    //   <root>/fakeanalyzer/1.0.0/analyzers/dotnet/fs/FakeAnalyzer.dll   (and NO lib/)
+    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
+
+    let srcDll =
+        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+
+    let cacheRoot =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fstagger-cache-" + System.Guid.NewGuid().ToString("N"))
+
+    let analyzerDir =
+        System.IO.Path.Combine(cacheRoot, "fakeanalyzer", "1.0.0", "analyzers", "dotnet", "fs")
+
+    System.IO.Directory.CreateDirectory(analyzerDir) |> ignore
+    System.IO.File.Copy(srcDll, System.IO.Path.Combine(analyzerDir, "FakeAnalyzer.dll"))
+    // The resolver needs FSharp.Core (and siblings) alongside for MetadataLoadContext.
+    for dep in System.IO.Directory.GetFiles(System.IO.Path.GetDirectoryName(srcDll), "*.dll") do
+        let destName = System.IO.Path.GetFileName(dep)
+
+        if destName <> "FakeAnalyzer.dll" then
+            System.IO.File.Copy(dep, System.IO.Path.Combine(analyzerDir, destName), true)
+
+    try
+        match extractFromCacheRoot cacheRoot "FakeAnalyzer" "1.0.0" with
+        | Some sigs -> test <@ sigs.Length > 0 @>
+        | None -> failwith "Expected Some signatures from analyzer-packaged fixture cache (analyzers/dotnet/fs)"
+    finally
+        System.IO.Directory.Delete(cacheRoot, true)
+
+[<Fact>]
+let ``extractFromCacheRoot still finds a lib-packaged assembly (lib layout unchanged)`` () =
+    // Regression guard: adding the analyzers/ search path must not disturb the
+    // classic library layout <root>/<id>/<ver>/lib/<tfm>/<id>.dll.
+    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
+
+    let srcDll =
+        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+
+    let cacheRoot =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fstagger-cache-" + System.Guid.NewGuid().ToString("N"))
+
+    let libDir = System.IO.Path.Combine(cacheRoot, "fakelib", "1.0.0", "lib", "net10.0")
+
+    System.IO.Directory.CreateDirectory(libDir) |> ignore
+    System.IO.File.Copy(srcDll, System.IO.Path.Combine(libDir, "FakeLib.dll"))
+
+    for dep in System.IO.Directory.GetFiles(System.IO.Path.GetDirectoryName(srcDll), "*.dll") do
+        let destName = System.IO.Path.GetFileName(dep)
+
+        if destName <> "FakeLib.dll" then
+            System.IO.File.Copy(dep, System.IO.Path.Combine(libDir, destName), true)
+
+    try
+        match extractFromCacheRoot cacheRoot "FakeLib" "1.0.0" with
+        | Some sigs -> test <@ sigs.Length > 0 @>
+        | None -> failwith "Expected Some signatures from lib-packaged fixture cache"
+    finally
+        System.IO.Directory.Delete(cacheRoot, true)
+
+[<Fact>]
+let ``extractFromCacheRoot returns None when a cached package has no assembly (real orphan not masked)`` () =
+    // The analyzers/ fallback must not conjure an API out of nothing: a package dir
+    // that exists but ships no <id>.dll under lib/, tools/ or analyzers/ still yields
+    // None, so genuine orphans keep classifying as AbsentOnFeed downstream.
+    let cacheRoot =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fstagger-cache-" + System.Guid.NewGuid().ToString("N"))
+
+    // A present version dir with an analyzers/ tree but the WRONG dll name inside.
+    let analyzerDir =
+        System.IO.Path.Combine(cacheRoot, "emptypkg", "1.0.0", "analyzers", "dotnet", "fs")
+
+    System.IO.Directory.CreateDirectory(analyzerDir) |> ignore
+    System.IO.File.WriteAllText(System.IO.Path.Combine(analyzerDir, "SomethingElse.dll"), "not the package assembly")
+
+    try
+        test <@ extractFromCacheRoot cacheRoot "EmptyPkg" "1.0.0" = None @>
+    finally
+        System.IO.Directory.Delete(cacheRoot, true)
+
+[<Fact>]
+let ``extractPreviousFromNuGetResult reports Found (not AbsentOnFeed) for an analyzer-packaged cached package`` () =
+    // AUTOMATION-196 end-to-end: an analyzer package whose assembly lives under
+    // analyzers/dotnet/fs/ must resolve from the local cache as Found, NOT be
+    // mis-classified as an orphan tag (AbsentOnFeed). Fixture a GUID-named package
+    // in the real user cache so extractFromNuGetCache (which reads ~/.nuget/packages)
+    // sees it, then assert the cache hit short-circuits before any restore.
+    let home =
+        System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
+
+    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
+
+    let srcDll =
+        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+
+    // Unique lower-cased id so we never collide with a real cached package.
+    let pkgId = "fsst-analyzer-fixture-" + System.Guid.NewGuid().ToString("N")
+
+    let analyzerDir =
+        System.IO.Path.Combine(home, ".nuget", "packages", pkgId, "1.0.0", "analyzers", "dotnet", "fs")
+
+    System.IO.Directory.CreateDirectory(analyzerDir) |> ignore
+    System.IO.File.Copy(srcDll, System.IO.Path.Combine(analyzerDir, pkgId + ".dll"))
+
+    for dep in System.IO.Directory.GetFiles(System.IO.Path.GetDirectoryName(srcDll), "*.dll") do
+        let destName = System.IO.Path.GetFileName(dep)
+
+        if destName <> pkgId + ".dll" then
+            System.IO.File.Copy(dep, System.IO.Path.Combine(analyzerDir, destName), true)
+
+    // If the cache lookup ever falls through to restore, fail loudly: a green
+    // restore would mask the very regression under test.
+    let failRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        FsSemanticTagger.Shell.Failure("restore must not be reached for a cached package", 1)
+
+    try
+        match extractPreviousFromNuGetResult failRun pkgId "1.0.0" with
+        | Found sigs -> test <@ not (List.isEmpty sigs) @>
+        | other -> failwithf "Expected Found for analyzer-packaged cache, got %A" other
+    finally
+        System.IO.Directory.Delete(System.IO.Path.Combine(home, ".nuget", "packages", pkgId), true)
+
+[<Fact>]
 let ``formatTypeName handles nested generic types`` () =
     // List<int> is a generic with one type arg
     let listType = typeof<System.Collections.Generic.List<int>>

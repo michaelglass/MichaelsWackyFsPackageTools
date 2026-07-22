@@ -337,8 +337,8 @@ let extractFromCacheRoot (cacheRoot: string) (packageId: string) (version: strin
     else
         let dllName = packageId + ".dll"
 
-        // Search lib/<tfm>/ (libraries) and tools/<tfm>/any/ (dotnet tools)
-        let searchDirs =
+        // Search lib/<tfm>/ (libraries) and tools/<tfm>/any/ (dotnet tools).
+        let libToolDirs =
             [ Path.Combine(pkgDir, "lib"); Path.Combine(pkgDir, "tools") ]
             |> List.filter Directory.Exists
             |> List.collect (fun dir ->
@@ -347,7 +347,24 @@ let extractFromCacheRoot (cacheRoot: string) (packageId: string) (version: strin
                 |> List.collect (fun tfmDir ->
                     // lib/<tfm>/ has DLLs directly; tools/<tfm>/any/ has them nested
                     [ tfmDir; Path.Combine(tfmDir, "any") ] |> List.filter Directory.Exists))
-            |> List.sortDescending
+
+        // An FSharp.Analyzers.SDK analyzer package (IncludeBuildOutput=false,
+        // DevelopmentDependency=true) ships its assembly under
+        // analyzers/dotnet/fs/<id>.dll (the SDK convention; C# analyzers use
+        // .../cs/) with NO lib/. Without this, the resolver never found the DLL and
+        // the package was mis-reported as an orphan tag (AbsentOnFeed) and never
+        // API-diffed. Recurse under analyzers/ so any nesting (fs/cs, or a TFM
+        // sub-folder) is covered while lib/tools layouts stay untouched.
+        let analyzerDirs =
+            let analyzersRoot = Path.Combine(pkgDir, "analyzers")
+
+            if Directory.Exists analyzersRoot then
+                Directory.GetDirectories(analyzersRoot, "*", SearchOption.AllDirectories)
+                |> Array.toList
+            else
+                []
+
+        let searchDirs = libToolDirs @ analyzerDirs |> List.sortDescending
 
         searchDirs
         |> List.tryPick (fun dir ->
