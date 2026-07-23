@@ -681,7 +681,16 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                 // fsproj already at the target version as AlreadyBumped and skip the
                 // changelog promotion) is correct here: FirstRelease has no prior tag,
                 // so this can never be an in-progress resume.
-                match readFsprojVersion pkg.Fsproj with
+                let declaredVersion =
+                    // readFsprojVersion throws on a missing file; a first release with
+                    // no readable fsproj is not shippable — skip it (matching the
+                    // File.Exists tolerance of inProgressResumeVersion above).
+                    if System.IO.File.Exists pkg.Fsproj then
+                        readFsprojVersion pkg.Fsproj
+                    else
+                        None
+
+                match declaredVersion with
                 | None ->
                     printfn
                         "Skipping %s: first release needs a <Version> in %s (or run an explicit `alpha`)"

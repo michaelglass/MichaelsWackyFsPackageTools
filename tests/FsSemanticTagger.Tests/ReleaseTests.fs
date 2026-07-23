@@ -290,6 +290,67 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
     finally
         File.Delete(tmpFile)
 
+[<Fact>]
+let ``release - Auto first-releases an untagged package at its declared fsproj version`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(
+            tmpFile,
+            """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Version>0.1.0-alpha.1</Version></PropertyGroup>
+</Project>"""
+        )
+
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "diff --summary" -> Success ""
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", a when a.StartsWith("commit") -> Success ""
+            | "jj", a when a.StartsWith("bookmark set") -> Success ""
+            | "jj", "git push" -> Success ""
+            | "jj", "git export" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        // The default (Auto) command must first-release a never-tagged package at
+        // its declared <Version>; previously Auto silently skipped a first release
+        // (only an explicit StartAlpha would ship one).
+        let result =
+            runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
+
+        test <@ result = 0 @>
+
+        test
+            <@
+                calls
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set v0.1.0-alpha.1"))
+            @>
+    finally
+        File.Delete(tmpFile)
+
 /// Helper: standard fakeRun responses for a passing CI + clean working copy
 let private passingCiRun (extraResponses: (string * string * CommandResult) list) =
     let mutable calls = []
