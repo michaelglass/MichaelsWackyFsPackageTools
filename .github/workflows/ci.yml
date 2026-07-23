@@ -18,6 +18,11 @@ jobs:
       fantomas-paths: "src/ tests/"
       syncdocs-cmd: "dotnet run --project $GITHUB_WORKSPACE/src/SyncDocs/SyncDocs.fsproj --"
       coverageratchet-cmd: "dotnet run --project $GITHUB_WORKSPACE/src/CoverageRatchet/CoverageRatchet.fsproj --"
+      # RefStamp ships no runtime code (MSBuild-targets-only package); its tests
+      # drive a `dotnet pack` subprocess and instrument nothing in-process, so it
+      # legitimately emits empty coverage. Run its tests, but don't collect
+      # coverage for it — otherwise the empty cobertura fails the summary.
+      coverage-exclude: RefStamp
     permissions:
       contents: read
       checks: write

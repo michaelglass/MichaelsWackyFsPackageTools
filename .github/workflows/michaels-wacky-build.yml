@@ -24,6 +24,17 @@ on:
       coverageratchet-cmd:
         type: string
         default: 'dotnet tool run coverageratchet'
+      coverage-exclude:
+        description: >-
+          Space/newline-separated project names (the coverage-dir name, i.e. the
+          test folder minus the ".Tests" suffix — e.g. "RefStamp") whose tests
+          RUN but are NOT coverage-collected. For packages that ship no
+          instrumentable product code (an MSBuild-targets-only package whose
+          tests drive a `dotnet pack` subprocess): they would otherwise emit an
+          empty cobertura, which the Coverage summary step rejects as a failure
+          by design. Leave empty to collect coverage for every test project.
+        type: string
+        default: ''
       paket-restore:
         description: 'Run paket restore after tool restore (for projects using Paket git dependencies)'
         type: boolean
@@ -95,9 +106,12 @@ jobs:
       - name: Test with coverage
         id: test-coverage
         run: |
+          # Space-separated set of project names to run WITHOUT coverage
+          # collection (see the coverage-exclude input). Word-splitting is
+          # intentional: names have no spaces.
+          exclude="${{ inputs.coverage-exclude }}"
           for proj in $(find tests -name '*.Tests.fsproj' | sort); do
             project_name=$(basename "$(dirname "$proj")" | sed 's/\.Tests$//')
-            echo "Testing $proj (coverage -> coverage/$project_name/)"
             # --no-build/--no-restore: the Build step above already compiled the
             # whole solution (test projects included). Without these flags each
             # `dotnet test` re-runs restore + an MSBuild up-to-date evaluation
@@ -107,6 +121,19 @@ jobs:
             # tree, scaling with graph size. Coverage is a runtime collector, so
             # skipping the build does not affect it (verified: cobertura still
             # emitted with --no-build).
+            skip=0
+            for ex in $exclude; do
+              [ "$ex" = "$project_name" ] && skip=1
+            done
+            if [ "$skip" = 1 ]; then
+              echo "Testing $proj (coverage SKIPPED — '$project_name' in coverage-exclude)"
+              dotnet test --project "$proj" \
+                --no-build \
+                --no-restore \
+                ${{ inputs.test-extra-args }}
+              continue
+            fi
+            echo "Testing $proj (coverage -> coverage/$project_name/)"
             dotnet test --project "$proj" \
               --no-build \
               --no-restore \
@@ -122,13 +149,81 @@ jobs:
           targetdir: coverage/report
           reporttypes: 'HtmlInline;MarkdownSummaryGithub'
       - name: Coverage summary
-        uses: irongut/CodeCoverageSummary@v1.3.0
-        with:
-          filename: coverage/*/coverage.cobertura.xml
-          badge: true
-          format: markdown
-          output: both
-          thresholds: '50 70'
+        id: coverage-summary
+        run: |
+          # Inlined replacement for irongut/CodeCoverageSummary@v1.3.0 — an
+          # unmaintained third-party Docker action that hard-threw ("Sequence
+          # contains no elements") on an empty coverage document. Aggregates the
+          # per-package cobertura files into a markdown summary + shields badge
+          # for the PR comment, and — by design — FAILS when a package emits an
+          # EMPTY coverage document (no <class> elements / lines-valid=0): for a
+          # code package that means the tests instrumented no product code, a
+          # real defect worth failing on. A package that legitimately ships no
+          # instrumentable code (e.g. an MSBuild-targets package whose tests
+          # drive a `dotnet pack` subprocess) is excluded from collection
+          # upstream via the coverage-exclude input, so it never produces a file
+          # that reaches here.
+          shopt -s nullglob
+          files=(coverage/*/coverage.cobertura.xml)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::warning::No coverage files found; nothing to summarize."
+            echo "No coverage files were produced." > code-coverage-results.md
+            exit 0
+          fi
+
+          total_covered=0
+          total_valid=0
+          empty_found=0
+          rows=""
+
+          for f in "${files[@]}"; do
+            pkg=$(basename "$(dirname "$f")")
+            # Portable extraction (grep -oE works on both GNU and BSD grep; -P
+            # would be GNU-only). The cobertura root element carries the
+            # aggregate attributes.
+            classes=$(grep -c '<class ' "$f" || true)
+            covered=$(grep -oE 'lines-covered="[0-9]+"' "$f" | head -1 | grep -oE '[0-9]+' || true)
+            valid=$(grep -oE 'lines-valid="[0-9]+"' "$f" | head -1 | grep -oE '[0-9]+' || true)
+            covered=${covered:-0}
+            valid=${valid:-0}
+            if [ "${classes:-0}" -eq 0 ] || [ "$valid" -eq 0 ]; then
+              echo "::error file=$f::Empty coverage for '$pkg': tests instrumented no product code. If this package legitimately ships no instrumentable code, add '$pkg' to coverage-exclude in the caller workflow."
+              empty_found=1
+              rows="${rows}| **${pkg}** | :warning: empty | 0 |"$'\n'
+              continue
+            fi
+            rate=$(awk "BEGIN { printf \"%.1f\", (100*$covered/$valid) }")
+            rows="${rows}| ${pkg} | ${rate}% | ${covered}/${valid} |"$'\n'
+            total_covered=$((total_covered + covered))
+            total_valid=$((total_valid + valid))
+          done
+
+          if [ "$total_valid" -gt 0 ]; then
+            overall=$(awk "BEGIN { printf \"%.1f\", (100*$total_covered/$total_valid) }")
+          else
+            overall="0.0"
+          fi
+          if awk "BEGIN { exit !($overall >= 70) }"; then color=brightgreen
+          elif awk "BEGIN { exit !($overall >= 50) }"; then color=yellow
+          else color=red
+          fi
+
+          {
+            echo "![Coverage](https://img.shields.io/badge/coverage-${overall}%25-${color})"
+            echo ""
+            echo "| Package | Line rate | Lines |"
+            echo "|---|---:|---:|"
+            printf '%s' "$rows"
+            echo ""
+            echo "**Overall:** ${overall}% (${total_covered}/${total_valid} lines)"
+          } > code-coverage-results.md
+
+          cat code-coverage-results.md >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$empty_found" -eq 1 ]; then
+            echo "Coverage summary failed: empty coverage document(s) found (see errors above)."
+            exit 1
+          fi
       - name: Coverage PR comment
         if: github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2
