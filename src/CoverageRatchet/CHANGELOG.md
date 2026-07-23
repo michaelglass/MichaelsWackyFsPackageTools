@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.15.0-alpha.9 - 2026-07-23
+
+- docs: SyncDocs changelog entry for code-sourced blocks; audit per-tool READMEs
+- deps: migrate to CommandTree 0.7.0 (Process runners take string list)
+
+
 ## 0.15.0-alpha.8 - 2026-06-12
 
 - fix: `loosen-from-ci` (and all `gh`-backed CI polling) now resolves the git store by walking up from any nested subdirectory, not just the repo root. The coverage tasks `cd` into the per-project `coverage/<Project>/` dir before invoking the tool; previously `resolveGitDir` only inspected that single directory, found no `.jj`/`.git`, and gave up — so `GIT_DIR` was never set and `gh` polling failed. It now ascends to the first ancestor that is a repo root (jj or native git), so the tool works from wherever it is launched.

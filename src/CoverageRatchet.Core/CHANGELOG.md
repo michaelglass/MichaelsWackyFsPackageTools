@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.4 - 2026-07-23
+
+- docs: SyncDocs changelog entry for code-sourced blocks; audit per-tool READMEs
+
+
 ## 0.1.0-alpha.3 - 2026-06-03
 
 - fix: `mergeFromCi` (used by `loosen-from-ci`) now only **lowers** a per-file floor toward the CI-measured value (`min`), never raises it. Previously it overwrote the floor with the CI value unconditionally, so a transiently-higher CI measurement would raise a floor above what CI stably hits — anti-converging, guaranteeing the next CI run trips its own floor. Each metric (line/branch) is minned independently and platform sections stay isolated.
