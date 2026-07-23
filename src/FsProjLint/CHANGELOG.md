@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.10.0-alpha.13 - 2026-07-23
+
+- deps: migrate to CommandTree 0.8.0
+
+
 ## 0.10.0-alpha.12 - 2026-07-23
 
 - feat: new repo-level check "Local packs are ref-stamped (RefStamp)" (AUTOMATION-123) — packable repos must wire in the RefStamp MSBuild guard so a local `dotnet pack` derives its version from the jj/git source ref and cannot produce a release-shaped version. Satisfied by a `<PackageReference Include="RefStamp" PrivateAssets="all" />` in a root `Directory.Build.props`/`Directory.Build.targets` (one line, repo-wide), by the same reference in every packable fsproj, or by a direct `<Import>` of `RefStamp.targets` (the shape RefStamp's own monorepo uses). Repos with no packable projects are unaffected.

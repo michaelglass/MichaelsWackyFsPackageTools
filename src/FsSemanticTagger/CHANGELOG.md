@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.13.0-alpha.19 - 2026-07-23
+
+- feat: auto-first-release registered packages under the default (Auto) command
+- fix: first-release version read tolerates a missing/unreadable fsproj
+- deps: migrate to CommandTree 0.8.0
+
+
 ## 0.13.0-alpha.18 - 2026-07-23
 
 - feat: grammar-aware versioning for CommandTree consumers (AUTOMATION-194). The version bump now also diffs a package's **realized CLI grammar** — the parse contract of its command tree: command names, positional arguments (name-order, optionality, list-ness, value type) and flags (long/short names, value arity) — and folds the result into the bump, taking the stronger of the grammar and API-signature verdicts. This closes a blind spot in the assembly-signature diff: a `[<Cmd(Name = "diff-api")>]` command rename, a `[<CmdFlag(Name = ...)>]` flag rename, a removed command/flag, a flag arity change (e.g. nullary → value, or required → inline-only), or a required-argument addition all keep the DU's type signature byte-identical yet break every old CLI invocation — previously under-bumped as a patch, now correctly a **major** break. Additive-only grammar changes (a new command, a new flag, a new optional/list argument, a required→optional relaxation) bump minor. The grammar is recovered structurally from the built assembly under `MetadataLoadContext` (metadata-only, mirroring CommandTree's own `buildUnionTree`), so no consumer code runs; non-CommandTree packages and any unreadable/ambiguous case fall back to the API diff unchanged. `check-api` surfaces grammar breaks too.
