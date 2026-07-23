@@ -338,8 +338,7 @@ let ``release - Auto first-releases an untagged package at its declared fsproj v
         // The default (Auto) command must first-release a never-tagged package at
         // its declared <Version>; previously Auto silently skipped a first release
         // (only an explicit StartAlpha would ship one).
-        let result =
-            runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
+        let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
 
