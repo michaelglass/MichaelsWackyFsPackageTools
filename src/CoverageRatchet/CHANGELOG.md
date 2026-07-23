@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.15.0-alpha.10 - 2026-07-23
+
+- deps: migrate to CommandTree 0.8.0
+
+
 ## 0.15.0-alpha.9 - 2026-07-23
 
 - docs: SyncDocs changelog entry for code-sourced blocks; audit per-tool READMEs
