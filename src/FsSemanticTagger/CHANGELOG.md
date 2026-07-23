@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.13.0-alpha.20 - 2026-07-23
+
+- fix: isCommitPushed revset direction (was a false positive for any commit atop pushed main)
+- chore(deps): update dev-tools and external dependencies
+
+
 ## 0.13.0-alpha.19 - 2026-07-23
 
 - feat: auto-first-release registered packages under the default (Auto) command

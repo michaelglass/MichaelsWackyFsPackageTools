@@ -8,7 +8,7 @@
   </PropertyGroup>
   <PropertyGroup>
     <PackageId>RefStamp</PackageId>
-    <Version>0.1.0-alpha.1</Version>
+    <Version>0.1.0-alpha.2</Version>
     <Authors>michaelglass</Authors>
     <Description>MSBuild guard that derives local `dotnet pack` versions from the jj/git source ref, so a dev machine cannot produce a release-shaped version</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
