@@ -109,6 +109,7 @@ dotnet pack src/CoverageRatchet.Core/CoverageRatchet.Core.fsproj -c Release -o a
 dotnet pack src/SyncDocs/SyncDocs.fsproj -c Release -o artifacts/
 dotnet pack src/FsSemanticTagger/FsSemanticTagger.fsproj -c Release -o artifacts/
 dotnet pack src/FsProjLint/FsProjLint.fsproj -c Release -o artifacts/
+dotnet pack src/RefStamp/RefStamp.fsproj -c Release -o artifacts/
 """
 depends = ["build"]
 
