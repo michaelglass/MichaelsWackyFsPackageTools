@@ -24,13 +24,13 @@ open Xunit
 open Swensen.Unquote
 
 // ---- fixture consumer DUs + a CommandTree->Grammar reference converter --------
-// The referenced CommandTree (0.7.0) has NO `FlagArity` type (flags are bool via
-// `FlagInfo.IsBool`) and supports flag-DU lists only as a SOLE field (a positional
-// prefix + trailing flag list is treated as positional args). The production walk
-// mirrors newer CommandTree semantics (the design's target), so the fromUnion
-// round-trip fixtures use only shapes on which the two agree; newer-only shapes
-// (positional-prefix flag leaves, optional-value flags) get extraction-only
-// assertions below. This module opens ONLY CommandTree; the model's same-named
+// The referenced CommandTree is now 0.8.0: it exposes a real `FlagInfo.Arity`
+// (Nullary | Required | Optional), and its runtime `fromUnion` supports both
+// positional-prefix flag leaves and optional-value flags. The fromUnion round-trip
+// fixtures below still use a conservative subset (nullary + required flags, no
+// positional-prefix flag leaves); the richer shapes (positional-prefix flag leaves,
+// optional-value flags) keep their extraction-only assertions below. This module
+// opens ONLY CommandTree; the model's same-named
 // types/cases are referenced fully qualified. It is public (not `private`) so the
 // fixture unions keep a public representation — CommandReflection.fromUnion (via
 // FSharpType) rejects private-representation unions.
@@ -107,9 +107,10 @@ module Fixtures =
         | [<Cmd(Name = "check")>] Inspect
         | [<Cmd("A brand new command")>] Extra // added command (Addition)
 
-    /// Convert a runtime CommandTree (0.7.0) node to the production Grammar model —
-    /// the ground truth the metadata-only walk is checked against. 0.7.0 flags are
-    /// bool-only: `IsBool` => Nullary, otherwise a required-value flag.
+    /// Convert a runtime CommandTree (0.8.0) node to the production Grammar model —
+    /// the ground truth the metadata-only walk is checked against. CommandTree 0.8.0
+    /// exposes a real `FlagInfo.Arity` (Nullary | Required | Optional) that maps 1:1
+    /// onto the production FlagArity.
     let rec private toNode (node: CommandTree<'Cmd>) : FsSemanticTagger.CommandNode =
         match node with
         | Leaf leaf ->
@@ -126,10 +127,11 @@ module Fixtures =
                     { FsSemanticTagger.FlagSpec.LongName = f.LongName
                       ShortName = f.ShortName
                       Arity =
-                        if f.IsBool then
-                            FsSemanticTagger.FlagArity.Nullary
-                        else
-                            FsSemanticTagger.FlagArity.RequiredValue
+                        // CommandTree 0.8.0's FlagArity maps 1:1 onto the production model.
+                        match f.Arity with
+                        | Nullary -> FsSemanticTagger.FlagArity.Nullary
+                        | Required -> FsSemanticTagger.FlagArity.RequiredValue
+                        | Optional -> FsSemanticTagger.FlagArity.OptionalValue
                       TypeName = f.TypeName })
             )
         | Group g -> FsSemanticTagger.CommandNode.Group(g.Name, g.Children |> List.map toNode)
