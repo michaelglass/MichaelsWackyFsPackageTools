@@ -669,7 +669,32 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                 | _ -> explicitBump OwnChange
         | FirstRelease ->
             match input.Command with
-            | Auto -> None // Need explicit command for first release
+            | Auto ->
+                // A first release has no prior tag to API-diff against — but a package
+                // registered in semantic-tagger.json with a declared fsproj <Version>
+                // and a first-release changelog is ready to ship. Honour that declared
+                // version and roll it as a NeedsBump (so the `## Unreleased` changelog
+                // section is promoted and the tag is created) rather than silently
+                // dropping the package: the old `None` meant a brand-new package never
+                // shipped under the default (Auto) command — not even a diagnostic
+                // line. Forcing NeedsBump (not `toDecision`, which would classify a
+                // fsproj already at the target version as AlreadyBumped and skip the
+                // changelog promotion) is correct here: FirstRelease has no prior tag,
+                // so this can never be an in-progress resume.
+                match readFsprojVersion pkg.Fsproj with
+                | None ->
+                    printfn
+                        "Skipping %s: first release needs a <Version> in %s (or run an explicit `alpha`)"
+                        pkg.Name
+                        pkg.Fsproj
+
+                    None
+                | Some v when input.Config.ReservedVersions.Contains(format v) ->
+                    printfn "Warning: version %s is reserved, skipping %s (first release)" (format v) pkg.Name
+                    None
+                | Some v ->
+                    printfn "Bumping %s: first release at declared version %s" pkg.Name (format v)
+                    Some(NeedsBump(pkg, v, OwnChange))
             | _ -> explicitBump OwnChange
 
 let private resumeAlreadyBumped (input: ReleaseInput) (alreadyBumped: (PackageConfig * Version) list) : int =
