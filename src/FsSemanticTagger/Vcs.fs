@@ -266,15 +266,21 @@ let isCiPassing (run: string -> string -> CommandResult) : bool =
 /// for*, not failed.
 ///
 /// jj-native first: a commit is pushed iff it is an ancestor of some
-/// remote-tracking bookmark (`remote_bookmarks() & ::<sha>` is non-empty). On a
-/// plain-git repo the `jj` call fails and we fall back to
-/// `git branch -r --contains`, which answers the same question. An indeterminate
-/// result (neither VCS could answer) is treated as "not pushed" so the caller
-/// errs toward the safe, actionable "push first" message rather than waiting
-/// forever on a run that will never appear.
+/// remote-tracking bookmark, i.e. it lies within the pushed history
+/// (`<sha> & ::(remote_bookmarks())` is non-empty). NOTE the direction — the
+/// earlier `remote_bookmarks() & ::<sha>` asked the *opposite* question (which
+/// remote bookmarks are ancestors OF sha) and was a false positive for ANY local
+/// commit built on top of pushed main (main@origin is its ancestor), so an
+/// unpushed release commit looked "pushed" and the caller hung waiting for a CI
+/// run that never started. On a plain-git repo the `jj` call fails and we fall
+/// back to `git branch -r --contains` (remote branches that contain sha — the
+/// same "sha is an ancestor of a remote tip" question, correctly). An
+/// indeterminate result (neither VCS could answer) is treated as "not pushed" so
+/// the caller errs toward the safe, actionable "push first" message rather than
+/// waiting forever on a run that will never appear.
 let isCommitPushed (run: string -> string -> CommandResult) (sha: string) : bool =
     let jjAnswer =
-        runSilent run "jj" (sprintf "log -r \"remote_bookmarks() & ::%s\" --no-graph -T commit_id" sha)
+        runSilent run "jj" (sprintf "log -r \"%s & ::(remote_bookmarks())\" --no-graph -T commit_id" sha)
         |> Option.map (fun out -> out.Trim() <> "")
 
     match jjAnswer with
