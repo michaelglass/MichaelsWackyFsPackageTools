@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.13.0-alpha.4 - 2026-07-23
+
+- chore(deps): update dev-tools and external dependencies
+
+
 ## 0.13.0-alpha.3 - 2026-06-16
 
 - feat: source a fenced code block from a region of a real `.fs`/`.fsx` file via a `src=` attribute on the start marker (`sync:NAME:start src=PATH`), delimited in the file by `// sync:NAME:start` / `// sync:NAME:end` comment markers — the region defaults to the block name (override with `#region`), common leading indentation is normalized, and the block is wrapped in an `fsharp` fence. Integrated into `sync` and `check` (refreshed before README -> docs propagation) so drift, a missing file, or a missing/duplicated/unterminated region breaks `check`

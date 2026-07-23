@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.5 - 2026-07-23
+
+- chore(deps): update dev-tools and external dependencies
+
+
 ## 0.1.0-alpha.4 - 2026-07-23
 
 - docs: SyncDocs changelog entry for code-sourced blocks; audit per-tool READMEs

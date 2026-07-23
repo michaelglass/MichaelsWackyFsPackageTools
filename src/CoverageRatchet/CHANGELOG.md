@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.15.0-alpha.11 - 2026-07-23
+
+- chore(deps): update dev-tools and external dependencies
+
+
 ## 0.15.0-alpha.10 - 2026-07-23
 
 - deps: migrate to CommandTree 0.8.0
