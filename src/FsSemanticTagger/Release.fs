@@ -615,11 +615,76 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                     // own-source change — including a CHANGELOG edit, which lives in the
                     // package dir and flips `ownChanged` false->true — can't be API-diffed
                     // against the previous release: a PackageReference to a tool package
-                    // fails NU1212 -> CannotDetermine. Bump NoChange-style like the
-                    // rebundle path; a tool's version story comes from its bundled deps +
-                    // changelog, not a public-API diff.
-                    printfn "Bumping %s: own change to a PackAsTool package (no API to diff) since %s" pkg.Name tag
-                    Some(toDecision OwnChange (skipReserved (determineBump currentVersion NoChange)))
+                    // fails NU1212 -> CannotDetermine. The API probe therefore stays
+                    // skipped here (AUTOMATION-79).
+                    //
+                    // But a tool still has a CLI CONTRACT, and that is exactly what the
+                    // grammar diff protects. Skipping the API probe must not also skip the
+                    // grammar diff, or every one of our dotnet tools releases a breaking
+                    // CLI change as a patch — AUTOMATION-194's guard silently disabled for
+                    // the whole set it was built for (AUTOMATION-202).
+                    //
+                    // Safe on this path because the two are independent: the grammar
+                    // extractor reads a prior release straight out of the NuGet cache
+                    // (`Grammar.extractPreviousGrammarFromNuGet`) and constructs no
+                    // PackageReference probe, so it cannot raise NU1212. Walk the tags
+                    // newest-first for the first whose grammar is readable, mirroring
+                    // `resolveBaselineApi`'s orphan walk.
+                    let previousGrammar =
+                        sortedTags
+                        |> List.tryPick (fun (_, version) -> input.ExtractPreviousGrammar pkg.Name (format version))
+
+                    match previousGrammar, input.ExtractCurrentGrammar pkg.DllPath with
+                    | Some previousGrammar, Some currentGrammar ->
+                        // Fold through the same `foldIntoApi` the non-tool arm uses, against
+                        // a `NoChange` API baseline — a tool has no library API, so the
+                        // grammar alone decides. Reusing the fold keeps one translation from
+                        // GrammarChange to ApiChange instead of a second, drifting copy.
+                        let change =
+                            Grammar.foldIntoApi NoChange (Grammar.compare previousGrammar currentGrammar)
+
+                        printfn
+                            "Bumping %s: own change to a PackAsTool package — CLI grammar diffed since %s"
+                            pkg.Name
+                            tag
+
+                        Some(toDecision OwnChange (skipReserved (determineBump currentVersion change)))
+                    | None, Some _ ->
+                        // FAIL CLOSED. This package HAS a CLI grammar (the current build
+                        // yielded one), but the previous release's could not be read — the
+                        // extractor is cache-only by design and this path deliberately skips
+                        // the API download that would have populated that cache, so a cold
+                        // cache lands here.
+                        //
+                        // Bumping NoChange here would silently forgo the guard and release a
+                        // possibly-breaking CLI change as a patch: the exact defect this
+                        // whole path exists to prevent, just quieter. Refuse to guess,
+                        // mirroring the `BaselineFetchError -> CannotDetermine` policy the
+                        // non-tool arm applies to an unreadable API baseline.
+                        Some(
+                            CannotDetermine(
+                                pkg,
+                                sprintf
+                                    "could not read the CLI grammar of the previous release %s: the package is not in the local NuGet cache, and a PackAsTool package is deliberately not API-probed (NU1212), so nothing populates it. Refusing to guess the version bump — a breaking CLI change would otherwise ship as a patch. Fix: restore/populate the cache for %s %s (e.g. `dotnet tool install --tool-path <tmp> %s --version %s`), then re-run; or use an explicit alpha/beta/rc/stable command."
+                                    tag
+                                    pkg.Name
+                                    tag
+                                    pkg.Name
+                                    tag
+                            )
+                        )
+                    | _, None ->
+                        // The current build yields no grammar at all, so this package is not
+                        // a CommandTree consumer and has no CLI contract to protect. Nothing
+                        // to diff — bump NoChange as before. Deliberately NOT failing closed
+                        // here: doing so would block every non-CLI PackAsTool release on a
+                        // guard that does not apply to it.
+                        printfn
+                            "Bumping %s: own change to a PackAsTool package (not a CommandTree CLI — no grammar to diff) since %s"
+                            pkg.Name
+                            tag
+
+                        Some(toDecision OwnChange (skipReserved (determineBump currentVersion NoChange)))
                 | Auto, false ->
                     // Diff against the most recent *published* prior release,
                     // walking back past any orphan tags (whose package never landed
