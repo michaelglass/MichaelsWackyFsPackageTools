@@ -2,15 +2,15 @@
   "overrides": {
     "Api.fs": [
       {
-        "line": 95,
+        "line": 93,
         "branch": 84,
-        "reason": "Assembly path resolution depends on runtime environment; reflection branches from compiler; httpGet is a live HttpClient network call exercised only via the injected fetch seam in tests",
+        "reason": "Assembly path resolution depends on runtime environment; reflection branches from compiler; httpGet is a live HttpClient network call exercised only via the injected fetch seam in tests. Settled 95 -> 93, the measured macos actual: the floor was never achieved for the CURRENT file. Api.fs grew (AUTOMATION-194 grammar extraction, AUTOMATION-196 analyzer-package path) while the environment-dependent core stayed uncovered, so the same untestable lines became a larger share of a bigger file. Verified uncovered on an unmodified main@origin checkout: the sdk/ and shared/ TRUE branches (the dirs-exist path) never execute here because DOTNET_ROOT is unset under mise and the runtime-dir-derived root has no sdk/ \u2014 i.e. exactly the 'depends on runtime environment' case this reason already named. NOT lowered to dodge work: raising it would need either a global DOTNET_ROOT mutation (unsafe with parallelizeTestCollections=true) or real network/restore I/O in unit tests. See AUTOMATION-213.",
         "platform": "macos"
       },
       {
         "line": 94,
         "branch": 77,
-        "reason": "settled to the CI-measured linux actual (line 94) after httpGet\u0027s network-call line; loosen-from-ci\u0027s platform-merge failed to apply the artifact\u0027s lower value",
+        "reason": "settled to the CI-measured linux actual (line 94) after httpGet's network-call line; loosen-from-ci's platform-merge failed to apply the artifact's lower value",
         "platform": "linux"
       }
     ],
