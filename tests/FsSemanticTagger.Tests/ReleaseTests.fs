@@ -3970,3 +3970,236 @@ let ``release --check passes when the package has no own-source changes since it
         let run = checkRun "" ""
         let result = release (releaseInput run config Auto PushTags true)
         test <@ result = 0 @>)
+
+// =============================================================================
+// AUTOMATION-202 — a PackAsTool package must still get its CLI grammar diffed.
+//
+// AUTOMATION-79 correctly stopped constructing an API probe for PackAsTool
+// packages (a PackageReference to a tool package fails NU1212). AUTOMATION-194
+// correctly added grammar-aware bumping. But -194's only call site sat inside
+// the NON-PackAsTool arm, so the two correct fixes cancelled: every
+// `PackAsTool` package — which is every CommandTree-consuming CLI we ship, i.e.
+// exactly the set with a CLI grammar to break — was routed past the grammar
+// diff and released a breaking CLI change as a PATCH.
+//
+// The two concerns are independent: the grammar extractor reads the prior
+// release from the NuGet cache and constructs no probe. This test pins both
+// halves at once — the grammar drives the bump, AND the API probe is never
+// constructed (the API extractors below throw if touched, so a regression that
+// reintroduces the probe fails loudly rather than silently reviving NU1212).
+// =============================================================================
+[<Fact>]
+let ``release - PackAsTool grammar break bumps major without constructing an API probe`` () =
+    let dir =
+        Path.Combine(Path.GetTempPath(), "fsst-packastool-grammar-" + System.Guid.NewGuid().ToString("N"))
+
+    Directory.CreateDirectory(dir) |> ignore
+
+    try
+        let fsproj = Path.Combine(dir, "MyTool.fsproj")
+
+        File.WriteAllText(
+            fsproj,
+            "<Project><PropertyGroup><Version>1.0.0</Version><PackAsTool>true</PackAsTool></PropertyGroup></Project>"
+        )
+
+        File.WriteAllText(Path.Combine(dir, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n- test entry\n")
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
+                  ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed") ]
+
+        // A renamed top-level verb is a breaking CLI change.
+        let previousGrammar = { Roots = [ Leaf("check-api", [], []) ] }
+        let currentGrammar = { Roots = [ Leaf("diff-api", [], []) ] }
+
+        let config =
+            { Packages =
+                [ { Name = "MyTool"
+                    Fsproj = fsproj
+                    DllPath = "fake.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = dir }
+
+        let result =
+            release
+                { Run = fakeRun
+                  Config = config
+                  Command = Auto
+                  Mode = PushTags
+                  TargetPackages = []
+                  // Constructing an API probe for a PackAsTool package is what raises
+                  // NU1212 (AUTOMATION-79). Fail loudly if this path is ever revived.
+                  ExtractPreviousApi =
+                    (fun _ _ ->
+                        failwith "API probe must not be constructed for a PackAsTool package (NU1212, AUTOMATION-79)")
+                  ExtractCurrentApi =
+                    (fun _ ->
+                        failwith "API probe must not be constructed for a PackAsTool package (NU1212, AUTOMATION-79)")
+                  ExtractPreviousGrammar = (fun _ _ -> Some previousGrammar)
+                  ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
+                  CiPollIntervalMs = 0
+                  CiMaxAttempts = 10
+                  CheckPublished = (fun _ _ -> true)
+                  WaitForNuGet = false
+                  NuGetPollIntervalMs = 0
+                  NuGetMaxAttempts = 1
+                  Push = false
+                  Check = false }
+
+        test <@ result = 0 @>
+        // Before AUTOMATION-202 this produced 1.0.1 — a breaking CLI change shipped
+        // as a patch. The grammar break must drive a MAJOR bump.
+        test <@ (File.ReadAllText fsproj).Contains("<Version>2.0.0</Version>") @>
+    finally
+        try
+            Directory.Delete(dir, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative NoChange bump`` () =
+    // No CURRENT grammar => the package is not a CommandTree consumer, so it has no
+    // CLI contract to protect and there is nothing to diff. This must stay non-fatal:
+    // failing closed here would block every non-CLI PackAsTool release on a guard
+    // that does not apply to it. Contrast the test below, where a current grammar
+    // EXISTS but the baseline cannot be read — that one must abort.
+    let dir =
+        Path.Combine(Path.GetTempPath(), "fsst-packastool-nogrammar-" + System.Guid.NewGuid().ToString("N"))
+
+    Directory.CreateDirectory(dir) |> ignore
+
+    try
+        let fsproj = Path.Combine(dir, "MyTool.fsproj")
+
+        File.WriteAllText(
+            fsproj,
+            "<Project><PropertyGroup><Version>1.0.0</Version><PackAsTool>true</PackAsTool></PropertyGroup></Project>"
+        )
+
+        File.WriteAllText(Path.Combine(dir, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n- test entry\n")
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
+                  ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed") ]
+
+        let config =
+            { Packages =
+                [ { Name = "MyTool"
+                    Fsproj = fsproj
+                    DllPath = "fake.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = dir }
+
+        let result =
+            release
+                { Run = fakeRun
+                  Config = config
+                  Command = Auto
+                  Mode = PushTags
+                  TargetPackages = []
+                  ExtractPreviousApi =
+                    (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package")
+                  ExtractCurrentApi = (fun _ -> failwith "API probe must not be constructed for a PackAsTool package")
+                  ExtractPreviousGrammar = noPreviousGrammar
+                  ExtractCurrentGrammar = noCurrentGrammar
+                  CiPollIntervalMs = 0
+                  CiMaxAttempts = 10
+                  CheckPublished = (fun _ _ -> true)
+                  WaitForNuGet = false
+                  NuGetPollIntervalMs = 0
+                  NuGetMaxAttempts = 1
+                  Push = false
+                  Check = false }
+
+        test <@ result = 0 @>
+        test <@ (File.ReadAllText fsproj).Contains("<Version>1.0.1</Version>") @>
+    finally
+        try
+            Directory.Delete(dir, true)
+        with _ ->
+            ()
+
+[<Fact>]
+let ``release - PackAsTool CLI aborts when the previous grammar cannot be read`` () =
+    // FAIL CLOSED (AUTOMATION-202, option b). The package HAS a CLI grammar — the
+    // current build yields one — but the previous release's is unreadable, which is
+    // what a cold NuGet cache looks like on this path (a PackAsTool package is
+    // deliberately not API-probed, so nothing populates the cache for it).
+    //
+    // Bumping NoChange here would release a possibly-breaking CLI change as a patch:
+    // the exact defect this path exists to prevent, only quieter. Mirrors the
+    // `BaselineFetchError -> CannotDetermine` policy the non-tool arm already applies
+    // to an unreadable API baseline, and is asserted the same way: exit 1, and the
+    // fsproj version left untouched.
+    let dir =
+        Path.Combine(Path.GetTempPath(), "fsst-packastool-coldcache-" + System.Guid.NewGuid().ToString("N"))
+
+    Directory.CreateDirectory(dir) |> ignore
+
+    try
+        let fsproj = Path.Combine(dir, "MyTool.fsproj")
+
+        File.WriteAllText(
+            fsproj,
+            "<Project><PropertyGroup><Version>1.0.0</Version><PackAsTool>true</PackAsTool></PropertyGroup></Project>"
+        )
+
+        File.WriteAllText(Path.Combine(dir, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n- test entry\n")
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
+                  ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed") ]
+
+        let currentGrammar = { Roots = [ Leaf("diff-api", [], []) ] }
+
+        let config =
+            { Packages =
+                [ { Name = "MyTool"
+                    Fsproj = fsproj
+                    DllPath = "fake.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = dir }
+
+        let result =
+            release
+                { Run = fakeRun
+                  Config = config
+                  Command = Auto
+                  Mode = PushTags
+                  TargetPackages = []
+                  ExtractPreviousApi =
+                    (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package")
+                  ExtractCurrentApi = (fun _ -> failwith "API probe must not be constructed for a PackAsTool package")
+                  // Cold cache: no previous grammar, but the current build HAS one.
+                  ExtractPreviousGrammar = noPreviousGrammar
+                  ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
+                  CiPollIntervalMs = 0
+                  CiMaxAttempts = 10
+                  CheckPublished = (fun _ _ -> true)
+                  WaitForNuGet = false
+                  NuGetPollIntervalMs = 0
+                  NuGetMaxAttempts = 1
+                  Push = false
+                  Check = false }
+
+        test <@ result = 1 @>
+        // Version untouched — refusing to guess must not half-apply a bump.
+        test <@ (File.ReadAllText fsproj).Contains("<Version>1.0.0</Version>") @>
+    finally
+        try
+            Directory.Delete(dir, true)
+        with _ ->
+            ()
