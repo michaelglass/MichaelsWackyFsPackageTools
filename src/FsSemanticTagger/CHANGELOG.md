@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.1 - 2026-08-04
+
+- fix: diff the CLI grammar for PackAsTool packages so a breaking tool change cannot ship as a patch
+
+
 ## 0.13.0-alpha.20 - 2026-07-23
 
 - fix: isCommitPushed revset direction (was a false positive for any commit atop pushed main)
