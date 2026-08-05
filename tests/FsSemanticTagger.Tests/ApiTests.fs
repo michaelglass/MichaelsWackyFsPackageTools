@@ -342,16 +342,16 @@ let ``flatContainerHasVersion is false when version absent or body malformed`` (
 let ``isPublishedViaFlatContainer true when version present, fetched from the id index url`` () =
     let mutable fetched = []
 
-    let fakeFetch (url: string) : Result<string, string> =
+    let fakeFetch (url: string) : HttpResult =
         fetched <- fetched @ [ url ]
-        Ok """{"versions":["1.2.3"]}"""
+        HttpOk """{"versions":["1.2.3"]}"""
 
     test <@ isPublishedViaFlatContainer fakeFetch "SomePackage" "1.2.3" = true @>
     test <@ fetched = [ "https://api.nuget.org/v3-flatcontainer/somepackage/index.json" ] @>
 
 [<Fact>]
 let ``isPublishedViaFlatContainer false when fetch errors (offline or non-2xx)`` () =
-    let fakeFetch (_url: string) : Result<string, string> = Error "HTTP 404"
+    let fakeFetch (_url: string) : HttpResult = HttpFailed "HTTP 503"
     test <@ isPublishedViaFlatContainer fakeFetch "SomePackage" "1.2.3" = false @>
 
 [<Fact>]
@@ -365,7 +365,7 @@ let ``isPublished succeeds on the FIRST attempt via flat container without ever 
         restored <- true
         FsSemanticTagger.Shell.Failure("registration index lagging", 1)
 
-    let fakeFetch (_url: string) : Result<string, string> = Ok """{"versions":["1.2.3"]}"""
+    let fakeFetch (_url: string) : HttpResult = HttpOk """{"versions":["1.2.3"]}"""
 
     test <@ isPublished fakeFetch fakeRun "SomePackage" "1.2.3" = true @>
     test <@ restored = false @>
@@ -380,7 +380,7 @@ let ``isPublished falls back to the restore probe when flat container has not in
         invoked <- invoked @ [ (cmd, args) ]
         FsSemanticTagger.Shell.Success ""
 
-    let fakeFetch (_url: string) : Result<string, string> = Ok """{"versions":[]}"""
+    let fakeFetch (_url: string) : HttpResult = HttpOk """{"versions":[]}"""
 
     test <@ isPublished fakeFetch fakeRun "SomePackage" "1.2.3" = true @>
     // The fallback probes a throwaway .csproj with the HTTP cache bypassed.
@@ -399,7 +399,7 @@ let ``isPublished false when neither flat container nor restore find the version
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         FsSemanticTagger.Shell.Failure("no such package", 1)
 
-    let fakeFetch (_url: string) : Result<string, string> = Error "offline"
+    let fakeFetch (_url: string) : HttpResult = HttpFailed "offline"
     test <@ isPublished fakeFetch fakeRun "SomePackage" "1.2.3" = false @>
 
 [<Fact>]
@@ -430,6 +430,105 @@ let ``isPublishedViaRestore returns false when restore fails`` () =
         FsSemanticTagger.Shell.Failure("no such package", 1)
 
     test <@ isPublishedViaRestore fakeRun "SomePackage" "1.2.3" = false @>
+
+// ---------------------------------------------------------------------------
+// flatContainerPresence: which feed answers are DEFINITE vs UNKNOWN. Only a
+// definite NotOnFeed may drive a republish, so each arm is pinned individually.
+// ---------------------------------------------------------------------------
+
+[<Fact>]
+let ``flatContainerPresence - 200 listing the version is OnFeed`` () =
+    let fakeFetch (_url: string) : HttpResult =
+        HttpOk """{"versions":["1.2.2","1.2.3"]}"""
+
+    test <@ flatContainerPresence fakeFetch "SomePackage" "1.2.3" = OnFeed @>
+
+[<Fact>]
+let ``flatContainerPresence - 200 whose version list lacks it is definitely NotOnFeed`` () =
+    // The feed enumerated everything it has for the id; this version wasn't there.
+    let fakeFetch (_url: string) : HttpResult = HttpOk """{"versions":["1.2.2"]}"""
+    test <@ flatContainerPresence fakeFetch "SomePackage" "1.2.3" = NotOnFeed @>
+
+[<Fact>]
+let ``flatContainerPresence - 404 for the id is definitely NotOnFeed`` () =
+    // A 404 is the flat container's normal "no such package id", not a fault.
+    let fakeFetch (_url: string) : HttpResult = HttpNotFound
+    test <@ flatContainerPresence fakeFetch "NeverPublished" "1.2.3" = NotOnFeed @>
+
+[<Fact>]
+let ``flatContainerPresence - transport failures are Unknown, never absence`` () =
+    // Timeout, DNS failure, 5xx, auth failure: all arrive as HttpFailed and must
+    // NOT be mistaken for "the version isn't published".
+    for reason in
+        [ "The operation has timed out."
+          "HTTP 503 for ..."
+          "HTTP 401 for ..."
+          "No such host is known." ] do
+        let fakeFetch (_url: string) : HttpResult = HttpFailed reason
+
+        test
+            <@
+                match flatContainerPresence fakeFetch "SomePackage" "1.2.3" with
+                | FeedUnknown _ -> true
+                | _ -> false
+            @>
+
+[<Fact>]
+let ``flatContainerPresence - an unreadable 200 body is Unknown, not absence`` () =
+    // A proxy error page or a truncated read: we cannot claim a version is missing
+    // from a list we could not parse.
+    for body in [ "not json"; ""; """{"other":[]}"""; "<html>502 Bad Gateway</html>" ] do
+        let fakeFetch (_url: string) : HttpResult = HttpOk body
+
+        test
+            <@
+                match flatContainerPresence fakeFetch "SomePackage" "1.2.3" with
+                | FeedUnknown _ -> true
+                | _ -> false
+            @>
+
+[<Fact>]
+let ``checkFeedPresence - the restore probe can only UPGRADE a verdict to OnFeed`` () =
+    // A privately-published package is absent from the public flat container, so
+    // the restore probe (which honours the repo nuget.config) rescues it.
+    let restoreSucceeds (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        FsSemanticTagger.Shell.Success ""
+
+    let notOnNugetOrg (_url: string) : HttpResult = HttpOk """{"versions":[]}"""
+    let feedUnreachable (_url: string) : HttpResult = HttpFailed "offline"
+
+    test <@ checkFeedPresence notOnNugetOrg restoreSucceeds "SomePackage" "1.2.3" = OnFeed @>
+    test <@ checkFeedPresence feedUnreachable restoreSucceeds "SomePackage" "1.2.3" = OnFeed @>
+
+[<Fact>]
+let ``checkFeedPresence - a failing restore probe never downgrades a definite absence`` () =
+    // This is what makes the check work for PackAsTool packages at all: a
+    // PackageReference probe of a tool ALWAYS fails NU1212, so if a probe failure
+    // could downgrade, every tool would be permanently FeedUnknown and could never
+    // recover from an orphan tag.
+    let nu1212 (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        FsSemanticTagger.Shell.Failure(
+            "error NU1212: Invalid project-package combination for SomeTool 1.2.3. DotnetToolReference \
+             project style can only contain references of the DotnetTool type",
+            1
+        )
+
+    let notOnNugetOrg (_url: string) : HttpResult = HttpOk """{"versions":["1.2.2"]}"""
+    test <@ checkFeedPresence notOnNugetOrg nu1212 "SomeTool" "1.2.3" = NotOnFeed @>
+
+[<Fact>]
+let ``checkFeedPresence - an unreachable feed stays Unknown when the probe cannot confirm`` () =
+    let restoreFails (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        FsSemanticTagger.Shell.Failure("connection refused", 1)
+
+    let feedUnreachable (_url: string) : HttpResult = HttpFailed "offline"
+
+    test
+        <@
+            match checkFeedPresence feedUnreachable restoreFails "SomePackage" "1.2.3" with
+            | FeedUnknown _ -> true
+            | _ -> false
+        @>
 
 [<Fact>]
 let ``probeAvailabilityArgs appends --no-http-cache and keeps --configfile when present`` () =
