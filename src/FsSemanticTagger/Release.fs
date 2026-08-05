@@ -45,7 +45,11 @@ type ReleaseInput =
         ExtractCurrentGrammar: string -> Grammar option
         CiPollIntervalMs: int
         CiMaxAttempts: int
-        CheckPublished: string -> string -> bool
+        /// Ask the feed whether a (packageName, version) is published. The
+        /// three-valued answer is what lets an orphan tag be distinguished from an
+        /// unreachable feed, so ONE seam serves both the post-push availability
+        /// poll and the orphan-tag detection.
+        CheckFeedPresence: string -> string -> FeedPresence
         WaitForNuGet: bool
         NuGetPollIntervalMs: int
         NuGetMaxAttempts: int
@@ -184,14 +188,16 @@ let internal waitForCi (run: string -> string -> CommandResult) (pollIntervalMs:
 /// Convenience only — callers MUST NOT fail the release on a false result, the
 /// tags are already pushed.
 let internal waitForNuGet
-    (checkPublished: string -> string -> bool)
+    (checkFeedPresence: string -> string -> FeedPresence)
     (pollIntervalMs: int)
     (maxAttempts: int)
     (packages: (string * string) list)
     : bool =
     let rec poll attempt pending =
+        // Only a definite `OnFeed` clears a package from the poll: an unreachable
+        // feed is not evidence of arrival, so keep waiting exactly as for absence.
         let stillPending =
-            pending |> List.filter (fun (id, ver) -> not (checkPublished id ver))
+            pending |> List.filter (fun (id, ver) -> checkFeedPresence id ver <> OnFeed)
 
         if List.isEmpty stillPending then
             true
@@ -228,7 +234,7 @@ let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * 
         if input.WaitForNuGet then
             printfn "Waiting for NuGet to index the published package(s)..."
 
-            waitForNuGet input.CheckPublished input.NuGetPollIntervalMs input.NuGetMaxAttempts pkgVersions
+            waitForNuGet input.CheckFeedPresence input.NuGetPollIntervalMs input.NuGetMaxAttempts pkgVersions
             |> ignore
 
         0
@@ -441,37 +447,49 @@ let private runPreBuild (input: ReleaseInput) : unit =
     printfn "Building in Release mode..."
     runOrFail input.Run "dotnet" "build -c Release" |> ignore
 
-/// Detect a release that was bumped but never tagged (a mid-release failure
-/// between the version-bump commit and the CI-poll/tag step).
+/// The version the working tree declares it is, read lazily and tolerantly: a
+/// missing (or unversioned) fsproj yields `None` rather than throwing, so such a
+/// package defers to the normal path — which surfaces the real error or skips it
+/// — instead of crashing the whole release run. `readFsprojVersion` alone throws
+/// on a missing file, so every caller that may run before the fsproj is known to
+/// exist must go through this.
+let private declaredFsprojVersion (pkg: PackageConfig) : Version option =
+    if System.IO.File.Exists pkg.Fsproj then
+        readFsprojVersion pkg.Fsproj
+    else
+        None
+
+/// Detect a release that was started but never finished, so the next run resumes
+/// it instead of starting a new one.
 ///
-/// This is decided purely from the *desired end state*, never from
-/// work-remaining (a half-rolled changelog, the latest-tag-to-HEAD diff, or an
-/// API comparison): the version recorded in the fsproj is the intended release
-/// version, and a release is finished only once its tag exists. So a release is
-/// IN PROGRESS exactly when the fsproj `<Version>` is strictly ahead of the
-/// latest published tag AND no tag yet exists at `<prefix><fsprojVersion>`.
+/// A release is finished only once its tag exists AND its package is actually on
+/// the feed — a tag is a promise to publish, not the publication. This function
+/// owns the tag-shaped half of that: the mid-release failure between the
+/// version-bump commit and the CI-poll/tag step. It is decided purely from the
+/// *desired end state*, never from work-remaining (a half-rolled changelog, the
+/// latest-tag-to-HEAD diff, or an API comparison): the version recorded in the
+/// fsproj is the intended release version, so a release is bumped-but-untagged
+/// exactly when the fsproj `<Version>` is strictly ahead of the latest tag AND no
+/// tag yet exists at `<prefix><fsprojVersion>`.
 ///
-/// When that holds we return the fsproj version so the caller resumes from the
+/// The feed-shaped half — a tag that exists but whose package never landed (an
+/// ORPHAN tag) — deliberately is NOT decided here, because it turns on whether
+/// there are source changes since that tag, which this function cannot see. With
+/// changes, `resolveBaselineApi` walks past the orphan and bumps forward (the
+/// tree is no longer what that version was cut from). Only with NO changes is
+/// resuming it correct, so that case lives at `decideBump`'s no-changes arm,
+/// which holds the change flags.
+///
+/// When this holds we return the fsproj version so the caller resumes from the
 /// CI-poll + tag step (idempotent finish) instead of recomputing a fresh bump,
-/// re-rolling the changelog, or aborting on an unreadable previous API. A fully
-/// released repo (fsproj == latest tag) and a fresh repo (fsproj == the next
-/// computed bump, no intermediate bump-but-untag) both fall through to the
-/// normal path.
+/// re-rolling the changelog, or aborting on an unreadable previous API. A fresh
+/// repo (fsproj == the next computed bump, no intermediate bump-but-untag) falls
+/// through to the normal path.
 let private inProgressResumeVersion (input: ReleaseInput) (state: ReleaseState) (pkg: PackageConfig) : Version option =
     match state with
     | FirstRelease -> None
     | HasPreviousRelease latestTagVersion ->
-        // Read the fsproj lazily and tolerantly: a missing/unreadable/unversioned
-        // fsproj is not a resume — defer to the normal path (which surfaces the
-        // real error or skips the package). Only an existing version strictly
-        // ahead of the latest tag, with no tag at that version, is in-progress.
-        let fsprojVersion =
-            if System.IO.File.Exists pkg.Fsproj then
-                readFsprojVersion pkg.Fsproj
-            else
-                None
-
-        match fsprojVersion with
+        match declaredFsprojVersion pkg with
         | Some v when
             sortKey v > sortKey latestTagVersion
             && not (tagExists input.Run (toTag pkg.TagPrefix v))
@@ -523,6 +541,38 @@ let private resolveBaselineApi
 
             None)
     |> Option.defaultValue NoPublishedPrior
+
+/// Is the release tagged at `version` an ORPHAN — tagged, but its package never
+/// landed on the feed?
+///
+/// This asks the FEED (`CheckFeedPresence`), not the API extractor, even though
+/// `ExtractPreviousApi` also carries an `AbsentOnFeed`. The question here is
+/// presence, not shape, and routing it through the API extractor would answer it
+/// with a proxy that has two failure modes of its own:
+///
+///   * A `PackAsTool` package can never be API-probed at all — a
+///     `PackageReference` to a tool package fails NU1212, which correctly
+///     classifies as `FetchError`. So the API seam can NEVER say "absent" for a
+///     tool, and every dotnet tool (including this one) would stay wedged.
+///   * `AbsentOnFeed` is also what the extractor reports when the package IS
+///     published but its DLL cannot be located inside the .nupkg — precisely the
+///     analyzer-package layout bug fixed in AUTOMATION-196. Driving a REPUBLISH
+///     off that signal would turn any future unrecognised package layout into a
+///     spurious re-release of a perfectly published version.
+///
+/// The feed check has neither failure mode: it reads the published version list
+/// directly and is blind to package internals.
+///
+/// Only a definite `NotOnFeed` answers true. `FeedUnknown` is deliberately folded
+/// in with `OnFeed`, because the two wrong guesses are not symmetric: guessing
+/// "absent" during an outage would re-publish an already-published version on
+/// every run, while guessing "published" only defers finishing to the next run
+/// that can reach the feed. So unknown means published.
+let private isOrphanRelease (input: ReleaseInput) (pkg: PackageConfig) (version: Version) : bool =
+    match input.CheckFeedPresence pkg.Name (format version) with
+    | NotOnFeed -> true
+    | OnFeed
+    | FeedUnknown _ -> false
 
 let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision option =
     let sortedTags = getSortedTags input.Run pkg.TagPrefix
@@ -599,8 +649,38 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
 
             match ownChanged, depChanged with
             | false, false ->
-                printfn "Skipping %s: no changes since %s" pkg.Name tag
-                None
+                // Nothing left to BUILD — but that is a FINISHED release only if
+                // the newest tag's package actually reached the feed. An orphan tag
+                // (tagged, but the publish never landed) leaves the release
+                // unfinished with an empty diff, and the plain skip below wedges it
+                // permanently: no change can ever appear "since" a tag that already
+                // sits at HEAD, so every future run prints the same skip and the
+                // version can never be published.
+                //
+                // Resume it instead, at THAT SAME version — the tree is still
+                // exactly what the version was cut from, so the finish path
+                // (`resumeAlreadyBumped`) just pushes the existing tag and lets CI
+                // publish. Recovery is in place: the tag is left where it is
+                // (re-tagging is already guarded by `tagExists`), nothing is
+                // re-bumped, and the changelog is not re-rolled.
+                //
+                // Guarded on the fsproj declaring that same version, because the
+                // resume publishes whatever `<Version>` the tree carries: a tree
+                // that says something else would ship the wrong version, so it
+                // falls through to the skip rather than guessing.
+                if
+                    declaredFsprojVersion pkg = Some currentVersion
+                    && isOrphanRelease input pkg currentVersion
+                then
+                    printfn
+                        "Resuming %s: tag %s exists but its package never landed on the feed (orphan tag). Finishing that release rather than skipping."
+                        pkg.Name
+                        tag
+
+                    Some(AlreadyBumped(pkg, currentVersion))
+                else
+                    printfn "Skipping %s: no changes since %s" pkg.Name tag
+                    None
             | false, true ->
                 match input.Command with
                 | Auto -> depBumpAuto currentVersion tag
@@ -746,16 +826,9 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                 // fsproj already at the target version as AlreadyBumped and skip the
                 // changelog promotion) is correct here: FirstRelease has no prior tag,
                 // so this can never be an in-progress resume.
-                let declaredVersion =
-                    // readFsprojVersion throws on a missing file; a first release with
-                    // no readable fsproj is not shippable — skip it (matching the
-                    // File.Exists tolerance of inProgressResumeVersion above).
-                    if System.IO.File.Exists pkg.Fsproj then
-                        readFsprojVersion pkg.Fsproj
-                    else
-                        None
-
-                match declaredVersion with
+                // A first release with no readable fsproj is not shippable — skip it
+                // rather than throw (`declaredFsprojVersion` owns that tolerance).
+                match declaredFsprojVersion pkg with
                 | None ->
                     printfn
                         "Skipping %s: first release needs a <Version> in %s (or run an explicit `alpha`)"

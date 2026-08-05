@@ -50,7 +50,7 @@ let private runReleaseWithPush run config cmd mode prev cur poll max push =
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = poll
           CiMaxAttempts = max
-          CheckPublished = (fun _ _ -> true)
+          CheckFeedPresence = (fun _ _ -> OnFeed)
           WaitForNuGet = false
           NuGetPollIntervalMs = 0
           NuGetMaxAttempts = 1
@@ -832,7 +832,7 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
                   ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
-                  CheckPublished = (fun _ _ -> true)
+                  CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
@@ -2116,7 +2116,7 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
-                  CheckPublished = (fun _ _ -> true)
+                  CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
@@ -2222,7 +2222,7 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
                       ExtractCurrentGrammar = noCurrentGrammar
                       CiPollIntervalMs = 0
                       CiMaxAttempts = 10
-                      CheckPublished = (fun _ _ -> true)
+                      CheckFeedPresence = (fun _ _ -> OnFeed)
                       WaitForNuGet = false
                       NuGetPollIntervalMs = 0
                       NuGetMaxAttempts = 1
@@ -2350,11 +2350,11 @@ let ``release - resume with LocalPublish packs without pushing`` () =
 let ``waitForNuGet - returns true when all packages already published`` () =
     let mutable checks = 0
 
-    let checkPublished (_id: string) (_ver: string) =
+    let checkFeedPresence (_id: string) (_ver: string) =
         checks <- checks + 1
-        true
+        OnFeed
 
-    let result = waitForNuGet checkPublished 0 5 [ "PkgA", "1.0.0"; "PkgB", "2.0.0" ]
+    let result = waitForNuGet checkFeedPresence 0 5 [ "PkgA", "1.0.0"; "PkgB", "2.0.0" ]
 
     test <@ result = true @>
     // One check per package, no polling rounds beyond the first.
@@ -2365,35 +2365,35 @@ let ``waitForNuGet - polls until a package becomes available`` () =
     let mutable attempts = 0
 
     // Not published for the first two checks, then available.
-    let checkPublished (_id: string) (_ver: string) =
+    let checkFeedPresence (_id: string) (_ver: string) =
         attempts <- attempts + 1
-        attempts >= 3
+        if attempts >= 3 then OnFeed else NotOnFeed
 
-    let result = waitForNuGet checkPublished 0 10 [ "PkgA", "1.0.0" ]
+    let result = waitForNuGet checkFeedPresence 0 10 [ "PkgA", "1.0.0" ]
 
     test <@ result = true @>
     test <@ attempts >= 3 @>
 
 [<Fact>]
 let ``waitForNuGet - returns false when never published (times out)`` () =
-    let checkPublished (_id: string) (_ver: string) = false
-    let result = waitForNuGet checkPublished 0 3 [ "PkgA", "1.0.0" ]
+    let checkFeedPresence (_id: string) (_ver: string) = NotOnFeed
+    let result = waitForNuGet checkFeedPresence 0 3 [ "PkgA", "1.0.0" ]
     test <@ result = false @>
 
 [<Fact>]
 let ``waitForNuGet - maxAttempts 1 does exactly one check then times out`` () =
     let mutable checks = 0
 
-    let checkPublished (_id: string) (_ver: string) =
+    let checkFeedPresence (_id: string) (_ver: string) =
         checks <- checks + 1
-        false
+        NotOnFeed
 
-    let result = waitForNuGet checkPublished 0 1 [ "PkgA", "1.0.0" ]
+    let result = waitForNuGet checkFeedPresence 0 1 [ "PkgA", "1.0.0" ]
     test <@ result = false @>
     test <@ checks = 1 @>
 
 /// Like runRelease but lets the caller drive the NuGet-availability wait.
-let private runReleaseWithNuGetWait run config cmd checkPublished maxAttempts =
+let private runReleaseWithNuGetWait run config cmd checkFeedPresence maxAttempts =
     seedTmpChangelog ()
 
     release
@@ -2410,7 +2410,7 @@ let private runReleaseWithNuGetWait run config cmd checkPublished maxAttempts =
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
           CiMaxAttempts = 10
-          CheckPublished = checkPublished
+          CheckFeedPresence = checkFeedPresence
           WaitForNuGet = true
           NuGetPollIntervalMs = 0
           NuGetMaxAttempts = maxAttempts
@@ -2427,9 +2427,9 @@ let ``release - waits for NuGet after pushing tags and checks the published pack
 
         let mutable checked' = []
 
-        let checkPublished (id: string) (ver: string) =
+        let checkFeedPresence (id: string) (ver: string) =
             checked' <- checked' @ [ (id, ver) ]
-            true
+            OnFeed
 
         let config =
             { Packages =
@@ -2442,7 +2442,7 @@ let ``release - waits for NuGet after pushing tags and checks the published pack
               PreBuildCmds = []
               RootDir = "" }
 
-        let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkPublished 5
+        let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkFeedPresence 5
 
         test <@ result = 0 @>
         // The just-released package id + version were polled on NuGet.
@@ -2459,7 +2459,7 @@ let ``release - NuGet wait timeout does not change the exit code`` () =
         let (fakeRun, _getCalls) = passingCiRun []
 
         // Never published -> waitForNuGet times out, but release already pushed tags.
-        let checkPublished (_id: string) (_ver: string) = false
+        let checkFeedPresence (_id: string) (_ver: string) = NotOnFeed
 
         let config =
             { Packages =
@@ -2472,7 +2472,7 @@ let ``release - NuGet wait timeout does not change the exit code`` () =
               PreBuildCmds = []
               RootDir = "" }
 
-        let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkPublished 2
+        let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkFeedPresence 2
 
         // Timeout is a convenience-wait failure; the release succeeded.
         test <@ result = 0 @>
@@ -2546,7 +2546,7 @@ let private runReleaseTargeting run config cmd mode targets =
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
           CiMaxAttempts = 10
-          CheckPublished = (fun _ _ -> true)
+          CheckFeedPresence = (fun _ _ -> OnFeed)
           WaitForNuGet = false
           NuGetPollIntervalMs = 0
           NuGetMaxAttempts = 1
@@ -2644,7 +2644,7 @@ let ``release - --only on a multi-package repo uses the per-package CHANGELOG, n
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
-                  CheckPublished = (fun _ _ -> true)
+                  CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
@@ -2943,6 +2943,280 @@ let ``release - Auto with fsproj equal to last tag has nothing to do (not a resu
     finally
         File.Delete(tmpFile)
 
+/// The exact wedged shape observed in Falco.UnionRoutes: tag `v0.3.4` created
+/// LOCALLY, never pushed, package 0.3.4 never published, fsproj still says 0.3.4,
+/// and — because the tag already sits at HEAD — no source changes can ever appear
+/// "since" it. Before the fix this printed "Skipping ...: no changes since v0.3.4"
+/// then "No packages to release" on every run, forever: 0.3.4 could never be
+/// published and re-running never recovered.
+///
+/// A tag is a promise to publish, not the publication. With the newest tag's
+/// package definitely `NotOnFeed` the release is UNFINISHED, so it must resume and
+/// finish THAT SAME version, in place: the existing tag is left exactly where it
+/// is (not deleted, not re-created), the version is not re-bumped to 0.3.5, and
+/// the changelog is not re-rolled.
+let private orphanTagFakeRun (tmpFile: string) =
+    passingCiRun
+        [ ("git", "tag -l \"v*\"", Success "v0.3.2\nv0.3.3\nv0.3.4")
+          // No source changes since the newest tag — it already points at HEAD.
+          ("jj",
+           "diff --from v0.3.4 --to @ --summary \"glob:"
+           + Path.GetDirectoryName(tmpFile)
+           + "/**\"",
+           Success "")
+          // The local tag EXISTS. Recovery must cope with that, not require its deletion.
+          ("jj", "tag list v0.3.4", Success "v0.3.4") ]
+
+/// The single-package config for the wedged-shape tests above.
+let private orphanTagConfig (tmpFile: string) =
+    { Packages =
+        [ { Name = "Falco.UnionRoutes"
+            Fsproj = tmpFile
+            DllPath = "x.dll"
+            TagPrefix = "v"
+            FsProjsSharingSameTag = [] } ]
+      ReservedVersions = Set.empty
+      PreBuildCmds = []
+      RootDir = "" }
+
+/// Like `runRelease`, but drives the FEED seam — the authority for "is this
+/// version actually published", and so for whether a tag is an orphan.
+///
+/// The API-extraction seam is deliberately left at its hostile default
+/// (`noPreviousApi`, a `FetchError`): the orphan decision must come from the feed
+/// alone. A test that passes with an unreadable previous API proves the decision
+/// never routes through the API extractor — which is exactly what a `PackAsTool`
+/// package gets in production (NU1212 -> FetchError).
+let private runReleaseWithFeed run config checkFeedPresence =
+    seedTmpChangelog ()
+
+    release
+        { Run = run
+          Config =
+            { config with
+                RootDir = Path.GetTempPath() }
+          Command = Auto
+          Mode = PushTags
+          TargetPackages = []
+          ExtractPreviousApi = noPreviousApi
+          ExtractCurrentApi = noCurrentApi
+          ExtractPreviousGrammar = noPreviousGrammar
+          ExtractCurrentGrammar = noCurrentGrammar
+          CiPollIntervalMs = 0
+          CiMaxAttempts = 10
+          CheckFeedPresence = checkFeedPresence
+          WaitForNuGet = false
+          NuGetPollIntervalMs = 0
+          NuGetMaxAttempts = 1
+          Push = false
+          Check = false }
+
+/// A plain library, and a `PackAsTool` CLI. Every orphan-recovery test below runs
+/// against BOTH: a dotnet tool cannot be API-probed at all (a PackageReference to
+/// one fails NU1212), so before the feed check existed, tools could never be
+/// detected as orphans and stayed wedged forever — the gap this pairing pins.
+let private libraryFsproj =
+    "<Project><PropertyGroup><Version>0.3.4</Version></PropertyGroup></Project>"
+
+let private toolFsproj =
+    "<Project><PropertyGroup><Version>0.3.4</Version><PackAsTool>true</PackAsTool></PropertyGroup></Project>"
+
+[<Theory>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``release - orphan newest tag with no changes resumes that same version in place`` (packAsTool: bool) =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, (if packAsTool then toolFsproj else libraryFsproj))
+
+        // The feed answered definitively: 0.3.4 is NOT there (orphan tag).
+        let checkFeedPresence (_pkg: string) (version: string) =
+            match version with
+            | "0.3.4" -> NotOnFeed
+            | other -> failwithf "should only ask about the wedged version; got %s" other
+
+        let (fakeRun, getCalls) = orphanTagFakeRun tmpFile
+
+        let output, result =
+            withCapturedConsole (fun () -> runReleaseWithFeed fakeRun (orphanTagConfig tmpFile) checkFeedPresence)
+
+        let calls = getCalls ()
+
+        test <@ result = 0 @>
+        // NOT wedged any more: neither the skip nor the no-op terminal.
+        test <@ not (output.Contains("No packages to release")) @>
+        test <@ not (output.Contains("no changes since v0.3.4")) @>
+        // Resumed at the SAME version — 0.3.4, not a re-bump to 0.3.5.
+        test <@ output.Contains("Falco.UnionRoutes: resuming in-progress release -> tag v0.3.4") @>
+        // The existing local tag is left exactly where it is: never re-created.
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
+        // ...and it IS pushed, which is what triggers the publish that never landed.
+        test <@ calls |> List.exists (fun (c, a) -> c = "git" && a = "push origin v0.3.4") @>
+        // No re-bump: no version-bump commit, no changelog re-roll, fsproj untouched.
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("commit"))) @>
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("bookmark set"))) @>
+        test <@ File.ReadAllText(tmpFile).Contains("<Version>0.3.4</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Theory>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``release - published newest tag with no changes still skips (no spurious release)`` (packAsTool: bool) =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, (if packAsTool then toolFsproj else libraryFsproj))
+
+        // The feed HAS 0.3.4: the release really is finished. Must stay a no-op —
+        // releasing on every invocation would be a severe regression.
+        let checkFeedPresence (_pkg: string) (_version: string) = OnFeed
+
+        let (fakeRun, getCalls) = orphanTagFakeRun tmpFile
+
+        let output, result =
+            withCapturedConsole (fun () -> runReleaseWithFeed fakeRun (orphanTagConfig tmpFile) checkFeedPresence)
+
+        let calls = getCalls ()
+
+        test <@ result = 0 @>
+        test <@ output.Contains("Skipping Falco.UnionRoutes: no changes since v0.3.4") @>
+        test <@ output.Contains("No packages to release") @>
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
+    finally
+        File.Delete(tmpFile)
+
+/// FAIL-SAFE. Every way the feed can fail to answer arrives here as `FeedUnknown`
+/// (the flavours themselves — timeout, 5xx, auth failure, unreadable body — are
+/// discriminated in `Api.flatContainerPresence` and pinned in ApiTests). None of
+/// them may trigger a republish: guessing "absent" during an outage would
+/// re-publish an already-published version on every single run.
+[<Theory>]
+[<InlineData(false, "The operation has timed out.")>]
+[<InlineData(true, "The operation has timed out.")>]
+[<InlineData(false, "HTTP 503 for https://api.nuget.org/v3-flatcontainer/falco.unionroutes/index.json")>]
+[<InlineData(true, "HTTP 503 for https://api.nuget.org/v3-flatcontainer/falco.unionroutes/index.json")>]
+[<InlineData(false, "HTTP 401 for https://api.nuget.org/v3-flatcontainer/falco.unionroutes/index.json")>]
+[<InlineData(true, "unreadable flat-container index for Falco.UnionRoutes")>]
+[<InlineData(true, "No such host is known.")>]
+let ``release - unreachable feed on the newest tag never triggers a republish`` (packAsTool: bool) (reason: string) =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, (if packAsTool then toolFsproj else libraryFsproj))
+
+        let checkFeedPresence (_pkg: string) (_version: string) = FeedUnknown reason
+
+        let (fakeRun, getCalls) = orphanTagFakeRun tmpFile
+
+        let output, result =
+            withCapturedConsole (fun () -> runReleaseWithFeed fakeRun (orphanTagConfig tmpFile) checkFeedPresence)
+
+        let calls = getCalls ()
+
+        test <@ result = 0 @>
+        test <@ output.Contains("Skipping Falco.UnionRoutes: no changes since v0.3.4") @>
+        test <@ not (output.Contains("orphan tag")) @>
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
+    finally
+        File.Delete(tmpFile)
+
+/// REGRESSION, and the reason the orphan decision asks the FEED rather than the
+/// API extractor. `extractPreviousFromNuGetResult` reports `AbsentOnFeed` in two
+/// very different situations: the package really isn't published, OR it is
+/// published but no DLL can be located inside the .nupkg. The second is not
+/// hypothetical — `RefStamp`, released from this very repo, is an MSBuild-only
+/// package shipping just `build/`, and the extractor really does answer
+/// `AbsentOnFeed` for its published newest version (verified against the live
+/// feed). Anything that drives a REPUBLISH off that signal re-releases a
+/// perfectly published package on every single run.
+///
+/// So: API says "absent", feed says "published" -> the feed wins and we skip.
+/// The API extractor must not even be consulted for this decision.
+[<Fact>]
+let ``release - a published package whose DLL is unreadable is never republished`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, libraryFsproj)
+
+        let mutable apiConsulted = false
+
+        // Exactly what the real extractor returns for a published, DLL-less package.
+        let extractPreviousApi (_pkg: string) (_version: string) =
+            apiConsulted <- true
+            AbsentOnFeed
+
+        let (fakeRun, getCalls) = orphanTagFakeRun tmpFile
+
+        let output, result =
+            withCapturedConsole (fun () ->
+                seedTmpChangelog ()
+
+                release
+                    { Run = fakeRun
+                      Config =
+                        { orphanTagConfig tmpFile with
+                            RootDir = Path.GetTempPath() }
+                      Command = Auto
+                      Mode = PushTags
+                      TargetPackages = []
+                      ExtractPreviousApi = extractPreviousApi
+                      ExtractCurrentApi = noCurrentApi
+                      ExtractPreviousGrammar = noPreviousGrammar
+                      ExtractCurrentGrammar = noCurrentGrammar
+                      CiPollIntervalMs = 0
+                      CiMaxAttempts = 10
+                      // The feed is the authority, and it says the version IS there.
+                      CheckFeedPresence = (fun _ _ -> OnFeed)
+                      WaitForNuGet = false
+                      NuGetPollIntervalMs = 0
+                      NuGetMaxAttempts = 1
+                      Push = false
+                      Check = false })
+
+        let calls = getCalls ()
+
+        test <@ result = 0 @>
+        test <@ output.Contains("Skipping Falco.UnionRoutes: no changes since v0.3.4") @>
+        test <@ output.Contains("No packages to release") @>
+        // Nothing re-released.
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
+        // And the misleading signal was never even asked for.
+        test <@ not apiConsulted @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - orphan newest tag is not resumed when the tree declares a different version`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        // The tree is NOT what v0.3.4 was cut from — it still says 0.3.3. Resuming
+        // would push the tag and have CI publish a package stamped 0.3.3 under the
+        // 0.3.4 tag, so this must fall through to the skip rather than guess.
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.3.3</Version></PropertyGroup></Project>")
+
+        let checkFeedPresence (_pkg: string) (_version: string) = NotOnFeed
+
+        let (fakeRun, getCalls) = orphanTagFakeRun tmpFile
+
+        let output, result =
+            withCapturedConsole (fun () -> runReleaseWithFeed fakeRun (orphanTagConfig tmpFile) checkFeedPresence)
+
+        let calls = getCalls ()
+
+        test <@ result = 0 @>
+        test <@ output.Contains("Skipping Falco.UnionRoutes: no changes since v0.3.4") @>
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
+        test <@ File.ReadAllText(tmpFile).Contains("<Version>0.3.3</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
 [<Fact>]
 let ``release - fresh changes still bump normally (not treated as resume)`` () =
     let tmpFile = Path.GetTempFileName()
@@ -3120,7 +3394,7 @@ let private runReleaseInRoot run config cmd =
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
           CiMaxAttempts = 10
-          CheckPublished = (fun _ _ -> true)
+          CheckFeedPresence = (fun _ _ -> OnFeed)
           WaitForNuGet = false
           NuGetPollIntervalMs = 0
           NuGetMaxAttempts = 1
@@ -3283,7 +3557,7 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
-                  CheckPublished = (fun _ _ -> true)
+                  CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
@@ -3489,7 +3763,7 @@ let ``release - library does NOT rebundle when only a separately-published depen
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
-                  CheckPublished = (fun _ _ -> true)
+                  CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
@@ -3590,7 +3864,7 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
-                  CheckPublished = (fun _ _ -> true)
+                  CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
@@ -3683,7 +3957,7 @@ let ``release - library rebundles when a non-configured helper dependency change
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
-                  CheckPublished = (fun _ _ -> true)
+                  CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
@@ -3791,7 +4065,7 @@ let private releaseInput run config cmd mode check : ReleaseInput =
       ExtractCurrentGrammar = noCurrentGrammar
       CiPollIntervalMs = 0
       CiMaxAttempts = 10
-      CheckPublished = (fun _ _ -> true)
+      CheckFeedPresence = (fun _ _ -> OnFeed)
       WaitForNuGet = false
       NuGetPollIntervalMs = 0
       NuGetMaxAttempts = 1
@@ -4044,7 +4318,7 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
                   ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
-                  CheckPublished = (fun _ _ -> true)
+                  CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
@@ -4113,7 +4387,7 @@ let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative 
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
-                  CheckPublished = (fun _ _ -> true)
+                  CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
@@ -4188,7 +4462,7 @@ let ``release - PackAsTool CLI aborts when the previous grammar cannot be read``
                   ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
-                  CheckPublished = (fun _ _ -> true)
+                  CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1

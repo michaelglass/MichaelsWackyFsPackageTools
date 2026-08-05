@@ -116,7 +116,7 @@ let internal runReleaseWith
                   ExtractCurrentGrammar = extractCurrentGrammar
                   CiPollIntervalMs = 15000
                   CiMaxAttempts = 60
-                  CheckPublished = Api.isPublished Api.httpGet run
+                  CheckFeedPresence = Api.checkFeedPresence Api.httpGet run
                   WaitForNuGet = not (flags |> List.contains SkipNugetWait)
                   NuGetPollIntervalMs = 15000
                   NuGetMaxAttempts = 40
