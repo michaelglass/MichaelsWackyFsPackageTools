@@ -504,11 +504,25 @@ let downloadToCache (run: string -> string -> Shell.CommandResult) (packageId: s
         | Shell.Success _ -> true
         | Shell.Failure _ -> false)
 
-/// A best-effort HTTP GET seam, injected so the availability poll is unit
-/// testable without real network. `Ok body` is a 2xx response body; `Error msg`
-/// is any non-success (non-2xx status, timeout, DNS/connection failure). Mirrors
-/// the `run` shell seam: a real default is provided, tests pass a fake.
-let httpGet (url: string) : Result<string, string> =
+/// The outcome of an HTTP GET, kept THREE-valued because the publication
+/// question turns on the distinction a `Result<string, string>` throws away: a
+/// definite 404 is *knowledge* (the feed answered; the resource is not there),
+/// whereas a timeout, a 5xx, a 401/403 or a DNS failure is the *absence* of
+/// knowledge. Collapsing those into one `Error` is what made a two-valued
+/// publication check unable to support a fail-safe.
+type HttpResult =
+    /// A 2xx response, carrying the body.
+    | HttpOk of body: string
+    /// The server answered 404: this resource definitively does not exist.
+    | HttpNotFound
+    /// Everything else — timeout, DNS/connection failure, any non-404 non-2xx
+    /// status, auth failure. The truth is UNKNOWN.
+    | HttpFailed of reason: string
+
+/// A best-effort HTTP GET seam, injected so feed queries are unit testable
+/// without real network. Mirrors the `run` shell seam: a real default is
+/// provided, tests pass a fake.
+let httpGet (url: string) : HttpResult =
     use client = new System.Net.Http.HttpClient()
     client.Timeout <- System.TimeSpan.FromSeconds(10.0)
 
@@ -517,11 +531,27 @@ let httpGet (url: string) : Result<string, string> =
         let body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
 
         if resp.IsSuccessStatusCode then
-            Ok body
+            HttpOk body
+        elif resp.StatusCode = System.Net.HttpStatusCode.NotFound then
+            HttpNotFound
         else
-            Error(sprintf "HTTP %d for %s" (int resp.StatusCode) url)
+            HttpFailed(sprintf "HTTP %d for %s" (int resp.StatusCode) url)
     with ex ->
-        Error ex.Message
+        HttpFailed ex.Message
+
+/// The feed's answer to "is this exact package version published?".
+///
+/// The whole point of the type is that `NotOnFeed` is a POSITIVE claim — the
+/// feed was reached and it does not have this version — while `FeedUnknown`
+/// admits we could not find out. Only `NotOnFeed` may drive a destructive
+/// decision (re-publishing an orphan release); `FeedUnknown` must always behave
+/// like `OnFeed`, because the two wrong guesses are not symmetric: a wrong
+/// "absent" re-publishes on every run of an outage, while a wrong "published"
+/// merely defers to the next run that can reach the feed.
+type FeedPresence =
+    | OnFeed
+    | NotOnFeed
+    | FeedUnknown of reason: string
 
 /// The nuget.org v3 flat-container index URL for a package id. The flat container
 /// is the lowest-level, fastest-updating publish surface (it's where `restore`
@@ -531,40 +561,77 @@ let httpGet (url: string) : Result<string, string> =
 let internal flatContainerIndexUrl (packageId: string) : string =
     sprintf "https://api.nuget.org/v3-flatcontainer/%s/index.json" (packageId.ToLowerInvariant())
 
-/// Is `version` present in a flat-container `index.json` body? Parses the
-/// `versions` array and matches case-insensitively (the feed stores normalised
-/// lower-case versions). A malformed/empty body simply yields false (treated as
-/// "not yet" by the caller, which then falls back to the restore probe).
-let internal flatContainerHasVersion (indexJson: string) (version: string) : bool =
+/// The `versions` array of a flat-container `index.json` body, or `None` when the
+/// body cannot be understood (not JSON, or no `versions` array). `None` is
+/// deliberately distinct from `Some []`: an unparseable body tells us nothing,
+/// while an empty array is the feed positively stating it has no versions.
+let internal flatContainerVersions (indexJson: string) : string list option =
     try
         let doc = System.Text.Json.JsonDocument.Parse(indexJson)
 
         match doc.RootElement.TryGetProperty("versions") with
         | true, versions when versions.ValueKind = System.Text.Json.JsonValueKind.Array ->
             versions.EnumerateArray()
-            |> Seq.exists (fun v ->
-                v.ValueKind = System.Text.Json.JsonValueKind.String
-                && String.Equals(v.GetString(), version, StringComparison.OrdinalIgnoreCase))
-        | _ -> false
+            |> Seq.choose (fun v ->
+                if v.ValueKind = System.Text.Json.JsonValueKind.String then
+                    Some(v.GetString())
+                else
+                    None)
+            |> List.ofSeq
+            |> Some
+        | _ -> None
     with _ ->
-        false
+        None
+
+/// Is `version` present in a flat-container `index.json` body? Matches
+/// case-insensitively (the feed stores normalised lower-case versions). A
+/// malformed/empty body yields false — callers needing to tell "absent" from
+/// "unreadable" apart must use `flatContainerVersions` / `flatContainerPresence`.
+let internal flatContainerHasVersion (indexJson: string) (version: string) : bool =
+    match flatContainerVersions indexJson with
+    | Some versions ->
+        versions
+        |> List.exists (fun v -> String.Equals(v, version, StringComparison.OrdinalIgnoreCase))
+    | None -> false
+
+/// What does the nuget.org flat container say about this exact package version?
+/// GETs the id's `index.json` via the injected `fetch`. The flat container is the
+/// fastest-updating publish surface, so a just-pushed release shows here well
+/// before the registration index that `dotnet restore` resolves against.
+///
+/// Which answers are DEFINITE, and why each is safe:
+///   * 200 whose `versions` array contains it -> `OnFeed`.
+///   * 404 for the id  -> `NotOnFeed`. The CDN answered: nuget.org has never
+///     hosted this package id at all. A 404 is the flat container's normal way of
+///     saying "no such package", not an error condition.
+///   * 200 whose `versions` array lacks it -> `NotOnFeed`. The feed enumerated
+///     everything it has for the id and this version was not among them.
+///
+/// Everything else is `FeedUnknown` and must never drive a republish:
+///   * an unparseable/garbage 200 body (a proxy error page, a truncated read) —
+///     we cannot claim the version is absent from a list we could not read;
+///   * a timeout, DNS/connection failure, 5xx, or auth failure — `HttpFailed`.
+let internal flatContainerPresence (fetch: string -> HttpResult) (packageId: string) (version: string) : FeedPresence =
+    match fetch (flatContainerIndexUrl packageId) with
+    | HttpNotFound -> NotOnFeed
+    | HttpFailed reason -> FeedUnknown reason
+    | HttpOk body ->
+        match flatContainerVersions body with
+        | None -> FeedUnknown(sprintf "unreadable flat-container index for %s" packageId)
+        | Some versions ->
+            if
+                versions
+                |> List.exists (fun v -> String.Equals(v, version, StringComparison.OrdinalIgnoreCase))
+            then
+                OnFeed
+            else
+                NotOnFeed
 
 /// Is this exact package version live on the nuget.org flat container right now?
-/// GETs the id's `index.json` via the injected `fetch` and looks for `version` in
-/// its `versions` array. The flat container is the fastest-updating publish
-/// surface, so a just-pushed release shows here well before the registration
-/// index that `dotnet restore` resolves against — the gap that made the old
-/// restore-only poll time out while the package was already downloadable.
-/// A fetch error (offline, non-2xx, private-feed-only package) yields false so
-/// the caller can fall back to the restore probe.
-let internal isPublishedViaFlatContainer
-    (fetch: string -> Result<string, string>)
-    (packageId: string)
-    (version: string)
-    : bool =
-    match fetch (flatContainerIndexUrl packageId) with
-    | Ok body -> flatContainerHasVersion body version
-    | Error _ -> false
+/// The two-valued view of `flatContainerPresence`, kept for the availability
+/// poll, which only ever needs to know "is it there yet".
+let internal isPublishedViaFlatContainer (fetch: string -> HttpResult) (packageId: string) (version: string) : bool =
+    flatContainerPresence fetch packageId version = OnFeed
 
 /// Is this exact package version restorable right now? Restores a throwaway
 /// project that references `packageId`/`version` with `--no-http-cache`, so a
@@ -577,22 +644,53 @@ let isPublishedViaRestore (run: string -> string -> Shell.CommandResult) (packag
         | Shell.Success _ -> true
         | Shell.Failure _ -> false)
 
-/// Is this exact package version live right now? Used by the post-push poll to
-/// confirm the new release is actually available. Checks the nuget.org flat
-/// container first (the fast-updating publish target for this tool's users) and
-/// only falls back to the `dotnet restore` probe when the flat container hasn't
-/// indexed it yet — which is also exactly the private-feed case, where the
-/// restore probe (honouring the repo `nuget.config`) is the real authority. The
-/// flat-container check fixes the timeout where the package was already on the
-/// CDN but the restore-resolved registration index still lagged.
+/// Is this exact package version published, as a three-valued verdict? THE
+/// publication authority: both the post-push availability poll and the orphan-tag
+/// detection ask this one question, so "actually on the feed" has a single
+/// definition.
+///
+/// The nuget.org flat container decides (it is the fast-updating publish target
+/// for this tool's users, and the only source that can answer *definitely
+/// absent*). The `dotnet restore` probe then acts purely as a MONOTONE UPGRADE:
+/// it may raise a verdict to `OnFeed`, and may never lower one.
+///
+/// That asymmetry is the whole design, and it buys two things at once:
+///   * A package published only to a PRIVATE feed is invisible to the public flat
+///     container, which would call it `NotOnFeed`. The restore probe honours the
+///     repo's `nuget.config`, so a success there corrects the verdict — no
+///     spurious republish of a privately-published release.
+///   * A restore FAILURE never downgrades a definite answer, because it cannot
+///     un-know what the flat container already established. This is what makes the
+///     check work for `PackAsTool` packages at all: a `PackageReference` probe of
+///     a tool package always fails NU1212, so for a tool the probe is structurally
+///     incapable of confirming presence. Under a "failure downgrades" rule every
+///     tool would be permanently `FeedUnknown` — exactly the gap that left tools
+///     unable to recover from an orphan tag.
+let checkFeedPresence
+    (fetch: string -> HttpResult)
+    (run: string -> string -> Shell.CommandResult)
+    (packageId: string)
+    (version: string)
+    : FeedPresence =
+    match flatContainerPresence fetch packageId version with
+    | OnFeed -> OnFeed
+    | verdict ->
+        if isPublishedViaRestore run packageId version then
+            OnFeed
+        else
+            verdict
+
+/// Is this exact package version live right now? The two-valued view of
+/// `checkFeedPresence`, for callers that only need "is it there yet" (the
+/// post-push availability poll). Identical in behaviour to the historical
+/// `flat container || restore probe`.
 let isPublished
-    (fetch: string -> Result<string, string>)
+    (fetch: string -> HttpResult)
     (run: string -> string -> Shell.CommandResult)
     (packageId: string)
     (version: string)
     : bool =
-    isPublishedViaFlatContainer fetch packageId version
-    || isPublishedViaRestore run packageId version
+    checkFeedPresence fetch run packageId version = OnFeed
 
 /// Extract the previous release's API: try the local NuGet cache first, then
 /// fall back to downloading the published package into the cache. Distinguishes
