@@ -316,11 +316,96 @@ let hasCoverageRatchet (run: string -> string -> CommandResult) : bool =
 
 let pushMain (run: string -> string -> CommandResult) : unit = runOrFail run "jj" "git push" |> ignore
 
-let pushTags (run: string -> string -> CommandResult) (tags: string list) : unit =
+/// How many workflow runs GitHub has for `gitRef`. A TAG name is a valid ref here: a
+/// tag-triggered run reports the tag as its head branch.
+///
+/// `None` means "could not find out" — `gh` missing, unauthenticated, rate-limited, or
+/// output we cannot parse. Deliberately distinct from `Some 0` ("asked, and there are
+/// none"), because only the latter is evidence about the release.
+let internal runCountForRef (run: string -> string -> CommandResult) (gitRef: string) : int option =
+    let args = sprintf "run list --branch %s --json name --limit 20" gitRef
+
+    withJjGitDir (fun () ->
+        match run "gh" args with
+        | Success output ->
+            try
+                use doc = System.Text.Json.JsonDocument.Parse(output)
+
+                if doc.RootElement.ValueKind = System.Text.Json.JsonValueKind.Array then
+                    Some(doc.RootElement.GetArrayLength())
+                else
+                    None
+            with _ ->
+                None
+        | Failure _ -> None)
+
+/// Push one tag, retrying a few times before giving up.
+///
+/// A push can fail for reasons that have nothing to do with the release and clear on
+/// their own — a momentarily unreachable SSH agent, a dropped connection, a blip at the
+/// far end. Observed live: a release aborted twice with
+/// `sign_and_send_pubkey: ... communication with agent failed`, and the identical push
+/// succeeded minutes later with nothing changed. Without a retry that transient becomes
+/// a half-finished release — version-bump commit pushed, tags not — and recovering by
+/// hand is what tempts you into a batch push that GitHub then ignores entirely.
+let private pushOneTag (run: string -> string -> CommandResult) (attempts: int) (delayMs: int) (tag: string) : unit =
+    let rec go attempt =
+        match run "git" (sprintf "push origin %s" tag) with
+        | Success _ -> ()
+        | Failure(error, _) when attempt < attempts ->
+            let firstLine =
+                error.Split('\n')
+                |> Array.map (fun s -> s.Trim())
+                |> Array.tryFind (fun s -> s <> "")
+
+            printfn
+                "  push of %s failed (attempt %d of %d), retrying: %s"
+                tag
+                attempt
+                attempts
+                (defaultArg firstLine "no output")
+
+            System.Threading.Thread.Sleep(delayMs)
+            go (attempt + 1)
+        | Failure(error, _) -> failwithf "git push origin %s failed after %d attempts: %s" tag attempts error
+
+    go 1
+
+/// Push each tag and CONFIRM each one actually triggered a workflow run. Returns the
+/// tags it could NOT confirm.
+///
+/// Pushing separately is load-bearing: a batch push of several tags can leave GitHub
+/// creating no push events at all, so the tags sit on the remote and nothing ever builds
+/// them. Observed: seven tags in one push produced zero runs; the same seven pushed
+/// singly produced seven.
+///
+/// The confirmation is the point of this function. "I pushed a tag" is not "a release is
+/// happening", and the difference is invisible from here — the tags are on the remote
+/// either way. An unaskable question counts as UNCONFIRMED: answering "all fine" because
+/// the check itself could not run would be the same lie one level down.
+let pushTagsAndConfirm
+    (run: string -> string -> CommandResult)
+    (attempts: int)
+    (delayMs: int)
+    (tags: string list)
+    : string list =
     // Export jj tags to the underlying git repo
     runOrFail run "jj" "git export" |> ignore
 
     // Push each tag separately so each gets its own GitHub Actions push event
     withJjGitDir (fun () ->
         for tag in tags do
-            runOrFail run "git" (sprintf "push origin %s" tag) |> ignore)
+            pushOneTag run attempts delayMs tag)
+
+    // Give GitHub a moment to register the events before asking about them.
+    if not (List.isEmpty tags) then
+        System.Threading.Thread.Sleep(delayMs)
+
+    tags
+    |> List.filter (fun tag ->
+        match runCountForRef run tag with
+        | Some n when n > 0 -> false
+        | _ -> true)
+
+let pushTags (run: string -> string -> CommandResult) (tags: string list) : unit =
+    pushTagsAndConfirm run 3 3000 tags |> ignore

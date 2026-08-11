@@ -1954,6 +1954,59 @@ let ``release - fails fast when resuming and CI has failed`` () =
         File.Delete(tmpFile)
 
 [<Fact>]
+let ``release - a tag that triggered no workflow run fails the release`` () =
+    // The defect this guards: every push succeeds, the tags are on the remote, and
+    // GitHub creates no event — so nothing is ever built or published while the release
+    // reports success. The confirmation query (`run list --branch <tag>`) answers with
+    // an empty array here; the CI poll (`--commit <sha>`) still passes, so the ONLY
+    // thing wrong is the missing trigger.
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.2.0-alpha.1</Version></PropertyGroup></Project>")
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            match cmd, args with
+            | "jj", "diff --summary" -> Success ""
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
+            // The post-push confirmation: no run exists for the tag.
+            | "gh", a when a.Contains("run list") && a.Contains("--branch") -> Success "[]"
+            // The pre-release CI check on the commit: green.
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "jj", a when a.Contains("tag list") && a.Contains("\"glob:v") -> Success "v0.1.0-alpha.1"
+            | "jj", a when a.Contains("--from v0.1.0-alpha.1") -> Success "1 file changed"
+            | "jj", "tag list v0.2.0-alpha.1" -> Success ""
+            | "git", "tag -l v0.2.0-alpha.1" -> Success ""
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", "git push" -> Success ""
+            | "jj", "git export" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let result =
+            runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
+
+        // Non-zero: the tags exist on the remote but nothing will build them.
+        test <@ result <> 0 @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
 let ``release - resumes and polls when CI is in progress`` () =
     let tmpFile = Path.GetTempFileName()
 
@@ -2012,8 +2065,11 @@ let ``release - resumes and polls when CI is in progress`` () =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
-        // Polled multiple times (1 pre-release + 2 in-progress + 1 success = 4)
-        test <@ ghCallCount = 4 @>
+        // Polled multiple times (1 pre-release + 2 in-progress + 1 success = 4), then
+        // ONE more per pushed tag: after pushing, the release now confirms a workflow
+        // run actually exists for each tag instead of assuming the push triggered one.
+        // One package here, so one tag, so 5.
+        test <@ ghCallCount = 5 @>
         // Resume re-pushed main (idempotent) before pushing tags.
         test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push") @>
         // Tags were pushed
