@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- fix: **a release no longer claims success when a pushed tag triggered nothing.**
+  `release` printed "Tags pushed. GitHub Actions will handle the release." and exited `0`
+  as soon as the pushes returned — an assertion about something nobody had checked. A tag
+  can land on the remote and create no workflow event at all, and then that line is the
+  only trace of a release that built and published nothing. Observed live: seven tags
+  pushed in one command produced **zero** runs while all seven were present on the
+  remote; the same seven pushed one at a time produced seven. The release now asks GitHub
+  whether a run exists for each tag, and exits non-zero naming the tags and how to
+  re-trigger them when any is unaccounted for.
+
+  A tag whose run cannot be *checked* — `gh` missing, unauthenticated, rate-limited, or
+  unparseable output — counts as **unconfirmed**, not as fine. Reporting success because
+  the check itself could not run would rebuild the same defect one level down.
+- fix: **a transient push failure no longer aborts a release half-done.** Each tag push is
+  retried before giving up. Observed live: a release crashed twice with
+  `sign_and_send_pubkey: ... communication with agent failed`, and the identical push
+  succeeded minutes later with nothing changed — leaving the version-bump commit pushed
+  and no tags, which is exactly the state that tempts a manual batch push (see above). A
+  push that never succeeds still fails loudly rather than being swallowed.
+
 ## 0.14.0-alpha.2 - 2026-08-05
 
 - fix: an orphan tag no longer wedges a package's releases forever. A release was treated as finished the moment its tag existed — but a tag is a promise to publish, not the publication. When the tag was created and the publish never landed on NuGet (a CI failure after tagging, or a tag that was never pushed), the tag sat at HEAD, so no source change could ever appear "since" it: every subsequent run printed `Skipping <pkg>: no changes since <tag>` then `No packages to release`, and that version could never be published. Re-running never recovered. "Finished" now means the tag exists **and** its package is actually on the feed: when the newest tag's version is definitely absent from the feed and there are no source changes since it, the release is resumed and finished at **that same version** — in place, with the existing tag left exactly where it is (never deleted, never re-created) and no re-bump or changelog re-roll. A newest tag whose package *is* published still skips exactly as before.
