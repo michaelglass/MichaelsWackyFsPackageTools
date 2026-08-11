@@ -724,22 +724,102 @@ let ``checkCiStatusForSha - queued run returns InProgress`` () =
 
 // pushTags
 
-[<Fact>]
-let ``pushTags - exports and pushes each tag separately`` () =
-    let mutable calls: (string * string) list = []
-
-    let run (cmd: string) (args: string) =
-        calls <- calls @ [ (cmd, args) ]
+/// A `run` that succeeds at export and push, and answers `gh run list` with
+/// `runsPerTag` entries. Tests pass zero delays so nothing sleeps.
+let private pushRun (runsPerTag: int) (calls: ResizeArray<string * string>) =
+    fun (cmd: string) (args: string) ->
+        calls.Add((cmd, args))
 
         match cmd, args with
         | "jj", "git export" -> Success ""
         | "git", a when a.StartsWith("push origin") -> Success ""
+        | "gh", a when a.StartsWith("run list") ->
+            Success(
+                "["
+                + String.concat "," (List.replicate runsPerTag "{\"name\":\"Release\"}")
+                + "]"
+            )
         | _ -> Failure("unexpected", 1)
 
-    pushTags run [ "v1.0.0"; "v2.0.0" ]
-    test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git export") @>
-    test <@ calls |> List.exists (fun (c, a) -> c = "git" && a = "push origin v1.0.0") @>
-    test <@ calls |> List.exists (fun (c, a) -> c = "git" && a = "push origin v2.0.0") @>
+[<Fact>]
+let ``pushTags - exports and pushes each tag separately`` () =
+    let calls = ResizeArray()
+    let run = pushRun 1 calls
+
+    pushTagsAndConfirm run 1 0 [ "v1.0.0"; "v2.0.0" ] |> ignore
+    test <@ calls |> Seq.exists (fun (c, a) -> c = "jj" && a = "git export") @>
+    test <@ calls |> Seq.exists (fun (c, a) -> c = "git" && a = "push origin v1.0.0") @>
+    test <@ calls |> Seq.exists (fun (c, a) -> c = "git" && a = "push origin v2.0.0") @>
+
+[<Fact>]
+let ``pushTagsAndConfirm - a tag whose push triggered a run is confirmed`` () =
+    let run = pushRun 1 (ResizeArray())
+    test <@ List.isEmpty (pushTagsAndConfirm run 1 0 [ "v1.0.0"; "v2.0.0" ]) @>
+
+[<Fact>]
+let ``pushTagsAndConfirm - a tag on the remote with NO run is reported unconfirmed`` () =
+    // The failure this change exists for: every push SUCCEEDS, GitHub creates no event,
+    // and nothing is ever built or published. Invisible without asking.
+    let run = pushRun 0 (ResizeArray())
+    test <@ pushTagsAndConfirm run 1 0 [ "v1.0.0"; "v2.0.0" ] = [ "v1.0.0"; "v2.0.0" ] @>
+
+[<Fact>]
+let ``pushTagsAndConfirm - when gh cannot answer, the tag is UNCONFIRMED not assumed fine`` () =
+    // `gh` missing, unauthenticated or rate-limited is "I could not find out", which is
+    // not "it is fine". Reporting confirmed here would rebuild the very defect being
+    // fixed, one level down: a check that cannot fail is not a check.
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", "git export" -> Success ""
+        | "git", a when a.StartsWith("push origin") -> Success ""
+        | "gh", _ -> Failure("gh: command not found", 127)
+        | _ -> Failure("unexpected", 1)
+
+    test <@ pushTagsAndConfirm run 1 0 [ "v1.0.0" ] = [ "v1.0.0" ] @>
+
+[<Fact>]
+let ``pushTagsAndConfirm - unparseable gh output is UNCONFIRMED`` () =
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", "git export" -> Success ""
+        | "git", a when a.StartsWith("push origin") -> Success ""
+        | "gh", _ -> Success "not json at all"
+        | _ -> Failure("unexpected", 1)
+
+    test <@ pushTagsAndConfirm run 1 0 [ "v1.0.0" ] = [ "v1.0.0" ] @>
+
+[<Fact>]
+let ``pushTagsAndConfirm - a transient push failure is retried, not fatal`` () =
+    // Modelled on the live failure: `sign_and_send_pubkey ... communication with agent
+    // failed`, twice, then the identical push succeeded with nothing changed.
+    let mutable pushAttempts = 0
+
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", "git export" -> Success ""
+        | "git", a when a.StartsWith("push origin") ->
+            pushAttempts <- pushAttempts + 1
+
+            if pushAttempts < 3 then
+                Failure("sign_and_send_pubkey: signing failed for ED25519 from agent", 128)
+            else
+                Success ""
+        | "gh", a when a.StartsWith("run list") -> Success "[{\"name\":\"Release\"}]"
+        | _ -> Failure("unexpected", 1)
+
+    test <@ List.isEmpty (pushTagsAndConfirm run 3 0 [ "v1.0.0" ]) @>
+    test <@ pushAttempts = 3 @>
+
+[<Fact>]
+let ``pushTagsAndConfirm - a push that never succeeds still fails loudly`` () =
+    // The retry must not become a way to swallow a real, persistent failure.
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", "git export" -> Success ""
+        | "git", a when a.StartsWith("push origin") -> Failure("permission denied", 128)
+        | _ -> Failure("unexpected", 1)
+
+    raises<exn> <@ pushTagsAndConfirm run 2 0 [ "v1.0.0" ] @>
 
 // tagExists - jj success but tag not in output
 

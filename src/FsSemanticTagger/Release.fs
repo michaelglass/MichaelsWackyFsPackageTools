@@ -228,16 +228,37 @@ let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * 
 
     match ciStatus with
     | Passed ->
-        pushTags run tags
-        printfn "Tags pushed. GitHub Actions will handle the release."
+        // "Tags pushed. GitHub Actions will handle the release." used to be printed
+        // unconditionally — an assertion about something nobody had checked. A tag can
+        // land on the remote and trigger nothing at all (a batch push does exactly
+        // that), and then this line is the only trace of a release that published
+        // nothing. Ask before claiming.
+        let unconfirmed = pushTagsAndConfirm run 3 3000 tags
 
-        if input.WaitForNuGet then
-            printfn "Waiting for NuGet to index the published package(s)..."
+        if not (List.isEmpty unconfirmed) then
+            printfn "Error: pushed %d tag(s), but no workflow run appeared for:" (List.length tags)
 
-            waitForNuGet input.CheckFeedPresence input.NuGetPollIntervalMs input.NuGetMaxAttempts pkgVersions
-            |> ignore
+            for tag in unconfirmed do
+                printfn "  %s" tag
 
-        0
+            printfn ""
+            printfn "The tags ARE on the remote — this is not a push failure, it is a MISSING TRIGGER."
+            printfn "Nothing will be built or published for them until a run exists."
+            printfn "Re-push one at a time to trigger:  git push origin :refs/tags/<tag> && git push origin <tag>"
+            printfn "(If `gh` is unavailable or unauthenticated here, the check could not run and says so"
+            printfn " by listing the tag — verify manually rather than assuming it published.)"
+            1
+        else
+
+            printfn "Tags pushed, and a workflow run exists for each. GitHub Actions will handle the release."
+
+            if input.WaitForNuGet then
+                printfn "Waiting for NuGet to index the published package(s)..."
+
+                waitForNuGet input.CheckFeedPresence input.NuGetPollIntervalMs input.NuGetMaxAttempts pkgVersions
+                |> ignore
+
+            0
     | Failed runs ->
         printfn "Error: CI failed on version bump commit. Not pushing tags."
 
