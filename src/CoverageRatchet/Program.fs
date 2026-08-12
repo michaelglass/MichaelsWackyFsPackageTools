@@ -718,7 +718,6 @@ let main argv =
             | Some extras -> printfn "%s" extras
             | None -> ()
 
-    // Bare invocation runs the default (ratchet) command
     if Array.isEmpty argv then
         match run (Ratchet None) searchDir mergeBaselines with
         | Ok exitCode -> exitCode

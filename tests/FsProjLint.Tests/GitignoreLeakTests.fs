@@ -120,9 +120,9 @@ let ``fails when a gitignored file is history-only (no longer tracked)`` () =
 
 [<Fact>]
 let ``passes when the leak lives only on a different branch (not current ancestry)`` () =
-    // The new scoping: the check scans the CURRENT branch's ancestry only. A
-    // gitignored file committed on an unrelated branch that is NOT an ancestor
-    // of HEAD must NOT fail the gate on the branch we publish from.
+    // The check scans the CURRENT branch's ancestry only. A gitignored file
+    // committed on an unrelated branch that is NOT an ancestor of HEAD must NOT
+    // fail the gate on the branch we publish from.
     withTempDir (fun dir ->
         initRepo dir
         writeFile dir ".gitignore" ".secret\n"

@@ -1026,12 +1026,10 @@ let ``tagExists - jj fails git returns different tag returns false`` () =
 
 // isCommitPushed
 
-// The revset asks whether SHA lies within the pushed history (sha is an ancestor
-// of some remote bookmark) — `<sha> & ::(remote_bookmarks())`. It must NOT be the
-// reverse (`remote_bookmarks() & ::<sha>`), which asked which remote bookmarks are
-// ancestors of sha and was a false positive for any local commit built on top of
-// pushed main — so an unpushed release commit read as "pushed" and the release hung
-// waiting for a CI run that never started.
+// The revset asks whether SHA lies within the pushed history (sha is an ancestor of
+// some remote bookmark) — `<sha> & ::(remote_bookmarks())`. NOT the reverse
+// (`remote_bookmarks() & ::<sha>`), which is true of any local commit built on top
+// of pushed main, so an unpushed release commit would read as "pushed".
 let private pushedQuery (sha: string) =
     sprintf "log -r \"%s & ::(remote_bookmarks())\" --no-graph -T commit_id" sha
 
