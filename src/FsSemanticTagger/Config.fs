@@ -151,10 +151,8 @@ let transitiveBundledRefDirs
                 let refDir = toRepoRelativeDir rootDir refFull
                 let refRel = toRepoRelativeFsproj rootDir refFull
 
-                // A reference ships inside the package iff the root is a tool
-                // (bundles everything) or the reference is not separately
-                // published. A separately-published reference is a NuGet-dependency
-                // boundary: skip it and do not recurse past it.
+                // A separately-published reference is a NuGet-dependency boundary:
+                // skip it and do not recurse past it.
                 let bundled = rootIsTool || not (isSeparatelyReleased refRel)
 
                 if bundled then
@@ -186,7 +184,6 @@ let findPackableProjects (rootDir: string) : (string * string) list =
         let content = File.ReadAllText(path)
         let m = packageIdRegex.Match(content)
 
-        // An Exe without PackAsTool is an example/demo app, not a published package.
         let isExampleExe =
             outputTypeExeRegex.IsMatch(content) && not (packAsToolRegex.IsMatch(content))
 

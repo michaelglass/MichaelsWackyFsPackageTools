@@ -21,14 +21,9 @@ open System.IO
 ///
 /// Walking up means resolution works from any nested subdirectory (e.g. the
 /// per-project `coverage/<Project>/` dir the coverage tasks cd into), not just
-/// from the repo root. For a caller already at the root the behavior is
-/// identical to a single-level check.
+/// from the repo root.
 let internal resolveGitDir (startDir: string) : string option =
     let storeFor (root: string) : string option =
-        // `<root>/.jj/repo` is either a directory (default checkout) or a small
-        // ASCII FILE whose contents are a path (usually relative to
-        // `<root>/.jj/`) pointing at the real repo dir (secondary workspace
-        // created by `jj workspace add`).
         let jjDir = Path.Combine(root, ".jj")
         let jjRepo = Path.Combine(jjDir, "repo")
 

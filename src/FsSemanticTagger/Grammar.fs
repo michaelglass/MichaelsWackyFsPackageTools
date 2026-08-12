@@ -219,9 +219,7 @@ module Grammar =
             api
 
     // -----------------------------------------------------------------------
-    // Structural recovery under MetadataLoadContext. Every read below is
-    // metadata-only (`GetCustomAttributesData()` + `Type` shape); nothing here
-    // instantiates an attribute or calls into FSharp.Reflection.
+    // Structural recovery under MetadataLoadContext.
     // -----------------------------------------------------------------------
 
     [<Literal>]
