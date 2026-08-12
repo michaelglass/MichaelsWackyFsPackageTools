@@ -165,7 +165,7 @@ let ``compare with empty lists returns NoChange`` () = test <@ compare [] [] = N
 
 [<Fact>]
 let ``extractFromAssembly extracts signatures from own DLL`` () =
-    // Use the tool's own compiled DLL as a test fixture
+    // The tool's own compiled DLL is the fixture.
     let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
 
     let dllPath =
@@ -173,20 +173,18 @@ let ``extractFromAssembly extracts signatures from own DLL`` () =
 
     let signatures = extractFromAssembly dllPath
 
-    // Should contain the Version type
     let hasVersionType =
         signatures
         |> List.exists (fun (ApiSignature s) -> s = "type FsSemanticTagger.Version+Version")
 
     test <@ hasVersionType @>
 
-    // Should contain the parse function (compiled as static method)
+    // `parse` is compiled as a static method.
     let hasParseFunction =
         signatures |> List.exists (fun (ApiSignature s) -> s.Contains("parse"))
 
     test <@ hasParseFunction @>
 
-    // Should have non-trivial number of signatures
     test <@ signatures.Length > 5 @>
 
 [<Fact>]
@@ -208,9 +206,7 @@ let ``getAssemblySearchPaths includes DLL directory and runtime directory`` () =
         System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
 
     let paths = getAssemblySearchPaths dllPath
-    // Should have at least the DLL dir and the runtime dir
     test <@ paths.Length >= 2 @>
-    // First path should be the DLL's directory
     let dllDir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(dllPath))
     test <@ paths[0] = dllDir @>
 
@@ -356,9 +352,8 @@ let ``isPublishedViaFlatContainer false when fetch errors (offline or non-2xx)``
 
 [<Fact>]
 let ``isPublished succeeds on the FIRST attempt via flat container without ever probing restore`` () =
-    // This is the regression: previously isPublished only ran a dotnet restore,
-    // which timed out while the flat container already had the package. Now the
-    // flat-container hit short-circuits and the restore probe is never invoked.
+    // A restore-only check times out while the flat container already has the
+    // package, so the flat-container hit must short-circuit the restore probe.
     let mutable restored = false
 
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
@@ -696,11 +691,10 @@ let ``extractFromCacheRoot returns signatures for cached tool package`` () =
 
 [<Fact>]
 let ``extractFromCacheRoot finds an analyzer-packaged assembly under analyzers-dotnet-fs`` () =
-    // AUTOMATION-196: an FSharp.Analyzers.SDK analyzer package (IncludeBuildOutput=false,
+    // An FSharp.Analyzers.SDK analyzer package (IncludeBuildOutput=false,
     // DevelopmentDependency=true) ships its assembly under analyzers/dotnet/fs/<id>.dll
-    // with NO lib/ folder. The resolver previously searched only lib/ and tools/, so it
-    // never found the DLL -> extractFromCacheRoot returned None -> the package was
-    // mis-reported as an orphan tag (AbsentOnFeed) and never actually API-diffed.
+    // with NO lib/ folder. A resolver that searches only lib/ and tools/ never finds
+    // the DLL, and the package is mis-reported as an orphan tag (AbsentOnFeed).
     //   <root>/fakeanalyzer/1.0.0/analyzers/dotnet/fs/FakeAnalyzer.dll   (and NO lib/)
     let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
 
@@ -781,7 +775,7 @@ let ``extractFromCacheRoot returns None when a cached package has no assembly (r
 
 [<Fact>]
 let ``extractPreviousFromNuGetResult reports Found (not AbsentOnFeed) for an analyzer-packaged cached package`` () =
-    // AUTOMATION-196 end-to-end: an analyzer package whose assembly lives under
+    // End-to-end: an analyzer package whose assembly lives under
     // analyzers/dotnet/fs/ must resolve from the local cache as Found, NOT be
     // mis-classified as an orphan tag (AbsentOnFeed). Fixture a GUID-named package
     // in the real user cache so extractFromNuGetCache (which reads ~/.nuget/packages)
@@ -905,7 +899,6 @@ let ``extractFromAssembly extracts properties`` () =
 
     let signatures = extractFromAssembly dllPath
 
-    // Version record should have property getters
     let hasProps =
         signatures
         |> List.exists (fun (ApiSignature s) -> s.Contains("::") && s.Contains(": ") && not (s.Contains("(")))
@@ -965,7 +958,6 @@ let ``compare with removed and added returns Breaking prioritizing removals`` ()
     match compare baseline current with
     | Breaking(h, t) ->
         let all = h :: t
-        // Should include the removed items
         test <@ all |> List.exists (fun (ApiSignature s) -> s.Contains("OldMethod")) @>
         test <@ all |> List.exists (fun (ApiSignature s) -> s.Contains("AnotherOld")) @>
     | other -> failwithf "Expected Breaking, got %A" other

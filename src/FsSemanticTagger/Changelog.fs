@@ -89,9 +89,9 @@ let private summaryLine (description: string) : string option =
     |> Array.tryFind (fun l -> l <> "")
 
 /// Derive `## Unreleased` changelog bullet lines from a set of commit
-/// descriptions (AUTOMATION-197). Only each description's SUMMARY line (its
-/// first non-blank line) is used — jj descriptions are long and multi-line, and
-/// the changelog stays readable with one bullet per commit. Each summary is
+/// descriptions. Only each description's SUMMARY line (its first non-blank line)
+/// is used — jj descriptions are long and multi-line, and the changelog stays
+/// readable with one bullet per commit. Each summary is
 /// parsed for a conventional-commit prefix (feat/fix/chore/docs/refactor/perf/
 /// test/build/ci/style/revert, an optional (scope), and an optional `!` breaking
 /// marker) and the bullets are returned grouped in a stable order: breaking-
@@ -249,8 +249,8 @@ let promoteOrInsert (changelogPath: string) (version: Version) (today: DateTime)
     promoteOrInsertLines changelogPath version today [ defaultBullet ]
 
 /// Promote `## Unreleased`, DERIVING the section content from `descriptions`
-/// (AUTOMATION-197) when — and only when — the section is missing or empty. A
-/// hand-authored `## Unreleased` is NEVER clobbered: if `validateUnreleased` is
+/// when — and only when — the section is missing or empty. A hand-authored
+/// `## Unreleased` is NEVER clobbered: if `validateUnreleased` is
 /// `Ok`, this behaves exactly like `promoteUnreleased` and `descriptions` is
 /// ignored. Otherwise the commit descriptions are turned into grouped bullets
 /// (`deriveUnreleasedBullets`) and promoted into a fresh version section. When

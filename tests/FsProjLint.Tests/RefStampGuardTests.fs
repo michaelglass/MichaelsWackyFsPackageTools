@@ -1,6 +1,6 @@
 module FsProjLint.Tests.RefStampGuardTests
 
-// The RefStamp local-pack guard (AUTOMATION-123): a repo that publishes
+// The RefStamp local-pack guard: a repo that publishes
 // packages must wire in RefStamp so a local `dotnet pack` cannot produce a
 // release-shaped version. fsprojlint is the distribution's enforcement arm —
 // the sibling repos adopt the guard because this check tells them to, with the

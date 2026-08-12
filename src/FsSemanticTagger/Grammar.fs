@@ -7,7 +7,7 @@ open System.Text.RegularExpressions
 open FsSemanticTagger.Api
 
 // ===========================================================================
-// AUTOMATION-194 — CommandTree grammar-aware versioning.
+// CommandTree grammar-aware versioning.
 //
 // A CommandTree consumer's *realized command grammar* (the parse contract of its
 // CLI: command names, positional args, flags and their arities) is not visible to
@@ -219,9 +219,7 @@ module Grammar =
             api
 
     // -----------------------------------------------------------------------
-    // Structural recovery under MetadataLoadContext. Every read below is
-    // metadata-only (`GetCustomAttributesData()` + `Type` shape); nothing here
-    // instantiates an attribute or calls into FSharp.Reflection.
+    // Structural recovery under MetadataLoadContext.
     // -----------------------------------------------------------------------
 
     [<Literal>]

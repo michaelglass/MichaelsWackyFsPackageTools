@@ -40,7 +40,6 @@ let tagExists (run: string -> string -> CommandResult) (tag: string) : bool =
 /// walking back past an orphan tag (one whose package never landed on the feed)
 /// to the most recent release that is actually published.
 let getSortedTags (run: string -> string -> CommandResult) (prefix: string) : (string * Version) list =
-    // Try jj first, fall back to git
     let output =
         match runSilent run "jj" (sprintf "tag list \"glob:%s*\" -T \"name ++ \\\"\\n\\\"\"" prefix) with
         | Some output when output.Trim() <> "" -> output
@@ -81,9 +80,8 @@ let hasChangesSinceTag (run: string -> string -> CommandResult) (tag: string) (p
     | Failure _ -> true
 
 /// Commit descriptions between `tag` (exclusive) and `@`, restricted to commits
-/// that touch any of `paths`. Feeds the `## Unreleased` changelog derivation
-/// (AUTOMATION-197): the raw, full descriptions since the last release for a
-/// package's change closure.
+/// that touch any of `paths`. Feeds the `## Unreleased` changelog derivation: the
+/// raw, full descriptions since the last release for a package's change closure.
 ///
 /// jj-native first: `jj log -r "<tag>..@"` with a `\x1e` (record-separator)
 /// delimited `description` template and the paths as positional filesets. The
@@ -248,7 +246,8 @@ let getCiStatus (run: string -> string -> CommandResult) : CiStatus =
     | Some sha ->
         match checkCiStatusForSha run sha with
         | NoRuns when not (hasUncommittedChanges run) ->
-            // In jj, @ is always a new commit. Check parent if working copy is clean.
+            // In jj, @ is always a new commit, so a clean working copy means CI ran
+            // on the parent.
             match runSilent run "jj" "log -r @- --no-graph -T commit_id" with
             | Some parentSha when parentSha.Trim() <> "" -> checkCiStatusForSha run (parentSha.Trim())
             | _ -> NoRuns
@@ -267,17 +266,13 @@ let isCiPassing (run: string -> string -> CommandResult) : bool =
 ///
 /// jj-native first: a commit is pushed iff it is an ancestor of some
 /// remote-tracking bookmark, i.e. it lies within the pushed history
-/// (`<sha> & ::(remote_bookmarks())` is non-empty). NOTE the direction — the
-/// earlier `remote_bookmarks() & ::<sha>` asked the *opposite* question (which
-/// remote bookmarks are ancestors OF sha) and was a false positive for ANY local
-/// commit built on top of pushed main (main@origin is its ancestor), so an
-/// unpushed release commit looked "pushed" and the caller hung waiting for a CI
-/// run that never started. On a plain-git repo the `jj` call fails and we fall
-/// back to `git branch -r --contains` (remote branches that contain sha — the
-/// same "sha is an ancestor of a remote tip" question, correctly). An
-/// indeterminate result (neither VCS could answer) is treated as "not pushed" so
-/// the caller errs toward the safe, actionable "push first" message rather than
-/// waiting forever on a run that will never appear.
+/// (`<sha> & ::(remote_bookmarks())` is non-empty). MIND THE DIRECTION: the
+/// mirror-image `remote_bookmarks() & ::<sha>` is true of every local commit
+/// built on pushed main, so it calls an unpushed release commit "pushed". On a
+/// plain-git repo the `jj` call fails and we fall back to `git branch -r
+/// --contains` (the same question, correctly). An indeterminate result is treated
+/// as "not pushed", so the caller errs toward the actionable "push first" message
+/// rather than waiting forever on a run that will never appear.
 let isCommitPushed (run: string -> string -> CommandResult) (sha: string) : bool =
     let jjAnswer =
         runSilent run "jj" (sprintf "log -r \"%s & ::(remote_bookmarks())\" --no-graph -T commit_id" sha)
@@ -342,12 +337,11 @@ let internal runCountForRef (run: string -> string -> CommandResult) (gitRef: st
 /// Push one tag, retrying a few times before giving up.
 ///
 /// A push can fail for reasons that have nothing to do with the release and clear on
-/// their own — a momentarily unreachable SSH agent, a dropped connection, a blip at the
-/// far end. Observed live: a release aborted twice with
-/// `sign_and_send_pubkey: ... communication with agent failed`, and the identical push
-/// succeeded minutes later with nothing changed. Without a retry that transient becomes
-/// a half-finished release — version-bump commit pushed, tags not — and recovering by
-/// hand is what tempts you into a batch push that GitHub then ignores entirely.
+/// their own. Observed live: a release aborted twice with `sign_and_send_pubkey: ...
+/// communication with agent failed`, and the identical push succeeded minutes later
+/// with nothing changed. Without a retry that transient becomes a half-finished
+/// release — version-bump commit pushed, tags not — and recovering by hand is what
+/// tempts you into a batch push that GitHub then ignores entirely.
 let private pushOneTag (run: string -> string -> CommandResult) (attempts: int) (delayMs: int) (tag: string) : unit =
     let rec go attempt =
         match run "git" (sprintf "push origin %s" tag) with
@@ -374,7 +368,7 @@ let private pushOneTag (run: string -> string -> CommandResult) (attempts: int) 
 /// Push each tag and CONFIRM each one actually triggered a workflow run. Returns the
 /// tags it could NOT confirm.
 ///
-/// Pushing separately is load-bearing: a batch push of several tags can leave GitHub
+/// Pushing separately is required: a batch push of several tags can leave GitHub
 /// creating no push events at all, so the tags sit on the remote and nothing ever builds
 /// them. Observed: seven tags in one push produced zero runs; the same seven pushed
 /// singly produced seven.
@@ -389,10 +383,8 @@ let pushTagsAndConfirm
     (delayMs: int)
     (tags: string list)
     : string list =
-    // Export jj tags to the underlying git repo
     runOrFail run "jj" "git export" |> ignore
 
-    // Push each tag separately so each gets its own GitHub Actions push event
     withJjGitDir (fun () ->
         for tag in tags do
             pushOneTag run attempts delayMs tag)

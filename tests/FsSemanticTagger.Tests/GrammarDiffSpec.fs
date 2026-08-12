@@ -1,17 +1,14 @@
 module FsSemanticTagger.Tests.GrammarDiffSpec
 
 // ===========================================================================
-// AUTOMATION-194 — the CommandTree GRAMMAR diff + structural recovery.
+// The CommandTree GRAMMAR diff + structural recovery.
 //
 // Two halves:
 //   * The PURE diff over two grammar models (`FsSemanticTagger.Grammar.compare`).
-//     The model + diff now live in the production module `src/FsSemanticTagger/
-//     Grammar.fs`; this file pins their semantics.
 //   * The STRUCTURAL recovery of a consumer's realized grammar from a built
 //     assembly under MetadataLoadContext (`extractGrammarFromAssembly` /
 //     `extractGrammarForType`). These tests prove the metadata-only walk recovers
-//     exactly the tree CommandTree's own `fromUnion` builds at runtime — the crux
-//     of the feature and its abandon criterion.
+//     exactly the tree CommandTree's own `fromUnion` builds at runtime.
 //
 // Diff principle pinned here: a change is BREAKING iff some previously-valid CLI
 // invocation is no longer valid or changes meaning; ADDITION iff new invocations
@@ -24,13 +21,9 @@ open Xunit
 open Swensen.Unquote
 
 // ---- fixture consumer DUs + a CommandTree->Grammar reference converter --------
-// The referenced CommandTree is now 0.8.0: it exposes a real `FlagInfo.Arity`
-// (Nullary | Required | Optional), and its runtime `fromUnion` supports both
-// positional-prefix flag leaves and optional-value flags. The fromUnion round-trip
-// fixtures below still use a conservative subset (nullary + required flags, no
-// positional-prefix flag leaves); the richer shapes (positional-prefix flag leaves,
-// optional-value flags) keep their extraction-only assertions below. This module
-// opens ONLY CommandTree; the model's same-named
+// The fromUnion round-trip fixtures use a conservative subset (nullary + required
+// flags, no positional-prefix flag leaves); the richer shapes keep extraction-only
+// assertions below. This module opens ONLY CommandTree; the model's same-named
 // types/cases are referenced fully qualified. It is public (not `private`) so the
 // fixture unions keep a public representation — CommandReflection.fromUnion (via
 // FSharpType) rejects private-representation unions.
@@ -127,7 +120,6 @@ module Fixtures =
                     { FsSemanticTagger.FlagSpec.LongName = f.LongName
                       ShortName = f.ShortName
                       Arity =
-                        // CommandTree 0.8.0's FlagArity maps 1:1 onto the production model.
                         match f.Arity with
                         | Nullary -> FsSemanticTagger.FlagArity.Nullary
                         | Required -> FsSemanticTagger.FlagArity.RequiredValue
@@ -237,7 +229,7 @@ let ``flag arity Nullary->RequiredValue is Breaking (now consumes next token)`` 
 let ``flag arity RequiredValue->OptionalValue is Breaking (space form no longer binds a value)`` () =
     // RequiredValue accepts `--conf v` (space form); OptionalValue is inline-only,
     // so `--conf v` now binds None and leaves `v` dangling => a previously-valid
-    // invocation changes meaning. This is the AUTOMATION-187 shape (0.8.0 arity).
+    // invocation changes meaning.
     let before = grammar [ leaf "release" [] [ flag "conf" RequiredValue ] ]
     let after = grammar [ leaf "release" [] [ flag "conf" OptionalValue ] ]
     test <@ Grammar.compare before after = GBreaking @>
@@ -385,8 +377,7 @@ let ``foldIntoApi keeps the stronger bump and prefers the API signatures on a ti
 let ``extractGrammarFromAssembly recovers FsSemanticTagger's own realized grammar`` () =
     // The real consumer: extract the grammar from the built FsSemanticTagger.dll
     // under MetadataLoadContext and assert it equals the tree CommandTree's own
-    // fromUnion builds at runtime for the same Command DU. This discharges the
-    // abandon criterion against a real consumer.
+    // fromUnion builds at runtime for the same Command DU.
     let dll = typeof<FsSemanticTagger.Program.Command>.Assembly.Location
     let extracted = Grammar.extractGrammarFromAssembly dll
     let expected = Some(Fixtures.expectedGrammar<FsSemanticTagger.Program.Command> ())

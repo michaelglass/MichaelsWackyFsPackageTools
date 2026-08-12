@@ -78,20 +78,14 @@ let checkRepo (dir: string) (hasPackableProjects: bool) : CheckResult list =
 // ancestor of where you are does not fail the gate here; you only care about
 // the history you'll publish from this branch.
 //
-// One efficient pass, NOT a per-revision loop:
-//   1. Resolve the current commit:
-//        * jj-backed repo (`.jj/` present): `git HEAD` is unreliable (it points
-//          at refs/jj/root or a stale detached commit, NOT the branch you are
-//          on), so we ask jj for the working-copy parent —
-//          `jj log --no-graph --ignore-working-copy -r @- -T commit_id`.
-//          @- is the real checked-out commit (@ is usually an empty working
-//          copy); that sha is a git object in the store.
-//        * plain-git repo: `HEAD`.
-//      If resolution yields no commit (unborn/root), the check passes.
+// One pass, NOT a per-revision loop:
+//   1. Resolve the current commit. Under jj, `git HEAD` is unreliable (it points
+//      at refs/jj/root or a stale detached commit), so ask jj for `@-` — the real
+//      checked-out commit, whose sha is a git object in the store. Plain git uses
+//      `HEAD`. No commit (unborn/root) means the check passes.
 //   2. `git log <commit> --diff-filter=A --name-only` -> every path ever added
-//      along that commit's ancestry. We deliberately do NOT use `--branches
-//      --remotes`/`--all`: those walk experiment branches and (on a jj store)
-//      `refs/jj/keep/*` — neither is the history published from here.
+//      along that commit's ancestry. NOT `--branches --remotes`/`--all`: those
+//      walk experiment branches and (on a jj store) `refs/jj/keep/*`.
 //   3. `git check-ignore --no-index --stdin` as the gitignore oracle (never
 //      hand-roll glob matching) -> the subset currently gitignored.
 // Leaks = (ever-added-on-current-ancestry) ∩ (currently gitignored).
@@ -237,9 +231,6 @@ let checkGitignoreLeaks (dir: string) : CheckResult =
             Passed
         | Some ctx ->
             // 1. Every path ever added along the CURRENT commit's ancestry.
-            //    Scope is this branch only (not --branches --remotes), so a leak
-            //    that lives solely on an unrelated experiment branch does not
-            //    fail the gate here.
             let everAdded =
                 match resolveCurrentCommit ctx with
                 | None ->
@@ -325,11 +316,11 @@ let isPackable (doc: XDocument) : bool =
 
 // --- RefStamp local-pack guard ----------------------------------------------
 //
-// AUTOMATION-123: a repo that publishes packages must wire in the RefStamp
-// MSBuild guard, so a LOCAL `dotnet pack` derives its version from the jj/git
-// source ref and cannot produce a release-shaped version. This check is the
-// distribution's enforcement arm — sibling repos adopt the guard because
-// fsprojlint tells them to, with the exact line to add.
+// A repo that publishes packages must wire in the RefStamp MSBuild guard, so a
+// LOCAL `dotnet pack` derives its version from the jj/git source ref and cannot
+// produce a release-shaped version. This check is the distribution's enforcement
+// arm — sibling repos adopt the guard because fsprojlint tells them to, with the
+// exact line to add.
 //
 // Accepted wirings (any one suffices):
 //   * a root Directory.Build.props / Directory.Build.targets with a

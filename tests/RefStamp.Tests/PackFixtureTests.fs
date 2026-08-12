@@ -3,7 +3,7 @@ module RefStamp.Tests.PackFixtureTests
 // End-to-end regression tests for src/RefStamp/build/RefStamp.targets — the
 // MSBuild guard that makes a LOCAL `dotnet pack` version derive from the jj/git
 // source ref, so choosing a release-shaped label is not an available action on
-// a dev machine (AUTOMATION-123).
+// a dev machine.
 //
 // Each test scaffolds a throwaway C# project in a temp dir (C#, not F#: an
 // empty csproj compiles with zero package restores, so the packs stay fast and

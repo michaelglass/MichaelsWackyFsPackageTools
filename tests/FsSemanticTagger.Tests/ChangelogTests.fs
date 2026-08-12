@@ -243,7 +243,7 @@ let ``promoteOrInsert handles empty Unreleased with no trailing blank line`` () 
         test <@ updated.Contains "## 0.1.0 - 2026-01-01" @>
         test <@ updated.Contains "- old" @>)
 
-// --- deriveUnreleasedBullets (AUTOMATION-197) ---
+// --- deriveUnreleasedBullets ---
 
 [<Fact>]
 let ``deriveUnreleasedBullets groups by conventional prefix, drops bodies + bump-version commits, keeps un-prefixed``
@@ -316,7 +316,7 @@ let ``deriveUnreleasedBullets skips leading blank lines to find the summary`` ()
     // The summary is the first NON-blank line, so leading blanks are skipped.
     test <@ deriveUnreleasedBullets [ "\n\nfeat: after leading blank" ] = [ "- feat: after leading blank" ] @>
 
-// --- promoteOrDerive (AUTOMATION-197) ---
+// --- promoteOrDerive ---
 
 [<Fact>]
 let ``promoteOrDerive never clobbers a hand-authored Unreleased entry`` () =

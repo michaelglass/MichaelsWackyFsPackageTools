@@ -36,11 +36,10 @@ type ReleaseInput =
         ExtractCurrentApi: string -> ApiSignature list
         /// Recover a prior release's realized CLI grammar by (packageName, version),
         /// and the current build's grammar by DLL path. When BOTH sides yield a
-        /// `Grammar` (i.e. the package is a CommandTree consumer with an unambiguous
-        /// root command), the grammar diff is folded into the API diff (stronger bump
+        /// `Grammar`, the grammar diff is folded into the API diff (stronger bump
         /// wins) before `determineBump`, so a `[<Cmd(Name)>]` rename or a flag arity
-        /// change bumps even though the assembly signature is unchanged. Either
-        /// seam returning `None` leaves the API diff in sole charge of the bump.
+        /// change bumps even though the assembly signature is unchanged. Either seam
+        /// returning `None` leaves the API diff in sole charge of the bump.
         ExtractPreviousGrammar: string -> string -> Grammar option
         ExtractCurrentGrammar: string -> Grammar option
         CiPollIntervalMs: int
@@ -58,11 +57,8 @@ type ReleaseInput =
         /// fast. Default `false` keeps auto-push off, because pushing to a
         /// branch-protected / PR-gated `main` is unsafe to do implicitly.
         Push: bool
-        /// `--check`: run only the changelog pre-flight (does a changed package
-        /// have an authored-or-derivable `## Unreleased`?) and exit, writing
-        /// nothing and creating no tags. For `mise run ci` — catches an
-        /// unnotable change at PR time instead of at release. Skips the clean-
-        /// working-copy / CI-green preconditions and the build entirely.
+        /// `--check`: run only the changelog pre-flight (`runChangelogCheck`) and
+        /// exit — no preconditions, no build, no writes, no tags.
         Check: bool
     }
 
@@ -101,12 +97,10 @@ type ReleaseState =
 let determineBump (current: Version) (change: ApiChange) : Version =
     match current.Stage with
     | PreRelease(RC _) ->
-        // RC + any API change -> revert to beta
         match change with
-        | NoChange -> toStable current // promote to stable
+        | NoChange -> toStable current
         | _ -> toBeta current
     | PreRelease pre ->
-        // Alpha/Beta: just increment pre-release number
         { current with
             Stage = PreRelease(bumpPreRelease pre) }
     | Stable ->
@@ -228,11 +222,9 @@ let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * 
 
     match ciStatus with
     | Passed ->
-        // "Tags pushed. GitHub Actions will handle the release." used to be printed
-        // unconditionally — an assertion about something nobody had checked. A tag can
-        // land on the remote and trigger nothing at all (a batch push does exactly
-        // that), and then this line is the only trace of a release that published
-        // nothing. Ask before claiming.
+        // A tag can land on the remote and trigger no workflow at all (a batch push
+        // does exactly that), so confirm a run exists rather than claiming a release
+        // is happening.
         let unconfirmed = pushTagsAndConfirm run 3 3000 tags
 
         if not (List.isEmpty unconfirmed) then
@@ -277,10 +269,10 @@ let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * 
 
 let private packLocally (run: string -> string -> CommandResult) (bumps: (PackageConfig * Version) list) : int =
     for (pkg, _version) in bumps do
-        // -p:ReleaseBuild=true: local-publish is the RELEASE pipeline running on
-        // a dev machine — it owns the clean semver it just computed. Without the
-        // flag the RefStamp guard (AUTOMATION-123) would refuse to emit a
-        // release-shaped version from a local pack.
+        // -p:ReleaseBuild=true: local-publish is the RELEASE pipeline running on a
+        // dev machine — it owns the clean semver it just computed. Without the flag
+        // the RefStamp guard refuses to emit a release-shaped version from a local
+        // pack.
         runOrFail run "dotnet" (sprintf "pack %s -c Release -p:ReleaseBuild=true -o artifacts/" pkg.Fsproj)
         |> ignore
 
@@ -338,10 +330,9 @@ let internal changelogPathsFor (config: ToolConfig) (pkg: PackageConfig) : (stri
         |> List.map (fun dir -> pkg.Name, System.IO.Path.Combine(dir, "CHANGELOG.md"))
 
 /// The actionable error printed when the release commit isn't on the remote, so
-/// no CI run could ever exist for it. Names the fix and points at `--push` —
-/// crucially, it never mislabels a *missing* run as a *failed* one (the old
-/// behaviour, which ran the full local CI first and then reported "CI failed for
-/// non-coverage reasons"). Kept as a value so the wording is pinned by one test.
+/// no CI run could ever exist for it. Names the fix and points at `--push`, and
+/// never mislabels a *missing* run as a *failed* one. Kept as a value so the
+/// wording is pinned by one test.
 let internal notPushedMessage: string =
     "Error: the release commit isn't on the remote, so no CI run exists for it (it \
      hasn't been pushed yet).\n\
@@ -352,18 +343,10 @@ let internal notPushedMessage: string =
      push and wait for CI automatically."
 
 /// Wait for the release commit's CI to complete and translate the terminal
-/// status into a release verdict. Reused for both "already pushed" and
-/// "just pushed via --push" — the single place that polls CI for the release
-/// commit and decides go / no-go:
-///
-///   * `Passed`     -> proceed.
-///   * `Failed`     -> the REAL failure case: a run exists and failed. Error
-///                     "CI failed", naming each failing run's URL.
-///   * `NoRuns`     -> polled to timeout and no run ever registered (rare on a
-///                     pushed commit). Surface it honestly, distinct from a push
-///                     precondition.
-///   * `InProgress` -> still running after the timeout; re-run later.
-///   * `Unknown`    -> couldn't read CI status (e.g. `gh` missing).
+/// status into a release verdict. Reused for both "already pushed" and "just
+/// pushed via --push" — the single place that decides go / no-go. `NoRuns` is
+/// reported as itself: a run that never registered is not a run that failed, and
+/// neither is the unpushed precondition.
 let private waitForReleaseCi (input: ReleaseInput) : Result<unit, int> =
     printfn "Waiting for CI on the release commit to pass before releasing (expected, ~1-2 min)..."
 
@@ -387,20 +370,10 @@ let private waitForReleaseCi (input: ReleaseInput) : Result<unit, int> =
         Error 1
 
 /// FAIL-FAST CI precondition, run *before* the expensive coverage reconciliation.
-/// Splits the historical "no CI run" failure into its two real causes:
-///
-///   * commit NOT on the remote  -> with `--push`, push then wait for CI;
-///                                  otherwise FAIL FAST with `notPushedMessage`
-///                                  (don't run anything expensive first).
-///   * commit on the remote      -> WAIT for its CI to register/finish and
-///                                  classify the result (`waitForReleaseCi`).
-///                                  This covers the right-after-push race where
-///                                  the run isn't registered yet — we poll for it
-///                                  rather than erroring, exactly as the bump
-///                                  commit's CI is already waited on.
-///
-/// A normal `release` after a push therefore just waits for CI itself; the user
-/// never hand-rolls a `gh run watch` loop.
+/// "No CI run" has two causes needing opposite handling: a commit not on the
+/// remote can never have a run (fail fast, or push it with `--push`), whereas a
+/// pushed commit whose run hasn't registered yet must be *waited* for — which is
+/// also the right-after-push race.
 let private confirmReleaseCommitCiGreen (input: ReleaseInput) : Result<unit, int> =
     match releaseCommitSha input.Run with
     | None ->
@@ -408,7 +381,6 @@ let private confirmReleaseCommitCiGreen (input: ReleaseInput) : Result<unit, int
         Error 1
     | Some sha ->
         if isCommitPushed input.Run sha then
-            // On the remote already: a run will exist or is on its way — wait for it.
             waitForReleaseCi input
         elif input.Push then
             printfn "Release commit isn't pushed yet; --push given, pushing and waiting for CI..."
@@ -451,9 +423,8 @@ let private preReleaseChecks (input: ReleaseInput) : Result<unit, int> =
 
             Error 1
         else
-            // Fail-fast precondition FIRST: confirm the release commit is pushed
-            // and its CI is green before any expensive coverage reconciliation.
-            // Only once green do we reconcile coverage floors from the CI artifact.
+            // Precondition FIRST: the release commit is pushed and its CI green,
+            // before any expensive coverage reconciliation.
             confirmReleaseCommitCiGreen input
             |> Result.bind (fun () -> reconcileCoverageFromCi input)
 
@@ -468,12 +439,11 @@ let private runPreBuild (input: ReleaseInput) : unit =
     printfn "Building in Release mode..."
     runOrFail input.Run "dotnet" "build -c Release" |> ignore
 
-/// The version the working tree declares it is, read lazily and tolerantly: a
-/// missing (or unversioned) fsproj yields `None` rather than throwing, so such a
-/// package defers to the normal path — which surfaces the real error or skips it
-/// — instead of crashing the whole release run. `readFsprojVersion` alone throws
-/// on a missing file, so every caller that may run before the fsproj is known to
-/// exist must go through this.
+/// The version the working tree declares it is, read tolerantly: a missing (or
+/// unversioned) fsproj yields `None` rather than throwing, so such a package
+/// defers to the normal path instead of crashing the whole release run.
+/// `readFsprojVersion` alone throws on a missing file, so every caller that may
+/// run before the fsproj is known to exist must go through this.
 let private declaredFsprojVersion (pkg: PackageConfig) : Version option =
     if System.IO.File.Exists pkg.Fsproj then
         readFsprojVersion pkg.Fsproj
@@ -485,27 +455,22 @@ let private declaredFsprojVersion (pkg: PackageConfig) : Version option =
 ///
 /// A release is finished only once its tag exists AND its package is actually on
 /// the feed — a tag is a promise to publish, not the publication. This function
-/// owns the tag-shaped half of that: the mid-release failure between the
-/// version-bump commit and the CI-poll/tag step. It is decided purely from the
-/// *desired end state*, never from work-remaining (a half-rolled changelog, the
-/// latest-tag-to-HEAD diff, or an API comparison): the version recorded in the
-/// fsproj is the intended release version, so a release is bumped-but-untagged
-/// exactly when the fsproj `<Version>` is strictly ahead of the latest tag AND no
-/// tag yet exists at `<prefix><fsprojVersion>`.
+/// owns the tag-shaped half: the mid-release failure between the version-bump
+/// commit and the CI-poll/tag step. It is decided purely from the *desired end
+/// state*, never from work-remaining (a half-rolled changelog, the
+/// latest-tag-to-HEAD diff, an API comparison): the fsproj `<Version>` is the
+/// intended release version, so a release is bumped-but-untagged exactly when it
+/// is strictly ahead of the latest tag AND no tag exists at
+/// `<prefix><fsprojVersion>`.
 ///
-/// The feed-shaped half — a tag that exists but whose package never landed (an
-/// ORPHAN tag) — deliberately is NOT decided here, because it turns on whether
-/// there are source changes since that tag, which this function cannot see. With
-/// changes, `resolveBaselineApi` walks past the orphan and bumps forward (the
-/// tree is no longer what that version was cut from). Only with NO changes is
-/// resuming it correct, so that case lives at `decideBump`'s no-changes arm,
-/// which holds the change flags.
+/// The feed-shaped half — an ORPHAN tag, one whose package never landed — is
+/// deliberately NOT decided here: it turns on whether there are source changes
+/// since that tag, which this function cannot see. It lives at `decideBump`'s
+/// no-changes arm, which holds the change flags.
 ///
 /// When this holds we return the fsproj version so the caller resumes from the
 /// CI-poll + tag step (idempotent finish) instead of recomputing a fresh bump,
-/// re-rolling the changelog, or aborting on an unreadable previous API. A fresh
-/// repo (fsproj == the next computed bump, no intermediate bump-but-untag) falls
-/// through to the normal path.
+/// re-rolling the changelog, or aborting on an unreadable previous API.
 let private inProgressResumeVersion (input: ReleaseInput) (state: ReleaseState) (pkg: PackageConfig) : Version option =
     match state with
     | FirstRelease -> None
@@ -546,9 +511,6 @@ let private resolveBaselineApi
     (pkg: PackageConfig)
     (sortedTags: (string * Version) list)
     : BaselineApi =
-    // tryPick stops at the first tag that resolves to a verdict (Found or a fetch
-    // error); an AbsentOnFeed orphan warns and yields None so the walk continues.
-    // Exhausting the list with only orphans leaves NoPublishedPrior.
     sortedTags
     |> List.tryPick (fun (tag, version) ->
         match input.ExtractPreviousApi pkg.Name (format version) with
@@ -567,28 +529,26 @@ let private resolveBaselineApi
 /// landed on the feed?
 ///
 /// This asks the FEED (`CheckFeedPresence`), not the API extractor, even though
-/// `ExtractPreviousApi` also carries an `AbsentOnFeed`. The question here is
-/// presence, not shape, and routing it through the API extractor would answer it
-/// with a proxy that has two failure modes of its own:
+/// `ExtractPreviousApi` also carries an `AbsentOnFeed`. The question is presence,
+/// not shape, and the API extractor is a proxy with two failure modes of its own:
 ///
-///   * A `PackAsTool` package can never be API-probed at all — a
-///     `PackageReference` to a tool package fails NU1212, which correctly
-///     classifies as `FetchError`. So the API seam can NEVER say "absent" for a
-///     tool, and every dotnet tool (including this one) would stay wedged.
+///   * A `PackAsTool` package can never be API-probed — a `PackageReference` to a
+///     tool package fails NU1212, which classifies as `FetchError`. The API seam
+///     can therefore NEVER say "absent" for a tool, and every dotnet tool
+///     (including this one) would stay wedged.
 ///   * `AbsentOnFeed` is also what the extractor reports when the package IS
-///     published but its DLL cannot be located inside the .nupkg — precisely the
-///     analyzer-package layout bug fixed in AUTOMATION-196. Driving a REPUBLISH
-///     off that signal would turn any future unrecognised package layout into a
-///     spurious re-release of a perfectly published version.
+///     published but its DLL cannot be located inside the .nupkg (an analyzer
+///     package, for one). Driving a REPUBLISH off that signal re-releases a
+///     perfectly published version on every unrecognised package layout.
 ///
 /// The feed check has neither failure mode: it reads the published version list
 /// directly and is blind to package internals.
 ///
-/// Only a definite `NotOnFeed` answers true. `FeedUnknown` is deliberately folded
-/// in with `OnFeed`, because the two wrong guesses are not symmetric: guessing
-/// "absent" during an outage would re-publish an already-published version on
-/// every run, while guessing "published" only defers finishing to the next run
-/// that can reach the feed. So unknown means published.
+/// Only a definite `NotOnFeed` answers true. `FeedUnknown` is folded in with
+/// `OnFeed` because the two wrong guesses are not symmetric: guessing "absent"
+/// during an outage re-publishes an already-published version on every run, while
+/// guessing "published" only defers finishing to the next run that can reach the
+/// feed.
 let private isOrphanRelease (input: ReleaseInput) (pkg: PackageConfig) (version: Version) : bool =
     match input.CheckFeedPresence pkg.Name (format version) with
     | NotOnFeed -> true
@@ -605,11 +565,8 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
 
     let ownSrcDir = System.IO.Path.GetDirectoryName(pkg.Fsproj)
 
-    // A referenced project contributes to this package's change-detection
-    // closure only if its DLL actually ships inside the package. `packageDepDirs`
-    // resolves the transitive `<ProjectReference>` closure pruned at every
-    // separately-released dependency boundary (PackAsTool packages bundle
-    // everything regardless — handled inside `transitiveBundledRefDirs`).
+    // A referenced project contributes to this package's change-detection closure
+    // only if its DLL actually ships inside the package — see `packageDepDirs`.
     let depDirs = packageDepDirs input.Config pkg
 
     match inProgressResumeVersion input state pkg with
@@ -670,25 +627,20 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
 
             match ownChanged, depChanged with
             | false, false ->
-                // Nothing left to BUILD — but that is a FINISHED release only if
-                // the newest tag's package actually reached the feed. An orphan tag
-                // (tagged, but the publish never landed) leaves the release
-                // unfinished with an empty diff, and the plain skip below wedges it
-                // permanently: no change can ever appear "since" a tag that already
-                // sits at HEAD, so every future run prints the same skip and the
-                // version can never be published.
+                // Nothing left to BUILD — but that is a FINISHED release only if the
+                // newest tag's package actually reached the feed. An orphan tag
+                // leaves the release unfinished with an empty diff, and the plain
+                // skip below wedges it permanently: no change can ever appear "since"
+                // a tag that already sits at HEAD.
                 //
-                // Resume it instead, at THAT SAME version — the tree is still
-                // exactly what the version was cut from, so the finish path
-                // (`resumeAlreadyBumped`) just pushes the existing tag and lets CI
-                // publish. Recovery is in place: the tag is left where it is
-                // (re-tagging is already guarded by `tagExists`), nothing is
-                // re-bumped, and the changelog is not re-rolled.
+                // Resume it instead, at THAT SAME version — the tree is still exactly
+                // what the version was cut from, so `resumeAlreadyBumped` just pushes
+                // the existing tag and lets CI publish; nothing is re-bumped and the
+                // changelog is not re-rolled.
                 //
                 // Guarded on the fsproj declaring that same version, because the
-                // resume publishes whatever `<Version>` the tree carries: a tree
-                // that says something else would ship the wrong version, so it
-                // falls through to the skip rather than guessing.
+                // resume publishes whatever `<Version>` the tree carries: a tree that
+                // says something else would ship the wrong version.
                 if
                     declaredFsprojVersion pkg = Some currentVersion
                     && isOrphanRelease input pkg currentVersion
@@ -709,38 +661,29 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                     printfn "Bumping %s: bundled dependency changed since %s (rebundle)" pkg.Name tag
                     explicitBump DependencyChange
             | true, _ ->
-                // The package's own source changed — existing behaviour unchanged.
                 match input.Command, isPackAsTool (System.IO.File.ReadAllText pkg.Fsproj) with
                 | Auto, true ->
-                    // A PackAsTool package has no library API surface to diff, so an
-                    // own-source change — including a CHANGELOG edit, which lives in the
-                    // package dir and flips `ownChanged` false->true — can't be API-diffed
-                    // against the previous release: a PackageReference to a tool package
-                    // fails NU1212 -> CannotDetermine. The API probe therefore stays
-                    // skipped here (AUTOMATION-79).
+                    // A PackAsTool package has no library API surface to diff: a
+                    // PackageReference to a tool package fails NU1212, which would land
+                    // every own-source change (a CHANGELOG edit included) in
+                    // CannotDetermine. So the API probe stays skipped here.
                     //
-                    // But a tool still has a CLI CONTRACT, and that is exactly what the
-                    // grammar diff protects. Skipping the API probe must not also skip the
-                    // grammar diff, or every one of our dotnet tools releases a breaking
-                    // CLI change as a patch — AUTOMATION-194's guard silently disabled for
-                    // the whole set it was built for (AUTOMATION-202).
-                    //
-                    // Safe on this path because the two are independent: the grammar
-                    // extractor reads a prior release straight out of the NuGet cache
-                    // (`Grammar.extractPreviousGrammarFromNuGet`) and constructs no
-                    // PackageReference probe, so it cannot raise NU1212. Walk the tags
-                    // newest-first for the first whose grammar is readable, mirroring
-                    // `resolveBaselineApi`'s orphan walk.
+                    // A tool still has a CLI CONTRACT, and skipping the API probe must
+                    // not also skip the grammar diff, or every dotnet tool we ship
+                    // releases a breaking CLI change as a patch. The two are
+                    // independent: the grammar extractor reads a prior release straight
+                    // out of the NuGet cache and constructs no PackageReference probe,
+                    // so it cannot raise NU1212. Walk the tags newest-first for the
+                    // first whose grammar is readable, mirroring `resolveBaselineApi`.
                     let previousGrammar =
                         sortedTags
                         |> List.tryPick (fun (_, version) -> input.ExtractPreviousGrammar pkg.Name (format version))
 
                     match previousGrammar, input.ExtractCurrentGrammar pkg.DllPath with
                     | Some previousGrammar, Some currentGrammar ->
-                        // Fold through the same `foldIntoApi` the non-tool arm uses, against
-                        // a `NoChange` API baseline — a tool has no library API, so the
-                        // grammar alone decides. Reusing the fold keeps one translation from
-                        // GrammarChange to ApiChange instead of a second, drifting copy.
+                        // Folded against a `NoChange` API baseline — a tool has no library
+                        // API, so the grammar alone decides. Reusing `foldIntoApi` keeps
+                        // one translation from GrammarChange to ApiChange, not two.
                         let change =
                             Grammar.foldIntoApi NoChange (Grammar.compare previousGrammar currentGrammar)
 
@@ -751,17 +694,13 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
 
                         Some(toDecision OwnChange (skipReserved (determineBump currentVersion change)))
                     | None, Some _ ->
-                        // FAIL CLOSED. This package HAS a CLI grammar (the current build
-                        // yielded one), but the previous release's could not be read — the
-                        // extractor is cache-only by design and this path deliberately skips
-                        // the API download that would have populated that cache, so a cold
-                        // cache lands here.
-                        //
-                        // Bumping NoChange here would silently forgo the guard and release a
-                        // possibly-breaking CLI change as a patch: the exact defect this
-                        // whole path exists to prevent, just quieter. Refuse to guess,
-                        // mirroring the `BaselineFetchError -> CannotDetermine` policy the
-                        // non-tool arm applies to an unreadable API baseline.
+                        // FAIL CLOSED. This package HAS a CLI grammar, but the previous
+                        // release's could not be read — the extractor is cache-only and
+                        // this path skips the API download that would have populated the
+                        // cache, so a cold cache lands here. Bumping NoChange would
+                        // release a possibly-breaking CLI change as a patch, so refuse to
+                        // guess, mirroring the non-tool arm's `BaselineFetchError ->
+                        // CannotDetermine`.
                         Some(
                             CannotDetermine(
                                 pkg,
@@ -775,10 +714,9 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                             )
                         )
                     | _, None ->
-                        // The current build yields no grammar at all, so this package is not
-                        // a CommandTree consumer and has no CLI contract to protect. Nothing
-                        // to diff — bump NoChange as before. Deliberately NOT failing closed
-                        // here: doing so would block every non-CLI PackAsTool release on a
+                        // No current grammar: this package is not a CommandTree consumer
+                        // and has no CLI contract to protect. Deliberately NOT failing
+                        // closed — that would block every non-CLI PackAsTool release on a
                         // guard that does not apply to it.
                         printfn
                             "Bumping %s: own change to a PackAsTool package (not a CommandTree CLI — no grammar to diff) since %s"
@@ -792,11 +730,9 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                     // on NuGet) so a missed publish doesn't block the next release.
                     match resolveBaselineApi input pkg sortedTags with
                     | BaselineFetchError msg ->
-                        // The previous release's API couldn't be read because the feed
-                        // was unreachable. Treating this as "no change" would let a
-                        // breaking release ship as a patch (the very bug this guards
-                        // against), so refuse to guess — and surface the underlying
-                        // restore error so the cause is visible.
+                        // The feed was unreachable, so the previous API is unknown.
+                        // Treating that as "no change" would ship a breaking release as a
+                        // patch — refuse to guess, and surface the restore error.
                         Some(
                             CannotDetermine(
                                 pkg,
@@ -808,11 +744,9 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                         )
                     | NoPublishedPrior ->
                         // Every prior tag is an orphan: nothing published to diff
-                        // against. There is no breaking-change risk to guard (no
-                        // consumer ever received those releases), so auto-bump
-                        // conservatively (NoChange) off the latest tag's version,
-                        // exactly as the dependency-rebundle terminal (`depBumpAuto`)
-                        // does, rather than aborting or demanding an explicit command.
+                        // against, and so no breaking-change risk to guard (no consumer
+                        // ever received those releases). Bump conservatively off the
+                        // latest tag rather than aborting.
                         Some(toDecision OwnChange (skipReserved (determineBump currentVersion NoChange)))
                     | BaselineFound(baselineVersion, oldApi) ->
                         let currentApi = input.ExtractCurrentApi pkg.DllPath
@@ -836,19 +770,11 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
         | FirstRelease ->
             match input.Command with
             | Auto ->
-                // A first release has no prior tag to API-diff against — but a package
-                // registered in semantic-tagger.json with a declared fsproj <Version>
-                // and a first-release changelog is ready to ship. Honour that declared
-                // version and roll it as a NeedsBump (so the `## Unreleased` changelog
-                // section is promoted and the tag is created) rather than silently
-                // dropping the package: the old `None` meant a brand-new package never
-                // shipped under the default (Auto) command — not even a diagnostic
-                // line. Forcing NeedsBump (not `toDecision`, which would classify a
-                // fsproj already at the target version as AlreadyBumped and skip the
-                // changelog promotion) is correct here: FirstRelease has no prior tag,
-                // so this can never be an in-progress resume.
-                // A first release with no readable fsproj is not shippable — skip it
-                // rather than throw (`declaredFsprojVersion` owns that tolerance).
+                // A first release has no prior tag to API-diff against, so the declared
+                // fsproj <Version> is what ships. Forced to NeedsBump rather than
+                // `toDecision`, which would call a fsproj already at the target version
+                // AlreadyBumped and skip the changelog promotion; FirstRelease has no
+                // prior tag, so this can never be an in-progress resume.
                 match declaredFsprojVersion pkg with
                 | None ->
                     printfn
@@ -874,10 +800,8 @@ let private resumeAlreadyBumped (input: ReleaseInput) (alreadyBumped: (PackageCo
     match input.Mode with
     | DryRun -> 0
     | PushTags ->
-        // Re-push main first: if the original run failed at `pushMain` (after the
-        // bump commit was made locally but before it reached the remote), the bump
-        // commit is still local-only here. `jj git push` is idempotent — a no-op
-        // when main is already pushed (the CI-flake-after-push case) — so pushing
+        // Re-push main first: if the original run failed at `pushMain`, the bump
+        // commit is still local-only here. `jj git push` is idempotent, so pushing
         // again is safe and closes the partial-failure window before tagging.
         pushMain input.Run
 
@@ -926,12 +850,11 @@ let private executeBumps
         |> List.map (fun (pkg, v, trigger) ->
             pkg, v, trigger, changelogPathsFor input.Config pkg, descriptionsFor pkg trigger)
 
-    // Only OwnChange bumps are subject to `## Unreleased` enforcement, and an
-    // empty section is an error ONLY when it also can't be derived from the
-    // commit descriptions (AUTOMATION-197). A hand-authored section always
-    // passes; a derivable one is filled in at promote time. A DependencyChange
-    // (rebundle) bump's real change lives in the dependency's changelog, so its
-    // missing/empty own section is fine — auto-filled with the rebundle bullet.
+    // Only OwnChange bumps are subject to `## Unreleased` enforcement, and an empty
+    // section is an error ONLY when it also can't be derived from the commit
+    // descriptions. A hand-authored section always passes; a derivable one is filled
+    // in at promote time. A DependencyChange (rebundle) bump's real change lives in
+    // the dependency's changelog, so its own section may be missing.
     let changelogErrors =
         bumpsWithChangelogs
         |> List.filter (fun (_, _, trigger, _, _) -> trigger = OwnChange)
@@ -1004,14 +927,12 @@ let private executeBumps
         | LocalPublish -> packLocally input.Run allBumps
         | DryRun -> 0
 
-/// `--check`: fail (exit 1) when a package with own-source changes since its
-/// last tag has an empty/missing `## Unreleased` that ALSO can't be derived from
-/// its commit descriptions (AUTOMATION-197). A pre-flight gate for `mise run ci`
-/// so an unnotable change is caught at PR time, not at release. It never builds
-/// or diffs API — derivation needs only the commit descriptions and the
-/// changelog file — and is conservative: a package with no prior tag (nothing to
-/// diff "since"), or whose section is authored or derivable, passes. Mirrors the
-/// release-time enforcement in `executeBumps`.
+/// `--check`: fail (exit 1) when a package with own-source changes since its last
+/// tag has an empty/missing `## Unreleased` that ALSO can't be derived from its
+/// commit descriptions. A pre-flight gate for `mise run ci` so an unnotable change
+/// is caught at PR time, not at release. It never builds or diffs API, and is
+/// conservative: a package with no prior tag, or whose section is authored or
+/// derivable, passes. Mirrors the release-time enforcement in `executeBumps`.
 let private runChangelogCheck (input: ReleaseInput) (selectedPackages: PackageConfig list) : int =
     let problems =
         selectedPackages
@@ -1064,20 +985,16 @@ let release (input: ReleaseInput) : int =
         1
     | Ok selectedPackages ->
 
-        // NB: we deliberately do NOT narrow `input.Config.Packages` to
-        // `selectedPackages`. `Config.Packages` is the repo's *structural* package
-        // set — it answers "is this a single-package repo?" (changelog at root vs.
-        // per-fsproj-dir, see `changelogPathsFor`) and "which projects are
-        // separately-released dependency boundaries?" (see `separatelyReleased`).
-        // `--only` is a *runtime selection* of which packages to release; it must
-        // not rewrite repo structure. So the selection is applied at the release
-        // iteration below, and `Config.Packages` stays the full set throughout.
+        // `input.Config.Packages` is deliberately NOT narrowed to `selectedPackages`.
+        // It is the repo's *structural* package set — it answers "is this a
+        // single-package repo?" (changelog at root vs. per-fsproj-dir, see
+        // `changelogPathsFor`) and "which projects are separately-released dependency
+        // boundaries?". `--only` selects what to release; it must not rewrite repo
+        // structure. So the selection is applied at the release iteration below.
         if not input.TargetPackages.IsEmpty then
             printfn "Targeting: %s" (selectedPackages |> List.map (fun p -> p.Name) |> String.concat ", ")
 
         if input.Check then
-            // `--check` is a pre-flight validation only: no clean-working-copy / CI
-            // preconditions, no build, no writes, no tags.
             runChangelogCheck input selectedPackages
         else
 

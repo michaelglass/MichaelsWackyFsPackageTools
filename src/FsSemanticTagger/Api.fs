@@ -89,7 +89,6 @@ let internal nuspecClosureDirsFor (cacheRoot: string) (dllPath: string) : string
             StringComparison.OrdinalIgnoreCase
         )
 
-    // Locate the package version dir by walking up to the nearest .nuspec.
     let rec findPkgDir (dir: string) =
         if String.IsNullOrEmpty dir then
             None
@@ -176,7 +175,6 @@ let getAssemblySearchPaths (dllPath: string) : string list =
         else
             []
 
-    // Resolve transitive NuGet dependencies from .deps.json
     let depsJsonDirs =
         let assemblyName = Path.GetFileNameWithoutExtension(dllPath)
         let depsJsonPath = Path.Combine(dllDir, assemblyName + ".deps.json")
@@ -199,7 +197,6 @@ let getAssemblySearchPaths (dllPath: string) : string list =
                             let pkgDir = Path.Combine(nugetRoot, p.GetString())
 
                             if Directory.Exists(pkgDir) then
-                                // Search common lib TFM directories
                                 supportedTfms
                                 |> List.map (fun tfm -> Path.Combine(pkgDir, "lib", tfm))
                                 |> List.tryFind Directory.Exists
@@ -212,12 +209,8 @@ let getAssemblySearchPaths (dllPath: string) : string list =
         else
             []
 
-    // When the target dll lives inside the NuGet package cache (e.g. when
-    // diffing against a *previously published* package extracted from the
-    // cache), there is no co-located .deps.json to resolve transitive
-    // dependencies from. Walk the package's .nuspec dependency graph and add
-    // each resolved package's lib/<tfm> dir so MetadataLoadContext can load
-    // types that reference those dependencies.
+    // A dll inside the NuGet package cache has no co-located .deps.json, so its
+    // transitive dependencies come from the .nuspec graph instead.
     let nuspecClosureDirs = nuspecClosureDirsFor (nugetCacheRoot ()) dllPath
 
     [ dllDir; runtimeDir ]
@@ -238,7 +231,7 @@ let createResolver (dllPath: string) : MetadataAssemblyResolver =
             else
                 [])
 
-    // Deduplicate by filename, keeping first occurrence (search paths are priority-ordered)
+    // Search paths are priority-ordered, so the first occurrence of a filename wins.
     let seen =
         System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
 
@@ -254,9 +247,9 @@ let createResolver (dllPath: string) : MetadataAssemblyResolver =
 /// identified by its **assembly name + full name**, not its short name: a member
 /// whose parameter/return type keeps the same short name but moves to a *different*
 /// assembly (e.g. `RouteStore` moving from `TestPrune.Core` to `Falco`) is a breaking
-/// change, and this key makes that visible to the diff (both used to render as the
-/// bare `RouteStore` and looked identical). The assembly *name* is used, never its
-/// *version*, so a routine dependency version bump is not mistaken for a major break.
+/// change, and only the qualified key makes that visible to the diff. The assembly
+/// *name* is used, never its *version*, so a routine dependency version bump is not
+/// mistaken for a major break.
 let rec formatTypeName (t: Type) : string =
     // Concrete types have a namespace-qualified FullName; open constructed generics
     // (e.g. `List<'T>` in a generic method signature) do not — fall back to Name.
@@ -291,7 +284,6 @@ let extractFromAssembly (dllPath: string) : ApiSignature list =
     [ for t in assembly.GetExportedTypes() do
           yield ApiSignature(sprintf "type %s" t.FullName)
 
-          // Methods (public, instance + static, declared only)
           for m in
               t.GetMethods(
                   BindingFlags.Public
@@ -307,7 +299,6 @@ let extractFromAssembly (dllPath: string) : ApiSignature list =
 
                   yield ApiSignature(sprintf "  %s::%s(%s): %s" t.Name m.Name ps (formatTypeName m.ReturnType))
 
-          // Properties
           for p in
               t.GetProperties(
                   BindingFlags.Public
@@ -317,7 +308,6 @@ let extractFromAssembly (dllPath: string) : ApiSignature list =
               ) do
               yield ApiSignature(sprintf "  %s::%s: %s" t.Name p.Name (formatTypeName p.PropertyType))
 
-          // Constructors
           for c in t.GetConstructors(BindingFlags.Public ||| BindingFlags.Instance ||| BindingFlags.DeclaredOnly) do
               let ps =
                   c.GetParameters()
@@ -330,9 +320,9 @@ let extractFromAssembly (dllPath: string) : ApiSignature list =
 /// Locate the candidate directories (newest-tfm-first) and expected DLL file name
 /// for a cached package version. Covers the `lib/<tfm>/` (library) and
 /// `tools/<tfm>[/any]/` (dotnet tool) layouts, plus the FSharp.Analyzers.SDK
-/// `analyzers/dotnet/fs/` layout (AUTOMATION-196). Returns `None` when the
-/// package-version directory isn't cached. Shared by the API and grammar
-/// cache-extraction paths so both look in exactly the same places.
+/// `analyzers/dotnet/fs/` layout. Returns `None` when the package-version
+/// directory isn't cached. Shared by the API and grammar cache-extraction paths
+/// so both look in exactly the same places.
 let internal packageCacheSearch
     (cacheRoot: string)
     (packageId: string)
@@ -345,7 +335,6 @@ let internal packageCacheSearch
     else
         let dllName = packageId + ".dll"
 
-        // Search lib/<tfm>/ (libraries) and tools/<tfm>/any/ (dotnet tools).
         let libToolDirs =
             [ Path.Combine(pkgDir, "lib"); Path.Combine(pkgDir, "tools") ]
             |> List.filter Directory.Exists
@@ -358,11 +347,9 @@ let internal packageCacheSearch
 
         // An FSharp.Analyzers.SDK analyzer package (IncludeBuildOutput=false,
         // DevelopmentDependency=true) ships its assembly under
-        // analyzers/dotnet/fs/<id>.dll (the SDK convention; C# analyzers use
-        // .../cs/) with NO lib/. Without this, the resolver never found the DLL and
-        // the package was mis-reported as an orphan tag (AbsentOnFeed) and never
-        // API-diffed. Recurse under analyzers/ so any nesting (fs/cs, or a TFM
-        // sub-folder) is covered while lib/tools layouts stay untouched.
+        // analyzers/dotnet/fs/<id>.dll with NO lib/, so without this the DLL is
+        // never found and the package reads as an orphan tag (AbsentOnFeed).
+        // Recurse so any nesting (fs/cs, or a TFM sub-folder) is covered.
         let analyzerDirs =
             let analyzersRoot = Path.Combine(pkgDir, "analyzers")
 
@@ -508,8 +495,7 @@ let downloadToCache (run: string -> string -> Shell.CommandResult) (packageId: s
 /// question turns on the distinction a `Result<string, string>` throws away: a
 /// definite 404 is *knowledge* (the feed answered; the resource is not there),
 /// whereas a timeout, a 5xx, a 401/403 or a DNS failure is the *absence* of
-/// knowledge. Collapsing those into one `Error` is what made a two-valued
-/// publication check unable to support a fail-safe.
+/// knowledge. Collapsing those into one `Error` leaves no way to fail safe.
 type HttpResult =
     /// A 2xx response, carrying the body.
     | HttpOk of body: string
@@ -599,18 +585,14 @@ let internal flatContainerHasVersion (indexJson: string) (version: string) : boo
 /// fastest-updating publish surface, so a just-pushed release shows here well
 /// before the registration index that `dotnet restore` resolves against.
 ///
-/// Which answers are DEFINITE, and why each is safe:
-///   * 200 whose `versions` array contains it -> `OnFeed`.
-///   * 404 for the id  -> `NotOnFeed`. The CDN answered: nuget.org has never
-///     hosted this package id at all. A 404 is the flat container's normal way of
-///     saying "no such package", not an error condition.
-///   * 200 whose `versions` array lacks it -> `NotOnFeed`. The feed enumerated
-///     everything it has for the id and this version was not among them.
+/// Two answers are DEFINITE: a 200 whose `versions` array lacks the version (the
+/// feed enumerated everything it has), and a 404 for the id — the flat
+/// container's normal way of saying "no such package", not an error condition.
 ///
-/// Everything else is `FeedUnknown` and must never drive a republish:
-///   * an unparseable/garbage 200 body (a proxy error page, a truncated read) —
-///     we cannot claim the version is absent from a list we could not read;
-///   * a timeout, DNS/connection failure, 5xx, or auth failure — `HttpFailed`.
+/// Everything else is `FeedUnknown` and must never drive a republish: an
+/// unparseable 200 body (a proxy error page, a truncated read) cannot show a
+/// version is absent from a list we could not read, and `HttpFailed` covers
+/// timeouts, DNS failures, 5xx and auth failures.
 let internal flatContainerPresence (fetch: string -> HttpResult) (packageId: string) (version: string) : FeedPresence =
     match fetch (flatContainerIndexUrl packageId) with
     | HttpNotFound -> NotOnFeed
@@ -682,8 +664,7 @@ let checkFeedPresence
 
 /// Is this exact package version live right now? The two-valued view of
 /// `checkFeedPresence`, for callers that only need "is it there yet" (the
-/// post-push availability poll). Identical in behaviour to the historical
-/// `flat container || restore probe`.
+/// post-push availability poll).
 let isPublished
     (fetch: string -> HttpResult)
     (run: string -> string -> Shell.CommandResult)
@@ -707,12 +688,8 @@ let extractPreviousFromNuGetResult
     match extractFromNuGetCache packageId version with
     | Some api -> Found api
     | None ->
-        // Not cached — restore a throwaway project that references it to pull it
-        // in, then classify. On a restore failure, distinguish an orphan tag
-        // (AbsentOnFeed — walk back to an older published release) from a transient
-        // FetchError (abort rather than under-bump). On restore success, re-read
-        // the now-cached package; success that still yields nothing readable is
-        // AbsentOnFeed (the version simply isn't materialisable), not a FetchError.
+        // A restore that succeeds but still yields nothing readable is AbsentOnFeed
+        // (the version isn't materialisable), not a FetchError.
         withProbeProject packageId version (fun proj ->
             match run "dotnet" (probeRestoreArgs (currentNuGetConfig ()) proj) with
             | Shell.Failure(msg, _) -> classifyRestoreFailure msg

@@ -21,8 +21,7 @@ let private noPreviousApi (_pkg: string) (_version: string) : PreviousApiResult 
 let private noCurrentApi (_dll: string) : ApiSignature list = []
 
 /// Default grammar stubs: no CommandTree grammar to diff, so the API diff alone
-/// governs the bump (the pre-194 behaviour). Tests exercising the grammar fold
-/// pass real grammars instead.
+/// governs the bump. Tests exercising the grammar fold pass real grammars instead.
 let private noPreviousGrammar (_pkg: string) (_version: string) : Grammar option = None
 
 let private noCurrentGrammar (_dll: string) : Grammar option = None
@@ -272,18 +271,15 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
 
         test <@ result = 0 @>
 
-        // Verify tag was set on immutable commit
         test
             <@
                 calls
                 |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set v0.1.0-alpha.1"))
             @>
 
-        // Verify fsproj was updated
         let content = File.ReadAllText(tmpFile)
         test <@ content.Contains("<Version>0.1.0-alpha.1</Version>") @>
 
-        // Verify commit + bookmark advance happened after tagging
         test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("commit")) @>
 
         test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("bookmark set main")) @>
@@ -335,9 +331,6 @@ let ``release - Auto first-releases an untagged package at its declared fsproj v
               PreBuildCmds = []
               RootDir = "" }
 
-        // The default (Auto) command must first-release a never-tagged package at
-        // its declared <Version>; previously Auto silently skipped a first release
-        // (only an explicit StartAlpha would ship one).
         let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
@@ -409,9 +402,9 @@ let ``release - StartAlpha with LocalPublish calls dotnet pack`` () =
         let calls = getCalls ()
         test <@ result = 0 @>
 
-        // LocalPublish IS the release pipeline packing on a dev machine: it must
-        // carry the explicit release flag or the RefStamp guard (AUTOMATION-123)
-        // would refuse the clean, release-shaped version it just computed.
+        // LocalPublish IS the release pipeline packing on a dev machine: without the
+        // explicit release flag the RefStamp guard refuses the clean, release-shaped
+        // version it just computed.
         test
             <@
                 calls
@@ -472,8 +465,8 @@ let ``release - Auto with own-changed PackAsTool package skips the API-diff (NU1
 
     try
         // A PackAsTool package with a prior tag AND an own-source change (e.g. a CHANGELOG
-        // edit, which lives in the package dir) — the exact shape that flipped FsHotWatch.Cli
-        // onto the API-diff branch on cli-v0.14.0-alpha.2.
+        // edit, which lives in the package dir) — the shape that put FsHotWatch.Cli on the
+        // API-diff branch at cli-v0.14.0-alpha.2.
         File.WriteAllText(
             tmpFile,
             "<Project><PropertyGroup><PackAsTool>true</PackAsTool><Version>0.14.0-alpha.1</Version></PropertyGroup></Project>"
@@ -489,9 +482,9 @@ let ``release - Auto with own-changed PackAsTool package skips the API-diff (NU1
                    + "/**\"",
                    Success "1 file changed") ]
 
-        // A tool has no library API surface — reading the previous release's API fails NU1212.
-        // WITHOUT the fix this routes to CannotDetermine and aborts the release; WITH the fix the
-        // PackAsTool package skips the API-diff entirely, so this fetch must never be reached.
+        // A tool has no library API surface — reading the previous release's API fails
+        // NU1212, which would abort as CannotDetermine. The PackAsTool path skips the
+        // API diff entirely, so this fetch must never be reached.
         let extractPreviousApi (_pkg: string) (_version: string) : PreviousApiResult =
             FetchError "NU1212: DotnetToolReference project style can only contain references of the DotnetTool type"
 
@@ -3002,9 +2995,7 @@ let ``release - Auto with fsproj equal to last tag has nothing to do (not a resu
 /// The exact wedged shape observed in Falco.UnionRoutes: tag `v0.3.4` created
 /// LOCALLY, never pushed, package 0.3.4 never published, fsproj still says 0.3.4,
 /// and — because the tag already sits at HEAD — no source changes can ever appear
-/// "since" it. Before the fix this printed "Skipping ...: no changes since v0.3.4"
-/// then "No packages to release" on every run, forever: 0.3.4 could never be
-/// published and re-running never recovered.
+/// "since" it. A plain "no changes since v0.3.4" skip wedges that forever.
 ///
 /// A tag is a promise to publish, not the publication. With the newest tag's
 /// package definitely `NotOnFeed` the release is UNFINISHED, so it must resume and
@@ -3181,14 +3172,13 @@ let ``release - unreachable feed on the newest tag never triggers a republish`` 
         File.Delete(tmpFile)
 
 /// REGRESSION, and the reason the orphan decision asks the FEED rather than the
-/// API extractor. `extractPreviousFromNuGetResult` reports `AbsentOnFeed` in two
-/// very different situations: the package really isn't published, OR it is
-/// published but no DLL can be located inside the .nupkg. The second is not
-/// hypothetical — `RefStamp`, released from this very repo, is an MSBuild-only
-/// package shipping just `build/`, and the extractor really does answer
-/// `AbsentOnFeed` for its published newest version (verified against the live
-/// feed). Anything that drives a REPUBLISH off that signal re-releases a
-/// perfectly published package on every single run.
+/// API extractor. `extractPreviousFromNuGetResult` reports `AbsentOnFeed` both
+/// when a package really isn't published and when it is published but no DLL can
+/// be located inside the .nupkg. The second is not hypothetical: `RefStamp`,
+/// released from this very repo, is an MSBuild-only package shipping just
+/// `build/`, and the extractor really does answer `AbsentOnFeed` for its published
+/// newest version (verified against the live feed). Driving a REPUBLISH off that
+/// signal re-releases a perfectly published package on every run.
 ///
 /// So: API says "absent", feed says "published" -> the feed wins and we skip.
 /// The API extractor must not even be consulted for this decision.
@@ -4101,7 +4091,7 @@ let ``release - pushes main before creating tags so a push failure leaves no orp
     finally
         File.Delete(tmpFile)
 
-// --- AUTOMATION-197: derive the Unreleased changelog from commits + --check ---
+// --- derive the Unreleased changelog from commits + --check ---
 
 let private rs = string (char 0x1e)
 
@@ -4302,21 +4292,15 @@ let ``release --check passes when the package has no own-source changes since it
         test <@ result = 0 @>)
 
 // =============================================================================
-// AUTOMATION-202 — a PackAsTool package must still get its CLI grammar diffed.
+// A PackAsTool package must still get its CLI grammar diffed. Skipping the API
+// probe (a PackageReference to a tool package fails NU1212) must not also skip
+// the grammar diff, or every CommandTree-consuming CLI we ship — exactly the set
+// with a CLI grammar to break — releases a breaking CLI change as a PATCH.
 //
-// AUTOMATION-79 correctly stopped constructing an API probe for PackAsTool
-// packages (a PackageReference to a tool package fails NU1212). AUTOMATION-194
-// correctly added grammar-aware bumping. But -194's only call site sat inside
-// the NON-PackAsTool arm, so the two correct fixes cancelled: every
-// `PackAsTool` package — which is every CommandTree-consuming CLI we ship, i.e.
-// exactly the set with a CLI grammar to break — was routed past the grammar
-// diff and released a breaking CLI change as a PATCH.
-//
-// The two concerns are independent: the grammar extractor reads the prior
-// release from the NuGet cache and constructs no probe. This test pins both
-// halves at once — the grammar drives the bump, AND the API probe is never
-// constructed (the API extractors below throw if touched, so a regression that
-// reintroduces the probe fails loudly rather than silently reviving NU1212).
+// The two concerns are independent: the grammar extractor reads the prior release
+// from the NuGet cache and constructs no probe. This test pins both halves — the
+// grammar drives the bump, AND the API probe is never constructed (the API
+// extractors below throw if touched).
 // =============================================================================
 [<Fact>]
 let ``release - PackAsTool grammar break bumps major without constructing an API probe`` () =
@@ -4363,7 +4347,7 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
                   Mode = PushTags
                   TargetPackages = []
                   // Constructing an API probe for a PackAsTool package is what raises
-                  // NU1212 (AUTOMATION-79). Fail loudly if this path is ever revived.
+                  // NU1212. Fail loudly if this path is ever revived.
                   ExtractPreviousApi =
                     (fun _ _ ->
                         failwith "API probe must not be constructed for a PackAsTool package (NU1212, AUTOMATION-79)")
@@ -4382,8 +4366,8 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
                   Check = false }
 
         test <@ result = 0 @>
-        // Before AUTOMATION-202 this produced 1.0.1 — a breaking CLI change shipped
-        // as a patch. The grammar break must drive a MAJOR bump.
+        // The grammar break must drive a MAJOR bump, not the patch the API diff
+        // alone would give.
         test <@ (File.ReadAllText fsproj).Contains("<Version>2.0.0</Version>") @>
     finally
         try
@@ -4460,16 +4444,12 @@ let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative 
 
 [<Fact>]
 let ``release - PackAsTool CLI aborts when the previous grammar cannot be read`` () =
-    // FAIL CLOSED (AUTOMATION-202, option b). The package HAS a CLI grammar — the
-    // current build yields one — but the previous release's is unreadable, which is
-    // what a cold NuGet cache looks like on this path (a PackAsTool package is
-    // deliberately not API-probed, so nothing populates the cache for it).
-    //
-    // Bumping NoChange here would release a possibly-breaking CLI change as a patch:
-    // the exact defect this path exists to prevent, only quieter. Mirrors the
-    // `BaselineFetchError -> CannotDetermine` policy the non-tool arm already applies
-    // to an unreadable API baseline, and is asserted the same way: exit 1, and the
-    // fsproj version left untouched.
+    // FAIL CLOSED. The package HAS a CLI grammar — the current build yields one — but
+    // the previous release's is unreadable, which is what a cold NuGet cache looks
+    // like on this path (a PackAsTool package is deliberately not API-probed, so
+    // nothing populates the cache for it). Bumping NoChange would release a
+    // possibly-breaking CLI change as a patch, so this mirrors the non-tool arm's
+    // `BaselineFetchError -> CannotDetermine`: exit 1, fsproj untouched.
     let dir =
         Path.Combine(Path.GetTempPath(), "fsst-packastool-coldcache-" + System.Guid.NewGuid().ToString("N"))
 
