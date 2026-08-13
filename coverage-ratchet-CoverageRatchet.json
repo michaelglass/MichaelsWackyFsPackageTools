@@ -35,8 +35,8 @@
       },
       {
         "line": 83,
-        "branch": 82,
-        "reason": "deliberately too high to induce a linux coverage failure for loosen-from-ci end-to-end test",
+        "branch": 72,
+        "reason": "Re-baselined 2026-08-13 after branch-instrumentation drift: CI now instruments 209 branches here where the last green run instrumented 100, with line coverage byte-identical at 86.8%, so 84/100 (84.0%) became 162/209 (77.5%). NOTE: this entry previously read 'deliberately too high to induce a linux coverage failure for loosen-from-ci end-to-end test', but 82 sat BELOW the achieved 84.0% and so induced nothing — the note was stale. If an induced-failure fixture is still wanted for exercising loosen-from-ci, set it explicitly rather than relying on a number that drifts. See AUTOMATION-312.",
         "platform": "linux"
       }
     ],
@@ -71,7 +71,8 @@
       },
       {
         "line": 96,
-        "branch": 93,
+        "branch": 84,
+        "reason": "Re-baselined 2026-08-13 after branch-instrumentation drift: CI now instruments 62 branches here where the last green run instrumented 28, with line coverage byte-identical at 96.9%, so 27/28 (96.4%) became 55/62 (88.7%). Set below the Linux value with headroom. See AUTOMATION-312.",
         "platform": "linux"
       }
     ]
