@@ -5,10 +5,18 @@ open System.Xml.Linq
 open System.Text.RegularExpressions
 
 /// Per-file coverage data parsed from a Cobertura XML report.
+///
+/// Both the ratio and its two components are kept deliberately. The collector
+/// emits a source line only when its containing method JIT-compiles, so the
+/// *Total fields (the percentage DENOMINATOR) drift with load and run context,
+/// while the *Covered fields (the NUMERATOR) are stable for unchanged code.
+/// Count floors gate on the numerator for that reason — see ADR 0019.
 type FileCoverage =
     { FileName: string
       LinePct: float
       BranchPct: float
+      LinesCovered: int
+      LinesTotal: int
       BranchesCovered: int
       BranchesTotal: int }
 
@@ -145,6 +153,8 @@ let buildCoverage (rawLines: RawLine list) : FileCoverage list =
         { FileName = fileName
           LinePct = linePct
           BranchPct = branchPct
+          LinesCovered = coveredLines
+          LinesTotal = totalLines
           BranchesCovered = coveredBranches
           BranchesTotal = totalBranches })
 

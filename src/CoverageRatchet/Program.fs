@@ -33,6 +33,9 @@ type Command =
         CmdArg("Path to write JSON results", FieldIndex = 1, Default = "coverage-results.json")>] CheckJson of
         config: string option *
         output: string option
+    | [<Cmd("Record current covered-line counts as per-file floors (bootstrap and re-baseline)");
+        CmdArg("Path to the JSON config file", Default = "coverage-ratchet.json")>] BaselineLines of
+        config: string option
     | [<Cmd("List files sorted by coverage to find improvement targets");
         CmdArg("Path to the JSON config file", Default = "coverage-ratchet.json")>] Targets of config: string option
     | [<Cmd("List uncovered branch points per file");
@@ -69,6 +72,35 @@ let formatFileResult (r: FileResult) =
         branchStr
         thresholdStr
 
+let formatCountShortfall (label: string) (actual: int) (floor: int) =
+    sprintf "%s %d < %d (%+d)" label actual floor (actual - floor)
+
+/// Report count-floor failures. The tool cannot tell a deleted TEST from deleted
+/// COVERED CODE — the only signal that would distinguish them is the emitted-line
+/// total, which is exactly the unreliable quantity count floors exist to avoid —
+/// so the way out is named explicitly rather than guessed at.
+let private reportCountFailures (configPath: string) (failed: CountResult list) =
+    printfn "FAILED count floors (absolute covered lines/branches):"
+
+    for r in failed do
+        let parts =
+            [ if not (CountResult.linesPassed r) then
+                  formatCountShortfall "covered lines" r.File.LinesCovered r.Floor.CoveredLines
+              if not (CountResult.branchesPassed r) then
+                  formatCountShortfall "covered branches" r.File.BranchesCovered r.Floor.CoveredBranches ]
+
+        printfn "  FAIL %s: %s" r.File.FileName (String.concat ", " parts)
+
+        match r.Floor.Reason with
+        | Some reason -> printfn "       reason on file: %s" reason
+        | None -> ()
+
+    printfn ""
+    printfn "A count floor drops for one of two reasons:"
+    printfn "  - a test stopped covering the code  -> a real regression, fix the tests"
+    printfn "  - you deliberately deleted covered code -> re-baseline it:"
+    printfn "      coverageratchet baseline-lines %s" configPath
+
 let private runCheck (configPath: string) (files: FileCoverage list) =
     let config = loadConfig configPath
 
@@ -97,7 +129,20 @@ let private runCheck (configPath: string) (files: FileCoverage list) =
 
         printfn "Result: %d/%d files passed" passed.Length allResults.Length
 
-        if List.isEmpty failed then 0 else 1
+        let countResults = buildCountResults config files
+
+        let countFailed = countResults |> List.filter (fun r -> not (CountResult.passed r))
+
+        if not (List.isEmpty countFailed) then
+            printfn ""
+            reportCountFailures configPath countFailed
+        elif not (List.isEmpty countResults) then
+            printfn "Count floors: %d/%d files passed" countResults.Length countResults.Length
+
+        if List.isEmpty failed && List.isEmpty countFailed then
+            0
+        else
+            1
 
 let private runRatchet (configPath: string) (files: FileCoverage list) =
     let raw = loadRawConfig configPath
@@ -128,6 +173,33 @@ let private runRatchet (configPath: string) (files: FileCoverage list) =
         saveRawConfig configPath newRaw
         eprintfn "Coverage below threshold for: %s" (String.concat ", " failedFiles)
         2
+
+let private runBaselineLines (configPath: string) (files: FileCoverage list) =
+    let raw = loadRawConfig configPath
+    let before = resolveConfig raw
+    let newRaw = baselineCountFloorsRaw raw files
+    saveRawConfig configPath newRaw
+    let after = resolveConfig newRaw
+
+    let lowered, raised, added =
+        files
+        |> List.fold
+            (fun (lo, hi, add) file ->
+                match Map.tryFind file.FileName before.CountFloors, Map.tryFind file.FileName after.CountFloors with
+                | None, Some _ -> lo, hi, add + 1
+                | Some oldFloor, Some newFloor when newFloor.CoveredLines < oldFloor.CoveredLines -> lo + 1, hi, add
+                | Some oldFloor, Some newFloor when newFloor.CoveredLines > oldFloor.CoveredLines -> lo, hi + 1, add
+                | _ -> lo, hi, add)
+            (0, 0, 0)
+
+    printfn "Baseline complete: %d floors added, %d raised, %d LOWERED" added raised lowered
+
+    if lowered > 0 then
+        printfn ""
+        printfn "%d floor(s) went DOWN. That is only correct if you deliberately removed" lowered
+        printfn "covered code — review the diff to %s before committing it." configPath
+
+    0
 
 let private runLoosen (configPath: string) (files: FileCoverage list) =
     let raw = loadRawConfig configPath
@@ -478,6 +550,7 @@ type CoverageFileCommand =
     | CfRatchet
     | CfCheck
     | CfLoosen
+    | CfBaselineLines
     | CfCheckJson of output: string option
     | CfTargets
     | CfGaps
@@ -492,6 +565,7 @@ let private runWithCoverageFiles
     | CfRatchet -> runRatchet configPath files
     | CfCheck -> runCheck configPath files
     | CfLoosen -> runLoosen configPath files
+    | CfBaselineLines -> runBaselineLines configPath files
     | CfCheckJson outputOpt ->
         let outputPath = outputOpt |> Option.defaultValue "coverage-results.json"
         runCheckJson configPath outputPath files
@@ -515,6 +589,7 @@ let run (command: Command) (searchDir: string) (mergeBaselines: bool) : Result<i
             | Ratchet(config = c)
             | Check(config = c)
             | Loosen(config = c)
+            | BaselineLines(config = c)
             | CheckJson(config = c)
             | Targets(config = c)
             | Gaps(config = c)
@@ -527,6 +602,7 @@ let run (command: Command) (searchDir: string) (mergeBaselines: bool) : Result<i
             | Ratchet _ -> Some CfRatchet
             | Check _ -> Some CfCheck
             | Loosen _ -> Some CfLoosen
+            | BaselineLines _ -> Some CfBaselineLines
             | CheckJson(output = outputOpt) -> Some(CfCheckJson outputOpt)
             | Targets _ -> Some CfTargets
             | Gaps _ -> Some CfGaps
@@ -599,6 +675,32 @@ Use in CI. Files not listed in [config] must hit 100%/100%.
 Lower thresholds in [config] to match current coverage so 'check'
 passes. Use sparingly — bootstrapping, or after a deliberate drop.
 Unlike 'ratchet' this can move thresholds DOWN.
+
+Applies to PERCENTAGE floors only. The covered-line count floors live
+in the separate "countFloors" section; re-baseline those with
+'baseline-lines'.
+"""
+    | [ "baseline-lines" ] ->
+        Some
+            """
+Record each file's current COVERED-LINE and COVERED-BRANCH count into
+[config]'s "countFloors" section. This both bootstraps count floors and
+re-baselines them, and it CAN move a floor down.
+
+Why counts exist: the coverage collector emits a source line only when
+its method JIT-compiles, so the percentage DENOMINATOR drifts between
+runs while the numerator does not. Percentages therefore fail on files
+nobody touched; counts do not.
+
+The cost, stated plainly: a count floor cannot distinguish a deleted
+TEST (a regression) from deleted COVERED CODE (a refactor) — both lower
+the count, and the only signal that would tell them apart is the very
+number that drifts. So after deliberately removing covered code, run
+this and review the diff. That is the intended, routine workflow.
+
+Run against a FULL test run, or with --merge-baselines. An impact-
+filtered partial run covers less, so its counts are not the file's
+real counts.
 """
     | [ "check-json" ] ->
         Some
@@ -678,14 +780,24 @@ Config file format (default: coverage-ratchet.json):
         { "line": 79, "branch": 76, "platform": "macos" },
         { "line": 46, "branch": 44, "platform": "linux" }
       ]
+    },
+    "countFloors": {
+      "Program.fs": { "coveredLines": 383, "coveredBranches": 41 }
     }
   }
 
-  - Files not listed must have 100% line and 100% branch coverage.
-  - "platform" is optional: "macos" | "linux" | "windows". Use an array of
-    entries when coverage differs per platform; a platform-less entry
-    serves as fallback.
-  - "reason" is free-form prose explaining the override.
+  - "overrides" holds PERCENTAGE floors. Files not listed must have 100%
+    line and 100% branch coverage.
+  - "countFloors" holds ABSOLUTE COUNT floors: the number of covered lines
+    and covered branches a file must not drop below. Files not listed have
+    no count floor — counts are opt-in per file, set by 'baseline-lines'.
+  - The two sections are never interchangeable. "line": 93 means 93 PERCENT;
+    "coveredLines": 93 means 93 LINES. A config with no "countFloors"
+    section enforces percentages exactly as before.
+  - "platform" is optional in both sections: "macos" | "linux" | "windows".
+    Use an array of entries when coverage differs per platform; a
+    platform-less entry serves as fallback.
+  - "reason" is free-form prose explaining the floor.
 
 Examples:
   coverageratchet                         # ratchet using ./coverage-ratchet.json
