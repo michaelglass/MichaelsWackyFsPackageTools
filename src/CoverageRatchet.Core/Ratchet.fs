@@ -43,13 +43,20 @@ let ratchetWithStatus (config: Config) (files: FileCoverage list) : RatchetStatu
         buildFileResults config files
         |> List.filter (fun r -> not (FileResult.passed r))
         |> List.map (fun r -> r.File.FileName)
+        |> List.append (
+            buildCountResults config files
+            |> List.filter (fun r -> not (CountResult.passed r))
+            |> List.map (fun r -> r.File.FileName)
+        )
+        |> List.distinct
 
     let newConfig = ratchet config files
 
     let newRaw =
         { DefaultLine = newConfig.DefaultLine
           DefaultBranch = newConfig.DefaultBranch
-          RawOverrides = newConfig.Overrides |> Map.map (fun _ ovr -> [ ovr ]) }
+          RawOverrides = newConfig.Overrides |> Map.map (fun _ ovr -> [ ovr ])
+          RawCountFloors = newConfig.CountFloors |> Map.map (fun _ floor -> [ floor ]) }
 
     if not (List.isEmpty failedFiles) then
         Failed(newRaw, failedFiles)
@@ -58,34 +65,41 @@ let ratchetWithStatus (config: Config) (files: FileCoverage list) : RatchetStatu
     else
         NoChanges
 
-let private mergeRawOverrides
-    (raw: RawConfig)
-    (resolvedBefore: Config)
-    (resolvedAfter: Config)
+/// Fold a resolved before/after pair back into the platform-structured raw map,
+/// touching only the entry that resolved for the running platform and leaving
+/// other platforms' entries untouched.
+///
+/// Shared by percentage overrides and count floors so the two cannot drift apart:
+/// `copyValues` is the only part that knows which numbers a floor kind carries.
+let private mergeRawSection
+    (platformOf: 'a -> Platform option)
+    (setPlatform: Platform option -> 'a -> 'a)
+    (copyValues: 'a -> 'a -> 'a)
+    (rawEntries: Map<string, 'a list>)
+    (before: Map<string, 'a>)
+    (after: Map<string, 'a>)
     (newEntryPlatform: Platform option)
-    : RawConfig =
-    let mutable result = raw.RawOverrides
+    : Map<string, 'a list> =
+    let mutable result = rawEntries
 
-    for kv in resolvedBefore.Overrides do
+    for kv in before do
         let name = kv.Key
-        let existingEntries = Map.tryFind name raw.RawOverrides |> Option.defaultValue []
+        let existingEntries = Map.tryFind name rawEntries |> Option.defaultValue []
 
         let hasPlatformSpecific =
-            existingEntries |> List.exists (fun e -> e.Platform = Some Platform.current)
+            existingEntries |> List.exists (fun e -> platformOf e = Some Platform.current)
 
-        let isResolvingEntry (entry: Override) =
-            entry.Platform = Some Platform.current
-            || (entry.Platform = None && not hasPlatformSpecific)
+        let isResolvingEntry entry =
+            platformOf entry = Some Platform.current
+            || (platformOf entry = None && not hasPlatformSpecific)
 
-        match Map.tryFind name resolvedAfter.Overrides with
-        | Some newOverride ->
+        match Map.tryFind name after with
+        | Some updatedValue ->
             let updated =
                 existingEntries
                 |> List.map (fun entry ->
                     if isResolvingEntry entry then
-                        { entry with
-                            Line = newOverride.Line
-                            Branch = newOverride.Branch }
+                        copyValues updatedValue entry
                     else
                         entry)
 
@@ -99,39 +113,159 @@ let private mergeRawOverrides
             else
                 result <- Map.add name remaining result
 
-    for kv in resolvedAfter.Overrides do
-        if not (Map.containsKey kv.Key resolvedBefore.Overrides) then
-            let existingEntries = Map.tryFind kv.Key raw.RawOverrides |> Option.defaultValue []
-
-            let newEntry =
-                { Line = kv.Value.Line
-                  Branch = kv.Value.Branch
-                  Reason = kv.Value.Reason
-                  Platform = newEntryPlatform }
-
+    for kv in after do
+        if not (Map.containsKey kv.Key before) then
+            let existingEntries = Map.tryFind kv.Key rawEntries |> Option.defaultValue []
+            let newEntry = setPlatform newEntryPlatform kv.Value
             result <- Map.add kv.Key (existingEntries @ [ newEntry ]) result
 
-    { raw with RawOverrides = result }
+    result
+
+let private mergeOverrideSection =
+    mergeRawSection (fun (o: Override) -> o.Platform) (fun p o -> { o with Platform = p }) (fun src tgt ->
+        { tgt with
+            Line = src.Line
+            Branch = src.Branch })
+
+let private mergeCountFloorSection =
+    mergeRawSection (fun (f: CountFloor) -> f.Platform) (fun p f -> { f with Platform = p }) (fun src tgt ->
+        { tgt with
+            CoveredLines = src.CoveredLines
+            CoveredBranches = src.CoveredBranches })
+
+let private mergeRawOverrides
+    (raw: RawConfig)
+    (resolvedBefore: Config)
+    (resolvedAfter: Config)
+    (newEntryPlatform: Platform option)
+    : RawConfig =
+    { raw with
+        RawOverrides =
+            mergeOverrideSection raw.RawOverrides resolvedBefore.Overrides resolvedAfter.Overrides newEntryPlatform }
+
+let private mergeRawCountFloors
+    (raw: RawConfig)
+    (resolvedBefore: Config)
+    (resolvedAfter: Config)
+    (newEntryPlatform: Platform option)
+    : RawConfig =
+    { raw with
+        RawCountFloors =
+            mergeCountFloorSection
+                raw.RawCountFloors
+                resolvedBefore.CountFloors
+                resolvedAfter.CountFloors
+                newEntryPlatform }
+
+// ---------------------------------------------------------------------------
+// Count floors (AUTOMATION-119)
+//
+// Gating on the NUMERATOR. Covered-line count is stable for unchanged code
+// because it does not divide by the JIT-dependent emitted-line set (ADR 0019).
+//
+// The cost, stated plainly: a count floor cannot tell a deleted TEST (a real
+// regression) from deleted COVERED CODE (a legitimate refactor). Both lower the
+// count. The only signal that would distinguish them is the total emitted-line
+// count — precisely the quantity ADR 0019 proved unreliable — so guessing from
+// it would reintroduce the non-determinism this design exists to avoid.
+//
+// Therefore a legitimate decrease is resolved by a HUMAN re-baseline, and the
+// re-baseline is deliberately the same one-word command used to bootstrap
+// (`baseline-lines`), so the routine path is the well-trodden path.
+// ---------------------------------------------------------------------------
+
+/// Raise count floors toward current counts. Monotonic — never lowers.
+///
+/// Only files that already HAVE a floor are touched: an ordinary ratchet run
+/// must not silently enrol new files, or an impact-filtered partial run would
+/// write floors from coverage that never ran.
+let ratchetCountFloors (config: Config) (files: FileCoverage list) : Config =
+    let fileMap = files |> List.map (fun f -> f.FileName, f) |> Map.ofList
+
+    let newFloors =
+        config.CountFloors
+        |> Map.map (fun name floor ->
+            match Map.tryFind name fileMap with
+            | None -> floor
+            | Some file ->
+                { floor with
+                    CoveredLines = max floor.CoveredLines file.LinesCovered
+                    CoveredBranches = max floor.CoveredBranches file.BranchesCovered })
+
+    { config with CountFloors = newFloors }
+
+/// Record current counts as the floor for every observed file.
+///
+/// This is both the bootstrap and the re-baseline, and it CAN lower a floor —
+/// that is the point. Run it after deliberately removing covered code. Existing
+/// reasons are preserved so a recorded justification is not silently dropped.
+let baselineCountFloors (config: Config) (files: FileCoverage list) : Config =
+    let newFloors =
+        files
+        |> List.fold
+            (fun acc (file: FileCoverage) ->
+                let reason =
+                    Map.tryFind file.FileName acc |> Option.bind (fun (f: CountFloor) -> f.Reason)
+
+                Map.add
+                    file.FileName
+                    { CoveredLines = file.LinesCovered
+                      CoveredBranches = file.BranchesCovered
+                      Reason = reason
+                      Platform = None }
+                    acc)
+            config.CountFloors
+
+    { config with CountFloors = newFloors }
+
+let ratchetCountFloorsRaw (raw: RawConfig) (files: FileCoverage list) : RawConfig =
+    let resolved = resolveConfig raw
+    let ratcheted = ratchetCountFloors resolved files
+    mergeRawCountFloors raw resolved ratcheted None
+
+/// New entries are tagged with the running platform when the file already has
+/// platform-specific entries; otherwise they are platform-less. Keeping the
+/// platform explicit matters because CI is Linux-only, so a macOS-tagged floor
+/// never runs there (AUTOMATION-213).
+let baselineCountFloorsRaw (raw: RawConfig) (files: FileCoverage list) : RawConfig =
+    let resolved = resolveConfig raw
+    let baselined = baselineCountFloors resolved files
+    mergeRawCountFloors raw resolved baselined None
 
 let ratchetRaw (raw: RawConfig) (files: FileCoverage list) : RawConfig =
     let resolved = resolveConfig raw
     let ratcheted = ratchet resolved files
+
     mergeRawOverrides raw resolved ratcheted None
+    |> fun r -> ratchetCountFloorsRaw r files
 
-let ratchetRawWithStatus (raw: RawConfig) (files: FileCoverage list) : RatchetStatus =
-    let resolved = resolveConfig raw
-
-    let failedFiles =
+/// Files failing EITHER the percentage floors or their count floor.
+let private allFailedFiles (resolved: Config) (files: FileCoverage list) =
+    let pctFailures =
         buildFileResults resolved files
         |> List.filter (fun r -> not (FileResult.passed r))
         |> List.map (fun r -> r.File.FileName)
 
+    let countFailures =
+        buildCountResults resolved files
+        |> List.filter (fun r -> not (CountResult.passed r))
+        |> List.map (fun r -> r.File.FileName)
+
+    pctFailures @ countFailures |> List.distinct
+
+let ratchetRawWithStatus (raw: RawConfig) (files: FileCoverage list) : RatchetStatus =
+    let resolved = resolveConfig raw
+    let failedFiles = allFailedFiles resolved files
+
     let ratcheted = ratchet resolved files
-    let newRaw = mergeRawOverrides raw resolved ratcheted None
+
+    let newRaw =
+        mergeRawOverrides raw resolved ratcheted None
+        |> fun r -> ratchetCountFloorsRaw r files
 
     if not (List.isEmpty failedFiles) then
         Failed(newRaw, failedFiles)
-    elif newRaw.RawOverrides <> raw.RawOverrides then
+    elif newRaw <> raw then
         Tightened newRaw
     else
         NoChanges

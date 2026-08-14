@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- feat: `FileCoverage` now carries `LinesCovered` and `LinesTotal` alongside `LinePct`. The covered-line count was already computed while parsing Cobertura and then discarded; it is the numerator that stays stable when the JIT-dependent denominator drifts.
+- feat: `CountFloor`, `CountResult` and `checkCounts` add per-file floors on the absolute count of covered lines/branches. `Config`/`RawConfig` gain `CountFloors`/`RawCountFloors`, parsed from a separate `countFloors` config section so counts and percentages are never positionally confusable.
+- feat: `ratchetCountFloors` raises count floors monotonically and never enrols new files; `baselineCountFloors` records current counts and *can* lower a floor — the deliberate re-baseline after removing covered code. Both preserve a recorded `reason` and leave other platforms' entries untouched.
+- refactor: the raw platform-aware merge used by ratchet/loosen is now shared by both floor kinds (`mergeRawSection`), so percentage and count handling cannot drift apart.
+
 ## 0.1.0-alpha.5 - 2026-07-23
 
 - chore(deps): update dev-tools and external dependencies
