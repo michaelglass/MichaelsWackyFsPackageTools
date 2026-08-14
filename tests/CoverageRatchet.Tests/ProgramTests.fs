@@ -224,6 +224,7 @@ let ``run - ratchet with no changes returns Ok 0`` () =
         let config =
             { DefaultLine = 100.0
               DefaultBranch = 100.0
+              CountFloors = Map.empty
               Overrides =
                 Map.ofList
                     [ "Foo.fs",
@@ -251,6 +252,7 @@ let ``run - ratchet with tightened config returns Ok 1`` () =
         let config =
             { DefaultLine = 100.0
               DefaultBranch = 100.0
+              CountFloors = Map.empty
               Overrides =
                 Map.ofList
                     [ "Foo.fs",
@@ -386,6 +388,7 @@ let ``run - ratchet with new file in coverage only counts existing overrides as 
         let config =
             { DefaultLine = 100.0
               DefaultBranch = 100.0
+              CountFloors = Map.empty
               Overrides =
                 Map.ofList
                     [ "Foo.fs",
@@ -902,6 +905,7 @@ let ``run - ratchet removes override when file reaches 100 percent`` () =
         let config =
             { DefaultLine = 100.0
               DefaultBranch = 100.0
+              CountFloors = Map.empty
               Overrides =
                 Map.ofList
                     [ "Foo.fs",
@@ -1095,6 +1099,7 @@ let ``run - ratchet tightens some overrides and removes others`` () =
         let config =
             { DefaultLine = 100.0
               DefaultBranch = 100.0
+              CountFloors = Map.empty
               Overrides =
                 Map.ofList
                     [ "Foo.fs",
@@ -1827,3 +1832,270 @@ let ``run - RefreshBaseline copies coverage to baseline and returns Ok 0`` () =
 
         test <@ result = Ok 0 @>
         test <@ File.ReadAllText(baselinePath) = xml @>)
+
+// --- count floors: gating on covered-line COUNT rather than percentage (AUTOMATION-119) ---
+//
+// Every test here pins the percentage floors to 0 so the percentage check always
+// passes. Whatever verdict `check` returns is therefore attributable to the count
+// floor alone.
+
+let private countFloorConfig (coveredLines: int) =
+    sprintf
+        """{
+  "overrides": { "Foo.fs": { "line": 0, "branch": 0 } },
+  "countFloors": { "Foo.fs": { "coveredLines": %d, "coveredBranches": 0 } }
+}"""
+        coveredLines
+
+[<Fact>]
+let ``run - check FAILS when covered lines fall below the count floor`` () =
+    withTempDir (fun tmpDir ->
+        // 3 of 10 lines hit -> 3 covered lines, against a floor of 8.
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 30)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, countFloorConfig 8)
+
+        let result = run (Check(config = Some configPath)) tmpDir false
+
+        test <@ result = Ok 1 @>)
+
+[<Fact>]
+let ``run - check passes when covered lines meet the count floor`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 30)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, countFloorConfig 3)
+
+        let result = run (Check(config = Some configPath)) tmpDir false
+
+        test <@ result = Ok 0 @>)
+
+[<Fact>]
+let ``run - check ignores count floors for files that have none recorded`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 30)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        // Floor recorded for a DIFFERENT file; Foo.fs is unenrolled.
+        File.WriteAllText(
+            configPath,
+            """{
+  "overrides": { "Foo.fs": { "line": 0, "branch": 0 } },
+  "countFloors": { "Other.fs": { "coveredLines": 999, "coveredBranches": 0 } }
+}"""
+        )
+
+        let result = run (Check(config = Some configPath)) tmpDir false
+
+        test <@ result = Ok 0 @>)
+
+[<Fact>]
+let ``run - check catches a covered-line drop that 100 percent line coverage hides`` () =
+    withTempDir (fun tmpDir ->
+        // Every emitted line is hit, so LinePct is a perfect 100% and no
+        // percentage floor can fire. But only 10 lines were emitted where the
+        // recorded floor saw 20 covered — the regression percentage cannot see.
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 100)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        File.WriteAllText(
+            configPath,
+            """{
+  "overrides": { "Foo.fs": { "line": 100, "branch": 100 } },
+  "countFloors": { "Foo.fs": { "coveredLines": 20, "coveredBranches": 0 } }
+}"""
+        )
+
+        let result = run (Check(config = Some configPath)) tmpDir false
+
+        test <@ result = Ok 1 @>)
+
+[<Fact>]
+let ``run - check reports the count shortfall and names the re-baseline command`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 30)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, countFloorConfig 8)
+
+        let output, result =
+            withCapturedConsole (fun () -> run (Check(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 1 @>
+        test <@ output.Contains("Foo.fs") @>
+        // The delta must be legible, and the way out must be stated: a legitimate
+        // deletion is resolved by a human re-baseline, not by the tool guessing.
+        test <@ output.Contains("3") && output.Contains("8") @>
+        test <@ output.Contains("baseline-lines") @>)
+
+// --- baseline-lines: bootstrap and re-baseline of count floors (AUTOMATION-119) ---
+
+[<Fact>]
+let ``run - baseline-lines bootstraps count floors from current coverage`` () =
+    withTempDir (fun tmpDir ->
+        // 3 of 10 lines hit.
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 30)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, "{}")
+
+        let result = run (BaselineLines(config = Some configPath)) tmpDir false
+
+        test <@ result = Ok 0 @>
+
+        let config = loadConfig configPath
+        test <@ config.CountFloors.["Foo.fs"].CoveredLines = 3 @>)
+
+[<Fact>]
+let ``run - baseline-lines lowers a floor and says so`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 30)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        File.WriteAllText(
+            configPath,
+            """{ "countFloors": { "Foo.fs": { "coveredLines": 9, "coveredBranches": 0 } } }"""
+        )
+
+        let output, result =
+            withCapturedConsole (fun () -> run (BaselineLines(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 0 @>
+        test <@ output.Contains("LOWERED") @>
+        test <@ output.Contains("went DOWN") @>
+
+        let config = loadConfig configPath
+        test <@ config.CountFloors.["Foo.fs"].CoveredLines = 3 @>)
+
+[<Fact>]
+let ``run - baseline-lines raises a floor without the lowered warning`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 30)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        File.WriteAllText(
+            configPath,
+            """{ "countFloors": { "Foo.fs": { "coveredLines": 1, "coveredBranches": 0 } } }"""
+        )
+
+        let output, result =
+            withCapturedConsole (fun () -> run (BaselineLines(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 0 @>
+        test <@ output.Contains("0 LOWERED") @>
+        test <@ not (output.Contains("went DOWN")) @>
+
+        let config = loadConfig configPath
+        test <@ config.CountFloors.["Foo.fs"].CoveredLines = 3 @>)
+
+[<Fact>]
+let ``run - baseline-lines then check is green, and a later drop is caught`` () =
+    withTempDir (fun tmpDir ->
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        File.WriteAllText(xmlPath, makeCoverageXml 100)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, "{}")
+
+        test <@ run (BaselineLines(config = Some configPath)) tmpDir false = Ok 0 @>
+        test <@ run (Check(config = Some configPath)) tmpDir false = Ok 0 @>
+
+        // Same file, fewer covered lines -> the floor catches it.
+        File.WriteAllText(xmlPath, makeCoverageXml 60)
+        test <@ run (Check(config = Some configPath)) tmpDir false = Ok 1 @>)
+
+[<Fact>]
+let ``run - check surfaces a count floor's recorded reason`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 30)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        File.WriteAllText(
+            configPath,
+            """{
+  "overrides": { "Foo.fs": { "line": 0, "branch": 0 } },
+  "countFloors": { "Foo.fs": { "coveredLines": 8, "coveredBranches": 0, "reason": "logic lives in Shared.fs" } }
+}"""
+        )
+
+        let output, result =
+            withCapturedConsole (fun () -> run (Check(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 1 @>
+        test <@ output.Contains("logic lives in Shared.fs") @>)
+
+[<Fact>]
+let ``run - check reports a covered-BRANCH shortfall`` () =
+    withTempDir (fun tmpDir ->
+        // Two lines, one branch point at 1/2 covered.
+        File.WriteAllText(
+            Path.Combine(tmpDir, "coverage.cobertura.xml"),
+            """<?xml version="1.0" encoding="utf-8"?><coverage><packages><package name="p"><classes><class name="C" filename="/src/Foo.fs"><lines><line number="1" hits="1" branch="true" condition-coverage="50% (1/2)" /></lines></class></classes></package></packages></coverage>"""
+        )
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        File.WriteAllText(
+            configPath,
+            """{
+  "overrides": { "Foo.fs": { "line": 0, "branch": 0 } },
+  "countFloors": { "Foo.fs": { "coveredLines": 0, "coveredBranches": 2 } }
+}"""
+        )
+
+        let output, result =
+            withCapturedConsole (fun () -> run (Check(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 1 @>
+        test <@ output.Contains("covered branches 1 < 2") @>)
+
+[<Fact>]
+let ``run - ratchet raises count floors monotonically`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 100)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        File.WriteAllText(
+            configPath,
+            """{ "countFloors": { "Foo.fs": { "coveredLines": 4, "coveredBranches": 0 } } }"""
+        )
+
+        let result = run (Ratchet(config = Some configPath)) tmpDir false
+
+        test <@ result <> Ok 2 @>
+
+        let config = loadConfig configPath
+        test <@ config.CountFloors.["Foo.fs"].CoveredLines = 10 @>)
+
+[<Fact>]
+let ``run - ratchet exits 2 when a count floor is breached`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 100)
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        // 10 covered lines against a floor of 50: a real shortfall.
+        File.WriteAllText(
+            configPath,
+            """{
+  "overrides": { "Foo.fs": { "line": 0, "branch": 0 } },
+  "countFloors": { "Foo.fs": { "coveredLines": 50, "coveredBranches": 0 } }
+}"""
+        )
+
+        let result = run (Ratchet(config = Some configPath)) tmpDir false
+
+        test <@ result = Ok 2 @>)
+
+[<Fact>]
+let ``main with baseline-lines --help returns 0`` () =
+    let result = main [| "baseline-lines"; "--help" |]
+    test <@ result = 0 @>

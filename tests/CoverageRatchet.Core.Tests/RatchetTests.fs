@@ -189,6 +189,7 @@ let ``ratchetRaw updates non-platform entry when no platform-specific entries ex
     let raw: RawConfig =
         { DefaultLine = 100.0
           DefaultBranch = 100.0
+          RawCountFloors = Map.empty
           RawOverrides =
             Map.ofList
                 [ "Foo.fs",
@@ -211,6 +212,7 @@ let ``loosenRaw adds platform-agnostic entry for new file`` () =
     let raw: RawConfig =
         { DefaultLine = 100.0
           DefaultBranch = 100.0
+          RawCountFloors = Map.empty
           RawOverrides = Map.empty }
 
     let files = [ makeFile "New.fs" 80.0 75.0 3 4 ]
@@ -239,6 +241,7 @@ let ``mergeFromCi - adds new file override when CI has file below defaults`` () 
     let raw: RawConfig =
         { DefaultLine = 100.0
           DefaultBranch = 100.0
+          RawCountFloors = Map.empty
           RawOverrides = Map.empty }
 
     let ciResults = Map.ofList [ "NewFile.fs", { Line = 80.0; Branch = 60.0 } ]
@@ -254,8 +257,160 @@ let ``mergeFromCi - skips files at or above defaults`` () =
     let raw: RawConfig =
         { DefaultLine = 100.0
           DefaultBranch = 100.0
+          RawCountFloors = Map.empty
           RawOverrides = Map.empty }
 
     let ciResults = Map.ofList [ "Perfect.fs", { Line = 100.0; Branch = 100.0 } ]
     let result = mergeFromCi raw Linux ciResults
     test <@ result.RawOverrides.ContainsKey("Perfect.fs") = false @>
+
+// --- count floors: ratchet raises, baseline re-baselines (AUTOMATION-119) ---
+
+[<Fact>]
+let ``ratchetCountFloors raises a floor toward current counts`` () =
+    let config =
+        { defaultsConfig with
+            CountFloors = Map.ofList [ "Foo.fs", countFloor 300 10 ] }
+
+    let result = ratchetCountFloors config [ makeFileWithCounts "Foo.fs" 383 400 41 60 ]
+
+    test <@ result.CountFloors.["Foo.fs"].CoveredLines = 383 @>
+    test <@ result.CountFloors.["Foo.fs"].CoveredBranches = 41 @>
+
+[<Fact>]
+let ``ratchetCountFloors NEVER lowers a floor`` () =
+    // A partial (impact-filtered) run reports fewer covered lines. The floor
+    // must not follow it down, or the ratchet would erase itself.
+    let config =
+        { defaultsConfig with
+            CountFloors = Map.ofList [ "Foo.fs", countFloor 383 41 ] }
+
+    let result = ratchetCountFloors config [ makeFileWithCounts "Foo.fs" 12 400 2 60 ]
+
+    test <@ result.CountFloors.["Foo.fs"].CoveredLines = 383 @>
+    test <@ result.CountFloors.["Foo.fs"].CoveredBranches = 41 @>
+
+[<Fact>]
+let ``ratchetCountFloors does not enrol files that have no floor`` () =
+    let result =
+        ratchetCountFloors defaultsConfig [ makeFileWithCounts "Foo.fs" 383 400 41 60 ]
+
+    test <@ result.CountFloors = Map.empty @>
+
+[<Fact>]
+let ``ratchetCountFloors leaves a floor alone when its file is absent from the run`` () =
+    let config =
+        { defaultsConfig with
+            CountFloors = Map.ofList [ "Absent.fs", countFloor 383 41 ] }
+
+    let result = ratchetCountFloors config [ makeFileWithCounts "Other.fs" 10 10 0 0 ]
+
+    test <@ result.CountFloors.["Absent.fs"].CoveredLines = 383 @>
+
+[<Fact>]
+let ``baselineCountFloors enrols every observed file`` () =
+    let files =
+        [ makeFileWithCounts "Foo.fs" 383 400 41 60
+          makeFileWithCounts "Bar.fs" 12 12 0 0 ]
+
+    let result = baselineCountFloors defaultsConfig files
+
+    test <@ result.CountFloors.["Foo.fs"].CoveredLines = 383 @>
+    test <@ result.CountFloors.["Foo.fs"].CoveredBranches = 41 @>
+    test <@ result.CountFloors.["Bar.fs"].CoveredLines = 12 @>
+
+[<Fact>]
+let ``baselineCountFloors LOWERS a floor - the legitimate-deletion path`` () =
+    // The refactor case: covered code was deliberately extracted or deleted, so
+    // the count legitimately drops. The tool cannot detect that on its own, so a
+    // human runs this and the lowered floor lands in the config diff for review.
+    let config =
+        { defaultsConfig with
+            CountFloors = Map.ofList [ "Foo.fs", countFloor 383 41 ] }
+
+    let result = baselineCountFloors config [ makeFileWithCounts "Foo.fs" 120 130 8 10 ]
+
+    test <@ result.CountFloors.["Foo.fs"].CoveredLines = 120 @>
+    test <@ result.CountFloors.["Foo.fs"].CoveredBranches = 8 @>
+
+[<Fact>]
+let ``baselineCountFloors preserves an existing recorded reason`` () =
+    let config =
+        { defaultsConfig with
+            CountFloors =
+                Map.ofList
+                    [ "Foo.fs",
+                      { CoveredLines = 383
+                        CoveredBranches = 41
+                        Reason = Some "logic lives in Shared.fs"
+                        Platform = None } ] }
+
+    let result = baselineCountFloors config [ makeFileWithCounts "Foo.fs" 120 130 8 10 ]
+
+    test <@ result.CountFloors.["Foo.fs"].Reason = Some "logic lives in Shared.fs" @>
+
+[<Fact>]
+let ``baselineCountFloors leaves a floor alone when its file is absent from the run`` () =
+    let config =
+        { defaultsConfig with
+            CountFloors = Map.ofList [ "Absent.fs", countFloor 383 41 ] }
+
+    let result = baselineCountFloors config [ makeFileWithCounts "Other.fs" 10 10 0 0 ]
+
+    test <@ result.CountFloors.["Absent.fs"].CoveredLines = 383 @>
+
+[<Fact>]
+let ``baselineCountFloorsRaw keeps other platforms' floors untouched`` () =
+    let raw =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides = Map.empty
+          RawCountFloors =
+            Map.ofList
+                [ "Foo.fs",
+                  [ { CoveredLines = 100
+                      CoveredBranches = 10
+                      Reason = None
+                      Platform = Some Platform.current }
+                    { CoveredLines = 999
+                      CoveredBranches = 99
+                      Reason = None
+                      Platform = Some otherPlatform } ] ] }
+
+    let result = baselineCountFloorsRaw raw [ makeFileWithCounts "Foo.fs" 55 60 5 6 ]
+
+    let entries = result.RawCountFloors.["Foo.fs"]
+
+    let mine = entries |> List.find (fun e -> e.Platform = Some Platform.current)
+    let theirs = entries |> List.find (fun e -> e.Platform = Some otherPlatform)
+
+    test <@ mine.CoveredLines = 55 @>
+    test <@ theirs.CoveredLines = 999 @>
+
+[<Fact>]
+let ``ratchetRawWithStatus reports Failed when a count floor is breached`` () =
+    let raw =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides = Map.empty
+          RawCountFloors = Map.ofList [ "Foo.fs", [ countFloor 383 0 ] ] }
+
+    // 100% line coverage, so no percentage floor can fire — only the count can.
+    let result = ratchetRawWithStatus raw [ makeFileWithCounts "Foo.fs" 300 300 0 0 ]
+
+    match result with
+    | Failed(_, failedFiles) -> test <@ failedFiles = [ "Foo.fs" ] @>
+    | other -> failwithf "expected Failed, got %A" other
+
+[<Fact>]
+let ``ratchetRawWithStatus is NoChanges when counts already sit at the floor`` () =
+    // Positive control for the test above: the same shape must be able to pass.
+    let raw =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides = Map.empty
+          RawCountFloors = Map.ofList [ "Foo.fs", [ countFloor 300 0 ] ] }
+
+    let result = ratchetRawWithStatus raw [ makeFileWithCounts "Foo.fs" 300 300 0 0 ]
+
+    test <@ result = NoChanges @>
