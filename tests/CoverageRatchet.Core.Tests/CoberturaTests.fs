@@ -295,3 +295,71 @@ let ``buildBranchGaps - file with no uncovered branches not included`` () =
     let result = buildBranchGaps rawLines
 
     test <@ List.isEmpty result @>
+
+// --- ADR 0019 stability repro: the numerator survives what breaks the ratio ---
+//
+// ADR 0019's finding, restated: pooling a project that covers NONE of a file
+// enlarges that file's emitted-line set (the percentage denominator) without
+// adding hits. Embeddings.fs read 383/412 = 93.0% alone and 383/639 = 59.9%
+// pooled — "same hits, different denominator".
+//
+// These tests demonstrate that on real parsing rather than asserting it.
+
+let private classXml (fileName: string) (lines: (int * int) list) =
+    let lineEls =
+        lines
+        |> List.map (fun (num, hits) -> sprintf """<line number="%d" hits="%d" branch="false" />""" num hits)
+        |> String.concat ""
+
+    sprintf
+        """<?xml version="1.0" encoding="utf-8"?><coverage><packages><package name="p"><classes><class name="C" filename="%s"><lines>%s</lines></class></classes></package></packages></coverage>"""
+        fileName
+        lineEls
+
+[<Fact>]
+let ``pooling a project that covers none of a file leaves LinesCovered untouched`` () =
+    // Run A emits lines 1-4, hitting 3 of them.
+    let runA = classXml "Foo.fs" [ 1, 1; 2, 1; 3, 1; 4, 0 ]
+
+    // Run B emits a WIDER set (1-10) for the same file and hits none of it —
+    // the "project that tests nothing of the file" from ADR 0019.
+    let runB = classXml "Foo.fs" [ for i in 1..10 -> i, 0 ]
+
+    let alone = parseXmls [ runA ] |> List.head
+    let pooled = parseXmls [ runA; runB ] |> List.head
+
+    // The denominator moves...
+    test <@ alone.LinesTotal = 4 @>
+    test <@ pooled.LinesTotal = 10 @>
+
+    // ...and drags the percentage down with it, on identical hits.
+    test <@ alone.LinePct = 75.0 @>
+    test <@ pooled.LinePct = 30.0 @>
+
+    // But the numerator — what count floors gate on — does not move.
+    test <@ alone.LinesCovered = 3 @>
+    test <@ pooled.LinesCovered = 3 @>
+
+[<Fact>]
+let ``LinesCovered rises only when hits are actually added`` () =
+    // Positive control for the test above: LinesCovered is not simply frozen.
+    // A pooled run that DOES add a hit must move it, or the stability claim
+    // would be vacuous.
+    let runA = classXml "Foo.fs" [ 1, 1; 2, 0 ]
+    let runB = classXml "Foo.fs" [ 1, 0; 2, 1 ]
+
+    let alone = parseXmls [ runA ] |> List.head
+    let pooled = parseXmls [ runA; runB ] |> List.head
+
+    test <@ alone.LinesCovered = 1 @>
+    test <@ pooled.LinesCovered = 2 @>
+    test <@ pooled.LinesTotal = 2 @>
+
+[<Fact>]
+let ``LinesCovered and LinesTotal agree with LinePct`` () =
+    let coverage =
+        parseXmls [ classXml "Foo.fs" [ 1, 1; 2, 1; 3, 0; 4, 0 ] ] |> List.head
+
+    test <@ coverage.LinesCovered = 2 @>
+    test <@ coverage.LinesTotal = 4 @>
+    test <@ coverage.LinePct = 50.0 @>

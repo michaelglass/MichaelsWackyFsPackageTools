@@ -11,10 +11,13 @@ Per-file code coverage enforcement that only goes up. CoverageRatchet reads your
 3. **`check`** fails the build if any file drops below its threshold.
 4. **`ratchet`** (the default command) updates thresholds to match current coverage -- thresholds only go up, not down.
 5. **`loosen`** sets thresholds to whatever coverage is right now, so `check` passes immediately.
-6. **`targets`** lists files sorted by coverage to find improvement opportunities.
-7. **`gaps`** shows uncovered branch points per file with line numbers.
+6. **`baseline-lines`** records each file's current *covered-line count* as a floor (see [Count floors](#count-floors)).
+7. **`targets`** lists files sorted by coverage to find improvement opportunities.
+8. **`gaps`** shows uncovered branch points per file with line numbers.
 
 The default threshold for every file is **100% line and branch coverage**. Files that can't easily reach 100% (like CLI entry points) can get per-file overrides with a documented reason.
+
+There are two independent kinds of floor, and they never mix: **percentage** floors in `overrides`, and **absolute covered-line count** floors in `countFloors`. Percentages are what most projects want. Count floors exist for the case where the percentage *denominator* is not trustworthy — see below.
 
 ## Installation
 
@@ -205,6 +208,7 @@ The flag works in any position. Directories like `.devenv` are automatically ski
 coverageratchet check path/to/my-config.json
 coverageratchet ratchet path/to/my-config.json
 coverageratchet loosen path/to/my-config.json
+coverageratchet baseline-lines path/to/my-config.json
 ```
 
 ## Configuration
@@ -239,8 +243,55 @@ CoverageRatchet uses a JSON config file (default: `coverage-ratchet.json` in the
 | `overrides.<file>.branch` | number | Minimum branch coverage percentage (0-100) |
 | `overrides.<file>.reason` | string | Why this file has a lower threshold |
 | `overrides.<file>.platform` | string | Optional: `"macos"`, `"linux"`, or `"windows"` — restricts this override to one platform |
+| `countFloors` | object | Per-file **covered-line count** floors, keyed by filename |
+| `countFloors.<file>.coveredLines` | number | Minimum number of covered lines (a count, not a percentage) |
+| `countFloors.<file>.coveredBranches` | number | Minimum number of covered branches (a count, not a percentage) |
+| `countFloors.<file>.reason` | string | Why this file's floor sits where it does |
+| `countFloors.<file>.platform` | string | Optional, same meaning as for `overrides` |
 
 Files not listed in `overrides` must have 100% line and branch coverage.
+
+Files not listed in `countFloors` have **no** count floor — counts are opt-in per file. `"line": 93` means 93 **percent**; `"coveredLines": 93` means 93 **lines**. A config with no `countFloors` section behaves exactly as it did before count floors existed.
+
+## Count floors
+
+Coverage percentage has a denominator problem. The .NET coverage collector emits a source line only when its containing method is **JIT-compiled** during the run, so the set of emitted lines — the percentage denominator — shifts with execution path, machine load, and how many projects you pool together. The numerator (how many lines were actually covered) does not.
+
+The effect is that the same file, with the same tests and the same hits, can report very different percentages:
+
+```
+Foo.fs from one project's report:      383 / 412 = 93.0%
+Foo.fs pooled with a project that
+covers none of it:                     383 / 639 = 59.9%
+```
+
+Same hits. Different denominator. A percentage ratchet built on that will fail files nobody touched.
+
+Count floors gate on the number that held still — **383** in both readings:
+
+```bash
+# after a full test run, record current counts as floors
+coverageratchet baseline-lines
+
+# thereafter, check fails if a file's covered-line count drops
+coverageratchet check
+```
+
+This catches a regression class percentages structurally cannot see: if a file's emitted-line set shrinks alongside its covered lines, the percentage can stay at a perfect 100% while real coverage is lost.
+
+### The trade-off, stated plainly
+
+A count floor **cannot tell a deleted test from deleted code**. Both lower the count. The only signal that would distinguish them is the total emitted-line count — precisely the number that is not trustworthy — so the tool does not guess.
+
+That means legitimate refactoring (deleting dead code, extracting a module, collapsing duplication) will fail `check`. This is deliberate: those failures land on files you *just changed*, in the same commit, where you can judge them. Re-baselining is one command, and it is the same command used to bootstrap:
+
+```bash
+coverageratchet baseline-lines
+```
+
+It reports how many floors went **down**, and the lowered floors show up in your config diff for review. Treat a re-baseline as routine, not exceptional.
+
+Run `baseline-lines` against a **full** test run, or with `--merge-baselines`. An impact-filtered partial run covers less code, so its counts are not the file's real counts.
 
 ### Platform-specific overrides
 
