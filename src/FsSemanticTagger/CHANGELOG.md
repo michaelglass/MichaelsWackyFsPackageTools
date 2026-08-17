@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.3 - 2026-08-17
+
 - fix: **a release no longer claims success when a pushed tag triggered nothing.**
   `release` printed "Tags pushed. GitHub Actions will handle the release." and exited `0`
   as soon as the pushes returned — an assertion about something nobody had checked. A tag

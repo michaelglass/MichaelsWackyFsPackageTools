@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.10.0-alpha.15 - 2026-08-17
+
+- docs: cut thinking-out-loud comments across src and tests
+
+
 ## 0.10.0-alpha.14 - 2026-07-23
 
 - chore(deps): update dev-tools and external dependencies
