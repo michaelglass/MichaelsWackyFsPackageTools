@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.4 - 2026-08-17
+
 - feat: **a changelog merge that buries a `## Unreleased` callout now fails structurally.**
   A callout — a blockquote opening with a heading (`> ### ⚠️ Read this first`) or a GitHub
   alert marker (`> [!WARNING]`) — must be the first content of `## Unreleased`. A merge that
