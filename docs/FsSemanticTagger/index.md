@@ -113,6 +113,42 @@ A fresh empty `## Unreleased` heading is inserted above it so the file is ready 
 
 **Fail-fast:** if any package needing a bump is missing `CHANGELOG.md`, is missing the `## Unreleased` section, or the section is empty, the release aborts with exit code 1 before any files are modified.
 
+### Callout order
+
+A **callout** is a blockquote that opens with a heading or a GitHub alert marker — the "read this first" banner:
+
+```markdown
+## Unreleased
+
+> ### ⚠️ Read this first if you run the CLI from a script
+>
+> Two exit codes changed.
+
+- feat: ...
+```
+
+A callout must be the **first content** of `## Unreleased`. A merge that keeps both sides of an `## Unreleased` conflict prepends the incoming entries *above* it, so the one block whose job is to be read first is no longer read first — with no conflict marker, no duplicate and no empty section to give it away. That is a structural fact about the section, so it is checked structurally: the rule keys on markdown shape and never on prose.
+
+The rule is deliberately narrow, and has no opt-out:
+
+- Only a blockquote opening with an ATX heading (`> ### ...`) or an alert marker (`> [!WARNING]`, `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!CAUTION]`) counts. A plain `> quoted line` — an aside, some quoted output — is ignored wherever it sits.
+- Blockquotes inside fenced code are sample text, so a changelog documenting callout syntax doesn't fail on its own example.
+- Only `## Unreleased` is checked. Released sections are history.
+- Checked files are every package's `CHANGELOG.md` plus the repo-root `CHANGELOG.md` when one exists — in a multi-package repo the root file is the reader-facing aggregate, and it is exactly where a callout lives.
+
+Both `release` (before any writes) and `release --check` enforce it. Unlike an empty section, a buried callout is never excused by "derivable from commits": deriving bullets cannot move a callout back to the top, and promoting the section would freeze the wrong order into a published version.
+
+### `--check`
+
+```bash
+fssemantictagger release --check
+```
+
+A pre-flight gate for CI (`mise run changelog-check`). It never builds, diffs APIs or writes anything. It fails with exit code 1 when either
+
+- a package with source changes since its last tag has an empty/missing `## Unreleased` that also can't be derived from its commit summaries, or
+- a `## Unreleased` callout is no longer its section's first content.
+
 ### Flags
 
 All release commands (`release`, `alpha`, `beta`, `rc`, `stable`) accept:
