@@ -8,12 +8,24 @@ type ChangelogError =
     | NoFile of path: string
     | NoUnreleasedSection of path: string
     | EmptyUnreleasedSection of path: string
+    | CalloutNotFirst of path: string * title: string * line: int
 
 let formatError (err: ChangelogError) : string =
     match err with
     | NoFile p -> sprintf "%s: CHANGELOG.md not found" p
     | NoUnreleasedSection p -> sprintf "%s: no '## Unreleased' section" p
     | EmptyUnreleasedSection p -> sprintf "%s: '## Unreleased' section is empty" p
+    | CalloutNotFirst(p, title, line) ->
+        String.concat
+            "\n"
+            [ sprintf "%s: the '## Unreleased' callout is buried — it is not the first thing in the section." p
+              sprintf "    Callout: \"%s\" (line %d)." title line
+              "    A callout — a blockquote opening with a heading ('> ### ...') or an alert ('> [!WARNING]') —"
+              "    exists to be read FIRST, so it must be the first content under '## Unreleased'."
+              "    Fix: move the whole '> ...' block back to directly under the '## Unreleased' heading, above"
+              "    every entry. The usual cause is a merge that prepended its entries above it."
+              "    If this blockquote is not a callout, drop its leading heading or alert marker — a plain"
+              "    '> quote' is ignored by this check." ]
 
 let internal isUnreleasedHeading (line: string) : bool =
     let trimmed = line.TrimEnd()
@@ -33,28 +45,147 @@ let internal isUnreleasedHeading (line: string) : bool =
 
 let private isLevel2Heading (line: string) : bool = line.TrimStart().StartsWith("## ")
 
+/// The body of the `## Unreleased` section as (0-based file line index, text)
+/// pairs: every line after the heading up to the next `## ` heading, or EOF.
+/// `None` when the file has no `## Unreleased` heading at all.
+let private unreleasedBody (lines: string[]) : (int * string)[] option =
+    match lines |> Array.tryFindIndex isUnreleasedHeading with
+    | None -> None
+    | Some idx ->
+        lines
+        |> Array.indexed
+        |> Array.skip (idx + 1)
+        |> Array.takeWhile (fun (_, l) -> not (isLevel2Heading l))
+        |> Some
+
 let validateUnreleased (changelogPath: string) : Result<unit, ChangelogError> =
     if not (File.Exists changelogPath) then
         Error(NoFile changelogPath)
     else
-        let lines = File.ReadAllLines changelogPath
-        let unreleasedIdx = lines |> Array.tryFindIndex isUnreleasedHeading
-
-        match unreleasedIdx with
+        match unreleasedBody (File.ReadAllLines changelogPath) with
         | None -> Error(NoUnreleasedSection changelogPath)
-        | Some idx ->
-            let hasEntry =
-                seq {
-                    for i in (idx + 1) .. (lines.Length - 1) do
-                        yield lines[i]
-                }
-                |> Seq.takeWhile (fun l -> not (isLevel2Heading l))
-                |> Seq.exists (fun l -> not (String.IsNullOrWhiteSpace l))
-
-            if hasEntry then
+        | Some body ->
+            if body |> Array.exists (fun (_, l) -> not (String.IsNullOrWhiteSpace l)) then
                 Ok()
             else
                 Error(EmptyUnreleasedSection changelogPath)
+
+/// Opens a CALLOUT: a blockquote line that is either an ATX heading
+/// (`> ### Read this first`) or a GitHub alert marker (`> [!WARNING]`). Those
+/// are the two structural shapes of a *titled banner*; a plain `> quoted line`
+/// is an ordinary aside and is deliberately not matched. Group `t` is the
+/// heading text, group `a` the alert kind.
+let private calloutOpenerRegex =
+    System.Text.RegularExpressions.Regex(
+        @"^>\s*(?:#{1,6}\s+(?<t>\S.*)|\[!(?<a>NOTE|TIP|IMPORTANT|WARNING|CAUTION)\])",
+        System.Text.RegularExpressions.RegexOptions.Compiled
+        ||| System.Text.RegularExpressions.RegexOptions.IgnoreCase
+    )
+
+/// The callout's title, when `line` opens one. Used verbatim in the error so a
+/// reader mid-merge sees which block moved.
+let internal calloutTitle (line: string) : string option =
+    let m = calloutOpenerRegex.Match(line.TrimStart())
+
+    if not m.Success then
+        None
+    elif m.Groups["t"].Success then
+        Some(m.Groups["t"].Value.TrimEnd())
+    else
+        Some(sprintf "[!%s]" (m.Groups["a"].Value))
+
+/// A fenced-code delimiter. Everything between two of them is sample text, so a
+/// `>` in there is markdown being *shown*, not a blockquote in the document.
+let private isFenceDelimiter (line: string) : bool =
+    let t = line.TrimStart()
+    t.StartsWith("```") || t.StartsWith("~~~")
+
+type private SectionScan =
+    {
+        InFence: bool
+        /// Whether the previous line was part of a blockquote, so a `>` line can
+        /// be told apart as *opening* a block versus continuing one. Only an
+        /// opening line can be a callout — a heading deeper inside one long
+        /// callout is part of that same block, not a second one.
+        InQuoteBlock: bool
+        /// File line index of the section's first non-blank content.
+        FirstContent: int option
+        /// File line index and title of the first callout in the section.
+        Callout: (int * string) option
+    }
+
+let private scanSection (body: (int * string)[]) : SectionScan =
+    let start =
+        { InFence = false
+          InQuoteBlock = false
+          FirstContent = None
+          Callout = None }
+
+    (start, body)
+    ||> Array.fold (fun state (i, line) ->
+        let firstContent = state.FirstContent |> Option.orElse (Some i)
+
+        if isFenceDelimiter line then
+            { state with
+                InFence = not state.InFence
+                InQuoteBlock = false
+                FirstContent = firstContent }
+        elif state.InFence then
+            state
+        elif String.IsNullOrWhiteSpace line then
+            { state with InQuoteBlock = false }
+        elif line.TrimStart().StartsWith(">") then
+            let callout =
+                if state.Callout.IsSome || state.InQuoteBlock then
+                    state.Callout
+                else
+                    calloutTitle line |> Option.map (fun t -> i, t)
+
+            { state with
+                InQuoteBlock = true
+                FirstContent = firstContent
+                Callout = callout }
+        else
+            { state with
+                InQuoteBlock = false
+                FirstContent = firstContent })
+
+/// A callout — the "read this first" banner — must be the FIRST content of the
+/// `## Unreleased` section. Its whole job is to be read before the entries, and
+/// a merge that keeps both sides of a conflict happily prepends the incoming
+/// entries above it: no conflict marker, no lost text, and a document whose
+/// lead block is now buried. That is a structural fact about the section, so it
+/// is checked structurally, keying on markdown shape and never on prose.
+///
+/// Deliberately narrow and deliberately without an escape hatch:
+/// - Only a blockquote *opening with a heading or a GitHub alert* counts (see
+///   `calloutOpenerRegex`). A plain `> quote` — an aside, some quoted output —
+///   is ignored wherever it sits.
+/// - Fenced code is skipped, so a changelog that *documents* callout syntax
+///   doesn't fail on its own example.
+/// - Only the first callout is judged, and only against the section's first
+///   content. A second callout further down is that section's business.
+/// - Only `## Unreleased`. Released sections are history; re-ordering them is
+///   not a live risk and a rule over them would break existing changelogs.
+///
+/// A missing file or a missing `## Unreleased` section is `Ok` here — those are
+/// `validateUnreleased`'s errors, and reporting them twice helps nobody. This is
+/// kept OUT of `validateUnreleased` on purpose: that function answers "is there
+/// something to promote?", and its callers suppress its error when the section
+/// is derivable from commits. A buried callout is not derivable and must never
+/// be suppressed, and a section with a buried callout is still promotable.
+let validateCalloutOrder (changelogPath: string) : Result<unit, ChangelogError> =
+    if not (File.Exists changelogPath) then
+        Ok()
+    else
+        match unreleasedBody (File.ReadAllLines changelogPath) with
+        | None -> Ok()
+        | Some body ->
+            let scan = scanSection body
+
+            match scan.Callout, scan.FirstContent with
+            | Some(i, title), Some first when i <> first -> Error(CalloutNotFirst(changelogPath, title, i + 1))
+            | _ -> Ok()
 
 /// Conventional-commit types recognised for changelog grouping. An unrecognised
 /// prefix (or no prefix) falls into the "other" group and is kept verbatim.

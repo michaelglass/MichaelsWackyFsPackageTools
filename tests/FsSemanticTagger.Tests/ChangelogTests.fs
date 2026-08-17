@@ -394,6 +394,152 @@ let ``promoteOrDerive returns EmptyUnreleasedSection and writes nothing when emp
         // No write happened.
         test <@ File.ReadAllText path = before @>)
 
+// --- callout order -------------------------------------------------------
+// A callout is a blockquote opening with a heading or a GitHub alert marker:
+// the "read this first" banner. It exists to be read first, so it must be the
+// first content of `## Unreleased`. A merge that prepends entries above it
+// silently demotes it, which is exactly what these tests pin.
+
+let private write (dir: string) (text: string) =
+    let path = Path.Combine(dir, "CHANGELOG.md")
+    File.WriteAllText(path, text)
+    path
+
+/// The shape of the real incident: five merges each prepended their entries
+/// above the callout, which sank from the top of the section to below them.
+let private buriedCallout =
+    "# Changelog\n\n\
+     ## Unreleased\n\n\
+     - fix: entry that arrived in merge A\n\
+     - feat: entry that arrived in merge B\n\n\
+     > ### Read this first if you run fshw in CI or from a script\n\
+     >\n\
+     > fshw stop is not a remedy, and never was.\n\n\
+     ## 0.1.0 - 2026-01-01\n\n- old\n"
+
+/// The same document before the merge: the callout leads the section.
+let private calloutFirst =
+    "# Changelog\n\n\
+     ## Unreleased\n\n\
+     > ### Read this first if you run fshw in CI or from a script\n\
+     >\n\
+     > fshw stop is not a remedy, and never was.\n\n\
+     - fix: entry that arrived in merge A\n\
+     - feat: entry that arrived in merge B\n\n\
+     ## 0.1.0 - 2026-01-01\n\n- old\n"
+
+[<Fact>]
+let ``callout order - entries prepended above the callout fail`` () =
+    withTempDir (fun dir ->
+        let path = write dir buriedCallout
+
+        test
+            <@
+                validateCalloutOrder path = Error(
+                    CalloutNotFirst(path, "Read this first if you run fshw in CI or from a script", 8)
+                )
+            @>)
+
+// POSITIVE CONTROL: the rule must not be "reject every section with a blockquote".
+[<Fact>]
+let ``callout order - a callout that leads the section passes`` () =
+    withTempDir (fun dir -> test <@ validateCalloutOrder (write dir calloutFirst) = Ok() @>)
+
+[<Fact>]
+let ``callout order - a GitHub alert callout is recognised`` () =
+    withTempDir (fun dir ->
+        let path =
+            write dir "# Changelog\n\n## Unreleased\n\n- fix: thing\n\n> [!WARNING]\n> Breaking.\n"
+
+        test <@ validateCalloutOrder path = Error(CalloutNotFirst(path, "[!WARNING]", 7)) @>)
+
+[<Fact>]
+let ``callout order - a leading GitHub alert callout passes`` () =
+    withTempDir (fun dir ->
+        let path =
+            write dir "# Changelog\n\n## Unreleased\n\n> [!WARNING]\n> Breaking.\n\n- fix: thing\n"
+
+        test <@ validateCalloutOrder path = Ok() @>)
+
+[<Fact>]
+let ``callout order - a plain blockquote is not a callout`` () =
+    withTempDir (fun dir ->
+        let path =
+            write dir "# Changelog\n\n## Unreleased\n\n- fix: the daemon printed\n\n  > waiting on build\n"
+
+        test <@ validateCalloutOrder path = Ok() @>)
+
+[<Fact>]
+let ``callout order - a callout inside a fenced code block is sample text`` () =
+    withTempDir (fun dir ->
+        let path =
+            write
+                dir
+                "# Changelog\n\n\
+                 ## Unreleased\n\n\
+                 - docs: show how to write a callout\n\n\
+                 ```markdown\n\
+                 > ### Read this first\n\
+                 ```\n"
+
+        test <@ validateCalloutOrder path = Ok() @>)
+
+[<Fact>]
+let ``callout order - a heading inside the leading callout does not re-trigger`` () =
+    withTempDir (fun dir ->
+        let path =
+            write
+                dir
+                "# Changelog\n\n\
+                 ## Unreleased\n\n\
+                 > ### Read this first\n\
+                 >\n\
+                 > #### Exit codes\n\
+                 >\n\
+                 > Four runs that were green can now be red.\n\n\
+                 - fix: thing\n"
+
+        test <@ validateCalloutOrder path = Ok() @>)
+
+[<Fact>]
+let ``callout order - a callout in a released section is not the Unreleased rule's business`` () =
+    withTempDir (fun dir ->
+        let path =
+            write
+                dir
+                "# Changelog\n\n\
+                 ## Unreleased\n\n\
+                 - fix: thing\n\n\
+                 ## 0.1.0 - 2026-01-01\n\n\
+                 - old\n\n\
+                 > ### Read this first\n"
+
+        test <@ validateCalloutOrder path = Ok() @>)
+
+[<Fact>]
+let ``callout order - no Unreleased section is not a callout problem`` () =
+    withTempDir (fun dir ->
+        let path = write dir "# Changelog\n\n## 0.1.0 - 2026-01-01\n\n- old\n"
+        test <@ validateCalloutOrder path = Ok() @>)
+
+[<Fact>]
+let ``callout order - an empty Unreleased section is not a callout problem`` () =
+    withTempDir (fun dir ->
+        let path = write dir "# Changelog\n\n## Unreleased\n\n## 0.1.0 - 2026-01-01\n"
+        test <@ validateCalloutOrder path = Ok() @>)
+
+[<Fact>]
+let ``callout order - a missing file is validateUnreleased's error, not this one`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        test <@ validateCalloutOrder path = Ok() @>)
+
+[<Fact>]
+let ``callout order - the buried document still passes the emptiness check`` () =
+    // The two rules are independent: the buried document has content, so
+    // `validateUnreleased` is Ok and only the order rule catches it.
+    withTempDir (fun dir -> test <@ validateUnreleased (write dir buriedCallout) = Ok() @>)
+
 [<Fact>]
 let ``formatError - NoFile`` () =
     test <@ formatError (NoFile "x.md") = "x.md: CHANGELOG.md not found" @>
@@ -405,3 +551,21 @@ let ``formatError - NoUnreleasedSection`` () =
 [<Fact>]
 let ``formatError - EmptyUnreleasedSection`` () =
     test <@ formatError (EmptyUnreleasedSection "x.md") = "x.md: '## Unreleased' section is empty" @>
+
+[<Fact>]
+let ``formatError - CalloutNotFirst names the callout, the line and the fix`` () =
+    let text = formatError (CalloutNotFirst("x.md", "Read this first", 42))
+
+    let expected =
+        String.concat
+            "\n"
+            [ "x.md: the '## Unreleased' callout is buried — it is not the first thing in the section."
+              "    Callout: \"Read this first\" (line 42)."
+              "    A callout — a blockquote opening with a heading ('> ### ...') or an alert ('> [!WARNING]') —"
+              "    exists to be read FIRST, so it must be the first content under '## Unreleased'."
+              "    Fix: move the whole '> ...' block back to directly under the '## Unreleased' heading, above"
+              "    every entry. The usual cause is a merge that prepended its entries above it."
+              "    If this blockquote is not a callout, drop its leading heading or alert marker — a plain"
+              "    '> quote' is ignored by this check." ]
+
+    test <@ text = expected @>

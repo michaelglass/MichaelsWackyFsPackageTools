@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- feat: **a changelog merge that buries a `## Unreleased` callout now fails structurally.**
+  A callout — a blockquote opening with a heading (`> ### ⚠️ Read this first`) or a GitHub
+  alert marker (`> [!WARNING]`) — must be the first content of `## Unreleased`. A merge that
+  keeps both sides of an `## Unreleased` conflict prepends the incoming entries *above* it, so
+  the one block whose job is to be read first stops being read first: no conflict marker, no
+  duplicate entry, no empty section, nothing that "resolved cleanly and gated green" could
+  catch. `release` (before any writes) and `release --check` now report it, naming the callout,
+  its line, and where to move it back to.
+
+  Narrow on purpose: a plain `> quoted line` is not a callout and is ignored wherever it sits,
+  blockquotes inside fenced code are sample text, and only `## Unreleased` is checked — verified
+  against every `CHANGELOG.md` in four consuming repos (25 files, 636 sections) with zero flags,
+  and against the five FsHotWatch revisions where the burial actually happened, all five flagged.
+  The checked set is each package's changelog plus the repo-root `CHANGELOG.md` when one exists:
+  in a multi-package repo the root file is the reader-facing aggregate the tool never promotes,
+  and is exactly where a callout lives. There is no opt-out — a flag would be flipped by the
+  person mid-merge, which is the person the rule exists for.
+
 ## 0.14.0-alpha.3 - 2026-08-17
 
 - fix: **a release no longer claims success when a pushed tag triggered nothing.**
