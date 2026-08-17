@@ -398,6 +398,3 @@ let pushTagsAndConfirm
         match runCountForRef run tag with
         | Some n when n > 0 -> false
         | _ -> true)
-
-let pushTags (run: string -> string -> CommandResult) (tags: string list) : unit =
-    pushTagsAndConfirm run 3 3000 tags |> ignore

@@ -553,7 +553,9 @@ let internal flatContainerIndexUrl (packageId: string) : string =
 /// while an empty array is the feed positively stating it has no versions.
 let internal flatContainerVersions (indexJson: string) : string list option =
     try
-        let doc = System.Text.Json.JsonDocument.Parse(indexJson)
+        // `use`, not `let`: the versions are materialised below, so nothing
+        // outlives the document and its pooled buffers go back to the pool.
+        use doc = System.Text.Json.JsonDocument.Parse(indexJson)
 
         match doc.RootElement.TryGetProperty("versions") with
         | true, versions when versions.ValueKind = System.Text.Json.JsonValueKind.Array ->
@@ -610,8 +612,11 @@ let internal flatContainerPresence (fetch: string -> HttpResult) (packageId: str
                 NotOnFeed
 
 /// Is this exact package version live on the nuget.org flat container right now?
-/// The two-valued view of `flatContainerPresence`, kept for the availability
-/// poll, which only ever needs to know "is it there yet".
+/// The two-valued view of `flatContainerPresence`, for a caller that only needs
+/// "is it there yet". No production caller remains: the availability poll moved to
+/// the three-valued `checkFeedPresence`, because collapsing "the feed says no" and
+/// "the feed did not answer" into `false` is what made a spurious re-release
+/// possible. Prefer `flatContainerPresence` for anything new.
 let internal isPublishedViaFlatContainer (fetch: string -> HttpResult) (packageId: string) (version: string) : bool =
     flatContainerPresence fetch packageId version = OnFeed
 
@@ -663,8 +668,11 @@ let checkFeedPresence
             verdict
 
 /// Is this exact package version live right now? The two-valued view of
-/// `checkFeedPresence`, for callers that only need "is it there yet" (the
-/// post-push availability poll).
+/// `checkFeedPresence`. No production caller remains — the post-push availability
+/// poll (`Release.waitForNuGet`) consumes `FeedPresence` directly so that
+/// `FeedUnknown` behaves like "published" instead of like "absent". Prefer
+/// `checkFeedPresence` for anything new; a `bool` cannot express the distinction a
+/// release decision depends on.
 let isPublished
     (fetch: string -> HttpResult)
     (run: string -> string -> Shell.CommandResult)
