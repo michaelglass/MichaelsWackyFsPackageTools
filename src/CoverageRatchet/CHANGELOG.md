@@ -5,6 +5,8 @@
 - feat: **count floors** — enforce a per-file floor on the absolute number of covered lines/branches, not just a percentage. Coverage percentage has a non-deterministic denominator (the collector emits a source line only when its method JIT-compiles), so percentage floors fail on files nobody touched; the covered-line count does not move. New `baseline-lines` command records current counts as floors and is also the re-baseline path; `check` enforces them and `ratchet` raises them monotonically.
 - feat: count floors live in a separate `countFloors` config section with `coveredLines`/`coveredBranches` keys, so an existing percentage floor can never be reread as a line count. Configs with no `countFloors` section behave exactly as before.
 - docs: README documents count floors, the denominator problem they solve, and the deliberate trade-off — a count floor cannot distinguish a deleted test from deleted code, so legitimate refactors are re-baselined by hand.
+- docs: the percentage-vs-count distinction is now called out explicitly wherever the config format appears (`"line": 93` is 93 **percent**, `"coveredLines": 93` is 93 **lines**), with a worked example showing one file carrying both kinds of floor at once. Getting this wrong silently swaps a 93% floor for a 93-line one, so it is stated rather than implied.
+- docs: `countFloors.<file>.platform` is documented as hand-written only. `baseline-lines` always writes platform-less floors and `loosen-from-ci` handles percentages only — the `coverage-thresholds` artifact carries no counts — so the README no longer implies a CI round-trip for counts that does not exist.
 
 ## 0.15.0-alpha.11 - 2026-07-23
 

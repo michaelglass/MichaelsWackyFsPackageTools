@@ -34,6 +34,7 @@ module Platform =
         | Linux -> "linux"
         | Windows -> "windows"
 
+// sync:threshold-types:start
 /// A per-file PERCENTAGE floor. `Line` and `Branch` are percentages (0-100).
 type Override =
     { Line: float
@@ -64,6 +65,7 @@ type Config =
       DefaultBranch: float
       Overrides: Map<string, Override>
       CountFloors: Map<string, CountFloor> }
+// sync:threshold-types:end
 
 type RawConfig =
     { DefaultLine: float
@@ -105,6 +107,8 @@ module CountResult =
 
     let passed (r: CountResult) = linesPassed r && branchesPassed r
 
+/// Verdict of a count-floor check. `CountsAllPassed` covers "no file has a count
+/// floor" as well as "every floor was cleared" — an absent floor is not a failure.
 type CountCheckResult =
     | CountsAllPassed
     | CountsFailed of CountResult list
@@ -147,6 +151,9 @@ let buildCountResults (config: Config) (files: FileCoverage list) : CountResult 
         |> Map.tryFind f.FileName
         |> Option.map (fun floor -> { File = f; Floor = floor }))
 
+/// Check every file that has a count floor against it. Independent of `check`:
+/// a file can clear its percentage floor and still fail its count floor, which is
+/// the whole point — the percentage denominator moves, the count does not.
 let checkCounts (config: Config) (files: FileCoverage list) : CountCheckResult =
     let results = buildCountResults config files
     let failed = results |> List.filter (fun r -> not (CountResult.passed r))
@@ -215,7 +222,7 @@ let private parseCountFloorElement (el: JsonElement) : CountFloor =
       Platform = parsePlatform el }
 
 let private parseSection (parseElement: JsonElement -> 'a) (root: JsonElement) (name: string) : Map<string, 'a list> =
-    match root.TryGetProperty(name: string) with
+    match root.TryGetProperty(name) with
     | false, _ -> Map.empty
     | true, sectionEl ->
         sectionEl.EnumerateObject()
@@ -273,6 +280,17 @@ let resolveConfig (raw: RawConfig) : Config =
 
 let loadConfig (path: string) : Config = loadRawConfig path |> resolveConfig
 
+/// Widen a platform-resolved `Config` back to a `RawConfig` whose every entry is
+/// a one-element, platform-less list. The inverse of `resolveConfig` only for a
+/// config that had no platform-specific entries to begin with — resolving
+/// discards the other platforms' entries, and this cannot invent them back. Use
+/// the `*Raw` merge functions when those entries must survive.
+let toRawConfig (config: Config) : RawConfig =
+    { DefaultLine = config.DefaultLine
+      DefaultBranch = config.DefaultBranch
+      RawOverrides = config.Overrides |> Map.map (fun _ ovr -> [ ovr ])
+      RawCountFloors = config.CountFloors |> Map.map (fun _ floor -> [ floor ]) }
+
 let private addReasonAndPlatform
     (reason: string option)
     (platform: Platform option)
@@ -324,11 +342,4 @@ let saveRawConfig (path: string) (config: RawConfig) : unit =
     let json = JsonSerializer.Serialize(dict, jsonOptions)
     File.WriteAllText(path, json)
 
-let saveConfig (path: string) (config: Config) : unit =
-    let raw =
-        { DefaultLine = config.DefaultLine
-          DefaultBranch = config.DefaultBranch
-          RawOverrides = config.Overrides |> Map.map (fun _ ovr -> [ ovr ])
-          RawCountFloors = config.CountFloors |> Map.map (fun _ floor -> [ floor ]) }
-
-    saveRawConfig path raw
+let saveConfig (path: string) (config: Config) : unit = saveRawConfig path (toRawConfig config)
