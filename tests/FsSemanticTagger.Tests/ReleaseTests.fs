@@ -4513,3 +4513,149 @@ let ``release - PackAsTool CLI aborts when the previous grammar cannot be read``
             Directory.Delete(dir, true)
         with _ ->
             ()
+
+// --- callout order: the structural half of the changelog gate ----------------
+// A merge that keeps both sides of a `## Unreleased` conflict prepends the
+// incoming entries ABOVE the section's callout, which then sinks below them.
+// Nothing about that is a conflict, a duplicate or an empty section, so the
+// emptiness rule cannot see it. These pin the wiring: `--check` fails on it, and
+// it is never suppressed by "derivable from commits".
+
+/// A package whose changelog lives next to its fsproj (multi-package layout).
+let private calloutPkg (dir: string) (name: string) : PackageConfig =
+    { Name = name
+      Fsproj = Path.Combine(dir, name, name + ".fsproj")
+      DllPath = ""
+      TagPrefix = name.ToLowerInvariant() + "-v"
+      FsProjsSharingSameTag = [] }
+
+let private writeChangelog (dir: string) (name: string) (text: string) =
+    let sub = Path.Combine(dir, name)
+    Directory.CreateDirectory sub |> ignore
+    File.WriteAllText(Path.Combine(sub, "CHANGELOG.md"), text)
+
+let private calloutFirstText =
+    "# Changelog\n\n## Unreleased\n\n> ### Read this first\n>\n> It breaks scripts.\n\n- fix: thing\n"
+
+let private calloutBuriedText =
+    "# Changelog\n\n## Unreleased\n\n- fix: thing\n\n> ### Read this first\n>\n> It breaks scripts.\n"
+
+let private noTags (cmd: string) (args: string) : CommandResult =
+    match cmd, args with
+    | "git", a when a.StartsWith("tag -l") -> Success ""
+    | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
+
+let private runCheck (config: ToolConfig) =
+    release
+        { Run = noTags
+          Config = config
+          Command = Auto
+          Mode = DryRun
+          TargetPackages = []
+          ExtractPreviousApi = noPreviousApi
+          ExtractCurrentApi = noCurrentApi
+          ExtractPreviousGrammar = noPreviousGrammar
+          ExtractCurrentGrammar = noCurrentGrammar
+          CiPollIntervalMs = 0
+          CiMaxAttempts = 1
+          CheckFeedPresence = (fun _ _ -> OnFeed)
+          WaitForNuGet = false
+          NuGetPollIntervalMs = 0
+          NuGetMaxAttempts = 1
+          Push = false
+          Check = true }
+
+[<Fact>]
+let ``calloutCheckPaths - multi-package repo also covers the repo-root changelog`` () =
+    withTempDir (fun dir ->
+        let config =
+            { Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = dir }
+
+        let paths = calloutCheckPaths config config.Packages |> List.map snd
+
+        test <@ paths |> List.contains (Path.Combine(dir, "Alpha", "CHANGELOG.md")) @>
+        test <@ paths |> List.contains (Path.Combine(dir, "Beta", "CHANGELOG.md")) @>
+        // The reader-facing aggregate the tool never promotes, but where the
+        // callout actually lives.
+        test <@ paths |> List.contains (Path.Combine(dir, "CHANGELOG.md")) @>)
+
+[<Fact>]
+let ``calloutCheckPaths - single-package repo lists the root changelog once, under the package`` () =
+    withTempDir (fun dir ->
+        let config =
+            { Packages = [ calloutPkg dir "Solo" ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = dir }
+
+        let paths = calloutCheckPaths config config.Packages
+        test <@ paths = [ "Solo", Path.Combine(dir, "CHANGELOG.md") ] @>)
+
+[<Fact>]
+let ``release --check - fails when a package changelog buries its callout`` () =
+    withTempDir (fun dir ->
+        writeChangelog dir "Alpha" calloutBuriedText
+
+        let config =
+            { Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = dir }
+
+        test <@ runCheck config = 1 @>)
+
+// POSITIVE CONTROL for the wiring: the same document, callout first, passes.
+[<Fact>]
+let ``release --check - passes when the callout leads the section`` () =
+    withTempDir (fun dir ->
+        writeChangelog dir "Alpha" calloutFirstText
+
+        let config =
+            { Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = dir }
+
+        test <@ runCheck config = 0 @>)
+
+[<Fact>]
+let ``release --check - fails when the repo-root aggregate buries its callout`` () =
+    withTempDir (fun dir ->
+        // The FsHotWatch shape: per-package changelogs are fine, the root
+        // aggregate — the one a human reads — is the one that got merged.
+        writeChangelog dir "Alpha" calloutFirstText
+        File.WriteAllText(Path.Combine(dir, "CHANGELOG.md"), calloutBuriedText)
+
+        let config =
+            { Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = dir }
+
+        test <@ runCheck config = 1 @>)
+
+[<Fact>]
+let ``calloutOrderProblems - names the package and the buried callout`` () =
+    withTempDir (fun dir ->
+        writeChangelog dir "Alpha" calloutBuriedText
+
+        let config =
+            { Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = dir }
+
+        let problems = calloutOrderProblems config config.Packages
+
+        test
+            <@
+                problems = [ "Alpha",
+                             Changelog.CalloutNotFirst(
+                                 Path.Combine(dir, "Alpha", "CHANGELOG.md"),
+                                 "Read this first",
+                                 7
+                             ) ]
+            @>)
