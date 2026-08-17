@@ -592,7 +592,7 @@ let ``getCiStatus - returns InProgress without parent fallback`` () =
             | _ -> false
         @>
 
-// pushTags
+// pushMain
 
 [<Fact>]
 let ``pushMain - pushes main bookmark via jj`` () =
@@ -722,7 +722,7 @@ let ``checkCiStatusForSha - queued run returns InProgress`` () =
             | _ -> false
         @>
 
-// pushTags
+// pushTagsAndConfirm
 
 /// A `run` that succeeds at export and push, and answers `gh run list` with
 /// `runsPerTag` entries. Tests pass zero delays so nothing sleeps.
@@ -742,7 +742,7 @@ let private pushRun (runsPerTag: int) (calls: ResizeArray<string * string>) =
         | _ -> Failure("unexpected", 1)
 
 [<Fact>]
-let ``pushTags - exports and pushes each tag separately`` () =
+let ``pushTagsAndConfirm - exports and pushes each tag separately`` () =
     let calls = ResizeArray()
     let run = pushRun 1 calls
 

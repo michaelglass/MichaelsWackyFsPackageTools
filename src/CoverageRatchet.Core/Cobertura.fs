@@ -4,6 +4,7 @@ open System.IO
 open System.Xml.Linq
 open System.Text.RegularExpressions
 
+// sync:file-coverage:start
 /// Per-file coverage data parsed from a Cobertura XML report.
 ///
 /// Both the ratio and its two components are kept deliberately. The collector
@@ -19,6 +20,7 @@ type FileCoverage =
       LinesTotal: int
       BranchesCovered: int
       BranchesTotal: int }
+// sync:file-coverage:end
 
 let private includedExtensions = [| ".fs" |]
 
