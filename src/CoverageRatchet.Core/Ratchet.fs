@@ -51,12 +51,7 @@ let ratchetWithStatus (config: Config) (files: FileCoverage list) : RatchetStatu
         |> List.distinct
 
     let newConfig = ratchet config files
-
-    let newRaw =
-        { DefaultLine = newConfig.DefaultLine
-          DefaultBranch = newConfig.DefaultBranch
-          RawOverrides = newConfig.Overrides |> Map.map (fun _ ovr -> [ ovr ])
-          RawCountFloors = newConfig.CountFloors |> Map.map (fun _ floor -> [ floor ]) }
+    let newRaw = toRawConfig newConfig
 
     if not (List.isEmpty failedFiles) then
         Failed(newRaw, failedFiles)
@@ -71,6 +66,11 @@ let ratchetWithStatus (config: Config) (files: FileCoverage list) : RatchetStatu
 ///
 /// Shared by percentage overrides and count floors so the two cannot drift apart:
 /// `copyValues` is the only part that knows which numbers a floor kind carries.
+///
+/// An entry present in `after` but not `before` is NEW, and is written
+/// platform-less via `setPlatform None`: a platform-tagged floor is invisible to
+/// every other platform's CI, so nothing may synthesise one implicitly. Only
+/// `mergeFromCi`, which knows which platform measured the numbers, tags an entry.
 let private mergeRawSection
     (platformOf: 'a -> Platform option)
     (setPlatform: Platform option -> 'a -> 'a)
@@ -78,7 +78,6 @@ let private mergeRawSection
     (rawEntries: Map<string, 'a list>)
     (before: Map<string, 'a>)
     (after: Map<string, 'a>)
-    (newEntryPlatform: Platform option)
     : Map<string, 'a list> =
     let mutable result = rawEntries
 
@@ -116,7 +115,7 @@ let private mergeRawSection
     for kv in after do
         if not (Map.containsKey kv.Key before) then
             let existingEntries = Map.tryFind kv.Key rawEntries |> Option.defaultValue []
-            let newEntry = setPlatform newEntryPlatform kv.Value
+            let newEntry = setPlatform None kv.Value
             result <- Map.add kv.Key (existingEntries @ [ newEntry ]) result
 
     result
@@ -133,29 +132,13 @@ let private mergeCountFloorSection =
             CoveredLines = src.CoveredLines
             CoveredBranches = src.CoveredBranches })
 
-let private mergeRawOverrides
-    (raw: RawConfig)
-    (resolvedBefore: Config)
-    (resolvedAfter: Config)
-    (newEntryPlatform: Platform option)
-    : RawConfig =
+let private mergeRawOverrides (raw: RawConfig) (resolvedBefore: Config) (resolvedAfter: Config) : RawConfig =
     { raw with
-        RawOverrides =
-            mergeOverrideSection raw.RawOverrides resolvedBefore.Overrides resolvedAfter.Overrides newEntryPlatform }
+        RawOverrides = mergeOverrideSection raw.RawOverrides resolvedBefore.Overrides resolvedAfter.Overrides }
 
-let private mergeRawCountFloors
-    (raw: RawConfig)
-    (resolvedBefore: Config)
-    (resolvedAfter: Config)
-    (newEntryPlatform: Platform option)
-    : RawConfig =
+let private mergeRawCountFloors (raw: RawConfig) (resolvedBefore: Config) (resolvedAfter: Config) : RawConfig =
     { raw with
-        RawCountFloors =
-            mergeCountFloorSection
-                raw.RawCountFloors
-                resolvedBefore.CountFloors
-                resolvedAfter.CountFloors
-                newEntryPlatform }
+        RawCountFloors = mergeCountFloorSection raw.RawCountFloors resolvedBefore.CountFloors resolvedAfter.CountFloors }
 
 // ---------------------------------------------------------------------------
 // Count floors (AUTOMATION-119)
@@ -221,23 +204,22 @@ let baselineCountFloors (config: Config) (files: FileCoverage list) : Config =
 let ratchetCountFloorsRaw (raw: RawConfig) (files: FileCoverage list) : RawConfig =
     let resolved = resolveConfig raw
     let ratcheted = ratchetCountFloors resolved files
-    mergeRawCountFloors raw resolved ratcheted None
+    mergeRawCountFloors raw resolved ratcheted
 
-/// New entries are tagged with the running platform when the file already has
-/// platform-specific entries; otherwise they are platform-less. Keeping the
-/// platform explicit matters because CI is Linux-only, so a macOS-tagged floor
-/// never runs there (AUTOMATION-213).
+/// Baselined floors are written PLATFORM-LESS, so one baseline run guards every
+/// platform. The alternative — tagging them with the machine that measured them —
+/// would make a floor baselined on macOS invisible to a Linux-only CI, which is
+/// the failure mode AUTOMATION-213 records for percentage floors.
 let baselineCountFloorsRaw (raw: RawConfig) (files: FileCoverage list) : RawConfig =
     let resolved = resolveConfig raw
     let baselined = baselineCountFloors resolved files
-    mergeRawCountFloors raw resolved baselined None
+    mergeRawCountFloors raw resolved baselined
 
 let ratchetRaw (raw: RawConfig) (files: FileCoverage list) : RawConfig =
     let resolved = resolveConfig raw
     let ratcheted = ratchet resolved files
-
-    mergeRawOverrides raw resolved ratcheted None
-    |> fun r -> ratchetCountFloorsRaw r files
+    let withOverrides = mergeRawOverrides raw resolved ratcheted
+    ratchetCountFloorsRaw withOverrides files
 
 /// Files failing EITHER the percentage floors or their count floor.
 let private allFailedFiles (resolved: Config) (files: FileCoverage list) =
@@ -254,14 +236,8 @@ let private allFailedFiles (resolved: Config) (files: FileCoverage list) =
     pctFailures @ countFailures |> List.distinct
 
 let ratchetRawWithStatus (raw: RawConfig) (files: FileCoverage list) : RatchetStatus =
-    let resolved = resolveConfig raw
-    let failedFiles = allFailedFiles resolved files
-
-    let ratcheted = ratchet resolved files
-
-    let newRaw =
-        mergeRawOverrides raw resolved ratcheted None
-        |> fun r -> ratchetCountFloorsRaw r files
+    let failedFiles = allFailedFiles (resolveConfig raw) files
+    let newRaw = ratchetRaw raw files
 
     if not (List.isEmpty failedFiles) then
         Failed(newRaw, failedFiles)
@@ -314,7 +290,7 @@ let loosen (config: Config) (files: FileCoverage list) : Config =
 let loosenRaw (raw: RawConfig) (files: FileCoverage list) : RawConfig =
     let resolved = resolveConfig raw
     let loosened = loosen resolved files
-    mergeRawOverrides raw resolved loosened None
+    mergeRawOverrides raw resolved loosened
 
 let mergeFromCi (raw: RawConfig) (ciPlatform: Platform) (ciResults: Map<string, CiFileResult>) : RawConfig =
     let mutable result = raw.RawOverrides

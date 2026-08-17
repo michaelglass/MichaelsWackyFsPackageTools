@@ -21,6 +21,14 @@
   succeeded minutes later with nothing changed — leaving the version-bump commit pushed
   and no tags, which is exactly the state that tempts a manual batch push (see above). A
   push that never succeeds still fails loudly rather than being swallowed.
+- refactor: removed `Vcs.pushTags`, a wrapper that called `pushTagsAndConfirm` and then
+  `|> ignore`d the list of unconfirmed tags — re-arming, one call away, exactly the
+  silent-missing-trigger failure the confirmation was added to catch. It had no callers.
+- docs: `Api.isPublished` and `Api.isPublishedViaFlatContainer` no longer claim to serve
+  the post-push availability poll. That poll consumes the three-valued `FeedPresence`
+  directly, precisely so `FeedUnknown` behaves like "published" instead of like "absent";
+  both two-valued views are now marked as such, with `checkFeedPresence` named as the
+  one to reach for.
 
 ## 0.14.0-alpha.2 - 2026-08-05
 

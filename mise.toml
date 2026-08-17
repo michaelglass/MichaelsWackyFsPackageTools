@@ -57,6 +57,18 @@ done
 """
 depends = ["test"]
 
+[tasks.coverage-baseline-lines]
+description = "Record each file's current covered-LINE COUNT as a floor (bootstrap AND deliberate re-baseline)"
+run = """
+for config in coverage-ratchet-*.json; do
+  [ -f "$config" ] || continue
+  project=$(echo "$config" | sed 's/coverage-ratchet-\\(.*\\)\\.json/\\1/')
+  echo "Baselining line counts for $project..."
+  (cd "coverage/$project" && dotnet run --project "../../src/CoverageRatchet/CoverageRatchet.fsproj" --no-build -- baseline-lines "../../$config")
+done
+"""
+depends = ["test"]
+
 [tasks.loosen-from-ci]
 run = """
 for config in coverage-ratchet-*.json; do

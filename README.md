@@ -70,6 +70,9 @@ coverageratchet check
 # Set thresholds to current coverage (makes check pass immediately)
 coverageratchet loosen
 
+# Record each file's current covered-LINE COUNT as a floor
+coverageratchet baseline-lines
+
 # Find files with lowest coverage
 coverageratchet targets
 
@@ -77,7 +80,7 @@ coverageratchet targets
 coverageratchet gaps
 ```
 
-Configuration lives in a `coverage-ratchet.json` file. See the [CoverageRatchet README](src/CoverageRatchet/) for the full configuration format.
+Configuration lives in a `coverage-ratchet.json` file with two independent kinds of floor: **percentages** in `overrides` (`"line": 93` is 93 percent) and **absolute covered-line counts** in `countFloors` (`"coveredLines": 93` is 93 lines). Counts exist for the case where the percentage denominator is not trustworthy — the .NET collector only emits a source line once its method JIT-compiles, so the denominator drifts between runs while the numerator does not. See the [CoverageRatchet README](src/CoverageRatchet/) for the full configuration format.
 
 ### FsSemanticTagger
 
