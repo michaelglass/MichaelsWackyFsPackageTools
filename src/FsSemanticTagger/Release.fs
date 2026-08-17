@@ -329,6 +329,34 @@ let internal changelogPathsFor (config: ToolConfig) (pkg: PackageConfig) : (stri
         |> List.distinct
         |> List.map (fun dir -> pkg.Name, System.IO.Path.Combine(dir, "CHANGELOG.md"))
 
+/// The changelogs whose callout order is checked: every selected package's
+/// changelog, plus the repo-root `CHANGELOG.md` when one exists. The root file
+/// is the reader-facing aggregate — it is where a "read this first" callout
+/// actually lives, and where a merge buries it — even though a multi-package
+/// repo's tool-managed promotion never touches it. In a single-package repo
+/// `changelogPathsFor` already returns that same path, so the dedupe keeps one
+/// entry under the package's own name.
+let internal calloutCheckPaths (config: ToolConfig) (packages: PackageConfig list) : (string * string) list =
+    let rootPath = System.IO.Path.Combine(config.RootDir, "CHANGELOG.md")
+
+    (packages |> List.collect (changelogPathsFor config))
+    @ [ "repo root", rootPath ]
+    |> List.distinctBy snd
+
+/// Changelogs whose `## Unreleased` callout is no longer the first thing in the
+/// section. Unlike an empty section this is NEVER suppressed by "derivable from
+/// commits": deriving bullets cannot move a callout back to the top, and a
+/// release would freeze the wrong order into a published version section.
+let internal calloutOrderProblems
+    (config: ToolConfig)
+    (packages: PackageConfig list)
+    : (string * Changelog.ChangelogError) list =
+    calloutCheckPaths config packages
+    |> List.choose (fun (name, path) ->
+        match Changelog.validateCalloutOrder path with
+        | Ok() -> None
+        | Error err -> Some(name, err))
+
 /// The actionable error printed when the release commit isn't on the remote, so
 /// no CI run could ever exist for it. Names the fix and points at `--push`, and
 /// never mislabels a *missing* run as a *failed* one. Kept as a value so the
@@ -855,7 +883,7 @@ let private executeBumps
     // descriptions. A hand-authored section always passes; a derivable one is filled
     // in at promote time. A DependencyChange (rebundle) bump's real change lives in
     // the dependency's changelog, so its own section may be missing.
-    let changelogErrors =
+    let emptySectionErrors =
         bumpsWithChangelogs
         |> List.filter (fun (_, _, trigger, _, _) -> trigger = OwnChange)
         |> List.collect (fun (_, _, _, paths, descriptions) ->
@@ -866,6 +894,13 @@ let private executeBumps
                 match Changelog.validateUnreleased path with
                 | Ok() -> None
                 | Error err -> if derivable then None else Some(pkgName, err)))
+
+    // Promotion turns `## Unreleased` into a version section, so a callout that
+    // has sunk below the entries is about to be frozen there. Checked for every
+    // bump regardless of trigger, and never suppressed.
+    let changelogErrors =
+        emptySectionErrors
+        @ calloutOrderProblems input.Config (needsBump |> List.map (fun (pkg, _, _) -> pkg))
 
     match input.Mode with
     | DryRun ->
@@ -956,21 +991,33 @@ let private runChangelogCheck (input: ReleaseInput) (selectedPackages: PackageCo
                         | Ok() -> None
                         | Error err -> if derivable then None else Some(pkgName, err)))
 
-    match problems with
-    | [] ->
+    // The callout-order rule is checked for EVERY selected package (and the repo
+    // root changelog), not only the changed ones: a merge buries a callout by
+    // rewriting the changelog alone, with no source change to key off.
+    let calloutProblems = calloutOrderProblems input.Config selectedPackages
+
+    if problems.IsEmpty && calloutProblems.IsEmpty then
         printfn
-            "Changelog check passed: every changed package has an Unreleased entry (authored or derivable from commits)."
+            "Changelog check passed: every changed package has an Unreleased entry (authored or derivable from commits), and no '## Unreleased' callout is buried."
 
         0
-    | ps ->
-        printfn
-            "\nError: changelog check failed — changed package(s) have an empty '## Unreleased' with no commit descriptions to derive from:"
+    else
+        if not problems.IsEmpty then
+            printfn
+                "\nError: changelog check failed — changed package(s) have an empty '## Unreleased' with no commit descriptions to derive from:"
 
-        for (pkgName, err) in ps do
-            printfn "  %s: %s" pkgName (Changelog.formatError err)
+            for (pkgName, err) in problems do
+                printfn "  %s: %s" pkgName (Changelog.formatError err)
 
-        printfn
-            "Fix: add a '## Unreleased' entry, or give the commit(s) a conventional summary (feat:/fix:/chore:/...)."
+            printfn
+                "Fix: add a '## Unreleased' entry, or give the commit(s) a conventional summary (feat:/fix:/chore:/...)."
+
+        if not calloutProblems.IsEmpty then
+            printfn
+                "\nError: changelog check failed — a '## Unreleased' callout is no longer the section's first content:"
+
+            for (pkgName, err) in calloutProblems do
+                printfn "  %s: %s" pkgName (Changelog.formatError err)
 
         1
 
