@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- fix: **a release that gives up waiting for NuGet no longer reports success.** `waitForNuGet` returned `false` on timeout and the caller did `|> ignore` and returned `0`, so a partial release exited green and the operator found out by diffing tags against nuget.org by hand. It now returns **the packages it could not confirm**, and the release **exits 2** naming each one plus how to resume (`gh run rerun <id> --failed`) (AUTOMATION-355).
+  - **Three outcomes, three exit codes** rather than collapsing to pass/fail: `0` confirmed on the feed, `1` the publish demonstrably failed (CI red, tags not pushed), `2` the tags went and the packages have not appeared within the window. **`2` and not `1` is the point** — "I stopped waiting" is not "it failed": the packages may land minutes later, and calling that a failure would train people to re-run a release that already succeeded.
+  - The old behaviour was **pinned by a test asserting it** — `release - NuGet wait timeout does not change the exit code`, commented "Timeout is a convenience-wait failure; the release succeeded." Half of that is sound (the tags *are* pushed); the conclusion was not. That test now asserts `2`, and a positive control asserts a fully-confirmed release still exits `0` so the fix cannot degenerate into "always fail".
+
 ## 0.14.0-alpha.4 - 2026-08-17
 
 - feat: **a changelog merge that buries a `## Unreleased` callout now fails structurally.**

@@ -179,14 +179,26 @@ let internal waitForCi (run: string -> string -> CommandResult) (pollIntervalMs:
 /// Poll NuGet until every (packageId, version) is restorable, or until
 /// `maxAttempts` rounds elapse. Returns true when all packages are available,
 /// false on timeout. `maxAttempts = 1` does exactly one check then times out.
-/// Convenience only — callers MUST NOT fail the release on a false result, the
-/// tags are already pushed.
+/// AUTOMATION-355 — RETURNS THE PACKAGES IT COULD NOT CONFIRM, not a bool. Empty
+/// means every package is on the feed.
+///
+/// This used to return `false` on timeout under a doc comment reading "callers
+/// MUST NOT fail the release on a false result, the tags are already pushed" —
+/// and the caller duly did `|> ignore` and returned 0. That reasoning is half
+/// right and the conclusion was wrong: the tags ARE pushed, so a timeout is
+/// genuinely not a failed publish, but reporting SUCCESS for a release whose
+/// packages nobody has seen is worse than either honest answer.
+///
+/// The way out is not to pick between them. "Not confirmed" gets its own exit
+/// code at the caller, so the release can say what it actually knows: the tags
+/// went, the packages have not appeared YET, here is what to check. Returning
+/// the names rather than a bool is what makes that message possible.
 let internal waitForNuGet
     (checkFeedPresence: string -> string -> FeedPresence)
     (pollIntervalMs: int)
     (maxAttempts: int)
     (packages: (string * string) list)
-    : bool =
+    : (string * string) list =
     let rec poll attempt pending =
         // Only a definite `OnFeed` clears a package from the poll: an unreachable
         // feed is not evidence of arrival, so keep waiting exactly as for absence.
@@ -194,12 +206,12 @@ let internal waitForNuGet
             pending |> List.filter (fun (id, ver) -> checkFeedPresence id ver <> OnFeed)
 
         if List.isEmpty stillPending then
-            true
+            []
         elif attempt + 1 >= maxAttempts then
             for id, ver in stillPending do
                 printfn "Timed out waiting for %s %s on NuGet after %d attempts" id ver maxAttempts
 
-            false
+            stillPending
         else
             for id, ver in stillPending do
                 printfn "Waiting for %s %s on NuGet..." id ver
@@ -247,10 +259,42 @@ let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * 
             if input.WaitForNuGet then
                 printfn "Waiting for NuGet to index the published package(s)..."
 
-                waitForNuGet input.CheckFeedPresence input.NuGetPollIntervalMs input.NuGetMaxAttempts pkgVersions
-                |> ignore
+                let unconfirmed =
+                    waitForNuGet input.CheckFeedPresence input.NuGetPollIntervalMs input.NuGetMaxAttempts pkgVersions
 
-            0
+                if List.isEmpty unconfirmed then
+                    0
+                else
+                    // AUTOMATION-355 — exit 2, and NOT 1. Three outcomes, three
+                    // answers: 0 confirmed on the feed, 1 the publish demonstrably
+                    // failed (CI red, tags not pushed), 2 the tags went and the
+                    // packages have not appeared within the window.
+                    //
+                    // This used to `|> ignore` the result and return 0, so a
+                    // release that gave up waiting reported success and the
+                    // operator learned otherwise by diffing tags against
+                    // nuget.org by hand.
+                    //
+                    // 2 rather than 1 because "I stopped waiting" is not "it
+                    // failed": the packages may land minutes later, and calling
+                    // that a failure would train people to re-run a release that
+                    // already succeeded — a worse habit than the one being fixed.
+                    printfn ""
+
+                    printfn
+                        "Release NOT CONFIRMED: %d package(s) did not appear on NuGet in time."
+                        (List.length unconfirmed)
+
+                    for id, ver in unconfirmed do
+                        printfn "  unconfirmed: %s %s" id ver
+
+                    printfn ""
+                    printfn "The tags ARE pushed, so this is not a failed publish — the packages may still be indexing."
+                    printfn "Check https://www.nuget.org/packages/<id>/<version> for each, and if the Release workflow"
+                    printfn "failed rather than lagged, resume it with:  gh run rerun <id> --failed"
+                    2
+            else
+                0
     | Failed runs ->
         printfn "Error: CI failed on version bump commit. Not pushing tags."
 

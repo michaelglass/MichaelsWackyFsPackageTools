@@ -2396,7 +2396,7 @@ let ``release - resume with LocalPublish packs without pushing`` () =
         File.Delete(tmpFile)
 
 [<Fact>]
-let ``waitForNuGet - returns true when all packages already published`` () =
+let ``waitForNuGet - returns NO unconfirmed packages when all are already published`` () =
     let mutable checks = 0
 
     let checkFeedPresence (_id: string) (_ver: string) =
@@ -2405,7 +2405,8 @@ let ``waitForNuGet - returns true when all packages already published`` () =
 
     let result = waitForNuGet checkFeedPresence 0 5 [ "PkgA", "1.0.0"; "PkgB", "2.0.0" ]
 
-    test <@ result = true @>
+    // AUTOMATION-355: the unconfirmed LIST, empty when everything is on the feed.
+    test <@ List.isEmpty result @>
     // One check per package, no polling rounds beyond the first.
     test <@ checks = 2 @>
 
@@ -2420,14 +2421,16 @@ let ``waitForNuGet - polls until a package becomes available`` () =
 
     let result = waitForNuGet checkFeedPresence 0 10 [ "PkgA", "1.0.0" ]
 
-    test <@ result = true @>
+    test <@ List.isEmpty result @>
     test <@ attempts >= 3 @>
 
 [<Fact>]
-let ``waitForNuGet - returns false when never published (times out)`` () =
+let ``waitForNuGet - names the package it could not confirm (times out)`` () =
     let checkFeedPresence (_id: string) (_ver: string) = NotOnFeed
     let result = waitForNuGet checkFeedPresence 0 3 [ "PkgA", "1.0.0" ]
-    test <@ result = false @>
+    // Names WHICH package was never confirmed — a bare `false` could not, which
+    // is why the release had nothing to print.
+    test <@ result = [ "PkgA", "1.0.0" ] @>
 
 [<Fact>]
 let ``waitForNuGet - maxAttempts 1 does exactly one check then times out`` () =
@@ -2438,7 +2441,7 @@ let ``waitForNuGet - maxAttempts 1 does exactly one check then times out`` () =
         NotOnFeed
 
     let result = waitForNuGet checkFeedPresence 0 1 [ "PkgA", "1.0.0" ]
-    test <@ result = false @>
+    test <@ result = [ "PkgA", "1.0.0" ] @>
     test <@ checks = 1 @>
 
 /// Like runRelease but lets the caller drive the NuGet-availability wait.
@@ -2500,7 +2503,7 @@ let ``release - waits for NuGet after pushing tags and checks the published pack
         File.Delete(tmpFile)
 
 [<Fact>]
-let ``release - NuGet wait timeout does not change the exit code`` () =
+let ``release - an unconfirmed NuGet wait exits 2, not 0`` () =
     let tmpFile = Path.GetTempFileName()
 
     try
@@ -2523,7 +2526,51 @@ let ``release - NuGet wait timeout does not change the exit code`` () =
 
         let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkFeedPresence 2
 
-        // Timeout is a convenience-wait failure; the release succeeded.
+        // AUTOMATION-355. This previously asserted `result = 0` under the name
+        // "NuGet wait timeout does not change the exit code", commented "Timeout
+        // is a convenience-wait failure; the release succeeded."
+        //
+        // THE DEFECT WAS PINNED BY A TEST ASSERTING IT. Half of that reasoning is
+        // sound — the tags are pushed, so it is not a failed publish — but the
+        // conclusion was not: a release whose packages nobody has seen must not
+        // report success.
+        //
+        // 2, not 1: "I stopped waiting" is not "it failed". A 1 would train
+        // people to re-run a release that already succeeded.
+        test <@ result = 2 @>
+    finally
+        File.Delete(tmpFile)
+
+/// THE POSITIVE CONTROL the ticket demands: the fix must not be "always fail".
+///
+/// Without it, `waitForNuGet` could return every package as unconfirmed — or the
+/// caller could return 2 unconditionally — and the timeout test above would still
+/// pass while every green release started crying wolf. That is the same shape as
+/// the bug, pointed the other way.
+[<Fact>]
+let ``release - a fully confirmed NuGet wait still exits 0`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        let (fakeRun, _getCalls) = passingCiRun []
+
+        // Every package present on the first check.
+        let checkFeedPresence (_id: string) (_ver: string) = OnFeed
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              RootDir = "" }
+
+        let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkFeedPresence 2
+
         test <@ result = 0 @>
     finally
         File.Delete(tmpFile)
