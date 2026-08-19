@@ -61,12 +61,28 @@ let getSortedTags (run: string -> string -> CommandResult) (prefix: string) : (s
 let getLatestTag (run: string -> string -> CommandResult) (prefix: string) : string option =
     getSortedTags run prefix |> List.tryHead |> Option.map fst
 
+/// Point `tag` at `revision`, CREATING it when it is new and MOVING it when it
+/// already exists.
+///
+/// Moving has to be asked for explicitly in both backends, and the path that most
+/// needs it is the one that was broken: resuming an orphan tag (a tag whose package
+/// never reached the feed) means re-pointing a tag that by definition already
+/// exists. Without `--allow-move` jj refuses with `Error: Refusing to move tag`,
+/// and without `-f` git refuses with `tag already exists` — so a resume could only
+/// ever fail. Both flags are unconditional: creating a fresh tag behaves identically
+/// with them, so there is nothing to branch on.
 let tagRevision (run: string -> string -> CommandResult) (tag: string) (revision: string) : unit =
-    match run "jj" (sprintf "tag set %s -r %s" tag revision) with
+    match run "jj" (sprintf "tag set --allow-move %s -r %s" tag revision) with
     | Success _ -> ()
-    | Failure _ ->
-        runOrFail run "git" (sprintf "tag -a %s -m \"%s\" %s" tag tag revision)
-        |> ignore
+    | Failure(jjError, _) ->
+        // The fallback exists for a PLAIN-GIT repo, where `jj` is not a thing. In a
+        // non-colocated jj checkout it can never succeed — there is no root `.git` —
+        // so quoting it alone reports `fatal: not a git repository`: true, useless,
+        // and pointing at the wrong VCS while the jj error that IS the diagnosis is
+        // discarded. Report both, and let the reader tell which repo they are in.
+        match run "git" (sprintf "tag -f -a %s -m \"%s\" %s" tag tag revision) with
+        | Success _ -> ()
+        | Failure(gitError, _) -> failwithf "cannot tag %s at %s\n  jj: %s\n  git: %s" tag revision jjError gitError
 
 let commitAndAdvanceMain (run: string -> string -> CommandResult) (message: string) : unit =
     runOrFail run "jj" (sprintf "commit -m \"%s\"" message) |> ignore

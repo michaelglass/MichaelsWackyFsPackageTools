@@ -6,6 +6,24 @@
   - **Three outcomes, three exit codes** rather than collapsing to pass/fail: `0` confirmed on the feed, `1` the publish demonstrably failed (CI red, tags not pushed), `2` the tags went and the packages have not appeared within the window. **`2` and not `1` is the point** — "I stopped waiting" is not "it failed": the packages may land minutes later, and calling that a failure would train people to re-run a release that already succeeded.
   - The old behaviour was **pinned by a test asserting it** — `release - NuGet wait timeout does not change the exit code`, commented "Timeout is a convenience-wait failure; the release succeeded." Half of that is sound (the tags *are* pushed); the conclusion was not. That test now asserts `2`, and a positive control asserts a fully-confirmed release still exits `0` so the fix cannot degenerate into "always fail".
 
+- fix: **resuming a release no longer crashes on the very tag it exists to re-point.**
+  Resuming an in-progress release means moving a tag, not creating one: an orphan tag —
+  one whose package never reached the feed — already exists by definition, so the resume
+  path always re-points. Neither backend moves a tag unasked. `jj tag set` refused with
+  `Error: Refusing to move tag`, and the `git tag -a` fallback beneath it would have
+  refused with `tag already exists`. In a non-colocated jj checkout there is no root
+  `.git` at all, so the fallback did not refuse — it aborted with `fatal: not a git
+  repository`, turning a recoverable "won't move that tag" into a hard crash *mid-release*,
+  with the version bump already committed and pushed and not one tag created. Observed
+  live releasing FsHotWatch. `tag set` now passes `--allow-move`, and the git fallback
+  passes `-f`.
+
+- fix: **a tag that cannot be created no longer reports only the fallback's error.**
+  When `jj tag set` failed and the `git` fallback failed too, the abort quoted git
+  alone — so in a jj repo, where the fallback can never work, every tagging failure
+  surfaced as `fatal: not a git repository`: true, useless, and naming the wrong VCS
+  while discarding the jj error that is the actual diagnosis. Both are now reported.
+
 ## 0.14.0-alpha.4 - 2026-08-17
 
 - feat: **a changelog merge that buries a `## Unreleased` callout now fails structurally.**
