@@ -304,6 +304,22 @@ let ``tagRevision - falls back to git tag when jj fails`` () =
     tagRevision run "v1.0.0" "main"
     test <@ calls |> List.exists (fun (c, a) -> c = "git" && a.Contains("tag -f -a v1.0.0")) @>
 
+/// When BOTH backends fail, the abort has to name the jj error. In a non-colocated
+/// jj repo the git fallback always fails with `fatal: not a git repository`, so
+/// quoting git alone reports the wrong VCS and throws away the only line that says
+/// what jj actually objected to.
+[<Fact>]
+let ``tagRevision - when both jj and git fail the error names BOTH`` () =
+    let run (cmd: string) (args: string) =
+        match cmd with
+        | "jj" -> Failure("Error: Refusing to move tag v1.0.0", 1)
+        | _ -> Failure("fatal: not a git repository", 128)
+
+    let ex = Assert.Throws<System.Exception>(fun () -> tagRevision run "v1.0.0" "main")
+
+    test <@ ex.Message.Contains("Refusing to move tag v1.0.0") @>
+    test <@ ex.Message.Contains("not a git repository") @>
+
 // commitAndAdvanceMain
 
 [<Fact>]
