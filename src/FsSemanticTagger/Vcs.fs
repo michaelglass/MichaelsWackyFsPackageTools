@@ -74,9 +74,15 @@ let getLatestTag (run: string -> string -> CommandResult) (prefix: string) : str
 let tagRevision (run: string -> string -> CommandResult) (tag: string) (revision: string) : unit =
     match run "jj" (sprintf "tag set --allow-move %s -r %s" tag revision) with
     | Success _ -> ()
-    | Failure _ ->
-        runOrFail run "git" (sprintf "tag -f -a %s -m \"%s\" %s" tag tag revision)
-        |> ignore
+    | Failure(jjError, _) ->
+        // The fallback exists for a PLAIN-GIT repo, where `jj` is not a thing. In a
+        // non-colocated jj checkout it can never succeed — there is no root `.git` —
+        // so quoting it alone reports `fatal: not a git repository`: true, useless,
+        // and pointing at the wrong VCS while the jj error that IS the diagnosis is
+        // discarded. Report both, and let the reader tell which repo they are in.
+        match run "git" (sprintf "tag -f -a %s -m \"%s\" %s" tag tag revision) with
+        | Success _ -> ()
+        | Failure(gitError, _) -> failwithf "cannot tag %s at %s\n  jj: %s\n  git: %s" tag revision jjError gitError
 
 let commitAndAdvanceMain (run: string -> string -> CommandResult) (message: string) : unit =
     runOrFail run "jj" (sprintf "commit -m \"%s\"" message) |> ignore

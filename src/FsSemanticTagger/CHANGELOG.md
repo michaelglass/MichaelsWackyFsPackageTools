@@ -14,6 +14,12 @@
   live releasing FsHotWatch. `tag set` now passes `--allow-move`, and the git fallback
   passes `-f`.
 
+- fix: **a tag that cannot be created no longer reports only the fallback's error.**
+  When `jj tag set` failed and the `git` fallback failed too, the abort quoted git
+  alone — so in a jj repo, where the fallback can never work, every tagging failure
+  surfaced as `fatal: not a git repository`: true, useless, and naming the wrong VCS
+  while discarding the jj error that is the actual diagnosis. Both are now reported.
+
 ## 0.14.0-alpha.4 - 2026-08-17
 
 - feat: **a changelog merge that buries a `## Unreleased` callout now fails structurally.**
