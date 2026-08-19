@@ -274,7 +274,7 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
         test
             <@
                 calls
-                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set v0.1.0-alpha.1"))
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move v0.1.0-alpha.1"))
             @>
 
         let content = File.ReadAllText(tmpFile)
@@ -338,7 +338,7 @@ let ``release - Auto first-releases an untagged package at its declared fsproj v
         test
             <@
                 calls
-                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set v0.1.0-alpha.1"))
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move v0.1.0-alpha.1"))
             @>
     finally
         File.Delete(tmpFile)
@@ -719,10 +719,20 @@ let ``release - skips packages with no changes since last tag`` () =
         test <@ result = 0 @>
 
         // LibA should be tagged
-        test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set liba-v")) @>
+        test
+            <@
+                calls
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move liba-v"))
+            @>
 
         // LibB should NOT be tagged
-        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set libb-v"))) @>
+        test
+            <@
+                not (
+                    calls
+                    |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move libb-v"))
+                )
+            @>
     finally
         File.Delete(tmpFileA)
 
@@ -2681,7 +2691,11 @@ let ``release - scoped to one package only tags that package`` () =
         let calls = getCalls ()
         test <@ result = 0 @>
         // LibA tagged
-        test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set liba-v")) @>
+        test
+            <@
+                calls
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move liba-v"))
+            @>
         // LibB never tagged or touched
         test <@ not (calls |> List.exists (fun (_, a) -> a.Contains("libb-v"))) @>
     finally
@@ -2750,7 +2764,12 @@ let ``release - --only on a multi-package repo uses the per-package CHANGELOG, n
         let calls = getCalls ()
         // Per-package changelog found + validated → release proceeded and tagged LibA.
         test <@ result = 0 @>
-        test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set liba-v")) @>
+
+        test
+            <@
+                calls
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move liba-v"))
+            @>
         // LibB stayed fully out of scope.
         test <@ not (calls |> List.exists (fun (_, a) -> a.Contains("libb-v"))) @>
     finally
@@ -2793,8 +2812,19 @@ let ``release - scoped to multiple packages tags exactly those`` () =
 
         let calls = getCalls ()
         test <@ result = 0 @>
-        test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set liba-v")) @>
-        test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set libc-v")) @>
+
+        test
+            <@
+                calls
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move liba-v"))
+            @>
+
+        test
+            <@
+                calls
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move libc-v"))
+            @>
+
         test <@ not (calls |> List.exists (fun (_, a) -> a.Contains("libb-v"))) @>
     finally
         File.Delete(tmpA)
@@ -2935,7 +2965,7 @@ let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that
         test
             <@
                 calls
-                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set core-v0.8.0-alpha.17"))
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move core-v0.8.0-alpha.17"))
             @>
 
         test <@ calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin")) @>
@@ -3425,7 +3455,7 @@ let ``release - multi-package mixed: one mid-release resumes, one fresh bumps`` 
         test
             <@
                 calls
-                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set liba-v0.2.0-alpha.2"))
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move liba-v0.2.0-alpha.2"))
             @>
         // LibB freshly bumped: StartAlpha on a prior release starts a new alpha
         // cycle => nextAlphaCycle(0.5.0-alpha.1) = 0.6.0-alpha.1.
@@ -3434,7 +3464,7 @@ let ``release - multi-package mixed: one mid-release resumes, one fresh bumps`` 
         test
             <@
                 calls
-                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set libb-v0.6.0-alpha.1"))
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move libb-v0.6.0-alpha.1"))
             @>
         // LibA's fsproj was NOT re-bumped (still alpha.2).
         test <@ File.ReadAllText(tmpResume).Contains("<Version>0.2.0-alpha.2</Version>") @>
@@ -3543,7 +3573,12 @@ let ``release - Auto rebundles when only a bundled dependency changed`` () =
         // (no API diff is performed for a rebundle, so the prior API is never fetched).
         let content = File.ReadAllText toolFsproj
         test <@ content.Contains("<Version>1.0.1</Version>") @>
-        test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set v1.0.1")) @>
+
+        test
+            <@
+                calls
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move v1.0.1"))
+            @>
         // CHANGELOG had an empty Unreleased; rebundle auto-inserts the default bullet.
         let changelog = File.ReadAllText(Path.Combine(root, "CHANGELOG.md"))
         test <@ changelog.Contains "- chore: rebuild to bundle updated dependencies" @>
@@ -3714,7 +3749,7 @@ let ``release - explicit command rebundles on dependency-only change`` () =
         test
             <@
                 calls
-                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set v0.1.0-beta.1"))
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move v0.1.0-beta.1"))
             @>
 
         let changelog = File.ReadAllText(Path.Combine(root, "CHANGELOG.md"))
@@ -3971,7 +4006,7 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
         test
             <@
                 calls
-                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set cli-v1.0.1"))
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move cli-v1.0.1"))
             @>)
 
 [<Fact>]
@@ -4064,7 +4099,7 @@ let ``release - library rebundles when a non-configured helper dependency change
         test
             <@
                 calls
-                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set lib-v1.0.1"))
+                |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move lib-v1.0.1"))
             @>)
 
 // ---------------------------------------------------------------------------
