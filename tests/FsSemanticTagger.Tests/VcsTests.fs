@@ -215,20 +215,80 @@ let ``getLatestTag - skips unparseable tags and returns latest valid`` () =
 
 // tagRevision
 
-[<Fact>]
-let ``tagRevision - sets tag on specified revision via jj`` () =
+/// A `run` that models a real jj tag store rather than answering `Success` to
+/// anything shaped like `tag set`. It refuses to move a tag that already exists
+/// unless `--allow-move` is passed — which is exactly what jj 0.44 does
+/// (`Error: Refusing to move tag`) — and it RECORDS the resulting tag set. Both
+/// halves matter: the refusal is what makes the "existing tag" test able to fail,
+/// and the recording is what stops a `tagRevision` that quietly does nothing from
+/// passing.
+///
+/// Returns the run function, a thunk for the calls made, and the live tag set.
+let private jjTagStore (existing: string list) =
+    let tags = System.Collections.Generic.HashSet<string>(existing: string list)
     let mutable calls: (string * string) list = []
 
     let run (cmd: string) (args: string) =
         calls <- calls @ [ (cmd, args) ]
 
         match cmd, args with
-        | "jj", a when a.StartsWith("tag set") -> Success ""
+        | "jj", a when a.StartsWith("tag set") ->
+            let allowMove = a.Contains("--allow-move")
+
+            let name =
+                a.Substring("tag set ".Length).Replace("--allow-move ", "").Split(' ').[0]
+
+            if tags.Contains name && not allowMove then
+                Failure(sprintf "Error: Refusing to move tag %s\nHint: Use --allow-move" name, 1)
+            else
+                tags.Add name |> ignore
+                Success ""
         | _ -> Failure(sprintf "unexpected: %s %s" cmd args, 1)
 
-    tagRevision run "v1.0.0" "main"
-    test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "tag set v1.0.0 -r main") @>
+    run, (fun () -> calls), tags
 
+[<Fact>]
+let ``tagRevision - sets tag on specified revision via jj`` () =
+    let run, calls, _ = jjTagStore []
+
+    tagRevision run "v1.0.0" "main"
+
+    test
+        <@
+            calls ()
+            |> List.exists (fun (c, a) -> c = "jj" && a = "tag set --allow-move v1.0.0 -r main")
+        @>
+
+/// The regression. Re-pointing an EXISTING tag is the orphan-resume path, and it
+/// crashed the FsHotWatch release: jj refused the move, and the `git` fallback
+/// beneath it cannot run in a non-colocated jj repo (no root `.git`), so a
+/// recoverable failure became a hard abort. With the fake modelling jj's refusal,
+/// this test fails outright without `--allow-move`.
+[<Fact>]
+let ``tagRevision - re-points a tag that ALREADY exists instead of failing`` () =
+    let run, calls, tags = jjTagStore [ "v1.0.0" ]
+
+    tagRevision run "v1.0.0" "main"
+
+    test <@ tags.Contains "v1.0.0" @>
+    // No `git` fallback: the jj path handled it, so no crash could come from there.
+    test <@ calls () |> List.forall (fun (c, _) -> c = "jj") @>
+
+/// POSITIVE CONTROL for the test above. Without it, a `tagRevision` that never
+/// tags anything — or a fake that answers `Success` to everything — would satisfy
+/// "re-pointing an existing tag succeeds" vacuously. Here the tag does NOT exist
+/// beforehand, so the assertion can only hold if `tagRevision` actually created it.
+[<Fact>]
+let ``tagRevision - POSITIVE CONTROL creating a brand-new tag still works`` () =
+    let run, calls, tags = jjTagStore []
+
+    tagRevision run "v2.0.0" "main"
+
+    test <@ tags.Contains "v2.0.0" @>
+    test <@ calls () |> List.forall (fun (c, _) -> c = "jj") @>
+
+/// The git fallback needs `-f` for the same reason jj needs `--allow-move`: a
+/// plain `git tag -a` on an existing name fails with "tag already exists".
 [<Fact>]
 let ``tagRevision - falls back to git tag when jj fails`` () =
     let mutable calls: (string * string) list = []
@@ -242,7 +302,23 @@ let ``tagRevision - falls back to git tag when jj fails`` () =
         | _ -> Failure(sprintf "unexpected: %s %s" cmd args, 1)
 
     tagRevision run "v1.0.0" "main"
-    test <@ calls |> List.exists (fun (c, a) -> c = "git" && a.Contains("tag -a v1.0.0")) @>
+    test <@ calls |> List.exists (fun (c, a) -> c = "git" && a.Contains("tag -f -a v1.0.0")) @>
+
+/// When BOTH backends fail, the abort has to name the jj error. In a non-colocated
+/// jj repo the git fallback always fails with `fatal: not a git repository`, so
+/// quoting git alone reports the wrong VCS and throws away the only line that says
+/// what jj actually objected to.
+[<Fact>]
+let ``tagRevision - when both jj and git fail the error names BOTH`` () =
+    let run (cmd: string) (args: string) =
+        match cmd with
+        | "jj" -> Failure("Error: Refusing to move tag v1.0.0", 1)
+        | _ -> Failure("fatal: not a git repository", 128)
+
+    let ex = Assert.Throws<System.Exception>(fun () -> tagRevision run "v1.0.0" "main")
+
+    test <@ ex.Message.Contains("Refusing to move tag v1.0.0") @>
+    test <@ ex.Message.Contains("not a git repository") @>
 
 // commitAndAdvanceMain
 
