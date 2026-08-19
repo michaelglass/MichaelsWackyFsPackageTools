@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- fix: **resuming a release no longer crashes on the very tag it exists to re-point.**
+  Resuming an in-progress release means moving a tag, not creating one: an orphan tag —
+  one whose package never reached the feed — already exists by definition, so the resume
+  path always re-points. Neither backend moves a tag unasked. `jj tag set` refused with
+  `Error: Refusing to move tag`, and the `git tag -a` fallback beneath it would have
+  refused with `tag already exists`. In a non-colocated jj checkout there is no root
+  `.git` at all, so the fallback did not refuse — it aborted with `fatal: not a git
+  repository`, turning a recoverable "won't move that tag" into a hard crash *mid-release*,
+  with the version bump already committed and pushed and not one tag created. Observed
+  live releasing FsHotWatch. `tag set` now passes `--allow-move`, and the git fallback
+  passes `-f`.
+
 ## 0.14.0-alpha.4 - 2026-08-17
 
 - feat: **a changelog merge that buries a `## Unreleased` callout now fails structurally.**
