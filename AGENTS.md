@@ -42,12 +42,19 @@ Common trap: after a release, `loosen-from-ci` writes a linux-only entry for som
 
 ## Releasing
 
-Use the FsSemanticTagger CLI on this repo itself:
+Release through mise, not the bare CLI:
 
 ```
-fssemantictagger release            # auto-detect bump level from API diff
+mise run release        # auto-detect bump level from API diff
+mise run release-alpha  # force start of a new alpha cycle
+```
+
+Both depend on `ci`, so the local gate runs first on the tree being released and mise refuses to run the release step if it is red. That matters because `ci` is the only gate that sees the macOS coverage floors — GitHub CI is linux-only and CoverageRatchet selects the override for the current platform, so a red macOS floor is invisible to remote CI. `scripts/check-release-gate.fsx` (part of `ci`) fails the build if that wiring is ever removed.
+
+The bare CLI **skips the local gate** — use it only for the modes that don't push a release tag:
+
+```
 fssemantictagger release --dry-run  # preview without mutating
-fssemantictagger alpha              # force start of a new alpha cycle
 fssemantictagger release --publish  # local pack instead of pushing tags
 ```
 
