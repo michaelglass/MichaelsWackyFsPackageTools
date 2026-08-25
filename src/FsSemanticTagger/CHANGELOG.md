@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- fix: **a tag push now goes through `jj`, and a push that fails no longer aborts the process mid-release.** Three defects in one function, all observed on two real release attempts (AUTOMATION-309).
+  - **The push used raw `git`.** In a jj repo with an HTTPS remote and no git credential helper, `git push` has no way to authenticate — while `jj git push` authenticates in exactly that environment, which is why every other operation in the repo worked and only the release failed. The push now prefers `jj git push --tag` and keeps raw `git` as a fallback, so a checkout with no `jj` still works. That fallback is not incidental: "prefer jj" quietly becoming "require jj" would be a worse defect than the one being fixed, and a test pins it.
+  - **The error named the wrong thing.** git's generic `Please make sure you have the correct access rights and the repository exists` is SSH-flavoured, and *both* of its readings were false here: the SSH agent was loaded and answering, and the account had access. The remote was HTTPS, so the agent was irrelevant to a push that never used SSH. Each false reading cost real time to rule out. The failure now reports the remote URL, its protocol, whether a credential helper is configured, and the fix that matches that cause (`gh auth setup-git`).
+  - **A push failure killed the process.** It was a `failwith` that escaped to `main` and ended in SIGABRT — *after* the version-bump commit had already been created and pushed. Two attempts died that way and left in-tree versions ahead of the newest published tag with no tags to explain them; recovery meant hand-resetting nine version fields. A push failure is an expected condition, so it is now reported through the same channel a missing trigger uses, which the caller already turns into a non-zero exit with instructions.
+  - A tag that never reached the remote stays distinct from one that arrived and triggered nothing — the operator's next move differs — so the code never asks GitHub about a tag it knows did not land.
+
 ## 0.14.0-alpha.5 - 2026-08-19
 
 - fix: **a release that gives up waiting for NuGet no longer reports success.** `waitForNuGet` returned `false` on timeout and the caller did `|> ignore` and returned `0`, so a partial release exited green and the operator found out by diffing tags against nuget.org by hand. It now returns **the packages it could not confirm**, and the release **exits 2** naming each one plus how to resume (`gh run rerun <id> --failed`) (AUTOMATION-355).
