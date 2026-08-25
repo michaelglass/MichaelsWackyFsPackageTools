@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.15.0-alpha.13 - 2026-08-25
+
+- chore(deps): CommandTree 0.8.0 -> 0.8.1
+
+
 ## 0.15.0-alpha.12 - 2026-08-17
 
 - feat: **count floors** — enforce a per-file floor on the absolute number of covered lines/branches, not just a percentage. Coverage percentage has a non-deterministic denominator (the collector emits a source line only when its method JIT-compiles), so percentage floors fail on files nobody touched; the covered-line count does not move. New `baseline-lines` command records current counts as floors and is also the re-baseline path; `check` enforces them and `ratchet` raises them monotonically.
