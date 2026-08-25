@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.6 - 2026-08-25
+
 - fix: **a tag push now goes through `jj`, and a push that fails no longer aborts the process mid-release.** Three defects in one function, all observed on two real release attempts (AUTOMATION-309).
   - **The push used raw `git`.** In a jj repo with an HTTPS remote and no git credential helper, `git push` has no way to authenticate — while `jj git push` authenticates in exactly that environment, which is why every other operation in the repo worked and only the release failed. The push now prefers `jj git push --tag` and keeps raw `git` as a fallback, so a checkout with no `jj` still works. That fallback is not incidental: "prefer jj" quietly becoming "require jj" would be a worse defect than the one being fixed, and a test pins it.
   - **The error named the wrong thing.** git's generic `Please make sure you have the correct access rights and the repository exists` is SSH-flavoured, and *both* of its readings were false here: the SSH agent was loaded and answering, and the account had access. The remote was HTTPS, so the agent was irrelevant to a push that never used SSH. Each false reading cost real time to rule out. The failure now reports the remote URL, its protocol, whether a credential helper is configured, and the fix that matches that cause (`gh auth setup-git`).
