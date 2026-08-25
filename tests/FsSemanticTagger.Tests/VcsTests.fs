@@ -888,14 +888,156 @@ let ``pushTagsAndConfirm - a transient push failure is retried, not fatal`` () =
 
 [<Fact>]
 let ``pushTagsAndConfirm - a push that never succeeds still fails loudly`` () =
-    // The retry must not become a way to swallow a real, persistent failure.
+    // The retry must not become a way to swallow a real, persistent failure —
+    // but AUTOMATION-309: it must not ABORT either. It used to `failwith`, which
+    // escaped to main and killed the process with SIGABRT *after* the
+    // version-bump commit had already been pushed. Two release attempts died
+    // that way and left in-tree versions ahead of the newest published tag with
+    // no tags to explain it. The tag is now REPORTED as unconfirmed, which is
+    // the same channel a missing trigger uses and which the caller already turns
+    // into a non-zero exit with instructions.
     let run (cmd: string) (args: string) =
         match cmd, args with
         | "jj", "git export" -> Success ""
+        | "jj", a when a.StartsWith("git push --tag") -> Failure("no jj here", 1)
         | "git", a when a.StartsWith("push origin") -> Failure("permission denied", 128)
         | _ -> Failure("unexpected", 1)
 
-    raises<exn> <@ pushTagsAndConfirm run 2 0 [ "v1.0.0" ] @>
+    test <@ pushTagsAndConfirm run 2 0 [ "v1.0.0" ] = [ "v1.0.0" ] @>
+
+[<Fact>]
+let ``pushTagsAndConfirm - a tag is pushed through jj, not raw git`` () =
+    // AUTOMATION-309's primary fix. `jj git push` authenticates in exactly the
+    // environment where the shelled-out git cannot, so preferring it removes the
+    // credential question rather than diagnosing it. The control is that raw git
+    // is a hard failure here: if the implementation reached for it, this test
+    // would report the tag unconfirmed instead of pushed.
+    let mutable pushedViaJj = false
+
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", "git export" -> Success ""
+        | "jj", a when a.StartsWith("git push --tag") ->
+            pushedViaJj <- true
+            Success ""
+        | "git", a when a.StartsWith("push origin") -> Failure("raw git must not be reached first", 128)
+        | "git", "remote get-url origin" -> Success "git@github.com:example/repo.git"
+        | "git", "config --get-regexp ^credential" -> Failure("", 1)
+        // `runCountForRef` parses this as JSON and counts the array — a bare
+        // "1" is not an array and reads as "could not ask", i.e. unconfirmed.
+        | "gh", _ -> Success "[{\"name\":\"release\"}]"
+        | _ -> Failure("unexpected", 1)
+
+    let unconfirmed = pushTagsAndConfirm run 1 0 [ "v1.0.0" ]
+
+    test <@ pushedViaJj @>
+    test <@ List.isEmpty unconfirmed @>
+
+[<Fact>]
+let ``pushTagsAndConfirm - raw git is still the fallback when jj is absent`` () =
+    // The negative control for the test above: preferring jj must not BREAK a
+    // checkout that has no jj to answer. Without this, "prefer jj" could quietly
+    // become "require jj", which is a worse defect than the one being fixed.
+    let mutable pushedViaGit = false
+
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", "git export" -> Success ""
+        | "jj", _ -> Failure("jj: command not found", 127)
+        | "git", a when a.StartsWith("push origin") ->
+            pushedViaGit <- true
+            Success ""
+        // Answered explicitly so a diagnosis can never reach the real machine's
+        // git config — a test that consults the developer's remote is a test
+        // whose result depends on whose laptop it runs on.
+        | "git", "remote get-url origin" -> Success "git@github.com:example/repo.git"
+        | "git", "config --get-regexp ^credential" -> Failure("", 1)
+        // `runCountForRef` parses this as JSON and counts the array — a bare
+        // "1" is not an array and reads as "could not ask", i.e. unconfirmed.
+        | "gh", _ -> Success "[{\"name\":\"release\"}]"
+        | _ -> Failure("unexpected", 1)
+
+    let unconfirmed = pushTagsAndConfirm run 1 0 [ "v1.0.0" ]
+
+    test <@ pushedViaGit @>
+    test <@ List.isEmpty unconfirmed @>
+
+[<Fact>]
+let ``pushTagsAndConfirm - an HTTPS remote with no credential helper is NAMED`` () =
+    // The diagnosis half. git's own sentence — "make sure you have the correct
+    // access rights and the repository exists" — is SSH-flavoured, and both of
+    // its readings were false in the incident: the agent was loaded and
+    // answering, and the account had access. The remote was HTTPS and there was
+    // no credential helper, so the SSH agent was irrelevant to a push that never
+    // used SSH. The message must say THAT.
+    let mutable reported = ""
+
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", "git export" -> Success ""
+        | "jj", _ -> Failure("jj refused", 1)
+        | "git", "remote get-url origin" -> Success "https://github.com/michaelglass/FsHotWatch.git"
+        | "git", "config --get-regexp ^credential" -> Failure("", 1)
+        | "git", a when a.StartsWith("push origin") ->
+            Failure(
+                "fatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights",
+                128
+            )
+        | _ -> Failure("unexpected", 1)
+
+    // The tag comes back unconfirmed rather than throwing…
+    test <@ pushTagsAndConfirm run 1 0 [ "v1.0.0" ] = [ "v1.0.0" ] @>
+
+    // …and the diagnosis names the protocol and the missing helper. Asserted on
+    // the pure function so the test does not depend on capturing stderr.
+    reported <- diagnosePushFailure run "fatal: Could not read from remote repository."
+
+    test <@ reported.Contains "HTTPS" @>
+    test <@ reported.Contains "credential helper" @>
+    test <@ reported.Contains "https://github.com/michaelglass/FsHotWatch.git" @>
+    // The fix it suggests must be the one that works for THIS cause.
+    test <@ reported.Contains "gh auth setup-git" @>
+
+[<Fact>]
+let ``pushTagsAndConfirm - an HTTPS remote WITH a helper points at the credential, not its absence`` () =
+    // The other half of the diagnosis, and the reason it is a match rather than
+    // a single if. When a helper IS configured the advice above is wrong —
+    // `gh auth setup-git` would install what is already there. The cause has
+    // moved: the credential exists and is being refused or has expired. Sending
+    // an operator to re-run setup in that situation is the same category of
+    // misdirection this ticket is about, one level in.
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "git", "remote get-url origin" -> Success "https://github.com/michaelglass/FsHotWatch.git"
+        | "git", "config --get-regexp ^credential" -> Success "credential.helper osxkeychain"
+        | _ -> Failure("unexpected", 1)
+
+    let reported = diagnosePushFailure run "fatal: Authentication failed"
+
+    test <@ reported.Contains "HTTPS" @>
+    test <@ reported.Contains "osxkeychain" @>
+    test <@ reported.Contains "rejected or expired" @>
+    // It must NOT repeat the advice for the absent-helper case.
+    test <@ not (reported.Contains "gh auth setup-git") @>
+
+[<Fact>]
+let ``pushTagsAndConfirm - an SSH remote is diagnosed without blaming HTTPS`` () =
+    // The third arm, and the control that keeps the other two honest: the
+    // HTTPS-specific explanation must not be attached to a failure that has
+    // nothing to do with it. An SSH remote gets the plain report plus git's own
+    // words, which is all this function can honestly say about it.
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "git", "remote get-url origin" -> Success "git@github.com:michaelglass/FsHotWatch.git"
+        | "git", "config --get-regexp ^credential" -> Failure("", 1)
+        | _ -> Failure("unexpected", 1)
+
+    let reported = diagnosePushFailure run "sign_and_send_pubkey: signing failed"
+
+    test <@ reported.Contains "git@github.com:michaelglass/FsHotWatch.git" @>
+    test <@ reported.Contains "signing failed" @>
+    test <@ not (reported.Contains "HTTPS") @>
+    test <@ not (reported.Contains "credential helper") @>
 
 // tagExists - jj success but tag not in output
 

@@ -358,13 +358,84 @@ let internal runCountForRef (run: string -> string -> CommandResult) (gitRef: st
 /// with nothing changed. Without a retry that transient becomes a half-finished
 /// release — version-bump commit pushed, tags not — and recovering by hand is what
 /// tempts you into a batch push that GitHub then ignores entirely.
-let private pushOneTag (run: string -> string -> CommandResult) (attempts: int) (delayMs: int) (tag: string) : unit =
+/// Why a push failed, in the operator's terms rather than git's.
+///
+/// AUTOMATION-309: raw `git push` against an HTTPS remote with no credential
+/// helper fails with git's generic "Please make sure you have the correct access
+/// rights and the repository exists." Both readings of that sentence were false
+/// in the incident it describes — the SSH agent was loaded and answering, and the
+/// account had access — and each cost real time to rule out. The sentence is
+/// SSH-flavoured; the remote was HTTPS. Repeating it verbatim sends the operator
+/// to the wrong place.
+let internal diagnosePushFailure (run: string -> string -> CommandResult) (error: string) : string =
+    let remote =
+        match run "git" "remote get-url origin" with
+        | Success url -> url.Trim()
+        | Failure _ -> ""
+
+    let helper =
+        match run "git" "config --get-regexp ^credential" with
+        | Success text when text.Trim() <> "" -> Some(text.Trim())
+        | _ -> None
+
+    let looksHttps =
+        remote.StartsWith("https://", System.StringComparison.OrdinalIgnoreCase)
+
+    match looksHttps, helper with
+    | true, None ->
+        sprintf
+            "the remote is HTTPS (%s) and NO git credential helper is configured, so a raw `git push` \
+             has no way to authenticate. This is not an SSH-key problem — an SSH agent is irrelevant to \
+             a push that never uses SSH. Fix with `gh auth setup-git`, or point the remote at SSH. \
+             git said: %s"
+            remote
+            (error.Trim())
+    | true, Some h ->
+        sprintf
+            "the remote is HTTPS (%s) and a credential helper IS configured (%s), so the credential \
+             itself is likely rejected or expired rather than absent. git said: %s"
+            remote
+            h
+            (error.Trim())
+    | false, _ -> sprintf "pushing to %s failed. git said: %s" (if remote = "" then "origin" else remote) (error.Trim())
+
+/// Push one tag, preferring the repo's own VCS front-end.
+///
+/// `jj git push --tag` is tried FIRST and raw `git push` only as a fallback,
+/// which is the ordering AUTOMATION-309 asks for: jj authenticates in exactly the
+/// environment where the shelled-out git cannot, so preferring it removes the
+/// credential question rather than diagnosing it. The fallback stays because a
+/// non-jj checkout is still a supported place to run this.
+///
+/// Returns the failure rather than raising it. A push failure is an EXPECTED
+/// condition — the remote can be unreachable, the credential can be missing — and
+/// letting `failwith` escape to `main` aborted the process with SIGABRT after the
+/// version-bump commit had already been pushed, which is how two release attempts
+/// left in-tree versions ahead of the newest published tag with no tags to explain
+/// it.
+let private pushOneTag
+    (run: string -> string -> CommandResult)
+    (attempts: int)
+    (delayMs: int)
+    (tag: string)
+    : Result<unit, string> =
+    let attemptPush () =
+        match run "jj" (sprintf "git push --tag %s" tag) with
+        | Success _ -> Ok()
+        | Failure(jjError, _) ->
+            // Fall back to raw git: a checkout that is not a jj repo has no `jj`
+            // to answer, and that is not a failure worth reporting as one.
+            match run "git" (sprintf "push origin %s" tag) with
+            | Success _ -> Ok()
+            | Failure(gitError, _) ->
+                Error(sprintf "%s (jj also refused: %s)" (diagnosePushFailure run gitError) (jjError.Trim()))
+
     let rec go attempt =
-        match run "git" (sprintf "push origin %s" tag) with
-        | Success _ -> ()
-        | Failure(error, _) when attempt < attempts ->
+        match attemptPush () with
+        | Ok() -> Ok()
+        | Error reason when attempt < attempts ->
             let firstLine =
-                error.Split('\n')
+                reason.Split('\n')
                 |> Array.map (fun s -> s.Trim())
                 |> Array.tryFind (fun s -> s <> "")
 
@@ -377,7 +448,7 @@ let private pushOneTag (run: string -> string -> CommandResult) (attempts: int) 
 
             System.Threading.Thread.Sleep(delayMs)
             go (attempt + 1)
-        | Failure(error, _) -> failwithf "git push origin %s failed after %d attempts: %s" tag attempts error
+        | Error reason -> Error(sprintf "push of %s failed after %d attempts: %s" tag attempts reason)
 
     go 1
 
@@ -401,16 +472,34 @@ let pushTagsAndConfirm
     : string list =
     runOrFail run "jj" "git export" |> ignore
 
-    withJjGitDir (fun () ->
-        for tag in tags do
-            pushOneTag run attempts delayMs tag)
+    // A tag that never reached the remote is a DIFFERENT failure from one that
+    // reached it and triggered nothing, and the operator's next move differs too:
+    // one is "authenticate and retry", the other is "re-push to trigger". Both
+    // end up in the returned list — silence about either would be the lie this
+    // function exists to prevent — but a failed push says so in its own words.
+    let failures =
+        withJjGitDir (fun () ->
+            tags
+            |> List.choose (fun tag ->
+                match pushOneTag run attempts delayMs tag with
+                | Ok() -> None
+                | Error reason ->
+                    eprintfn "  %s" reason
+                    Some tag))
 
     // Give GitHub a moment to register the events before asking about them.
     if not (List.isEmpty tags) then
         System.Threading.Thread.Sleep(delayMs)
 
+    let failedToPush = Set.ofList failures
+
     tags
     |> List.filter (fun tag ->
-        match runCountForRef run tag with
-        | Some n when n > 0 -> false
-        | _ -> true)
+        // Never ASK about a tag we know did not land: `gh` would answer "no run",
+        // which is true and would be reported under the wrong heading.
+        if failedToPush.Contains tag then
+            true
+        else
+            match runCountForRef run tag with
+            | Some n when n > 0 -> false
+            | _ -> true)
