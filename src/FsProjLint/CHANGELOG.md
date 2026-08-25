@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.10.0-alpha.16 - 2026-08-25
+
+- chore(deps): CommandTree 0.8.0 -> 0.8.1
+
+
 ## 0.10.0-alpha.15 - 2026-08-17
 
 - docs: cut thinking-out-loud comments across src and tests
