@@ -100,6 +100,10 @@ run = "dotnet fsi scripts/check-gitignore-leaks.fsx"
 description = "Verify all packable projects are linked in docs/docs-index.html"
 run = "dotnet fsi scripts/check-docs-index.fsx"
 
+[tasks.check-release-gate]
+description = "Verify every publishing task depends on the local `ci` gate (AUTOMATION-213)"
+run = "dotnet fsi scripts/check-release-gate.fsx"
+
 [tasks.sync-docs]
 run = "dotnet run --project src/SyncDocs/SyncDocs.fsproj --no-build -- sync"
 depends = ["build"]
@@ -109,10 +113,10 @@ run = "dotnet run --project src/SyncDocs/SyncDocs.fsproj --no-build -- check"
 depends = ["build"]
 
 [tasks.check]
-depends = ["format", "lint", "lint-project", "sync-docs", "docs", "coverage-ratchet", "check-docs-index"]
+depends = ["format", "lint", "lint-project", "sync-docs", "docs", "coverage-ratchet", "check-docs-index", "check-release-gate"]
 
 [tasks.ci]
-depends = ["format-check", "lint", "lint-project", "sync-docs-check", "docs", "coverage-check", "check-docs-index", "changelog-check"]
+depends = ["format-check", "lint", "lint-project", "sync-docs-check", "docs", "coverage-check", "check-docs-index", "check-release-gate", "changelog-check"]
 
 [tasks.pack]
 run = """
@@ -129,13 +133,20 @@ depends = ["build"]
 run = "dotnet run --project src/FsProjLint/FsProjLint.fsproj --no-build"
 depends = ["build"]
 
+# A release must not be cuttable unless the LOCAL gate is green (AUTOMATION-213).
+# `ci` — not `build` — because `ci` is the only gate that sees the macOS coverage
+# floors: GitHub CI is linux-only and CoverageRatchet selects the override for the
+# current platform. mise fails a task closed when a dependency exits non-zero, so a
+# red `ci` means `run` below never executes. A `depends` edge (rather than a recorded
+# green marker) cannot go stale: it runs in this invocation, on this tree.
+# `scripts/check-release-gate.fsx` fails `ci` if these edges are ever removed.
 [tasks.release]
 run = "dotnet run --project src/FsSemanticTagger/FsSemanticTagger.fsproj --no-build -- release"
-depends = ["build"]
+depends = ["ci"]
 
 [tasks.release-alpha]
 run = "dotnet run --project src/FsSemanticTagger/FsSemanticTagger.fsproj --no-build -- alpha"
-depends = ["build"]
+depends = ["ci"]
 
 [tasks.changelog-check]
 description = "Fail if a changed package has an empty '## Unreleased' that can't be derived from commits"
