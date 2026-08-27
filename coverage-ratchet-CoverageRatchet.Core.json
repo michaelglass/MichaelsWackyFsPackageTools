@@ -2,22 +2,22 @@
   "overrides": {
     "Cobertura.fs": {
       "line": 89,
-      "branch": 66,
-      "reason": "Branch floor tracks LINUX after instrumentation drift (2026-08-13): CI instruments 62 branches here where the last green run instrumented 76 — same code, same tests, line coverage byte-identical at 89.1%. 55/76 (72.4%) became 44/62 (71.0%) and the old 72 floor failed. Set below the Linux value with headroom; line coverage, which did not drift, remains the real guard. See AUTOMATION-312."
+      "branch": 72,
+      "reason": "Branch floor tracks LINUX after instrumentation drift (2026-08-13): CI instruments 62 branches here where the last green run instrumented 76 \u2014 same code, same tests, line coverage byte-identical at 89.1%. 55/76 (72.4%) became 44/62 (71.0%) and the old 72 floor failed. Set below the Linux value with headroom; line coverage, which did not drift, remains the real guard. See AUTOMATION-312."
     },
     "Merge.fs": {
       "line": 54,
-      "branch": 30,
-      "reason": "Branch floor tracks LINUX after instrumentation drift (2026-08-13): CI instruments 176 branches here where the last green run instrumented 112 — same code, same tests, line coverage byte-identical at 54.9%. 46/112 (41.1%) became 61/176 (34.7%) and the old 41 floor failed. Set below the Linux value with headroom; line coverage, which did not drift, remains the real guard. See AUTOMATION-312."
+      "branch": 41,
+      "reason": "Branch floor tracks LINUX after instrumentation drift (2026-08-13): CI instruments 176 branches here where the last green run instrumented 112 \u2014 same code, same tests, line coverage byte-identical at 54.9%. 46/112 (41.1%) became 61/176 (34.7%) and the old 41 floor failed. Set below the Linux value with headroom; line coverage, which did not drift, remains the real guard. See AUTOMATION-312."
     },
     "Ratchet.fs": {
-      "line": 78,
-      "branch": 58,
+      "line": 87,
+      "branch": 67,
       "reason": "loosened automatically"
     },
     "Thresholds.fs": {
-      "line": 82,
-      "branch": 53,
+      "line": 91,
+      "branch": 73,
       "reason": "loosened automatically"
     }
   }

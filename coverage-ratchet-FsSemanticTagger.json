@@ -3,14 +3,14 @@
     "Api.fs": [
       {
         "line": 92,
-        "branch": 84,
-        "reason": "Assembly path resolution depends on runtime environment; reflection branches from compiler; httpGet is a live HttpClient network call exercised only via the injected fetch seam in tests. Settled 95 -> 93, the measured macos actual: the floor was never achieved for the CURRENT file. Api.fs grew (AUTOMATION-194 grammar extraction, AUTOMATION-196 analyzer-package path) while the environment-dependent core stayed uncovered, so the same untestable lines became a larger share of a bigger file. Verified uncovered on an unmodified main@origin checkout: the sdk/ and shared/ TRUE branches (the dirs-exist path) never execute here because DOTNET_ROOT is unset under mise and the runtime-dir-derived root has no sdk/ \u2014 i.e. exactly the 'depends on runtime environment' case this reason already named. NOT lowered to dodge work: raising it would need either a global DOTNET_ROOT mutation (unsafe with parallelizeTestCollections=true) or real network/restore I/O in unit tests. See AUTOMATION-213. Settled 93 -> 92 on 2026-08-11, same cause once more: measured actual is 92.7% line (branch 87.2% clears its 84 floor comfortably and is untouched). Re-verified IDENTICAL on an unmodified main checkout before moving the floor - 92.7%/87.2%, byte-for-byte the same numbers - so this is drift in the pre-existing environment-dependent core, not coverage lost by the change that happened to be in flight (AUTOMATION-283, which left Release.fs at 99.1% and Vcs.fs at 96.6%, both over their floors). The uncovered lines are the seams this reason has always named: httpGet's live HttpClient call and the sdk/shared framework directory probes. Raising it would still require real network I/O or a global DOTNET_ROOT mutation in unit tests.",
+        "branch": 87,
+        "reason": "Assembly path resolution depends on runtime environment; reflection branches from compiler; httpGet is a live HttpClient network call exercised only via the injected fetch seam in tests. Settled 95 -\u003E 93, the measured macos actual: the floor was never achieved for the CURRENT file. Api.fs grew (AUTOMATION-194 grammar extraction, AUTOMATION-196 analyzer-package path) while the environment-dependent core stayed uncovered, so the same untestable lines became a larger share of a bigger file. Verified uncovered on an unmodified main@origin checkout: the sdk/ and shared/ TRUE branches (the dirs-exist path) never execute here because DOTNET_ROOT is unset under mise and the runtime-dir-derived root has no sdk/ \u2014 i.e. exactly the \u0027depends on runtime environment\u0027 case this reason already named. NOT lowered to dodge work: raising it would need either a global DOTNET_ROOT mutation (unsafe with parallelizeTestCollections=true) or real network/restore I/O in unit tests. See AUTOMATION-213. Settled 93 -\u003E 92 on 2026-08-11, same cause once more: measured actual is 92.7% line (branch 87.2% clears its 84 floor comfortably and is untouched). Re-verified IDENTICAL on an unmodified main checkout before moving the floor - 92.7%/87.2%, byte-for-byte the same numbers - so this is drift in the pre-existing environment-dependent core, not coverage lost by the change that happened to be in flight (AUTOMATION-283, which left Release.fs at 99.1% and Vcs.fs at 96.6%, both over their floors). The uncovered lines are the seams this reason has always named: httpGet\u0027s live HttpClient call and the sdk/shared framework directory probes. Raising it would still require real network I/O or a global DOTNET_ROOT mutation in unit tests.",
         "platform": "macos"
       },
       {
         "line": 94,
         "branch": 77,
-        "reason": "settled to the CI-measured linux actual (line 94) after httpGet's network-call line; loosen-from-ci's platform-merge failed to apply the artifact's lower value",
+        "reason": "settled to the CI-measured linux actual (line 94) after httpGet\u0027s network-call line; loosen-from-ci\u0027s platform-merge failed to apply the artifact\u0027s lower value",
         "platform": "linux"
       }
     ],
@@ -52,7 +52,7 @@
       {
         "line": 98,
         "branch": 84,
-        "reason": "AUTOMATION-194: the pure grammar diff is fully covered; the MetadataLoadContext structural walk's remaining gaps are defensive reflection paths that are unreachable from a test (ReflectionTypeLoadException recovery, an explicitly-null attribute named-arg, a CompilationMappingAttribute ctor arg that is not SourceConstructFlags). Floor = achieved macOS coverage.",
+        "reason": "AUTOMATION-194: the pure grammar diff is fully covered; the MetadataLoadContext structural walk\u0027s remaining gaps are defensive reflection paths that are unreachable from a test (ReflectionTypeLoadException recovery, an explicitly-null attribute named-arg, a CompilationMappingAttribute ctor arg that is not SourceConstructFlags). Floor = achieved macOS coverage.",
         "platform": "macos"
       },
       {
@@ -113,8 +113,8 @@
     ],
     "Vcs.fs": [
       {
-        "line": 96,
-        "branch": 92,
+        "line": 97,
+        "branch": 93,
         "reason": "All functions call jj/git processes",
         "platform": "macos"
       },

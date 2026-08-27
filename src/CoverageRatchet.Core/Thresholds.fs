@@ -163,6 +163,121 @@ let checkCounts (config: Config) (files: FileCoverage list) : CountCheckResult =
     else
         CountsFailed failed
 
+/// PURE: every file carrying a floor of either kind — the set a run is OBLIGED
+/// to measure. Read from the CONFIG, never from the report; that is the whole
+/// point of it existing separately.
+let configuredFloors (config: Config) : Set<string> =
+    Set.union
+        (config.Overrides |> Map.toList |> List.map fst |> Set.ofList)
+        (config.CountFloors |> Map.toList |> List.map fst |> Set.ofList)
+
+/// A configured floor whose file has NO row in the coverage report.
+///
+/// Both floor kinds ride in one record because both are obligations the same
+/// report failed to speak to. A caller that handled only percentages would
+/// leave the identical hole open for counts.
+type UnmeasuredFloor =
+    { File: string
+      HasPercentageFloor: bool
+      HasCountFloor: bool }
+
+/// PURE: every configured floor this report cannot speak to.
+///
+/// Floor keys are BASENAMES — `Cobertura.parseFiles` stores
+/// `Path.GetFileName` — so this deliberately cannot separate "the file was
+/// deleted from the tree" from "the file is still there and this run did not
+/// measure it". There is no path to stat. Both are reported the same way and
+/// the remedy text names both, because silently guessing between them is
+/// exactly what the false pass was doing.
+let unmeasuredFloors (config: Config) (files: FileCoverage list) : UnmeasuredFloor list =
+    let measured = files |> List.map (fun f -> f.FileName) |> Set.ofList
+
+    configuredFloors config
+    |> Set.toList
+    |> List.filter (fun name -> not (Set.contains name measured))
+    |> List.map (fun name ->
+        { File = name
+          HasPercentageFloor = Map.containsKey name config.Overrides
+          HasCountFloor = Map.containsKey name config.CountFloors })
+
+/// AUTOMATION-127: what one `check` run is ENTITLED to conclude.
+///
+/// `CheckResult` and `CountCheckResult` above answer "did anything I looked at
+/// fail?". That is the wrong question, and answering it was the bug: both take
+/// their entire file set from the coverage report, so a report that shrinks
+/// silently shrinks the claim with it. `7/7 files passed` is true of any 7,
+/// including 7 out of 50 — which is the run this was filed over.
+///
+/// Completeness is carried IN THE TYPE rather than re-checked at each call
+/// site. `AllFloorsHeld` has no field to put a hole in, so "everything held" is
+/// not a sentence a partial report can form, and a renderer cannot reach the
+/// passing case by forgetting to look at a list.
+///
+/// Rejected — keep the two results and add `if not (List.isEmpty unmeasured)
+/// then fail` in `runCheck`. It fixes one call site and leaves `runCheckJson`
+/// free to make the same mistake, which is how `runCheckJson` came to be a
+/// second copy of the defect in the first place.
+///
+/// Rejected — a tolerance ("fail only when more than K% of floors are
+/// unmeasured"). K is a number nobody can derive, and the honest value is zero:
+/// a floor exists because someone measured that file, so a run that cannot see
+/// it has not done the job the floor was written for.
+type Verdict =
+    /// Every file in the report met its floors, and every configured floor had
+    /// a file to measure. The only passing case, and the only one with nowhere
+    /// to put a hole.
+    | AllFloorsHeld of measuredFiles: int
+    /// The report carries no F# file at all. The purest form of the N/N pass
+    /// this type exists to remove: a run that checked nothing, rendering
+    /// exactly like one that checked everything.
+    | NothingMeasured
+    /// Everything the report could speak to held, and it could not speak to
+    /// every configured floor. UNDETERMINABLE, which is not a pass.
+    | Incomplete of measuredFiles: int * unmeasured: UnmeasuredFloor list
+    /// At least one MEASURED file fell below a floor. The holes ride along so a
+    /// red run cannot hide them behind the regression it is reporting.
+    | BelowFloor of files: FileResult list * counts: CountResult list * unmeasured: UnmeasuredFloor list
+
+/// PURE: the verdict, from the configuration and one run's report.
+///
+/// The expected set is the union of the two configured floor sections, never
+/// the report's file list. That is the whole correction: the denominator has to
+/// be the obligation, not the evidence.
+///
+/// Files in the report with no configured floor are still checked — they must
+/// clear `DefaultLine`/`DefaultBranch` — so they can contribute a failure but
+/// never a hole. A file counts as unmeasured only if something asked for it.
+let judge (config: Config) (files: FileCoverage list) : Verdict =
+    if List.isEmpty files then
+        NothingMeasured
+    else
+        let fileFailures =
+            buildFileResults config files
+            |> List.filter (fun r -> not (FileResult.passed r))
+
+        let countFailures =
+            buildCountResults config files
+            |> List.filter (fun r -> not (CountResult.passed r))
+
+        let unmeasured = unmeasuredFloors config files
+
+        match fileFailures, countFailures, unmeasured with
+        | [], [], [] -> AllFloorsHeld files.Length
+        | [], [], holes -> Incomplete(files.Length, holes)
+        | fell, counts, holes -> BelowFloor(fell, counts, holes)
+
+/// PURE: the process exit code for a verdict.
+///
+/// `1` is a floor that FELL — a measured regression, something a human changed.
+/// `2` is "this run may not answer the question". Keeping them apart keeps "you
+/// broke coverage" distinguishable from "you cannot know yet".
+let exitCodeOf (verdict: Verdict) : int =
+    match verdict with
+    | AllFloorsHeld _ -> 0
+    | BelowFloor _ -> 1
+    | NothingMeasured
+    | Incomplete _ -> 2
+
 let private defaultRawConfig =
     { DefaultLine = defaultLineThreshold
       DefaultBranch = defaultBranchThreshold

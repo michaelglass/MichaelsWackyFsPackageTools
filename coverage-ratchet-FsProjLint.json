@@ -16,7 +16,7 @@
     ],
     "GitDir.fs": {
       "line": 81,
-      "branch": 70,
+      "branch": 100,
       "reason": "Re-baselined 2026-08-13 after branch-instrumentation drift: CI now instruments 12 branches here where the last green run instrumented 10, with line coverage byte-identical at 81.8%, so 10/10 (100%) became 9/12 (75.0%). A 100% branch floor cannot survive a denominator that moves, which is why this one broke first and hardest. Set below the Linux value with headroom. This entry is flat (no platform list); migrating it to the per-platform schema is tracked in AUTOMATION-312."
     },
     "Program.fs": [

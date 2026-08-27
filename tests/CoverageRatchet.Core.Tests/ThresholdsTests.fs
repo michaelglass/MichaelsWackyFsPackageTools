@@ -6,6 +6,81 @@ open Swensen.Unquote
 open CoverageRatchet.Thresholds
 open CoverageRatchet.Core.Tests.TestHelpers
 
+let private percentageFloor line branch =
+    { Line = line
+      Branch = branch
+      Reason = None
+      Platform = None }
+
+// --- complete-report verdict (AUTOMATION-127) ---
+
+[<Fact>]
+let ``judge - missing percentage floor makes the run incomplete`` () =
+    let config =
+        { defaultsConfig with
+            Overrides = Map.ofList [ "Missing.fs", percentageFloor 80.0 70.0 ] }
+
+    match judge config [ makeFile "Measured.fs" 100.0 100.0 0 0 ] with
+    | Incomplete(1, [ hole ]) ->
+        test <@ hole.File = "Missing.fs" @>
+        test <@ hole.HasPercentageFloor @>
+        test <@ not hole.HasCountFloor @>
+    | verdict -> failwithf "Expected one missing percentage floor, got %A" verdict
+
+[<Fact>]
+let ``judge - missing count-only floor makes the run incomplete`` () =
+    let config =
+        { defaultsConfig with
+            CountFloors = Map.ofList [ "Missing.fs", countFloor 10 2 ] }
+
+    match judge config [ makeFile "Measured.fs" 100.0 100.0 0 0 ] with
+    | Incomplete(_, [ hole ]) ->
+        test <@ not hole.HasPercentageFloor @>
+        test <@ hole.HasCountFloor @>
+    | verdict -> failwithf "Expected one missing count floor, got %A" verdict
+
+[<Fact>]
+let ``judge - missing file with both floors is one obligation naming both kinds`` () =
+    let config =
+        { defaultsConfig with
+            Overrides = Map.ofList [ "Missing.fs", percentageFloor 80.0 70.0 ]
+            CountFloors = Map.ofList [ "Missing.fs", countFloor 10 2 ] }
+
+    match judge config [ makeFile "Measured.fs" 100.0 100.0 0 0 ] with
+    | Incomplete(_, [ hole ]) ->
+        test <@ hole.File = "Missing.fs" @>
+        test <@ hole.HasPercentageFloor && hole.HasCountFloor @>
+    | verdict -> failwithf "Expected one combined missing-floor obligation, got %A" verdict
+
+[<Fact>]
+let ``judge - measured regression remains below-floor and carries missing floors`` () =
+    let config =
+        { defaultsConfig with
+            Overrides =
+                Map.ofList
+                    [ "Measured.fs", percentageFloor 90.0 90.0
+                      "Missing.fs", percentageFloor 80.0 70.0 ] }
+
+    let verdict = judge config [ makeFile "Measured.fs" 50.0 100.0 0 0 ]
+
+    match verdict with
+    | BelowFloor([ failure ], [], [ hole ]) ->
+        test <@ failure.File.FileName = "Measured.fs" @>
+        test <@ hole.File = "Missing.fs" @>
+        test <@ exitCodeOf verdict = 1 @>
+    | other -> failwithf "Expected regression plus missing floor, got %A" other
+
+[<Fact>]
+let ``judge - measured count regression is below-floor`` () =
+    let config =
+        { defaultsConfig with
+            Overrides = Map.ofList [ "Foo.fs", percentageFloor 0.0 0.0 ]
+            CountFloors = Map.ofList [ "Foo.fs", countFloor 8 0 ] }
+
+    match judge config [ makeFileWithCounts "Foo.fs" 3 10 0 0 ] with
+    | BelowFloor([], [ failure ], []) -> test <@ failure.File.FileName = "Foo.fs" @>
+    | verdict -> failwithf "Expected a measured count-floor regression, got %A" verdict
+
 [<Fact>]
 let ``check - file meeting defaults passes`` () =
     let files = [ makeFile "Foo.fs" 100.0 100.0 4 4 ]

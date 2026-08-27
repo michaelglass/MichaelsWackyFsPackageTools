@@ -48,18 +48,6 @@ type Command =
         MergeArgs
     | [<Cmd("Copy each coverage.cobertura.xml to coverage.baseline.xml in the search dir")>] RefreshBaseline
 
-/// Exit codes for `check`.
-///
-/// `1` is a floor that FELL: a measured file got measurably worse, which is
-/// something a human changed. `2` is "this run may not answer the question" —
-/// the report and the configuration disagree about which tree they describe,
-/// so nothing is certified in either direction. Collapsing the two would make
-/// a broken measurement read as a regression and send the reader off to fix
-/// code that is fine.
-let private floorFellExit = 1
-
-let private undeterminableExit = 2
-
 let formatFileResult (r: FileResult) =
     let branchStr =
         if r.File.BranchesTotal > 0 then
@@ -129,13 +117,41 @@ let private reportNothingMeasured () =
     printfn "  - the test run collected no coverage (collector off, or the run crashed)"
     printfn "  - the report was read while it was still being written"
 
+/// AUTOMATION-127, the expensive half: name every configured floor the report
+/// could not speak to. No-ops on an empty list so callers need no guard.
+let private reportUnmeasuredFloors (configPath: string) (unmeasured: UnmeasuredFloor list) =
+    if not (List.isEmpty unmeasured) then
+        printfn ""
+        printfn "UNMEASURED floors — %d configured floor(s) have no row in the coverage report:" unmeasured.Length
+
+        for u in unmeasured do
+            let kinds =
+                [ if u.HasPercentageFloor then
+                      "percentage"
+                  if u.HasCountFloor then
+                      "count" ]
+                |> String.concat " + "
+
+            printfn "  MISSING %s (%s floor)" u.File kinds
+
+        printfn ""
+        printfn "A floor nobody measured is not a floor that held, so this run is"
+        printfn "UNDETERMINABLE. Two different things put a file on that list and this"
+        printfn "tool cannot tell them apart — floors are keyed by file NAME, so there is"
+        printfn "no path to go looking for:"
+        printfn "  - the REPORT is partial: the test run was filtered, or it crashed, or"
+        printfn "    the report was read mid-write. Re-run the full suite."
+        printfn "  - the FILE is gone: delete its entry from %s." configPath
+
 let private runCheck (configPath: string) (files: FileCoverage list) =
     let config = loadConfig configPath
+    let verdict = judge config files
 
-    if List.isEmpty files then
-        reportNothingMeasured ()
-        undeterminableExit
-    else
+    match verdict with
+    | NothingMeasured -> reportNothingMeasured ()
+    | AllFloorsHeld _
+    | Incomplete _
+    | BelowFloor _ ->
         let allResults = buildFileResults config files
 
         let failed, passed =
@@ -155,7 +171,11 @@ let private runCheck (configPath: string) (files: FileCoverage list) =
 
         printfn ""
 
-        printfn "Result: %d/%d files passed" passed.Length allResults.Length
+        // "N/N files passed" is the sentence this ticket was filed over: the
+        // denominator came from the report, so it read identically at 7 files
+        // and at 50. It stays, because it is the useful per-run detail — but it
+        // no longer decides anything, and it now names the set it counted.
+        printfn "Result: %d/%d files in the report passed" passed.Length allResults.Length
 
         let countResults = buildCountResults config files
 
@@ -165,12 +185,22 @@ let private runCheck (configPath: string) (files: FileCoverage list) =
             printfn ""
             reportCountFailures configPath countFailed
         elif not (List.isEmpty countResults) then
-            printfn "Count floors: %d/%d files passed" countResults.Length countResults.Length
+            printfn "Count floors: %d/%d files in the report passed" countResults.Length countResults.Length
 
-        if List.isEmpty failed && List.isEmpty countFailed then
-            0
-        else
-            floorFellExit
+        match verdict with
+        | AllFloorsHeld _ ->
+            // The claim that makes a green run worth anything, stated rather
+            // than assumed. Silent on a config with no floors: there is no
+            // obligation to have met.
+            let expected = (configuredFloors config).Count
+
+            if expected > 0 then
+                printfn "All %d configured floor(s) were measured." expected
+        | Incomplete(_, holes)
+        | BelowFloor(_, _, holes) -> reportUnmeasuredFloors configPath holes
+        | NothingMeasured -> ()
+
+    exitCodeOf verdict
 
 let private runRatchet (configPath: string) (files: FileCoverage list) =
     let raw = loadRawConfig configPath
@@ -236,10 +266,13 @@ let private runLoosen (configPath: string) (files: FileCoverage list) =
     printfn "Loosen complete: thresholds set to current coverage"
     0
 
-/// The same defect as `runCheck`'s, in the artifact-writing path: an empty
-/// report produced `{"results": {}}` and exit 0. The file is still written —
-/// a CI job that uploads it should get something to look at — but the exit
-/// code no longer claims the run passed.
+/// The artifact-writing twin of `runCheck`, and it carried the same defects: an
+/// empty report produced `{"results": {}}` and exit 0, a configured floor with
+/// no row in the report simply vanished, and the exit code ignored count floors
+/// entirely even though the README promised it "matches `check`". It now shares
+/// `judge`, so the two cannot drift apart again. The results file is written
+/// BEFORE the verdict is rendered, so a CI job that uploads it still has
+/// something to upload on a red run.
 let private runCheckJson (configPath: string) (outputPath: string) (files: FileCoverage list) =
     let config = loadConfig configPath
     let allResults = buildFileResults config files
@@ -259,12 +292,15 @@ let private runCheckJson (configPath: string) (outputPath: string) (files: FileC
     let json = JsonSerializer.Serialize(wrapper, jsonOptions)
     File.WriteAllText(outputPath, json)
 
-    if List.isEmpty files then
-        reportNothingMeasured ()
-        undeterminableExit
-    else
-        let failed = allResults |> List.filter (fun r -> not (FileResult.passed r))
-        if List.isEmpty failed then 0 else floorFellExit
+    let verdict = judge config files
+
+    match verdict with
+    | NothingMeasured -> reportNothingMeasured ()
+    | Incomplete(_, holes)
+    | BelowFloor(_, _, holes) -> reportUnmeasuredFloors configPath holes
+    | AllFloorsHeld _ -> ()
+
+    exitCodeOf verdict
 
 let private runTargets (configPath: string) (files: FileCoverage list) =
     let config = loadConfig configPath
@@ -702,11 +738,17 @@ for newly-encountered files).
     | [ "check" ] ->
         Some
             """
-Exit 0 = every F# file in the report met its line+branch threshold.
-Exit 1 = at least one file fell below one.
-Exit 2 = the run could not answer the question at all: the coverage
-         report holds no F# file, so nothing was measured. That is not
-         a pass, and it used to be reported as one.
+Exit 0 = every configured floor was measured, and every F# file in the
+         report met its line+branch threshold.
+Exit 1 = at least one MEASURED file fell below a floor.
+Exit 2 = this run cannot answer the question. Either the report holds
+         no F# file at all, or [config] records a floor for a file that
+         has no row in the report — so that floor was never checked.
+         Neither is a pass, and both used to be reported as one.
+
+The expected set comes from [config], never from the report. A report
+that shrinks used to shrink the claim with it: "7/7 files passed" reads
+the same whether 7 files exist or 50 do.
 
 Use in CI. Files not listed in [config] must hit 100%/100%.
 """

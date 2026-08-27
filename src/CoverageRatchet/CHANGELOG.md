@@ -3,6 +3,7 @@
 ## Unreleased
 
 - fix: **a coverage report with no F# file in it is no longer a pass.** `check` printed "No F# source files found in coverage report." and exited **0** — so an empty or wrong-directory report, a collector that wrote nothing, or a report read mid-write all rendered exactly like a healthy run. `check` and `check-json` now exit **2** and say what happened. Exit 2 means "this run cannot answer the question", kept distinct from exit 1, "a floor fell" (AUTOMATION-127).
+- fix: **configured floors can no longer disappear from a partial coverage report and silently pass.** `check` and `check-json` now share one verdict over the explicit percentage and count floors in the active config. A configured file with no report row is named and exits **2**; a measured regression still exits **1** and also reports any missing floors. Files governed only by the implicit 100%/100% default cannot be detected when absent, so full-set detection requires an explicit floor per expected file (AUTOMATION-127).
 
 ## 0.15.0-alpha.13 - 2026-08-25
 
