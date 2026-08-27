@@ -51,7 +51,17 @@ You can also run it explicitly as `coverageratchet ratchet`.
 coverageratchet check
 ```
 
-Exits with code 0 if all files meet their thresholds, 1 if any file is below.
+| Exit code | Meaning |
+|-----------|---------|
+| 0 | Every F# file in the report met its threshold |
+| 1 | At least one file fell below its threshold |
+| 2 | The run could not answer the question: the report holds no F# file at all |
+
+Exit 2 exists because a check that measured nothing used to exit 0. A report
+with no F# file in it is produced by a broken run — the wrong `--search-dir`, a
+collector that wrote nothing, a report read while it was still being written —
+and every one of those cases used to render as a pass. Zero files examined is
+not zero files failing, so `check` now says it does not know.
 
 ### Loosen thresholds
 
@@ -85,7 +95,7 @@ Shows uncovered branch points per file, with specific line numbers and how many 
 coverageratchet check-json [config-path] [output-path]
 ```
 
-Writes machine-readable coverage results. Exit code matches `check` (non-zero if any file fails). Used by CI workflows to upload coverage data as an artifact.
+Writes machine-readable coverage results. Exit code matches `check`, including exit 2 for a report with no F# file in it — the results file is still written so CI has something to upload, but the exit code does not claim the run passed. Used by CI workflows to upload coverage data as an artifact.
 
 ### Sync thresholds from CI
 
