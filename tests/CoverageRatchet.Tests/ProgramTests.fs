@@ -321,10 +321,13 @@ let ``run - loosen then check passes`` () =
 
         test <@ result = Ok 0 @>)
 
-// --- runCheck with empty file list ---
+// --- runCheck with empty file list (AUTOMATION-127) ---
 
+/// A C#-only report parses fine and yields no F# file. `check` used to answer
+/// `Ok 0` here — zero files examined, reported as a pass — which is the whole
+/// point of the exit-2 code: nothing was measured, so nothing is certified.
 [<Fact>]
-let ``run - check with only non-fs files returns Ok 0`` () =
+let ``run - check on a report with no F# file is undeterminable, not a pass`` () =
     withTempDir (fun tmpDir ->
         let xml =
             """<?xml version="1.0"?><coverage><packages><package><classes>
@@ -337,7 +340,45 @@ let ``run - check with only non-fs files returns Ok 0`` () =
         let result =
             run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false
 
-        test <@ result = Ok 0 @>)
+        test <@ result = Ok 2 @>)
+
+/// The degenerate case: a well-formed report that carries no class at all.
+[<Fact>]
+let ``run - check on an empty coverage report is undeterminable, not a pass`` () =
+    withTempDir (fun tmpDir ->
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+
+        File.WriteAllText(
+            xmlPath,
+            """<?xml version="1.0"?><coverage><packages><package><classes/></package></packages></coverage>"""
+        )
+
+        let output, result =
+            withCapturedConsole (fun () ->
+                run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false)
+
+        test <@ result = Ok 2 @>
+        // It has to SAY so: a silent 2 is only marginally better than a silent 0.
+        test <@ output.Contains("NOTHING MEASURED") @>)
+
+/// The same defect in the artifact path. `check-json` still writes its file —
+/// CI uploads it — but no longer claims the run passed.
+[<Fact>]
+let ``run - check-json on a report with no F# file is undeterminable, not a pass`` () =
+    withTempDir (fun tmpDir ->
+        let xml =
+            """<?xml version="1.0"?><coverage><packages><package><classes>
+<class filename="Foo.cs" line-rate="1.0" branch-rate="1.0"><lines/></class>
+</classes></package></packages></coverage>"""
+
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), xml)
+        let outPath = Path.Combine(tmpDir, "results.json")
+
+        let result =
+            run (CheckJson(config = Some(Path.Combine(tmpDir, "config.json")), output = Some outPath)) tmpDir false
+
+        test <@ result = Ok 2 @>
+        test <@ File.Exists(outPath) @>)
 
 // --- ratchet None branch (tightened count) ---
 

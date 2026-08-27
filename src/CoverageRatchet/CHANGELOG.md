@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: **a coverage report with no F# file in it is no longer a pass.** `check` printed "No F# source files found in coverage report." and exited **0** — so an empty or wrong-directory report, a collector that wrote nothing, or a report read mid-write all rendered exactly like a healthy run. `check` and `check-json` now exit **2** and say what happened. Exit 2 means "this run cannot answer the question", kept distinct from exit 1, "a floor fell" (AUTOMATION-127).
+
 ## 0.15.0-alpha.13 - 2026-08-25
 
 - chore(deps): CommandTree 0.8.0 -> 0.8.1

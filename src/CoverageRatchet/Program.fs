@@ -48,6 +48,18 @@ type Command =
         MergeArgs
     | [<Cmd("Copy each coverage.cobertura.xml to coverage.baseline.xml in the search dir")>] RefreshBaseline
 
+/// Exit codes for `check`.
+///
+/// `1` is a floor that FELL: a measured file got measurably worse, which is
+/// something a human changed. `2` is "this run may not answer the question" —
+/// the report and the configuration disagree about which tree they describe,
+/// so nothing is certified in either direction. Collapsing the two would make
+/// a broken measurement read as a regression and send the reader off to fix
+/// code that is fine.
+let private floorFellExit = 1
+
+let private undeterminableExit = 2
+
 let formatFileResult (r: FileResult) =
     let branchStr =
         if r.File.BranchesTotal > 0 then
@@ -101,12 +113,28 @@ let private reportCountFailures (configPath: string) (failed: CountResult list) 
     printfn "  - you deliberately deleted covered code -> re-baseline it:"
     printfn "      coverageratchet baseline-lines %s" configPath
 
+/// AUTOMATION-127, the cheap half: a coverage report with no F# file in it used
+/// to print one line and exit 0.
+///
+/// Zero files examined is not zero files failing. Every way of arriving here is
+/// a broken run, and each of them used to render identically to a healthy one.
+let private reportNothingMeasured () =
+    printfn "NOTHING MEASURED: no F# source file appears in the coverage report(s)."
+    printfn ""
+    printfn "This is not a pass. `check` examined zero files, so it has learned nothing"
+    printfn "about coverage and cannot certify anything. Exit code 2 says so."
+    printfn ""
+    printfn "What puts a run here:"
+    printfn "  - --search-dir names a directory whose coverage.cobertura.xml has no F# class"
+    printfn "  - the test run collected no coverage (collector off, or the run crashed)"
+    printfn "  - the report was read while it was still being written"
+
 let private runCheck (configPath: string) (files: FileCoverage list) =
     let config = loadConfig configPath
 
     if List.isEmpty files then
-        printfn "No F# source files found in coverage report."
-        0
+        reportNothingMeasured ()
+        undeterminableExit
     else
         let allResults = buildFileResults config files
 
@@ -142,7 +170,7 @@ let private runCheck (configPath: string) (files: FileCoverage list) =
         if List.isEmpty failed && List.isEmpty countFailed then
             0
         else
-            1
+            floorFellExit
 
 let private runRatchet (configPath: string) (files: FileCoverage list) =
     let raw = loadRawConfig configPath
@@ -208,6 +236,10 @@ let private runLoosen (configPath: string) (files: FileCoverage list) =
     printfn "Loosen complete: thresholds set to current coverage"
     0
 
+/// The same defect as `runCheck`'s, in the artifact-writing path: an empty
+/// report produced `{"results": {}}` and exit 0. The file is still written —
+/// a CI job that uploads it should get something to look at — but the exit
+/// code no longer claims the run passed.
 let private runCheckJson (configPath: string) (outputPath: string) (files: FileCoverage list) =
     let config = loadConfig configPath
     let allResults = buildFileResults config files
@@ -227,8 +259,12 @@ let private runCheckJson (configPath: string) (outputPath: string) (files: FileC
     let json = JsonSerializer.Serialize(wrapper, jsonOptions)
     File.WriteAllText(outputPath, json)
 
-    let failed = allResults |> List.filter (fun r -> not (FileResult.passed r))
-    if List.isEmpty failed then 0 else 1
+    if List.isEmpty files then
+        reportNothingMeasured ()
+        undeterminableExit
+    else
+        let failed = allResults |> List.filter (fun r -> not (FileResult.passed r))
+        if List.isEmpty failed then 0 else floorFellExit
 
 let private runTargets (configPath: string) (files: FileCoverage list) =
     let config = loadConfig configPath
@@ -666,7 +702,12 @@ for newly-encountered files).
     | [ "check" ] ->
         Some
             """
-Exits 0 if every F# file meets its line+branch threshold, 1 otherwise.
+Exit 0 = every F# file in the report met its line+branch threshold.
+Exit 1 = at least one file fell below one.
+Exit 2 = the run could not answer the question at all: the coverage
+         report holds no F# file, so nothing was measured. That is not
+         a pass, and it used to be reported as one.
+
 Use in CI. Files not listed in [config] must hit 100%/100%.
 """
     | [ "loosen" ] ->
