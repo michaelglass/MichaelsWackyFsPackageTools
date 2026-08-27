@@ -1914,7 +1914,7 @@ let ``run - check passes when covered lines meet the count floor`` () =
         test <@ result = Ok 0 @>)
 
 [<Fact>]
-let ``run - check ignores count floors for files that have none recorded`` () =
+let ``run - check fails undeterminable when a configured count floor is unmeasured`` () =
     withTempDir (fun tmpDir ->
         File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 30)
 
@@ -1931,7 +1931,71 @@ let ``run - check ignores count floors for files that have none recorded`` () =
 
         let result = run (Check(config = Some configPath)) tmpDir false
 
-        test <@ result = Ok 0 @>)
+        test <@ result = Ok 2 @>)
+
+[<Fact>]
+let ``run - check names an unmeasured percentage floor`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 100)
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        File.WriteAllText(configPath, """{ "overrides": { "Missing.fs": { "line": 80, "branch": 70 } } }""")
+
+        let output, result =
+            withCapturedConsole (fun () -> run (Check(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 2 @>
+        test <@ output.Contains("MISSING Missing.fs (percentage floor)") @>)
+
+[<Fact>]
+let ``run - check names both floor kinds once for one unmeasured file`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 100)
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        File.WriteAllText(
+            configPath,
+            """{
+  "overrides": { "Missing.fs": { "line": 80, "branch": 70 } },
+  "countFloors": { "Missing.fs": { "coveredLines": 10, "coveredBranches": 0 } }
+}"""
+        )
+
+        let output, result =
+            withCapturedConsole (fun () -> run (Check(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 2 @>
+        test <@ output.Contains("MISSING Missing.fs (percentage + count floor)") @>)
+
+[<Fact>]
+let ``run - check and check-json return the same verdict for an unmeasured floor`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 100)
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, """{ "overrides": { "Missing.fs": { "line": 80, "branch": 70 } } }""")
+
+        let checkResult = run (Check(config = Some configPath)) tmpDir false
+
+        let jsonResult =
+            run (CheckJson(config = Some configPath, output = None)) tmpDir false
+
+        test <@ checkResult = Ok 2 @>
+        test <@ jsonResult = checkResult @>)
+
+[<Fact>]
+let ``run - check-json fails when a measured count floor falls`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 30)
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, countFloorConfig 8)
+
+        let checkResult = run (Check(config = Some configPath)) tmpDir false
+
+        let jsonResult =
+            run (CheckJson(config = Some configPath, output = None)) tmpDir false
+
+        test <@ checkResult = Ok 1 @>
+        test <@ jsonResult = checkResult @>)
 
 [<Fact>]
 let ``run - check catches a covered-line drop that 100 percent line coverage hides`` () =

@@ -53,15 +53,38 @@ coverageratchet check
 
 | Exit code | Meaning |
 |-----------|---------|
-| 0 | Every F# file in the report met its threshold |
-| 1 | At least one file fell below its threshold |
-| 2 | The run could not answer the question: the report holds no F# file at all |
+| 0 | Every configured floor was measured, and every F# file in the report met its threshold |
+| 1 | At least one **measured** file fell below its threshold |
+| 2 | This run cannot answer the question — nothing was measured, or a configured floor has no row in the report |
 
-Exit 2 exists because a check that measured nothing used to exit 0. A report
-with no F# file in it is produced by a broken run — the wrong `--search-dir`, a
-collector that wrote nothing, a report read while it was still being written —
-and every one of those cases used to render as a pass. Zero files examined is
-not zero files failing, so `check` now says it does not know.
+#### The expected set comes from the config, not from the report
+
+`check` used to derive its entire file list from the coverage XML. A file with a
+recorded floor that had no row in the report was not failed, not warned about,
+and not counted — it silently disappeared, and the run printed `7/7 files
+passed` and exited 0. That sentence reads the same whether the project has 7
+files or 50.
+
+So the set a run is *obliged* to measure now comes from `overrides` and
+`countFloors` in the config. If the report cannot speak to one of them, `check`
+names it and exits 2. Two things put a file on that list and the tool cannot
+tell them apart — floors are keyed by file name, so there is no path to go
+looking for:
+
+- **the report is partial** — a filtered or crashed test run, or a report read
+  while it was still being written. Re-run the full suite.
+- **the file is gone** — delete its entry from the config.
+
+This completeness check is deliberately limited to those explicit, active
+configured floors. The 100%/100% default still applies to every file that does
+appear in the report, but a file with no `overrides` or `countFloors` entry
+leaves no name in the config to detect if it is absent. Projects that require
+full-set detection must therefore keep an explicit floor for every expected
+file (a count floor is sufficient).
+
+Exit 2 also covers a report with no F# file in it at all: the wrong
+`--search-dir`, a collector that wrote nothing, a report read mid-write. Zero
+files examined is not zero files failing.
 
 ### Loosen thresholds
 
@@ -95,7 +118,7 @@ Shows uncovered branch points per file, with specific line numbers and how many 
 coverageratchet check-json [config-path] [output-path]
 ```
 
-Writes machine-readable coverage results. Exit code matches `check`, including exit 2 for a report with no F# file in it — the results file is still written so CI has something to upload, but the exit code does not claim the run passed. Used by CI workflows to upload coverage data as an artifact.
+Writes machine-readable coverage results. The exit code really does match `check` now — same verdict, so count floors and unmeasured floors are included, where previously `check-json` looked only at percentage floors on files the report happened to contain. The results file is written before the verdict is rendered, so CI still has something to upload on a red run. Used by CI workflows to upload coverage data as an artifact.
 
 ### Sync thresholds from CI
 

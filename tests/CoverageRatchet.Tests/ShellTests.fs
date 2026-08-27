@@ -18,7 +18,9 @@ let ``run - successful command returns Success with output`` () =
 
 [<Fact>]
 let ``run - successful command trims trailing whitespace`` () =
-    let result = run "printf" "hello  \n\n"
+    // Shell.run accepts one command-line string, so preserve printf's
+    // whitespace-bearing format as one quoted argument.
+    let result = run "printf" "\"hello  \n\n\""
 
     test
         <@
