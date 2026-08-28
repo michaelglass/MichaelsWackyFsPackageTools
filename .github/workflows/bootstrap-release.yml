@@ -36,7 +36,7 @@ jobs:
           sed -i "s|<Version>[^<]*</Version>|<Version>${{ inputs.version }}</Version>|" "$FSPROJ"
           dotnet pack "$FSPROJ" -c Release -p:ReleaseBuild=true --no-build -o ./artifacts
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ inputs.package == 'CoverageRatchet' && 'coverageratchet-v' || inputs.package == 'SyncDocs' && 'syncdocs-v' || inputs.package == 'RefStamp' && 'refstamp-v' || 'fssemantictagger-v' }}${{ inputs.version }}
           name: ${{ inputs.package }} v${{ inputs.version }} (bootstrap)
