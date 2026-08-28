@@ -98,11 +98,6 @@
         "platform": "linux"
       }
     ],
-    "Sync.fs": {
-      "line": 100,
-      "branch": 93.75,
-      "reason": "loosened automatically"
-    },
     "Thresholds.fs": [
       {
         "line": 95,
