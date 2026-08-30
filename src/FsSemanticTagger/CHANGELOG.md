@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.7 - 2026-08-30
+
 - fix: release CI polling now treats completed `skipped` and `neutral` workflow runs as non-required once at least one run has genuinely succeeded, so tag-only jobs no longer leave a fully completed release waiting forever. A skipped/neutral-only run set still cannot pass, and failures or cancellations still fail the release.
 
 ## 0.14.0-alpha.6 - 2026-08-25
