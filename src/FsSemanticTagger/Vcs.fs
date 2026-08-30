@@ -173,6 +173,8 @@ module RunStatus =
 
 type RunConclusion =
     | SuccessConclusion
+    | SkippedConclusion
+    | NeutralConclusion
     | FailureConclusion
     | CancelledConclusion
     | PendingConclusion
@@ -182,6 +184,8 @@ module RunConclusion =
     let ofString (s: string) : RunConclusion =
         match s with
         | "success" -> SuccessConclusion
+        | "skipped" -> SkippedConclusion
+        | "neutral" -> NeutralConclusion
         | "failure" -> FailureConclusion
         | "cancelled" -> CancelledConclusion
         | "pending" -> PendingConclusion
@@ -240,11 +244,15 @@ let checkCiStatusForSha (run: string -> string -> CommandResult) (sha: string) :
                 if failed.Length > 0 then
                     Failed failed
                 elif
-                    runs
-                    |> List.forall (fun r ->
-                        match r.Status, r.Conclusion with
-                        | Completed, SuccessConclusion -> true
-                        | _ -> false)
+                    (runs
+                     |> List.exists (fun r -> r.Status = Completed && r.Conclusion = SuccessConclusion))
+                    && (runs
+                        |> List.forall (fun r ->
+                            match r.Status, r.Conclusion with
+                            | Completed, SuccessConclusion
+                            | Completed, SkippedConclusion
+                            | Completed, NeutralConclusion -> true
+                            | _ -> false))
                 then
                     Passed
                 else
