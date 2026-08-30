@@ -559,6 +559,28 @@ let ``checkCiStatusForSha - all success returns Passed`` () =
     test <@ checkCiStatusForSha run "abc123" = Passed @>
 
 [<Fact>]
+let ``checkCiStatusForSha - successful required run with skipped and neutral runs returns Passed`` () =
+    let json =
+        """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/ci"},{"status":"completed","conclusion":"skipped","name":"Deploy Docs","url":"https://example.com/docs"},{"status":"completed","conclusion":"neutral","name":"Release matrix","url":"https://example.com/release"}]"""
+
+    let run = fakeRun [ ("gh", ghCiArgs "abc123", Success json) ]
+    test <@ checkCiStatusForSha run "abc123" = Passed @>
+
+[<Fact>]
+let ``checkCiStatusForSha - skipped and neutral runs without a success stay InProgress`` () =
+    let json =
+        """[{"status":"completed","conclusion":"skipped","name":"Deploy Docs","url":"https://example.com/docs"},{"status":"completed","conclusion":"neutral","name":"Release matrix","url":"https://example.com/release"}]"""
+
+    let run = fakeRun [ ("gh", ghCiArgs "abc123", Success json) ]
+
+    test
+        <@
+            match checkCiStatusForSha run "abc123" with
+            | InProgress _ -> true
+            | _ -> false
+        @>
+
+[<Fact>]
 let ``checkCiStatusForSha - any failure returns Failed with failed runs`` () =
     let json =
         """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"},{"status":"completed","conclusion":"failure","name":"Deploy","url":"https://example.com/2"}]"""
@@ -726,7 +748,12 @@ let ``RunConclusion.ofString empty string`` () =
 
 [<Fact>]
 let ``RunConclusion.ofString unknown value`` () =
-    test <@ RunConclusion.ofString "skipped" = OtherConclusion "skipped" @>
+    test <@ RunConclusion.ofString "timed_out" = OtherConclusion "timed_out" @>
+
+[<Fact>]
+let ``RunConclusion.ofString skipped and neutral are terminal non-required conclusions`` () =
+    test <@ RunConclusion.ofString "skipped" = SkippedConclusion @>
+    test <@ RunConclusion.ofString "neutral" = NeutralConclusion @>
 
 // hasCoverageRatchet
 
@@ -1145,24 +1172,19 @@ let ``parseCiRuns - parses unknown status and conclusion`` () =
 
     let runs = parseCiRuns json
     test <@ runs.[0].Status = OtherStatus "waiting" @>
-    test <@ runs.[0].Conclusion = OtherConclusion "skipped" @>
+    test <@ runs.[0].Conclusion = SkippedConclusion @>
 
 // checkCiStatusForSha - mix of completed success and OtherStatus
 
 [<Fact>]
-let ``checkCiStatusForSha - completed success with OtherConclusion returns InProgress`` () =
+let ``checkCiStatusForSha - completed success with neutral conclusion returns Passed`` () =
     let json =
         """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"},{"status":"completed","conclusion":"neutral","name":"Lint","url":"https://example.com/2"}]"""
 
     let run = fakeRun [ ("gh", ghCiArgs "abc123", Success json) ]
     let result = checkCiStatusForSha run "abc123"
 
-    test
-        <@
-            match result with
-            | InProgress _ -> true
-            | _ -> false
-        @>
+    test <@ result = Passed @>
 
 // getLatestTag - prefix filtering
 
