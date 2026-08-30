@@ -29,7 +29,7 @@
     "Program.fs": [
       {
         "line": 89,
-        "branch": 85,
+        "branch": 86,
         "reason": "CLI entry point with untestable shell-dependent code",
         "platform": "macos"
       },

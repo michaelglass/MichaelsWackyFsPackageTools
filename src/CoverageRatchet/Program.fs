@@ -407,31 +407,46 @@ let internal pollCi
                         Thread.Sleep(intervalMs)
                         poll (attempt + 1)
                     else
-                        let allPassed =
+                        let conclusion (run: JsonElement) =
+                            run.GetProperty("conclusion").GetString()
+
+                        let failedRun =
                             runs
-                            |> List.forall (fun r -> r.GetProperty("conclusion").GetString() = "success")
+                            |> List.tryFind (fun r ->
+                                match conclusion r with
+                                | "failure"
+                                | "cancelled" -> true
+                                | _ -> false)
 
-                        if allPassed then
-                            CiPassed
-                        else
-                            let failedRun =
+                        match failedRun with
+                        | Some r ->
+                            let runId = r.GetProperty("databaseId").GetInt64()
+
+                            let tmpDir = Path.Combine(Path.GetTempPath(), sprintf "coverage-%d" runId)
+
+                            let dlResult =
+                                withJjGitDir (fun () ->
+                                    run "gh" (sprintf "run download %d -n coverage-thresholds -D %s" runId tmpDir))
+
+                            match dlResult with
+                            | Success _ -> CiCoverageFailure tmpDir
+                            | Failure _ -> CiOtherFailure
+                        | None ->
+                            let hasSuccess = runs |> List.exists (fun r -> conclusion r = "success")
+
+                            let hasOnlySuccessfulOrNonRequiredRuns =
                                 runs
-                                |> List.tryFind (fun r -> r.GetProperty("conclusion").GetString() <> "success")
+                                |> List.forall (fun r ->
+                                    match conclusion r with
+                                    | "success"
+                                    | "skipped"
+                                    | "neutral" -> true
+                                    | _ -> false)
 
-                            match failedRun with
-                            | None -> CiPassed
-                            | Some r ->
-                                let runId = r.GetProperty("databaseId").GetInt64()
-
-                                let tmpDir = Path.Combine(Path.GetTempPath(), sprintf "coverage-%d" runId)
-
-                                let dlResult =
-                                    withJjGitDir (fun () ->
-                                        run "gh" (sprintf "run download %d -n coverage-thresholds -D %s" runId tmpDir))
-
-                                match dlResult with
-                                | Success _ -> CiCoverageFailure tmpDir
-                                | Failure _ -> CiOtherFailure
+                            if hasSuccess && hasOnlySuccessfulOrNonRequiredRuns then
+                                CiPassed
+                            else
+                                CiOtherFailure
 
     poll 1
 
