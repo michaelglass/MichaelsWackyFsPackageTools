@@ -1296,6 +1296,38 @@ let ``pollCi - all runs completed and passed returns CiPassed`` () =
     test <@ result = CiPassed @>
 
 [<Fact>]
+let ``pollCi - completed success with skipped and neutral runs returns CiPassed without downloading`` () =
+    let json =
+        """[{"status":"completed","conclusion":"success","databaseId":1},{"status":"completed","conclusion":"skipped","databaseId":2},{"status":"completed","conclusion":"neutral","databaseId":3}]"""
+
+    let mutable calls = 0
+
+    let run _ _ =
+        calls <- calls + 1
+        CoverageRatchet.Shell.Success json
+
+    let result = pollCi run "abc123" 0 1
+
+    test <@ result = CiPassed @>
+    test <@ calls = 1 @>
+
+[<Fact>]
+let ``pollCi - skipped and neutral runs without a success return CiOtherFailure without downloading`` () =
+    let json =
+        """[{"status":"completed","conclusion":"skipped","databaseId":2},{"status":"completed","conclusion":"neutral","databaseId":3}]"""
+
+    let mutable calls = 0
+
+    let run _ _ =
+        calls <- calls + 1
+        CoverageRatchet.Shell.Success json
+
+    let result = pollCi run "abc123" 0 1
+
+    test <@ result = CiOtherFailure @>
+    test <@ calls = 1 @>
+
+[<Fact>]
 let ``pollCi - empty runs array retries then fails`` () =
     let run =
         fakeRun
@@ -1351,6 +1383,30 @@ let ``pollCi - failed run with artifact download failure returns CiOtherFailure`
     let result = pollCi run "abc123" 0 1
 
     test <@ result = CiOtherFailure @>
+
+[<Fact>]
+let ``pollCi - cancelled run attempts coverage artifact download`` () =
+    let json = """[{"status":"completed","conclusion":"cancelled","databaseId":42}]"""
+    let mutable calls = 0
+
+    let run _ _ =
+        calls <- calls + 1
+
+        if calls = 1 then
+            CoverageRatchet.Shell.Success json
+        else
+            CoverageRatchet.Shell.Success "downloaded"
+
+    let result = pollCi run "abc123" 0 1
+
+    test
+        <@
+            match result with
+            | CiCoverageFailure _ -> true
+            | _ -> false
+        @>
+
+    test <@ calls = 2 @>
 
 [<Fact>]
 let ``pollCi - timeout returns CiOtherFailure`` () =
