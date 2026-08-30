@@ -617,6 +617,24 @@ let ``waitForCi - polls until CI passes`` () =
     test <@ ghCallCount = 3 @>
 
 [<Fact>]
+let ``waitForCi - completed success plus skipped tag jobs passes without polling`` () =
+    let mutable ghCallCount = 0
+
+    let run (cmd: string) (args: string) : CommandResult =
+        match cmd, args with
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "gh", a when a.Contains("run list") ->
+            ghCallCount <- ghCallCount + 1
+
+            Success
+                """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/ci"},{"status":"completed","conclusion":"skipped","name":"Deploy Docs","url":"https://example.com/docs"},{"status":"completed","conclusion":"skipped","name":"Release","url":"https://example.com/release"}]"""
+        | _ -> Failure(sprintf "unexpected: %s %s" cmd args, 1)
+
+    let result = waitForCi run 0 3
+    test <@ result = Passed @>
+    test <@ ghCallCount = 1 @>
+
+[<Fact>]
 let ``waitForCi - times out when CI stays in progress`` () =
     let run (cmd: string) (args: string) : CommandResult =
         match cmd, args with
