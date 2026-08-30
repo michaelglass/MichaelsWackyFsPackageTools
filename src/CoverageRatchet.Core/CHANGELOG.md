@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.7 - 2026-08-30
+
+- Finish: AUTOMATION-127 fail when configured coverage floors are unmeasured
+
+
 ## 0.1.0-alpha.6 - 2026-08-17
 
 - feat: `FileCoverage` now carries `LinesCovered` and `LinesTotal` alongside `LinePct`. The covered-line count was already computed while parsing Cobertura and then discarded; it is the numerator that stays stable when the JIT-dependent denominator drifts.
