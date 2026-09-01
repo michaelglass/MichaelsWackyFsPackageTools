@@ -66,7 +66,42 @@ let rawLines = extractRawLines xmlContent
 let gaps: FileBranchGaps list = buildBranchGaps rawLines
 ```
 
-Files from paths like `paket-files/`, `vendor/`, `node_modules/`, and `.fable/` are automatically excluded, as are files matching `Test`, `AssemblyInfo`, or `AssemblyAttributes` in their name. Only `.fs` files are included.
+Files from paths like `paket-files/`, `vendor/`, `node_modules/`, and `.fable/` are automatically excluded, as are files matching `Test`, `AssemblyInfo`, or `AssemblyAttributes` in their name. Only `.fs` files are included by default.
+
+#### Reading reports from other languages
+
+Everything after the reader — `RawLine`, `buildCoverage`, `Thresholds.judge`, `Ratchet.ratchet` — is language-neutral, so a Cobertura report from a C# or VB project only needs the reader told which sources to accept. Every entry point has a `*With` twin that takes a `ReaderOptions`:
+
+<!-- sync:reader-options:start src=src/CoverageRatchet.Core/Cobertura.fs -->
+```fsharp
+/// Which source files a Cobertura report is read for.
+///
+/// Everything downstream of the reader — `RawLine`, `buildCoverage`, `Thresholds.judge`,
+/// `Ratchet.ratchet` — is language-neutral. The three filters below were the only part that
+/// was not, and they were private arrays with no hook, so a consumer with a C# or VB report
+/// got zero files back and no way to widen it. They are a record now; `ReaderOptions.defaults`
+/// is exactly what was hard-coded before, so nothing changes for a caller that does not ask.
+///
+/// `ExcludedFileNamePatterns` is matched with `Contains` on the base name and
+/// `ExcludedPathPatterns` with an exact, case-insensitive match on a path segment. That
+/// asymmetry is preserved rather than fixed here — see the note on `isIncludedWith`.
+type ReaderOptions =
+    { IncludedExtensions: string[]
+      ExcludedFileNamePatterns: string[]
+      ExcludedPathPatterns: string[] }
+```
+<!-- sync:reader-options:end -->
+
+```fsharp
+let options =
+    ReaderOptions.defaults |> ReaderOptions.withExtensions [| ".cs" |]
+
+let files: FileCoverage list = parseFileWith options "/path/to/coverage.cobertura.xml"
+```
+
+`parseXmlWith`, `parseXmlsWith`, `parseFilesWith`, `parseFileWith` and `extractRawLinesWith` all take one. The parameterless forms are exactly `ReaderOptions.defaults`, so nothing changes for a caller that does not ask.
+
+Extensions are matched with `EndsWith` and so include the dot. Widening them says which *languages* to read, not which paths and names to trust: a vendored or `AssemblyInfo` file is still excluded whatever its extension. Both exclusion lists are fields on the record too, so a project shipping a production file the default name list would drop — `TestKit.fs`, say — can override them.
 
 ### `CoverageRatchet.Thresholds`
 

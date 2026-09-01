@@ -363,3 +363,101 @@ let ``LinesCovered and LinesTotal agree with LinePct`` () =
     test <@ coverage.LinesCovered = 2 @>
     test <@ coverage.LinesTotal = 4 @>
     test <@ coverage.LinePct = 50.0 @>
+
+// ── ReaderOptions: which sources the reader is willing to read ────────────────────
+
+[<Fact>]
+let ``parseXml - a C# report reads as zero files by default`` () =
+    // The default is F#-only, and stays that way. This is the "before" half of the
+    // issue's reproduction, pinned so widening the reader cannot quietly widen the
+    // default with it.
+    let xml = classXml "src/Handler.cs" [ 1, 1; 2, 0 ]
+
+    test <@ parseXml xml |> List.isEmpty @>
+
+[<Fact>]
+let ``parseXmlWith - widening the extensions reads the same report`` () =
+    // The issue's reproduction: identical bytes, identical numbers, different
+    // extension. Renaming .cs to .fs inside the XML was enough to make the whole
+    // pipeline work, which is what showed the filter was the only F#-specific thing
+    // in the path.
+    let asCSharp = classXml "src/Handler.cs" [ 1, 1; 2, 0 ]
+    let asFSharp = classXml "src/Handler.fs" [ 1, 1; 2, 0 ]
+
+    let options = ReaderOptions.defaults |> ReaderOptions.withExtensions [| ".cs" |]
+
+    let widened = parseXmlWith options asCSharp
+    let renamed = parseXml asFSharp
+
+    test <@ widened.Length = 1 @>
+    test <@ widened.[0].FileName = "Handler.cs" @>
+    test <@ widened.[0].LinePct = 50.0 @>
+
+    // Same coverage either way — the extension decided whether it was read, not
+    // what it measured.
+    test <@ widened.[0].LinePct = renamed.[0].LinePct @>
+    test <@ widened.[0].LinesCovered = renamed.[0].LinesCovered @>
+    test <@ widened.[0].LinesTotal = renamed.[0].LinesTotal @>
+
+[<Fact>]
+let ``parseXmlWith - several languages can be read at once`` () =
+    let xmls =
+        [ classXml "src/Handler.cs" [ 1, 1; 2, 0 ]
+          classXml "src/Legacy.vb" [ 1, 1; 2, 1 ]
+          classXml "src/Core.fs" [ 1, 0; 2, 0 ] ]
+
+    let options =
+        ReaderOptions.defaults |> ReaderOptions.withExtensions [| ".fs"; ".cs"; ".vb" |]
+
+    let names =
+        parseXmlsWith options xmls |> List.map (fun f -> f.FileName) |> List.sort
+
+    test <@ names = [ "Core.fs"; "Handler.cs"; "Legacy.vb" ] @>
+
+[<Fact>]
+let ``parseXmlWith - widening the extensions does not disable the other filters`` () =
+    // Widening says which languages to read, not which paths and names to trust.
+    // A vendored C# file and a C# file whose name matches the exclusion list are
+    // still dropped, exactly as their F# counterparts are.
+    let xmls =
+        [ classXml "src/vendor/ThirdParty.cs" [ 1, 1 ]
+          classXml "src/AssemblyInfo.cs" [ 1, 1 ]
+          classXml "src/Handler.cs" [ 1, 1 ] ]
+
+    let options = ReaderOptions.defaults |> ReaderOptions.withExtensions [| ".cs" |]
+
+    let names = parseXmlsWith options xmls |> List.map (fun f -> f.FileName)
+
+    test <@ names = [ "Handler.cs" ] @>
+
+[<Fact>]
+let ``ReaderOptions - the exclusion lists are reachable too`` () =
+    // The extension filter is what issue #2 was about, but all three lists were
+    // private with no hook. A project shipping a production file the default name
+    // list would drop can now say so — see issue #3 for why that came up.
+    let xmls =
+        [ classXml "src/TestKit.fs" [ 1, 1; 2, 0 ]
+          classXml "src/Real.fs" [ 1, 1; 2, 0 ] ]
+
+    let keepEverything =
+        { ReaderOptions.defaults with
+            ExcludedFileNamePatterns = [||] }
+
+    let defaulted = parseXmls xmls |> List.map (fun f -> f.FileName)
+
+    let widened =
+        parseXmlsWith keepEverything xmls |> List.map (fun f -> f.FileName) |> List.sort
+
+    test <@ defaulted = [ "Real.fs" ] @>
+    test <@ widened = [ "Real.fs"; "TestKit.fs" ] @>
+
+[<Fact>]
+let ``extractRawLines - the parameterless form is the defaults`` () =
+    // Every parameterless entry point delegates to its *With twin rather than
+    // duplicating the pipeline, so this is the one assertion that keeps the two
+    // from drifting apart.
+    let xml = classXml "src/Core.fs" [ 1, 1; 2, 0 ]
+
+    test <@ extractRawLines xml = extractRawLinesWith ReaderOptions.defaults xml @>
+    test <@ parseXml xml = parseXmlWith ReaderOptions.defaults xml @>
+    test <@ parseXmls [ xml ] = parseXmlsWith ReaderOptions.defaults [ xml ] @>
