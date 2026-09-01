@@ -108,7 +108,7 @@
     ],
     "Vcs.fs": [
       {
-        "line": 97,
+        "line": 98,
         "branch": 93,
         "reason": "All functions call jj/git processes",
         "platform": "macos"
