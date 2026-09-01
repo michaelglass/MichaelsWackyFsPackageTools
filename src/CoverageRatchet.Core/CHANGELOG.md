@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- feat: `extractExclusions`, `extractExclusionsFromXmls` and `extractExclusionsFromFiles` report the files a Cobertura report contains that the reader did NOT read, each with an `ExclusionReason` — `NotASourceExtension`, `ExcludedByFileName`, or `ExcludedByPath`. Together with `extractRawLines` they partition the report rather than each filtering it independently, which is what makes "3 files, 1 excluded" trustworthy; a test asserts the two sides account for every class element.
+- refactor: the three inclusion checks were an `&&` of three booleans, which reaches the same verdict but cannot say which one decided it. They are now one `classify` returning the reason, with `isIncluded` defined in terms of it, so the filter and the explanation cannot drift apart.
+
 ## 0.1.0-alpha.7 - 2026-08-30
 
 - Finish: AUTOMATION-127 fail when configured coverage floors are unmeasured

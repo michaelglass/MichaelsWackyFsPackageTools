@@ -32,22 +32,59 @@ let private excludedPathPatterns =
 
 let private branchRegex = Regex(@"\((\d+)/(\d+)\)", RegexOptions.Compiled)
 
-let private isIncluded (fileName: string) =
-    let hasValidExt = includedExtensions |> Array.exists fileName.EndsWith
-    let baseName = Path.GetFileName(fileName)
+// sync:exclusion-reason:start
+/// Why the reader declined to read a file the Cobertura report does contain.
+///
+/// A filtered file is absent from BOTH sides of "N/N files passed": it never
+/// reaches `buildCoverage`, so it never gets a floor, so `unmeasuredFloors` has
+/// no obligation to report as missing and `Incomplete` cannot fire for it. That
+/// is the same shape `NothingMeasured` exists to prevent, one level down — the
+/// denominator is the filtered evidence rather than the obligation — and it is
+/// why the reason travels with the file instead of the filter just returning
+/// false.
+type ExclusionReason =
+    | NotASourceExtension
+    | ExcludedByFileName of pattern: string
+    | ExcludedByPath of pattern: string
 
-    let isFileExcluded = excludedFileNamePatterns |> Array.exists baseName.Contains
+/// A file present in the report that the reader did not read, and why.
+type ExcludedFile =
+    { FileName: string
+      Reason: ExclusionReason }
+// sync:exclusion-reason:end
 
-    let segments =
-        fileName.Split([| '/'; '\\' |], System.StringSplitOptions.RemoveEmptyEntries)
+module ExclusionReason =
+    /// One clause, for a line that has to say why without sending anyone to a manual.
+    let describe =
+        function
+        | NotASourceExtension -> "not an F# source file"
+        | ExcludedByFileName pattern -> sprintf "name contains \"%s\"" pattern
+        | ExcludedByPath pattern -> sprintf "under a \"%s\" path segment" pattern
 
-    let isPathExcluded =
-        segments
-        |> Array.exists (fun seg ->
-            excludedPathPatterns
-            |> Array.exists (fun p -> seg.Equals(p, System.StringComparison.OrdinalIgnoreCase)))
+/// The reason this file was filtered out, or `None` if it was read.
+///
+/// The three checks were an `&&` of three booleans, which is the same verdict but
+/// cannot say which one decided it. Order matters only for the REASON reported, not
+/// for whether the file is read: extension first, then name, then path.
+let private classify (fileName: string) : ExclusionReason option =
+    if not (includedExtensions |> Array.exists fileName.EndsWith) then
+        Some NotASourceExtension
+    else
+        let baseName = Path.GetFileName(fileName)
 
-    hasValidExt && not isFileExcluded && not isPathExcluded
+        match excludedFileNamePatterns |> Array.tryFind baseName.Contains with
+        | Some pattern -> Some(ExcludedByFileName pattern)
+        | None ->
+            let segments =
+                fileName.Split([| '/'; '\\' |], System.StringSplitOptions.RemoveEmptyEntries)
+
+            segments
+            |> Array.tryPick (fun seg ->
+                excludedPathPatterns
+                |> Array.tryFind (fun p -> seg.Equals(p, System.StringComparison.OrdinalIgnoreCase)))
+            |> Option.map ExcludedByPath
+
+let private isIncluded (fileName: string) = (classify fileName).IsNone
 
 /// Raw line data extracted from a Cobertura XML class element.
 type RawLine =
@@ -113,6 +150,43 @@ let extractRawLines (xmlContent: string) =
         else
             lines :> seq<_>)
     |> Seq.toList
+
+
+/// Every file the report contains that the reader did NOT read, and why.
+///
+/// The counterpart of `extractRawLines`: between them they account for every
+/// `<class>` element in the report, which is what lets a caller say "3 files, 1
+/// excluded" rather than "3 files" and leave the reader to wonder.
+let extractExclusions (xmlContent: string) : ExcludedFile list =
+    let doc = XDocument.Parse(xmlContent)
+    let ns = doc.Root.Name.Namespace
+
+    doc.Root.Descendants(ns + "class")
+    |> Seq.choose (fun classEl ->
+        let fn = classEl.Attribute(XName.Get("filename"))
+
+        if isNull fn then
+            None
+        else
+            classify fn.Value
+            |> Option.map (fun reason ->
+                { FileName = Path.GetFileName(fn.Value)
+                  Reason = reason }))
+    |> Seq.distinctBy (fun e -> e.FileName)
+    |> Seq.sortBy (fun e -> e.FileName)
+    |> Seq.toList
+
+/// Exclusions across several reports, deduplicated by file name — the same
+/// merge `parseXmls` does for the files it does read.
+let extractExclusionsFromXmls (xmlContents: string list) : ExcludedFile list =
+    xmlContents
+    |> List.collect extractExclusions
+    |> List.distinctBy (fun e -> e.FileName)
+    |> List.sortBy (fun e -> e.FileName)
+
+/// Exclusions across several report files on disk.
+let extractExclusionsFromFiles (xmlPaths: string list) : ExcludedFile list =
+    xmlPaths |> List.map File.ReadAllText |> extractExclusionsFromXmls
 
 /// Build FileCoverage list from raw line data.
 let buildCoverage (rawLines: RawLine list) : FileCoverage list =
