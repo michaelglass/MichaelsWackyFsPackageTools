@@ -193,7 +193,12 @@ module RunConclusion =
         | other -> OtherConclusion other
 
 type CiRunInfo =
-    { Name: string
+    { RunId: string
+      RunIdOrdinal: int64
+      Attempt: int
+      CreatedAt: System.DateTimeOffset
+      WorkflowId: int64 option
+      Name: string
       Url: string
       Status: RunStatus
       Conclusion: RunConclusion }
@@ -217,46 +222,120 @@ let parseCiRuns (json: string) : CiRunInfo list =
               else
                   prop.GetString()
 
-          { Name = elem.GetProperty("name").GetString()
+          let runId =
+              match elem.TryGetProperty("databaseId") with
+              | true, value -> value.ToString()
+              | false, _ -> "unknown"
+
+          let runIdOrdinal =
+              match elem.TryGetProperty("databaseId") with
+              | true, value -> value.GetInt64()
+              | false, _ -> 0L
+
+          let attempt =
+              match elem.TryGetProperty("attempt") with
+              | true, value -> value.GetInt32()
+              | false, _ -> 1
+
+          let createdAt =
+              match elem.TryGetProperty("createdAt") with
+              | true, value -> System.DateTimeOffset.Parse(value.GetString())
+              | false, _ -> System.DateTimeOffset.MinValue
+
+          let workflowId =
+              match elem.TryGetProperty("workflowDatabaseId") with
+              | true, value -> Some(value.GetInt64())
+              | false, _ -> None
+
+          { RunId = runId
+            RunIdOrdinal = runIdOrdinal
+            Attempt = attempt
+            CreatedAt = createdAt
+            WorkflowId = workflowId
+            Name = elem.GetProperty("name").GetString()
             Url = elem.GetProperty("url").GetString()
             Status = RunStatus.ofString (elem.GetProperty("status").GetString())
             Conclusion = RunConclusion.ofString conclusionStr } ]
 
 let checkCiStatusForSha (run: string -> string -> CommandResult) (sha: string) : CiStatus =
-    let args = sprintf "run list --commit %s --json status,conclusion,name,url" sha
+    let args =
+        sprintf
+            "run list --workflow .github/workflows/ci.yml --commit %s --json status,conclusion,name,url,databaseId,attempt,createdAt,workflowDatabaseId"
+            sha
 
     withJjGitDir (fun () ->
         match run "gh" args with
         | Success output ->
-            let runs = parseCiRuns output
+            // The workflow PATH is the stable identity. Display names are not:
+            // two workflows may share one, and a name can be edited at any time.
+            let consideredRuns = parseCiRuns output
+
+            let ordered =
+                consideredRuns
+                |> List.sortByDescending (fun workflowRun ->
+                    workflowRun.CreatedAt, workflowRun.Attempt, workflowRun.RunIdOrdinal)
+
+            let runs = ordered |> List.truncate 1
+
+            let reportRefusal reason =
+                printfn "Required CI workflow refused the release for %s: %s" sha reason
+
+                for workflowRun in consideredRuns do
+                    let decision =
+                        if runs |> List.contains workflowRun then
+                            "authoritative attempt"
+                        else
+                            "older attempt"
+
+                    printfn
+                        "  run %s attempt %d workflow %A: %s — created=%O status=%A conclusion=%A — %s"
+                        workflowRun.RunId
+                        workflowRun.Attempt
+                        workflowRun.WorkflowId
+                        workflowRun.Name
+                        workflowRun.CreatedAt
+                        workflowRun.Status
+                        workflowRun.Conclusion
+                        decision
 
             if runs.IsEmpty then
+                reportRefusal "no run from .github/workflows/ci.yml exists on the exact release SHA"
                 NoRuns
             else
-                let failed =
-                    runs
-                    |> List.filter (fun r ->
-                        match r.Conclusion with
-                        | FailureConclusion
-                        | CancelledConclusion -> true
-                        | _ -> false)
+                let latest = List.head runs
 
-                if failed.Length > 0 then
-                    Failed failed
-                elif
-                    (runs
-                     |> List.exists (fun r -> r.Status = Completed && r.Conclusion = SuccessConclusion))
-                    && (runs
-                        |> List.forall (fun r ->
-                            match r.Status, r.Conclusion with
-                            | Completed, SuccessConclusion
-                            | Completed, SkippedConclusion
-                            | Completed, NeutralConclusion -> true
-                            | _ -> false))
-                then
+                let workflowIdentityAmbiguous =
+                    ordered |> List.choose _.WorkflowId |> List.distinct |> List.length > 1
+
+                let ambiguous =
+                    ordered
+                    |> List.skip 1
+                    |> List.exists (fun other ->
+                        other.CreatedAt = latest.CreatedAt
+                        && other.Attempt = latest.Attempt
+                        && other.RunIdOrdinal = latest.RunIdOrdinal)
+
+                if workflowIdentityAmbiguous then
+                    reportRefusal "the workflow path resolved to more than one workflow database id"
+                    Failed ordered
+                elif ambiguous then
+                    reportRefusal "multiple newest CI runs have the same creation time and attempt"
+
+                    Failed(
+                        ordered
+                        |> List.takeWhile (fun other ->
+                            other.CreatedAt = latest.CreatedAt
+                            && other.Attempt = latest.Attempt
+                            && other.RunIdOrdinal = latest.RunIdOrdinal)
+                    )
+                elif latest.Status = Completed && latest.Conclusion = SuccessConclusion then
                     Passed
-                else
+                elif latest.Status = InProgressStatus || latest.Status = Queued then
+                    reportRefusal "the newest required CI attempt is queued or running"
                     InProgress runs
+                else
+                    reportRefusal "the newest required CI attempt ended without success"
+                    Failed runs
         | Failure _ -> Unknown)
 
 let private checkCiForSha (run: string -> string -> CommandResult) (sha: string) : bool =

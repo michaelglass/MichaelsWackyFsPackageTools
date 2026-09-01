@@ -648,7 +648,7 @@ let ``waitForCi - polls until CI passes`` () =
     test <@ ghCallCount = 3 @>
 
 [<Fact>]
-let ``waitForCi - completed success plus skipped tag jobs passes without polling`` () =
+let ``waitForCi - exact workflow query ignores same-SHA skipped release and docs jobs`` () =
     let mutable ghCallCount = 0
 
     let run (cmd: string) (args: string) : CommandResult =
@@ -658,7 +658,7 @@ let ``waitForCi - completed success plus skipped tag jobs passes without polling
             ghCallCount <- ghCallCount + 1
 
             Success
-                """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/ci"},{"status":"completed","conclusion":"skipped","name":"Deploy Docs","url":"https://example.com/docs"},{"status":"completed","conclusion":"skipped","name":"Release","url":"https://example.com/release"}]"""
+                """[{"databaseId":101,"attempt":1,"createdAt":"2026-08-31T12:00:00Z","workflowDatabaseId":77,"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/ci"}]"""
         | _ -> Failure(sprintf "unexpected: %s %s" cmd args, 1)
 
     let result = waitForCi run 0 3

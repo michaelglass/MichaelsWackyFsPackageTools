@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: release CI preflight now gates on the exact-SHA `.github/workflows/ci.yml` workflow and its newest run attempt, instead of treating every workflow or every historical attempt on that commit as part of the gate. A successful rerun can resume `release --only` even when an older CI attempt failed or same-SHA Release/Docs workflows are incomplete. Refusals list run IDs, attempts, workflow IDs, timestamps, statuses, conclusions, and the authoritative-attempt decision (AUTOMATION-601).
+
 - fix: a tag push failure now stays distinct from a tag that reached GitHub but started no workflow. The release command no longer claims a failed tag is already remote; it explains how to resume after fixing the transport, or how to restore the last published versions when abandoning the release (AUTOMATION-309).
 
 ## 0.14.0-alpha.7 - 2026-08-30
