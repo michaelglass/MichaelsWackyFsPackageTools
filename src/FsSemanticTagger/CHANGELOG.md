@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: a tag push failure now stays distinct from a tag that reached GitHub but started no workflow. The release command no longer claims a failed tag is already remote; it explains how to resume after fixing the transport, or how to restore the last published versions when abandoning the release (AUTOMATION-309).
+
 ## 0.14.0-alpha.7 - 2026-08-30
 
 - fix: release CI polling now treats completed `skipped` and `neutral` workflow runs as non-required once at least one run has genuinely succeeded, so tag-only jobs no longer leave a fully completed release waiting forever. A skipped/neutral-only run set still cannot pass, and failures or cancellations still fail the release.

@@ -933,6 +933,23 @@ let ``pushTagsAndConfirm - a push that never succeeds still fails loudly`` () =
     test <@ pushTagsAndConfirm run 2 0 [ "v1.0.0" ] = [ "v1.0.0" ] @>
 
 [<Fact>]
+let ``pushTagsAndConfirmDetailed - preserves that the tag never reached the remote`` () =
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", "git export" -> Success ""
+        | "jj", a when a.StartsWith("git push --tag") -> Failure("jj refused", 1)
+        | "git", a when a.StartsWith("push origin") -> Failure("permission denied", 128)
+        | "git", "remote get-url origin" -> Success "https://github.com/example/repo.git"
+        | "git", "config --get-regexp ^credential" -> Failure("", 1)
+        | _ -> Failure("unexpected", 1)
+
+    match pushTagsAndConfirmDetailed run 1 0 [ "v1.0.0" ] with
+    | [ TagConfirmationFailure.PushFailed(tag, reason) ] ->
+        test <@ tag = "v1.0.0" @>
+        test <@ reason.Contains("credential helper") @>
+    | other -> failwithf "Expected one push failure, got %A" other
+
+[<Fact>]
 let ``pushTagsAndConfirm - a tag is pushed through jj, not raw git`` () =
     // AUTOMATION-309's primary fix. `jj git push` authenticates in exactly the
     // environment where the shelled-out git cannot, so preferring it removes the

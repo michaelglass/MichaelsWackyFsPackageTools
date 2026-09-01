@@ -472,12 +472,16 @@ let private pushOneTag
 /// happening", and the difference is invisible from here — the tags are on the remote
 /// either way. An unaskable question counts as UNCONFIRMED: answering "all fine" because
 /// the check itself could not run would be the same lie one level down.
-let pushTagsAndConfirm
+type internal TagConfirmationFailure =
+    | PushFailed of tag: string * reason: string
+    | WorkflowTriggerMissing of tag: string
+
+let internal pushTagsAndConfirmDetailed
     (run: string -> string -> CommandResult)
     (attempts: int)
     (delayMs: int)
     (tags: string list)
-    : string list =
+    : TagConfirmationFailure list =
     runOrFail run "jj" "git export" |> ignore
 
     // A tag that never reached the remote is a DIFFERENT failure from one that
@@ -491,23 +495,36 @@ let pushTagsAndConfirm
             |> List.choose (fun tag ->
                 match pushOneTag run attempts delayMs tag with
                 | Ok() -> None
-                | Error reason ->
-                    eprintfn "  %s" reason
-                    Some tag))
+                | Error reason -> Some(tag, reason)))
 
     // Give GitHub a moment to register the events before asking about them.
     if not (List.isEmpty tags) then
         System.Threading.Thread.Sleep(delayMs)
 
-    let failedToPush = Set.ofList failures
+    let pushFailures = Map.ofList failures
 
     tags
-    |> List.filter (fun tag ->
+    |> List.choose (fun tag ->
         // Never ASK about a tag we know did not land: `gh` would answer "no run",
         // which is true and would be reported under the wrong heading.
-        if failedToPush.Contains tag then
-            true
-        else
+        match pushFailures.TryFind tag with
+        | Some reason -> Some(PushFailed(tag, reason))
+        | None ->
             match runCountForRef run tag with
-            | Some n when n > 0 -> false
-            | _ -> true)
+            | Some n when n > 0 -> None
+            | _ -> Some(WorkflowTriggerMissing tag))
+
+/// Compatibility surface for callers that only need the tag names. Release uses
+/// the detailed result so it cannot tell an operator that a failed push landed.
+let pushTagsAndConfirm
+    (run: string -> string -> CommandResult)
+    (attempts: int)
+    (delayMs: int)
+    (tags: string list)
+    : string list =
+    pushTagsAndConfirmDetailed run attempts delayMs tags
+    |> List.map (function
+        | PushFailed(tag, reason) ->
+            eprintfn "  %s" reason
+            tag
+        | WorkflowTriggerMissing tag -> tag)
