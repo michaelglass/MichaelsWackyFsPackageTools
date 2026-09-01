@@ -27,3 +27,8 @@ jobs:
       contents: read
       checks: write
       pull-requests: write
+
+  lint-project:
+    uses: ./.github/workflows/michaels-wacky-lint-project.yml
+    permissions:
+      contents: read
