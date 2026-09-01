@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: `check` and `targets` now say when the reader dropped a file. A file excluded by the reader's filters is absent from BOTH sides of `Result: N/N files in the report passed` — it never reaches `buildCoverage`, so it never gets a floor, so `unmeasuredFloors` has no obligation to report as missing and `Incomplete` cannot fire for it. `3/3` and `4/4` were therefore indistinguishable to a reader, which is the same failure `NothingMeasured` exists to prevent one level down: the denominator was the filtered evidence rather than the obligation. `check` appends the count to the line it already prints; `targets` names each dropped file and which filter decided, since that is the command you run when you want to know what is measurable and it is not on any CI hot path.
+
 ## 0.15.0-alpha.17 - 2026-09-27
 
 - feat: `propose-from-ci <run-id> [output]` reads a CI run's `coverage-thresholds` artifact and lists every file below the floor that run's platform enforces, across every project at once, with a drafted `overrides` entry for each: lowered only where it fell, to the measured value rounded down, tagged with the platform, and a reason citing the run, the commit and the numbers. It is read-only: it never edits a floor file, never commits and never pushes. A whole-number measurement against a fractional floor is reported as undetermined rather than drafted.
