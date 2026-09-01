@@ -221,6 +221,49 @@ let internal waitForNuGet
 
     poll 0 packages
 
+let internal reportTagConfirmationFailures (failures: TagConfirmationFailure list) : int =
+    let pushFailures =
+        failures
+        |> List.choose (function
+            | PushFailed(tag, reason) -> Some(tag, reason)
+            | WorkflowTriggerMissing _ -> None)
+
+    let missingTriggers =
+        failures
+        |> List.choose (function
+            | WorkflowTriggerMissing tag -> Some tag
+            | PushFailed _ -> None)
+
+    if not pushFailures.IsEmpty then
+        printfn "Error: %d tag push(es) failed:" pushFailures.Length
+
+        for tag, reason in pushFailures do
+            printfn "  %s — %s" tag reason
+
+        printfn ""
+
+        printfn
+            "The version-bump commit is already on the remote, so versions in the tree are ahead of the last published release."
+
+        printfn "After fixing authentication or transport, resume by running the same release command again."
+
+        printfn
+            "If abandoning the release, reset the bumped versions and changelog to the last published tags before starting another release."
+
+    if not missingTriggers.IsEmpty then
+        printfn "Error: %d pushed tag(s) have no workflow run:" missingTriggers.Length
+
+        for tag in missingTriggers do
+            printfn "  %s" tag
+
+        printfn ""
+        printfn "These tags ARE on the remote — this is a MISSING TRIGGER, not a push failure."
+        printfn "Nothing will be built or published for them until a run exists."
+        printfn "Re-push one at a time to trigger:  git push origin :refs/tags/<tag> && git push origin <tag>"
+        printfn "(If `gh` is unavailable or unauthenticated here, verify manually rather than assuming it published.)"
+
+    1
+
 let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * Version) list) : int =
     let run = input.Run
 
@@ -237,21 +280,10 @@ let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * 
         // A tag can land on the remote and trigger no workflow at all (a batch push
         // does exactly that), so confirm a run exists rather than claiming a release
         // is happening.
-        let unconfirmed = pushTagsAndConfirm run 3 3000 tags
+        let unconfirmed = pushTagsAndConfirmDetailed run 3 3000 tags
 
         if not (List.isEmpty unconfirmed) then
-            printfn "Error: pushed %d tag(s), but no workflow run appeared for:" (List.length tags)
-
-            for tag in unconfirmed do
-                printfn "  %s" tag
-
-            printfn ""
-            printfn "The tags ARE on the remote — this is not a push failure, it is a MISSING TRIGGER."
-            printfn "Nothing will be built or published for them until a run exists."
-            printfn "Re-push one at a time to trigger:  git push origin :refs/tags/<tag> && git push origin <tag>"
-            printfn "(If `gh` is unavailable or unauthenticated here, the check could not run and says so"
-            printfn " by listing the tag — verify manually rather than assuming it published.)"
-            1
+            reportTagConfirmationFailures unconfirmed
         else
 
             printfn "Tags pushed, and a workflow run exists for each. GitHub Actions will handle the release."
