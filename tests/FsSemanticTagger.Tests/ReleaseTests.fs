@@ -60,6 +60,37 @@ let private runRelease run config cmd mode prev cur poll max =
     runReleaseWithPush run config cmd mode prev cur poll max false
 
 [<Fact>]
+let ``tag confirmation output does not claim a failed push reached the remote`` () =
+    let output, result =
+        withCapturedConsole (fun () ->
+            reportTagConfirmationFailures
+                [ TagConfirmationFailure.PushFailed(
+                      "fssemantictagger-v0.14.0-alpha.8",
+                      "the HTTPS remote has no credential helper"
+                  ) ])
+
+    test <@ result = 1 @>
+    test <@ output.Contains("tag push(es) failed") @>
+    test <@ output.Contains("versions in the tree are ahead") @>
+    test <@ output.Contains("resume by running the same release command again") @>
+    test <@ output.Contains("If abandoning the release, reset the bumped versions") @>
+    test <@ not (output.Contains("ARE on the remote")) @>
+    test <@ not (output.Contains("MISSING TRIGGER")) @>
+
+[<Fact>]
+let ``tag confirmation output keeps a missing trigger distinct from a failed push`` () =
+    let output, result =
+        withCapturedConsole (fun () ->
+            reportTagConfirmationFailures
+                [ TagConfirmationFailure.WorkflowTriggerMissing "fssemantictagger-v0.14.0-alpha.8" ])
+
+    test <@ result = 1 @>
+    test <@ output.Contains("pushed tag(s) have no workflow run") @>
+    test <@ output.Contains("ARE on the remote") @>
+    test <@ output.Contains("MISSING TRIGGER") @>
+    test <@ not (output.Contains("versions in the tree are ahead")) @>
+
+[<Fact>]
 let ``updateFsprojVersion - updates Version element in fsproj`` () =
     let tmpFile = Path.GetTempFileName()
 
