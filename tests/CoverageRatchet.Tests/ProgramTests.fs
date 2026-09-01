@@ -2260,3 +2260,95 @@ let ``run - ratchet exits 2 when a count floor is breached`` () =
 let ``main with baseline-lines --help returns 0`` () =
     let result = main [| "baseline-lines"; "--help" |]
     test <@ result = 0 @>
+
+// ── Files the reader dropped are named rather than silently absent ────────────────
+
+/// The reproduction from the issue: four production files with identical coverage,
+/// one of them called `TestKit.fs`. It is filtered before it can become an
+/// obligation, so `unmeasuredFloors` has nothing to report and `check` renders a
+/// clean `3/3` with the file removed from the denominator as well as the numerator.
+let private fourFilesOneNamedTestKit =
+    let cls (name: string) =
+        sprintf
+            """<class filename="MyLib/%s"><lines><line number="1" hits="1" /><line number="2" hits="0" /></lines></class>"""
+            name
+
+    sprintf
+        """<?xml version="1.0" encoding="utf-8"?>
+<coverage><packages><package name="MyLib"><classes>%s%s%s%s</classes></package></packages></coverage>"""
+        (cls "Harness.fs")
+        (cls "TestKit.fs")
+        (cls "ProtestBanner.fs")
+        (cls "Latest.fs")
+
+[<Fact>]
+let ``run - check says how many files the reader did not read`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), fourFilesOneNamedTestKit)
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        File.WriteAllText(
+            configPath,
+            """{
+  "overrides": {
+    "Harness.fs": { "line": 50, "branch": 100 },
+    "ProtestBanner.fs": { "line": 50, "branch": 100 },
+    "Latest.fs": { "line": 50, "branch": 100 }
+  }
+}"""
+        )
+
+        let output, result =
+            withCapturedConsole (fun () -> run (Check(config = Some configPath)) tmpDir false)
+
+        // Still a pass, and still 3/3 — the point is not that the run should fail, it
+        // is that 3/3 and 4/4 were indistinguishable to a reader.
+        test <@ result = Ok 0 @>
+        test <@ output.Contains("Result: 3/3 files in the report passed") @>
+        test <@ output.Contains("1 more was excluded by the reader") @>)
+
+[<Fact>]
+let ``run - check says nothing extra when the reader read everything`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 100)
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, """{ "overrides": { "Foo.fs": { "line": 50, "branch": 100 } } }""")
+
+        let output, result =
+            withCapturedConsole (fun () -> run (Check(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 0 @>
+        test <@ output.Contains("Result: 1/1 files in the report passed") @>
+        test <@ not (output.Contains("excluded by the reader")) @>)
+
+[<Fact>]
+let ``run - targets names the dropped file and why`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), fourFilesOneNamedTestKit)
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, "{}")
+
+        let output, result =
+            withCapturedConsole (fun () -> run (Targets(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 0 @>
+        test <@ output.Contains("3 files") @>
+        test <@ output.Contains("Not read by the coverage reader:") @>
+        test <@ output.Contains("TestKit.fs") @>
+
+        // The reason matters as much as the name. "TestKit.fs is missing" sends you
+        // looking for a broken test run; "its name contains Test" does not.
+        test <@ output.Contains("name contains \"Test\"") @>)
+
+[<Fact>]
+let ``run - targets stays quiet when nothing was dropped`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 100)
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, "{}")
+
+        let output, result =
+            withCapturedConsole (fun () -> run (Targets(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 0 @>
+        test <@ not (output.Contains("Not read by the coverage reader")) @>)

@@ -68,6 +68,41 @@ let gaps: FileBranchGaps list = buildBranchGaps rawLines
 
 Files from paths like `paket-files/`, `vendor/`, `node_modules/`, and `.fable/` are automatically excluded, as are files matching `Test`, `AssemblyInfo`, or `AssemblyAttributes` in their name. Only `.fs` files are included.
 
+A filtered file is absent from everything downstream — it never reaches `buildCoverage`, so it never gets a floor, so nothing can report it as missing. `extractExclusions` is the counterpart of `extractRawLines`: between them they account for every `<class>` element in the report, so a caller can say "3 files, 1 excluded" instead of "3 files".
+
+<!-- sync:exclusion-reason:start src=src/CoverageRatchet.Core/Cobertura.fs -->
+```fsharp
+/// Why the reader declined to read a file the Cobertura report does contain.
+///
+/// A filtered file is absent from BOTH sides of "N/N files passed": it never
+/// reaches `buildCoverage`, so it never gets a floor, so `unmeasuredFloors` has
+/// no obligation to report as missing and `Incomplete` cannot fire for it. That
+/// is the same shape `NothingMeasured` exists to prevent, one level down — the
+/// denominator is the filtered evidence rather than the obligation — and it is
+/// why the reason travels with the file instead of the filter just returning
+/// false.
+type ExclusionReason =
+    | NotASourceExtension
+    | ExcludedByFileName of pattern: string
+    | ExcludedByPath of pattern: string
+
+/// A file present in the report that the reader did not read, and why.
+type ExcludedFile =
+    { FileName: string
+      Reason: ExclusionReason }
+```
+<!-- sync:exclusion-reason:end -->
+
+```fsharp
+let dropped: ExcludedFile list = extractExclusionsFromFiles [ "/path/to/coverage.cobertura.xml" ]
+
+for e in dropped do
+    printfn "%s — %s" e.FileName (ExclusionReason.describe e.Reason)
+    // TestKit.fs — name contains "Test"
+```
+
+`extractExclusions` takes one XML string, `extractExclusionsFromXmls` a list of them, and `extractExclusionsFromFiles` a list of paths; the last two deduplicate by file name, the same merge `parseXmls` does for the files it does read.
+
 ### `CoverageRatchet.Thresholds`
 
 Loads, saves, and checks per-file coverage thresholds from a `coverage-ratchet.json` config.

@@ -363,3 +363,85 @@ let ``LinesCovered and LinesTotal agree with LinePct`` () =
     test <@ coverage.LinesCovered = 2 @>
     test <@ coverage.LinesTotal = 4 @>
     test <@ coverage.LinePct = 50.0 @>
+
+// ── What the reader dropped ───────────────────────────────────────────────────────
+
+[<Fact>]
+let ``extractExclusions - names a production file caught by the name filter`` () =
+    // The issue's reproduction: four production files with identical coverage, one of
+    // them called TestKit.fs. It is dropped before it can become an obligation, so
+    // nothing downstream can report it missing — which is why the reader has to.
+    let xmls =
+        [ classXml "MyLib/Harness.fs" [ 1, 1; 2, 0 ]
+          classXml "MyLib/TestKit.fs" [ 1, 1; 2, 0 ]
+          classXml "MyLib/ProtestBanner.fs" [ 1, 1; 2, 0 ]
+          classXml "MyLib/Latest.fs" [ 1, 1; 2, 0 ] ]
+
+    let read = parseXmls xmls |> List.map (fun f -> f.FileName) |> List.sort
+    let dropped = extractExclusionsFromXmls xmls
+
+    test <@ read = [ "Harness.fs"; "Latest.fs"; "ProtestBanner.fs" ] @>
+    test <@ dropped |> List.map (fun e -> e.FileName) = [ "TestKit.fs" ] @>
+    test <@ dropped |> List.map (fun e -> e.Reason) = [ ExcludedByFileName "Test" ] @>
+
+[<Fact>]
+let ``extractExclusions - Latest and ProtestBanner survive because Contains is case-sensitive`` () =
+    // Not a behaviour anyone designed, but worth pinning while it holds: the filter
+    // catches PascalCase `Test` only, so `Latest.fs` and `ProtestBanner.fs` are read.
+    // If the matching rule is ever tightened, this test is where that shows up.
+    let xmls =
+        [ classXml "MyLib/Latest.fs" [ 1, 1 ]
+          classXml "MyLib/ProtestBanner.fs" [ 1, 1 ] ]
+
+    test <@ extractExclusionsFromXmls xmls |> List.isEmpty @>
+
+[<Fact>]
+let ``extractExclusions - reports which filter decided`` () =
+    let xmls =
+        [ classXml "MyLib/Handler.cs" [ 1, 1 ]
+          classXml "MyLib/AssemblyInfo.fs" [ 1, 1 ]
+          classXml "MyLib/vendor/ThirdParty.fs" [ 1, 1 ]
+          classXml "MyLib/Real.fs" [ 1, 1 ] ]
+
+    let reasons =
+        extractExclusionsFromXmls xmls
+        |> List.map (fun e -> e.FileName, e.Reason)
+        |> List.sortBy fst
+
+    test
+        <@
+            reasons = [ "AssemblyInfo.fs", ExcludedByFileName "AssemblyInfo"
+                        "Handler.cs", NotASourceExtension
+                        "ThirdParty.fs", ExcludedByPath "vendor" ]
+        @>
+
+[<Fact>]
+let ``extractExclusions - every class is either read or accounted for`` () =
+    // The property that makes "3 files, 1 excluded" trustworthy: the two functions
+    // partition the report rather than each filtering it independently.
+    let xmls =
+        [ classXml "MyLib/Real.fs" [ 1, 1 ]
+          classXml "MyLib/TestKit.fs" [ 1, 1 ]
+          classXml "MyLib/Handler.cs" [ 1, 1 ]
+          classXml "MyLib/node_modules/Dep.fs" [ 1, 1 ] ]
+
+    let read = parseXmls xmls |> List.map (fun f -> f.FileName)
+    let dropped = extractExclusionsFromXmls xmls |> List.map (fun e -> e.FileName)
+
+    test <@ List.length read + List.length dropped = 4 @>
+    test <@ Set.intersect (Set.ofList read) (Set.ofList dropped) |> Set.isEmpty @>
+
+[<Fact>]
+let ``extractExclusions - a clean report excludes nothing`` () =
+    let xmls = [ classXml "MyLib/Real.fs" [ 1, 1 ]; classXml "MyLib/Other.fs" [ 1, 0 ] ]
+
+    test <@ extractExclusionsFromXmls xmls |> List.isEmpty @>
+
+[<Fact>]
+let ``extractExclusions - one entry per file across several reports`` () =
+    // Same file in two reports is one exclusion, matching the merge parseXmls does
+    // for the files it does read.
+    let runA = classXml "MyLib/TestKit.fs" [ 1, 1 ]
+    let runB = classXml "MyLib/TestKit.fs" [ 2, 0 ]
+
+    test <@ (extractExclusionsFromXmls [ runA; runB ]).Length = 1 @>
