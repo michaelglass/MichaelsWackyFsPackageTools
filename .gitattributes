@@ -1,0 +1,13 @@
+# Keep the working tree LF on every platform, which is what .editorconfig already
+# declares for this repo (end_of_line = lf) and what the committed blobs already are.
+#
+# Without this, a Windows checkout gets CRLF — git's core.autocrlf default there — and
+# any test whose fixture is a multi-line string literal silently gains \r\n, because an
+# F# triple-quoted literal carries whatever line endings its SOURCE FILE has. Six
+# SyncDocs section tests fail that way on a stock windows-latest runner while passing on
+# a Windows dev box whose clone happens to be LF.
+#
+# This aligns the checkout with the declared intent; it does not change any committed
+# content. Note it also masks, rather than fixes, replaceSections not handling CRLF
+# DOCUMENTS — which is a separate, user-facing concern and is filed as its own issue.
+* text=auto eol=lf
