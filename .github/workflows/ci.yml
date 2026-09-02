@@ -21,6 +21,8 @@ jobs:
       # macOS on one band keeps both platforms' floors measuring the same thing.
       # Move both together, and re-measure the floors when you do.
       dotnet-version: '10.0.4xx'
+      # This repo opts in; the tests pass on Windows as of the parent commit.
+      test-windows: true
       fantomas-paths: "src/ tests/"
       syncdocs-cmd: "dotnet run --project $GITHUB_WORKSPACE/src/SyncDocs/SyncDocs.fsproj --"
       coverageratchet-cmd: "dotnet run --project $GITHUB_WORKSPACE/src/CoverageRatchet/CoverageRatchet.fsproj --"

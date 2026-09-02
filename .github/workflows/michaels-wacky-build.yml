@@ -51,6 +51,22 @@ on:
         description: 'Command to run for the Lint step. Empty string uses the default `dotnet fsharplint lint <solution>`. Override to e.g. `dotnet run --project src/MyCli -- analyze --run-once` when hosting analyzers in-process.'
         type: string
         default: ''
+      test-windows:
+        description: >-
+          Also build and run the tests on windows-latest, as a SEPARATE job. Off by
+          default, so a repo that has not opted in is completely unaffected.
+
+          Deliberately not a matrix over the `build` job. Giving that job a matrix
+          renames its check from `build` to `build (ubuntu-latest)`, which silently
+          breaks any branch protection rule requiring `build` in the repos that
+          consume this workflow. A second job adds a check rather than renaming one.
+
+          The Windows job runs build + tests only. Coverage stays on Linux: floors
+          are per-platform and no repo here has windows entries, so the ratchet would
+          fall back to the 100%/100% default and fail on the first file. Format, lint
+          and docs are platform-independent and are not worth paying for twice.
+        type: boolean
+        default: false
       failure-artifacts:
         description: >-
           Newline-separated glob(s) uploaded as a CI artifact when the job FAILS,
@@ -303,4 +319,52 @@ jobs:
           for proj in $projects; do
             echo "Building example: $proj"
             dotnet build "$proj" --warnaserror
+          done
+
+  # Build and test on Windows. Opt-in via the test-windows input; skipped entirely
+  # otherwise, so consumers that have not asked for it see no change beyond one
+  # skipped check.
+  #
+  # What this catches is the class of defect that is invisible to a Linux-only CI:
+  # code and tests that assume POSIX semantics. The three found when this repo was
+  # first run on Windows were a recursive delete refusing git's read-only loose
+  # objects (POSIX takes unlink permission from the parent directory, Windows from
+  # the file's own attribute), a fixture that used `Windows` as "some other
+  # platform", and path comparisons that assumed `/`.
+  test-windows:
+    if: inputs.test-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.fsproj', '**/*.csproj', '.config/dotnet-tools.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - run: dotnet tool restore
+      - name: Paket restore
+        if: inputs.paket-restore
+        run: dotnet tool run paket restore
+      - run: dotnet restore
+      - name: Pre-build
+        if: inputs.pre-build-cmd != ''
+        shell: bash
+        run: ${{ inputs.pre-build-cmd }}
+      - name: Build
+        run: dotnet build --warnaserror --no-restore
+      - name: Test
+        shell: bash
+        run: |
+          # shell: bash explicitly — GitHub's Windows runners default to pwsh, where
+          # this loop is a parse error. Git Bash ships on the image.
+          #
+          # No coverage collection here by design; see the test-windows input.
+          for proj in $(find tests -name '*.Tests.fsproj' | sort); do
+            echo "::group::$proj"
+            dotnet test --project "$proj" --no-build --no-restore ${{ inputs.test-extra-args }}
+            echo "::endgroup::"
           done
