@@ -340,13 +340,13 @@ let ``ratchetRaw preserves entries for other platforms`` () =
                     { Line = 0.0
                       Branch = 0.0
                       Reason = Some "other"
-                      Platform = Some Windows } ] ] }
+                      Platform = Some otherPlatform } ] ] }
 
     let files = [ makeFile "Foo.fs" 80.0 75.0 3 4 ]
     let result = ratchetRaw raw files
     let entries = result.RawOverrides.["Foo.fs"]
     let mine = entries |> List.find (fun o -> o.Platform = Some Platform.current)
-    let other = entries |> List.find (fun o -> o.Platform = Some Windows)
+    let other = entries |> List.find (fun o -> o.Platform = Some otherPlatform)
     test <@ mine.Line = 80.0 @>
     test <@ mine.Branch = 75.0 @>
     test <@ other.Line = 0.0 @>
@@ -368,14 +368,14 @@ let ``ratchetRaw removes current-platform entry when it reaches defaults`` () =
                     { Line = 0.0
                       Branch = 0.0
                       Reason = Some "other"
-                      Platform = Some Windows } ] ] }
+                      Platform = Some otherPlatform } ] ] }
 
     let files = [ makeFile "Foo.fs" 100.0 100.0 4 4 ]
     let result = ratchetRaw raw files
     let entries = result.RawOverrides.["Foo.fs"]
     // Current platform entry removed, other kept
     test <@ entries.Length = 1 @>
-    test <@ entries.[0].Platform = Some Windows @>
+    test <@ entries.[0].Platform = Some otherPlatform @>
 
 [<Fact>]
 let ``loosenRaw preserves entries for other platforms`` () =
@@ -393,13 +393,13 @@ let ``loosenRaw preserves entries for other platforms`` () =
                     { Line = 0.0
                       Branch = 0.0
                       Reason = Some "other"
-                      Platform = Some Windows } ] ] }
+                      Platform = Some otherPlatform } ] ] }
 
     let files = [ makeFile "Foo.fs" 70.0 60.0 2 4 ]
     let result = loosenRaw raw files
     let entries = result.RawOverrides.["Foo.fs"]
     let mine = entries |> List.find (fun o -> o.Platform = Some Platform.current)
-    let other = entries |> List.find (fun o -> o.Platform = Some Windows)
+    let other = entries |> List.find (fun o -> o.Platform = Some otherPlatform)
     test <@ mine.Line = 70.0 @>
     test <@ other.Line = 0.0 @>
 
@@ -421,7 +421,7 @@ let ``loosenRaw adds platform-agnostic entry for new file`` () =
 
 [<Fact>]
 let ``mergeFromCi - adds ci-platform entry splitting existing non-platform override`` () =
-    let ciPlatform = if Platform.current = MacOS then Linux else Windows
+    let ciPlatform = otherPlatform
 
     let raw: RawConfig =
         { DefaultLine = 100.0
