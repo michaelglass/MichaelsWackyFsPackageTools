@@ -484,3 +484,94 @@ let ``saveRawConfig - a file key with no entries serialises without crashing`` (
         test <@ List.isEmpty reloaded.RawCountFloors.["AlsoEmpty.fs"] @>
     finally
         File.Delete(path)
+
+// --- encoding stability (AUTOMATION-151) ---
+//
+// The floor file is the one file this project forbids anyone to hand-merge: floors are
+// re-settled by a full run, never by picking a number out of a conflict. So a writer
+// that rewrites bytes it was not asked to change does not merely make noise, it
+// manufactures the exact conflict the policy says must not be resolved by hand.
+//
+// Note what is NOT sufficient evidence here. save -> load -> save is a fixed point even
+// with the DEFAULT encoder, because both writes escape identically; a bare idempotence
+// test passes on the broken writer. The defect only shows against text a human typed,
+// so the assertion that has to hold is that a literal em-dash SURVIVES a write.
+
+/// The realistic case, taken from the reasons actually in this repo's floor files: an
+/// em-dash, an apostrophe and a backtick, every one of which `JavaScriptEncoder.Default`
+/// rewrites into a `\uXXXX` escape.
+let private proseReason =
+    "settled to the CI-measured actual \u2014 `httpGet`'s live call is not covered"
+
+[<Fact>]
+let ``saveRawConfig - a reason's non-ASCII text survives the write as literal UTF-8`` () =
+    let path = Path.GetTempFileName()
+
+    try
+        let raw =
+            { DefaultLine = 100.0
+              DefaultBranch = 100.0
+              RawOverrides =
+                Map.ofList
+                    [ "Api.fs",
+                      [ { Line = 93.0
+                          Branch = 84.0
+                          Reason = Some proseReason
+                          Platform = None } ] ]
+              RawCountFloors = Map.empty }
+
+        saveRawConfig path raw
+        let written = File.ReadAllText(path)
+
+        // Positive control: the reason really is in this file, so the assertions below
+        // are about text that IS there rather than text that was never written.
+        test <@ written.Contains("Api.fs") @>
+
+        test <@ written.Contains(proseReason) @>
+        test <@ not (written.Contains("\\u2014")) @>
+        test <@ not (written.Contains("\\u0027")) @>
+        test <@ not (written.Contains("\\u0060")) @>
+
+        // The value survives too, not just the bytes: a literal encoding that failed to
+        // round-trip would be a different bug wearing this one's fix.
+        let reloaded = loadRawConfig path
+        let reloadedReason = (reloaded.RawOverrides.["Api.fs"] |> List.head).Reason
+        test <@ reloadedReason = Some proseReason @>
+    finally
+        File.Delete(path)
+
+[<Fact>]
+let ``saveRawConfig - rewriting a config that changed no floor produces the same bytes`` () =
+    let path = Path.GetTempFileName()
+
+    try
+        let raw =
+            { DefaultLine = 100.0
+              DefaultBranch = 100.0
+              RawOverrides =
+                Map.ofList
+                    [ "Api.fs",
+                      [ { Line = 93.0
+                          Branch = 84.0
+                          Reason = Some proseReason
+                          Platform = None } ] ]
+              RawCountFloors =
+                Map.ofList
+                    [ "Api.fs",
+                      [ { CoveredLines = 383
+                          CoveredBranches = 41
+                          Reason = Some proseReason
+                          Platform = None } ] ] }
+
+        saveRawConfig path raw
+        let firstWrite = File.ReadAllBytes(path)
+
+        // What the ratchet does on a run that moves nothing: read the file back, write
+        // it out again. The bytes are the contract, because the bytes are what jj diffs.
+        saveRawConfig path (loadRawConfig path)
+        let secondWrite = File.ReadAllBytes(path)
+
+        test <@ firstWrite.Length > 0 @>
+        test <@ secondWrite = firstWrite @>
+    finally
+        File.Delete(path)
