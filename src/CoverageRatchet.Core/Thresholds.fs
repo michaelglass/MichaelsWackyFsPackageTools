@@ -2,6 +2,7 @@ module CoverageRatchet.Thresholds
 
 open System.IO
 open System.Runtime.InteropServices
+open System.Text.Encodings.Web
 open System.Text.Json
 open CoverageRatchet.Cobertura
 
@@ -119,9 +120,29 @@ let private defaultConfig =
       Overrides = Map.empty
       CountFloors = Map.empty }
 
+/// The single options value both write paths share (`saveRawConfig` here and the
+/// coverage-thresholds artifact in `CoverageRatchet/Program.fs`), so the two outputs
+/// cannot encode the same text differently.
+///
+/// `Encoder` is load-bearing, not decoration. `JavaScriptEncoder.Default` escapes
+/// everything outside Basic Latin — and `'`, `` ` ``, `"`, `<`, `>` besides — so a
+/// `reason` the tool writes comes back as a six-character `\u2014` escape where the
+/// same sentence typed by a human keeps its literal em-dash. Both parse to the same
+/// string, so nothing ever failed and nothing ever warned: the file simply rewrote
+/// itself on runs that moved no floor, and every
+/// such rewrite is a conflict waiting in the ONE file this project forbids anyone to
+/// resolve by hand (settle floors through a full run, never by picking a number). A
+/// writer that is not a fixed point turns a policy about correctness into a chore
+/// people learn to shortcut. AUTOMATION-151.
+///
+/// `UnsafeRelaxedJsonEscaping` is named for the single hazard it carries: its output
+/// must not be dropped into HTML without further encoding. This output is a coverage
+/// floor file, read by this tool and by reviewers and embedded in nothing, and the
+/// property it must have instead is that writing it twice produces the same bytes.
 let jsonOptions =
     let opts = JsonSerializerOptions()
     opts.WriteIndented <- true
+    opts.Encoder <- JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     opts
 
 let buildFileResults (config: Config) (files: FileCoverage list) : FileResult list =
