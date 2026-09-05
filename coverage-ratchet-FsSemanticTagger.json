@@ -27,14 +27,6 @@
         "platform": "linux"
       }
     ],
-    "Cobertura.fs": [
-      {
-        "line": 100,
-        "branch": 86,
-        "reason": "loosened automatically",
-        "platform": "macos"
-      }
-    ],
     "Config.fs": [
       {
         "line": 100,
@@ -76,14 +68,6 @@
         "platform": "linux"
       }
     ],
-    "Ratchet.fs": [
-      {
-        "line": 98,
-        "branch": 83,
-        "reason": "loosened automatically",
-        "platform": "macos"
-      }
-    ],
     "Release.fs": [
       {
         "line": 99,
@@ -96,14 +80,6 @@
         "branch": 94,
         "reason": "hasCoverageRatchet branches. Re-baselined 2026-08-13 after branch-instrumentation drift: CI now instruments 244 branches where the last green run instrumented 114, line coverage byte-identical at 99.1%, so 112/114 (98.2%) became 237/244 (97.1%). See AUTOMATION-312.",
         "platform": "linux"
-      }
-    ],
-    "Thresholds.fs": [
-      {
-        "line": 95,
-        "branch": 85,
-        "reason": "loosened automatically",
-        "platform": "macos"
       }
     ],
     "Vcs.fs": [
