@@ -116,6 +116,16 @@ let internal runReleaseWith
                   ExtractCurrentGrammar = extractCurrentGrammar
                   CiPollIntervalMs = 15000
                   CiMaxAttempts = 60
+                  // 5s x 60 = a five-minute window for a workflow run to register.
+                  // Generous on purpose: every observed appearance took seconds, and
+                  // the cost of waiting too long is a slow release, while the cost of
+                  // not waiting long enough was three healthy releases reported broken
+                  // with delete-and-re-push as the advice (AUTOMATION-711).
+                  TagPush =
+                    { PushAttempts = 3
+                      PushRetryDelayMs = 3000
+                      RunPollIntervalMs = 5000
+                      RunPollAttempts = 60 }
                   CheckFeedPresence = Api.checkFeedPresence Api.httpGet run
                   WaitForNuGet = not (flags |> List.contains SkipNugetWait)
                   NuGetPollIntervalMs = 15000

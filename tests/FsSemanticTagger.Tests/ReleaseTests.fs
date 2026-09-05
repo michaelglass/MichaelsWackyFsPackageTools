@@ -13,6 +13,15 @@ open FsSemanticTagger.Release
 open FsSemanticTagger.Api
 open FsSemanticTagger.Vcs
 
+/// Zero waits everywhere, and ONE question about the workflow run — the behaviour
+/// AUTOMATION-711 replaced in production. Tests that care about the poll pass their
+/// own policy; every other test just must not sleep for five minutes.
+let private immediateTagPush: TagPushPolicy =
+    { PushAttempts = 1
+      PushRetryDelayMs = 0
+      RunPollIntervalMs = 0
+      RunPollAttempts = 1 }
+
 /// Default prior-API stub for tests that never reach the fetch (no prior tag, or
 /// a non-Auto command). When a test *does* reach it in Auto mode, a FetchError
 /// makes it abort rather than silently bump — the conservative default.
@@ -49,6 +58,7 @@ let private runReleaseWithPush run config cmd mode prev cur poll max push =
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = poll
           CiMaxAttempts = max
+          TagPush = immediateTagPush
           CheckFeedPresence = (fun _ _ -> OnFeed)
           WaitForNuGet = false
           NuGetPollIntervalMs = 0
@@ -82,13 +92,93 @@ let ``tag confirmation output keeps a missing trigger distinct from a failed pus
     let output, result =
         withCapturedConsole (fun () ->
             reportTagConfirmationFailures
-                [ TagConfirmationFailure.WorkflowTriggerMissing "fssemantictagger-v0.14.0-alpha.8" ])
+                [ TagConfirmationFailure.WorkflowTriggerMissing(
+                      "fssemantictagger-v0.14.0-alpha.8",
+                      System.TimeSpan.FromSeconds 300.0,
+                      true
+                  ) ])
+
+    // AUTOMATION-711: 2, not 1. "No run has appeared yet" is not "the release failed",
+    // and this used to exit 1 — which is how three healthy FsHotWatch releases on
+    // 2026-09-04 each looked identical to a broken one from the exit code alone.
+    test <@ result = 2 @>
+    test <@ output.Contains("no workflow run YET") @>
+    test <@ output.Contains("ARE on the remote") @>
+    test <@ not (output.Contains("versions in the tree are ahead")) @>
+
+[<Fact>]
+let ``a release whose tag has no run yet must never be told to delete and re-push it`` () =
+    // The dangerous half of the false negative. The old remedy was
+    // `git push origin :refs/tags/<tag> && git push origin <tag>`, and following it
+    // after a run HAD in fact registered publishes the same version twice. Nothing in
+    // this branch may suggest removing or re-pushing the tag.
+    let output, _ =
+        withCapturedConsole (fun () ->
+            reportTagConfirmationFailures
+                [ TagConfirmationFailure.WorkflowTriggerMissing(
+                      "fssemantictagger-v0.14.0-alpha.8",
+                      System.TimeSpan.FromSeconds 300.0,
+                      true
+                  ) ])
+
+    test <@ not (output.Contains(":refs/tags/")) @>
+    test <@ not (output.Contains("Re-push")) @>
+    test <@ output.Contains("Do NOT delete and re-push") @>
+    // ... and it must still say what to look at instead.
+    test <@ output.Contains("gh run list --branch") @>
+
+[<Fact>]
+let ``the reported wait is the one actually performed, not the budget`` () =
+    // A sibling repo shipped exactly this bug: the give-up text was formatted from the
+    // budget, so a refusal that never slept claimed it had waited thirty minutes. The
+    // number in the message has to come from the clock.
+    let output, _ =
+        withCapturedConsole (fun () ->
+            reportTagConfirmationFailures
+                [ TagConfirmationFailure.WorkflowTriggerMissing(
+                      "fssemantictagger-v0.14.0-alpha.8",
+                      System.TimeSpan.FromSeconds 7.0,
+                      true
+                  ) ])
+
+    test <@ output.Contains("asked for 7s") @>
+
+[<Fact>]
+let ``an unaskable gh is not reported as GitHub saying there is no run`` () =
+    let output, _ =
+        withCapturedConsole (fun () ->
+            reportTagConfirmationFailures
+                [ TagConfirmationFailure.WorkflowTriggerMissing(
+                      "fssemantictagger-v0.14.0-alpha.8",
+                      System.TimeSpan.FromSeconds 300.0,
+                      false
+                  ) ])
+
+    test <@ output.Contains("could not be asked") @>
+    test <@ output.Contains("NOT evidence of a missing run") @>
+
+[<Fact>]
+let ``a workflow run that already failed stops the release, and says so as a failure`` () =
+    // The middle outcome, and the only one of the three that is a demonstrated failure:
+    // the run EXISTS and is FINISHED, so waiting longer cannot help. It must exit 1 so
+    // an ordered release chain stops here, and must not be dressed up as slowness.
+    let output, result =
+        withCapturedConsole (fun () ->
+            reportTagConfirmationFailures
+                [ TagConfirmationFailure.WorkflowRunFailed(
+                      "fssemantictagger-v0.14.0-alpha.8",
+                      [ { Name = "Release"
+                          Url = "https://github.com/example/repo/actions/runs/42"
+                          RunId = "42"
+                          Status = Completed
+                          Conclusion = FailureConclusion } ]
+                  ) ])
 
     test <@ result = 1 @>
-    test <@ output.Contains("pushed tag(s) have no workflow run") @>
-    test <@ output.Contains("ARE on the remote") @>
-    test <@ output.Contains("MISSING TRIGGER") @>
-    test <@ not (output.Contains("versions in the tree are ahead")) @>
+    test <@ output.Contains("workflow run that FAILED") @>
+    test <@ output.Contains("https://github.com/example/repo/actions/runs/42") @>
+    test <@ output.Contains("gh run rerun") @>
+    test <@ not (output.Contains("no workflow run YET")) @>
 
 [<Fact>]
 let ``updateFsprojVersion - updates Version element in fsproj`` () =
@@ -884,6 +974,7 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
                   ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
+                  TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
@@ -2224,6 +2315,7 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
+                  TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
@@ -2330,6 +2422,7 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
                       ExtractCurrentGrammar = noCurrentGrammar
                       CiPollIntervalMs = 0
                       CiMaxAttempts = 10
+                      TagPush = immediateTagPush
                       CheckFeedPresence = (fun _ _ -> OnFeed)
                       WaitForNuGet = false
                       NuGetPollIntervalMs = 0
@@ -2521,6 +2614,7 @@ let private runReleaseWithNuGetWait run config cmd checkFeedPresence maxAttempts
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
           CiMaxAttempts = 10
+          TagPush = immediateTagPush
           CheckFeedPresence = checkFeedPresence
           WaitForNuGet = true
           NuGetPollIntervalMs = 0
@@ -2701,6 +2795,7 @@ let private runReleaseTargeting run config cmd mode targets =
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
           CiMaxAttempts = 10
+          TagPush = immediateTagPush
           CheckFeedPresence = (fun _ _ -> OnFeed)
           WaitForNuGet = false
           NuGetPollIntervalMs = 0
@@ -2803,6 +2898,7 @@ let ``release - --only on a multi-package repo uses the per-package CHANGELOG, n
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
+                  TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
@@ -3177,6 +3273,7 @@ let private runReleaseWithFeed run config checkFeedPresence =
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
           CiMaxAttempts = 10
+          TagPush = immediateTagPush
           CheckFeedPresence = checkFeedPresence
           WaitForNuGet = false
           NuGetPollIntervalMs = 0
@@ -3342,6 +3439,7 @@ let ``release - a published package whose DLL is unreadable is never republished
                       ExtractCurrentGrammar = noCurrentGrammar
                       CiPollIntervalMs = 0
                       CiMaxAttempts = 10
+                      TagPush = immediateTagPush
                       // The feed is the authority, and it says the version IS there.
                       CheckFeedPresence = (fun _ _ -> OnFeed)
                       WaitForNuGet = false
@@ -3566,6 +3664,7 @@ let private runReleaseInRoot run config cmd =
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
           CiMaxAttempts = 10
+          TagPush = immediateTagPush
           CheckFeedPresence = (fun _ _ -> OnFeed)
           WaitForNuGet = false
           NuGetPollIntervalMs = 0
@@ -3734,6 +3833,7 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
+                  TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
@@ -3940,6 +4040,7 @@ let ``release - library does NOT rebundle when only a separately-published depen
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
+                  TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
@@ -4041,6 +4142,7 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
+                  TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
@@ -4134,6 +4236,7 @@ let ``release - library rebundles when a non-configured helper dependency change
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
+                  TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
@@ -4242,6 +4345,7 @@ let private releaseInput run config cmd mode check : ReleaseInput =
       ExtractCurrentGrammar = noCurrentGrammar
       CiPollIntervalMs = 0
       CiMaxAttempts = 10
+      TagPush = immediateTagPush
       CheckFeedPresence = (fun _ _ -> OnFeed)
       WaitForNuGet = false
       NuGetPollIntervalMs = 0
@@ -4489,6 +4593,7 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
                   ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
+                  TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
@@ -4558,6 +4663,7 @@ let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative 
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
+                  TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
@@ -4629,6 +4735,7 @@ let ``release - PackAsTool CLI aborts when the previous grammar cannot be read``
                   ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
                   CiPollIntervalMs = 0
                   CiMaxAttempts = 10
+                  TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   WaitForNuGet = false
                   NuGetPollIntervalMs = 0
@@ -4689,6 +4796,7 @@ let private runCheck (config: ToolConfig) =
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
           CiMaxAttempts = 1
+          TagPush = immediateTagPush
           CheckFeedPresence = (fun _ _ -> OnFeed)
           WaitForNuGet = false
           NuGetPollIntervalMs = 0

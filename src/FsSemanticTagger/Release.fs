@@ -44,6 +44,11 @@ type ReleaseInput =
         ExtractCurrentGrammar: string -> Grammar option
         CiPollIntervalMs: int
         CiMaxAttempts: int
+        /// How hard to push each release tag, and how long to keep asking GitHub
+        /// whether that tag produced a workflow run. Injected rather than fixed so a
+        /// test can bound the poll: the production budget is minutes long, and the
+        /// whole point of AUTOMATION-711 is that it must be.
+        TagPush: Vcs.TagPushPolicy
         /// Ask the feed whether a (packageName, version) is published. The
         /// three-valued answer is what lets an orphan tag be distinguished from an
         /// unreachable feed, so ONE seam serves both the post-push availability
@@ -221,18 +226,40 @@ let internal waitForNuGet
 
     poll 0 packages
 
+/// Report what the tag push and its confirmation actually established, and pick the
+/// exit code that matches.
+///
+/// Three outcomes, three exit codes — the convention AUTOMATION-355 established for the
+/// NuGet wait, applied to the same question one stage earlier:
+///
+/// * `0` — every tag has a workflow run (this function is not called).
+/// * `1` — the release DEMONSTRABLY did not happen: a push failed, or a run exists and
+///   has already finished without publishing. Both stop an ordered release chain.
+/// * `2` — the tags are on the remote and no run has appeared yet. "I stopped waiting"
+///   is not "it failed", and AUTOMATION-711 is the cost of confusing the two: three
+///   healthy releases were reported as broken, and the remedy printed with that verdict
+///   would have published each of them a second time.
 let internal reportTagConfirmationFailures (failures: TagConfirmationFailure list) : int =
     let pushFailures =
         failures
         |> List.choose (function
             | PushFailed(tag, reason) -> Some(tag, reason)
+            | WorkflowRunFailed _
+            | WorkflowTriggerMissing _ -> None)
+
+    let failedRuns =
+        failures
+        |> List.choose (function
+            | WorkflowRunFailed(tag, runs) -> Some(tag, runs)
+            | PushFailed _
             | WorkflowTriggerMissing _ -> None)
 
     let missingTriggers =
         failures
         |> List.choose (function
-            | WorkflowTriggerMissing tag -> Some tag
-            | PushFailed _ -> None)
+            | WorkflowTriggerMissing(tag, waited, everAnswered) -> Some(tag, waited, everAnswered)
+            | PushFailed _
+            | WorkflowRunFailed _ -> None)
 
     if not pushFailures.IsEmpty then
         printfn "Error: %d tag push(es) failed:" pushFailures.Length
@@ -250,19 +277,52 @@ let internal reportTagConfirmationFailures (failures: TagConfirmationFailure lis
         printfn
             "If abandoning the release, reset the bumped versions and changelog to the last published tags before starting another release."
 
-    if not missingTriggers.IsEmpty then
-        printfn "Error: %d pushed tag(s) have no workflow run:" missingTriggers.Length
+    if not failedRuns.IsEmpty then
+        printfn "Error: %d pushed tag(s) have a workflow run that FAILED:" failedRuns.Length
 
-        for tag in missingTriggers do
-            printfn "  %s" tag
+        for tag, runs in failedRuns do
+            for runInfo in runs do
+                printfn
+                    "  %s — %s finished %A (%s)"
+                    tag
+                    (if runInfo.Name = "" then "the workflow" else runInfo.Name)
+                    runInfo.Conclusion
+                    (if runInfo.Url = "" then "no url reported" else runInfo.Url)
 
         printfn ""
-        printfn "These tags ARE on the remote — this is a MISSING TRIGGER, not a push failure."
-        printfn "Nothing will be built or published for them until a run exists."
-        printfn "Re-push one at a time to trigger:  git push origin :refs/tags/<tag> && git push origin <tag>"
-        printfn "(If `gh` is unavailable or unauthenticated here, verify manually rather than assuming it published.)"
+        printfn "This is a real failure, not a slow one: the run exists and it is finished, so nothing published."
+        printfn "Read the log, fix the cause, then resume the SAME run rather than cutting a new tag:"
+        printfn "  gh run rerun <id> --failed"
 
-    1
+    if not missingTriggers.IsEmpty then
+        printfn "Warning: %d pushed tag(s) have no workflow run YET:" missingTriggers.Length
+
+        for tag, waited, everAnswered in missingTriggers do
+            printfn
+                "  %s — asked for %.0fs; %s"
+                tag
+                waited.TotalSeconds
+                (if everAnswered then
+                     "GitHub reported no run"
+                 else
+                     "`gh` could not be asked at all, so this is NOT evidence of a missing run")
+
+        printfn ""
+        printfn "The tags ARE on the remote. This is NOT a failed publish, and it may not be a failure at all:"
+        printfn "GitHub registers a tag-push run seconds after the push, and this poll can outrun it."
+        printfn ""
+        printfn "Do NOT delete and re-push the tag. If the run had merely not registered yet, that publishes twice."
+        printfn "Check first, one of:"
+        printfn "  gh run list --branch <tag>"
+        printfn "  the repository's Actions tab, filtered to the tag"
+        printfn ""
+
+        printfn "If, after checking, there is genuinely no run, the tag is an ORPHAN: leave it alone and run the same"
+
+        printfn
+            "release command again — the tagger detects an orphan tag whose package never reached the feed and resumes it."
+
+    if pushFailures.IsEmpty && failedRuns.IsEmpty then 2 else 1
 
 let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * Version) list) : int =
     let run = input.Run
@@ -280,7 +340,7 @@ let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * 
         // A tag can land on the remote and trigger no workflow at all (a batch push
         // does exactly that), so confirm a run exists rather than claiming a release
         // is happening.
-        let unconfirmed = pushTagsAndConfirmDetailed run 3 3000 tags
+        let unconfirmed = pushTagsAndConfirmDetailed run input.TagPush tags
 
         if not (List.isEmpty unconfirmed) then
             reportTagConfirmationFailures unconfirmed

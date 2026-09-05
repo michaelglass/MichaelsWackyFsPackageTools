@@ -414,14 +414,28 @@ let hasCoverageRatchet (run: string -> string -> CommandResult) : bool =
 
 let pushMain (run: string -> string -> CommandResult) : unit = runOrFail run "jj" "git push" |> ignore
 
-/// How many workflow runs GitHub has for `gitRef`. A TAG name is a valid ref here: a
+/// One workflow run GitHub reports for a ref, in the terms this poll needs.
+///
+/// Parsed leniently on purpose. The caller asks for a fixed `--json` field set, but a
+/// record missing one of those fields must still COUNT AS A RUN: treating a short
+/// record as unparseable would turn "the release is happening" into "no run appeared",
+/// which is the exact confusion AUTOMATION-711 exists to remove.
+type internal TagRunState =
+    { Name: string
+      Url: string
+      RunId: string
+      Status: RunStatus
+      Conclusion: RunConclusion }
+
+/// The workflow runs GitHub has for `gitRef`. A TAG name is a valid ref here: a
 /// tag-triggered run reports the tag as its head branch.
 ///
 /// `None` means "could not find out" — `gh` missing, unauthenticated, rate-limited, or
-/// output we cannot parse. Deliberately distinct from `Some 0` ("asked, and there are
+/// output we cannot parse. Deliberately distinct from `Some []` ("asked, and there are
 /// none"), because only the latter is evidence about the release.
-let internal runCountForRef (run: string -> string -> CommandResult) (gitRef: string) : int option =
-    let args = sprintf "run list --branch %s --json name --limit 20" gitRef
+let internal runStatesForRef (run: string -> string -> CommandResult) (gitRef: string) : TagRunState list option =
+    let args =
+        sprintf "run list --branch %s --json name,status,conclusion,url,databaseId --limit 20" gitRef
 
     withJjGitDir (fun () ->
         match run "gh" args with
@@ -430,12 +444,92 @@ let internal runCountForRef (run: string -> string -> CommandResult) (gitRef: st
                 use doc = System.Text.Json.JsonDocument.Parse(output)
 
                 if doc.RootElement.ValueKind = System.Text.Json.JsonValueKind.Array then
-                    Some(doc.RootElement.GetArrayLength())
+                    Some
+                        [ for elem in doc.RootElement.EnumerateArray() do
+                              let text (field: string) =
+                                  match elem.TryGetProperty(field) with
+                                  | true, value when value.ValueKind = System.Text.Json.JsonValueKind.String ->
+                                      value.GetString()
+                                  | true, value when value.ValueKind = System.Text.Json.JsonValueKind.Number ->
+                                      value.ToString()
+                                  | _ -> ""
+
+                              { Name = text "name"
+                                Url = text "url"
+                                RunId = text "databaseId"
+                                Status = RunStatus.ofString (text "status")
+                                Conclusion = RunConclusion.ofString (text "conclusion") } ]
                 else
                     None
             with _ ->
                 None
         | Failure _ -> None)
+
+/// Whether a run has already finished WITHOUT publishing anything.
+///
+/// An unrecognised conclusion counts as unsuccessful: `timed_out`, `action_required`,
+/// `startup_failure` and `stale` all mean nothing was published, and a conclusion this
+/// code has never seen is not evidence that one was.
+let private saysNothingWasPublished (state: TagRunState) : bool =
+    match state.Status, state.Conclusion with
+    | Completed, (FailureConclusion | CancelledConclusion | OtherConclusion _) -> true
+    | _ -> false
+
+/// What GitHub said about the workflow runs for one pushed tag.
+type internal TagRunOutcome =
+    /// At least one run exists, and none of them has already concluded without publishing.
+    | TagRunPresent
+    /// A run exists for the tag and has already concluded without publishing. This is
+    /// the ONE outcome of the three that is a demonstrated failure.
+    | TagRunFailed of TagRunState list
+    /// Asked until the budget ran out and GitHub still reported no run. `waited` is
+    /// MEASURED, never the budget the caller supplied: a poll that gave up after a
+    /// single question must not claim it waited for the whole window.
+    | TagRunAbsent of waited: System.TimeSpan * everAnswered: bool
+
+/// Ask GitHub whether `gitRef` has a workflow run, RETRYING while the answer is "none".
+///
+/// AUTOMATION-711: this was one question, asked three seconds after the push. GitHub
+/// registers a tag-push run seconds later rather than instantly, so three healthy
+/// FsHotWatch releases on 2026-09-04 were each reported as "no workflow run appeared" —
+/// and the remedy printed alongside that verdict, delete the tag and push it again,
+/// would have published every one of them twice.
+///
+/// An unanswerable question is retried exactly like an absent run rather than settled:
+/// a rate-limited or briefly unreachable `gh` clears on its own. Whether it was EVER
+/// answered is carried out, because "GitHub says there is no run" and "nobody could be
+/// asked" send the operator to different places.
+let internal waitForRunForRef
+    (run: string -> string -> CommandResult)
+    (pollIntervalMs: int)
+    (maxAttempts: int)
+    (gitRef: string)
+    : TagRunOutcome =
+    let elapsed = System.Diagnostics.Stopwatch.StartNew()
+    let budget = max 1 maxAttempts
+
+    let rec ask attempt everAnswered =
+        let answer = runStatesForRef run gitRef
+        let everAnswered = everAnswered || Option.isSome answer
+
+        match answer with
+        | Some states when states |> List.exists saysNothingWasPublished ->
+            TagRunFailed(states |> List.filter saysNothingWasPublished)
+        | Some(_ :: _) -> TagRunPresent
+        | _ when attempt >= budget -> TagRunAbsent(elapsed.Elapsed, everAnswered)
+        | _ ->
+            if pollIntervalMs > 0 then
+                printfn
+                    "  no workflow run for %s yet (asked %d of %d); waiting %.0fs"
+                    gitRef
+                    attempt
+                    budget
+                    (float pollIntervalMs / 1000.0)
+
+            System.Threading.Thread.Sleep(pollIntervalMs)
+            ask (attempt + 1) everAnswered
+
+    ask 1 false
 
 /// Push one tag, retrying a few times before giving up.
 ///
@@ -551,34 +645,55 @@ let private pushOneTag
 /// happening", and the difference is invisible from here — the tags are on the remote
 /// either way. An unaskable question counts as UNCONFIRMED: answering "all fine" because
 /// the check itself could not run would be the same lie one level down.
+/// How hard to try when pushing tags, and how long to keep asking about their runs.
+///
+/// One record rather than four positional ints: the push retry and the run poll are
+/// different waits with different reasons, and a call site that reads
+/// `run 3 3000 5000 60` cannot be checked by eye.
+type TagPushPolicy =
+    {
+        /// Attempts for each individual tag push.
+        PushAttempts: int
+        /// Delay between push attempts.
+        PushRetryDelayMs: int
+        /// Delay between successive "has a run appeared yet?" questions.
+        RunPollIntervalMs: int
+        /// How many such questions to ask before giving up, so the wait is bounded by
+        /// `(RunPollAttempts - 1) * RunPollIntervalMs`.
+        RunPollAttempts: int
+    }
+
+/// The three answers this function can give about ONE tag, and they are three because
+/// the operator's next move differs for each. Only `WorkflowRunFailed` is a
+/// demonstrated failure.
 type internal TagConfirmationFailure =
     | PushFailed of tag: string * reason: string
-    | WorkflowTriggerMissing of tag: string
+    /// The tag reached the remote and a run exists, but that run has already finished
+    /// without publishing.
+    | WorkflowRunFailed of tag: string * runs: TagRunState list
+    /// The tag reached the remote and, after `waited`, GitHub still reports no run.
+    /// `everAnswered` is false when `gh` could not be asked at all.
+    | WorkflowTriggerMissing of tag: string * waited: System.TimeSpan * everAnswered: bool
 
 let internal pushTagsAndConfirmDetailed
     (run: string -> string -> CommandResult)
-    (attempts: int)
-    (delayMs: int)
+    (policy: TagPushPolicy)
     (tags: string list)
     : TagConfirmationFailure list =
     runOrFail run "jj" "git export" |> ignore
 
     // A tag that never reached the remote is a DIFFERENT failure from one that
     // reached it and triggered nothing, and the operator's next move differs too:
-    // one is "authenticate and retry", the other is "re-push to trigger". Both
+    // one is "authenticate and retry", the other is "look before you touch it". Both
     // end up in the returned list — silence about either would be the lie this
     // function exists to prevent — but a failed push says so in its own words.
     let failures =
         withJjGitDir (fun () ->
             tags
             |> List.choose (fun tag ->
-                match pushOneTag run attempts delayMs tag with
+                match pushOneTag run policy.PushAttempts policy.PushRetryDelayMs tag with
                 | Ok() -> None
                 | Error reason -> Some(tag, reason)))
-
-    // Give GitHub a moment to register the events before asking about them.
-    if not (List.isEmpty tags) then
-        System.Threading.Thread.Sleep(delayMs)
 
     let pushFailures = Map.ofList failures
 
@@ -589,21 +704,23 @@ let internal pushTagsAndConfirmDetailed
         match pushFailures.TryFind tag with
         | Some reason -> Some(PushFailed(tag, reason))
         | None ->
-            match runCountForRef run tag with
-            | Some n when n > 0 -> None
-            | _ -> Some(WorkflowTriggerMissing tag))
+            match waitForRunForRef run policy.RunPollIntervalMs policy.RunPollAttempts tag with
+            | TagRunPresent -> None
+            | TagRunFailed runs -> Some(WorkflowRunFailed(tag, runs))
+            | TagRunAbsent(waited, everAnswered) -> Some(WorkflowTriggerMissing(tag, waited, everAnswered)))
 
 /// Compatibility surface for callers that only need the tag names. Release uses
-/// the detailed result so it cannot tell an operator that a failed push landed.
+/// the detailed result so it cannot tell an operator that a failed push landed, or
+/// that a workflow run which already failed means the release is under way.
 let pushTagsAndConfirm
     (run: string -> string -> CommandResult)
-    (attempts: int)
-    (delayMs: int)
+    (policy: TagPushPolicy)
     (tags: string list)
     : string list =
-    pushTagsAndConfirmDetailed run attempts delayMs tags
+    pushTagsAndConfirmDetailed run policy tags
     |> List.map (function
         | PushFailed(tag, reason) ->
             eprintfn "  %s" reason
             tag
-        | WorkflowTriggerMissing tag -> tag)
+        | WorkflowRunFailed(tag, _) -> tag
+        | WorkflowTriggerMissing(tag, _, _) -> tag)
