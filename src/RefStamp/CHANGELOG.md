@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix local packs from empty jj merge commits by including every parent ref under one valid version prefix.
+
 ## 0.1.0-alpha.2 - 2026-07-23
 
 - chore(deps): update dev-tools and external dependencies

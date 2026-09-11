@@ -242,6 +242,48 @@ let ``local pack with an empty working copy uses the parent commit's ref`` () =
             | other -> failwith $"expected exactly one nupkg, got %A{other}")
 
 [<Xunit.Fact(Timeout = PackTimeoutMs)>]
+let ``local pack with an empty merge includes every parent ref`` () =
+    if jjAvailable then
+        withTempDir (fun dir ->
+            initDescribedJjRepo dir
+            writeFixtureProject dir
+            jj dir [ "describe"; "-m"; "fixture base with project" ] =! 0
+            jj dir [ "new"; "-m"; "left parent" ] =! 0
+            File.WriteAllText(Path.Combine(dir, "left.txt"), "left parent\n")
+            jj dir [ "bookmark"; "create"; "left"; "-r"; "@" ] =! 0
+            jj dir [ "new"; "left-"; "-m"; "right parent" ] =! 0
+            File.WriteAllText(Path.Combine(dir, "right.txt"), "right parent\n")
+            jj dir [ "bookmark"; "create"; "right"; "-r"; "@" ] =! 0
+            jj dir [ "new"; "left"; "right" ] =! 0
+
+            let parentRef revision =
+                let code, output =
+                    run
+                        "jj"
+                        [ "log"
+                          "--no-graph"
+                          "-r"
+                          revision
+                          "-T"
+                          "change_id.short(8) ++ '.g' ++ commit_id.short(12)" ]
+                        dir
+                        []
+
+                test <@ code = 0 @>
+                output.Trim()
+
+            let leftRef = parentRef "left"
+            let rightRef = parentRef "right"
+            test <@ leftRef <> rightRef @>
+
+            let code, output, versions = pack dir [] localPackEnv
+
+            if code <> 0 then
+                failwith $"empty merge pack failed: %s{output}"
+
+            test <@ versions = [ $"1.2.3-ref.%s{leftRef}.%s{rightRef}" ] @>)
+
+[<Xunit.Fact(Timeout = PackTimeoutMs)>]
 let ``editing a source file between packs changes the version`` () =
     // The NuGet never-re-extract cache trap: same version string, different
     // bits. Killed by making the version track the TREE — an edit (snapshotted
