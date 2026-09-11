@@ -2,44 +2,30 @@
   "overrides": {
     "Api.fs": [
       {
-        "line": 92,
-        "branch": 87,
-        "reason": "Assembly path resolution depends on runtime environment; reflection branches from compiler; httpGet is a live HttpClient network call exercised only via the injected fetch seam in tests. Settled 95 -\u003E 93, the measured macos actual: the floor was never achieved for the CURRENT file. Api.fs grew (grammar extraction, analyzer-package path) while the environment-dependent core stayed uncovered, so the same untestable lines became a larger share of a bigger file. Verified uncovered on an unmodified main@origin checkout: the sdk/ and shared/ TRUE branches (the dirs-exist path) never execute here because DOTNET_ROOT is unset under mise and the runtime-dir-derived root has no sdk/ \u2014 i.e. exactly the \u0027depends on runtime environment\u0027 case this reason already named. NOT lowered to dodge work: raising it would need either a global DOTNET_ROOT mutation (unsafe with parallelizeTestCollections=true) or real network/restore I/O in unit tests.Settled 93 -\u003E 92 on 2026-08-11, same cause once more: measured actual is 92.7% line (branch 87.2% clears its 84 floor comfortably and is untouched). Re-verified IDENTICAL on an unmodified main checkout before moving the floor - 92.7%/87.2%, byte-for-byte the same numbers - so this is drift in the pre-existing environment-dependent core, not coverage lost by the change that happened to be in flight (which left Release.fs at 99.1% and Vcs.fs at 96.6%, both over their floors). The uncovered lines are the seams this reason has always named: httpGet\u0027s live HttpClient call and the sdk/shared framework directory probes. Raising it would still require real network I/O or a global DOTNET_ROOT mutation in unit tests.",
+        "line": 94,
+        "branch": 86,
+        "reason": "Assembly path resolution depends on runtime environment; reflection branches from compiler; httpGet is a live HttpClient network call exercised only via the injected fetch seam in tests. Settled 95 -> 93, the measured macos actual: the floor was never achieved for the CURRENT file. Api.fs grew (grammar extraction, analyzer-package path) while the environment-dependent core stayed uncovered, so the same untestable lines became a larger share of a bigger file. Verified uncovered on an unmodified main@origin checkout: the sdk/ and shared/ TRUE branches (the dirs-exist path) never execute here because DOTNET_ROOT is unset under mise and the runtime-dir-derived root has no sdk/ — i.e. exactly the 'depends on runtime environment' case this reason already named. NOT lowered to dodge work: raising it would need either a global DOTNET_ROOT mutation (unsafe with parallelizeTestCollections=true) or real network/restore I/O in unit tests.Settled 93 -> 92 on 2026-08-11, same cause once more: measured actual is 92.7% line (branch 87.2% clears its 84 floor comfortably and is untouched). Re-verified IDENTICAL on an unmodified main checkout before moving the floor - 92.7%/87.2%, byte-for-byte the same numbers - so this is drift in the pre-existing environment-dependent core, not coverage lost by the change that happened to be in flight (which left Release.fs at 99.1% and Vcs.fs at 96.6%, both over their floors). The uncovered lines are the seams this reason has always named: httpGet's live HttpClient call and the sdk/shared framework directory probes. Raising it would still require real network I/O or a global DOTNET_ROOT mutation in unit tests. Re-measured 2026-09-11 on SDK 10.0.400: controlled identical-source/test runs with FSharp.Core 10.1.401 and coverage collector 18.9.0 held fixed changed SDK 10.0.301 branches 82/94 to 121/140, with identical source-line hits. This measured compiler baseline supersedes the earlier macOS branch floor; no padding or line-floor reduction.",
         "platform": "macos"
       },
       {
         "line": 94,
         "branch": 77,
-        "reason": "settled to the CI-measured linux actual (line 94) after httpGet\u0027s network-call line; loosen-from-ci\u0027s platform-merge failed to apply the artifact\u0027s lower value",
+        "reason": "settled to the CI-measured linux actual (line 94) after httpGet's network-call line; loosen-from-ci's platform-merge failed to apply the artifact's lower value",
         "platform": "linux"
       }
     ],
     "Changelog.fs": [
       {
         "line": 100,
-        "branch": 95,
-        "reason": "loosened automatically",
-        "platform": "macos"
-      },
-      {
-        "line": 100,
         "branch": 70,
         "platform": "linux"
-      }
-    ],
-    "Cobertura.fs": [
-      {
-        "line": 100,
-        "branch": 86,
-        "reason": "loosened automatically",
-        "platform": "macos"
       }
     ],
     "Config.fs": [
       {
         "line": 100,
-        "branch": 90,
-        "reason": "F# compiler generates extra branches for TryGetProperty patterns; toJson serializer branches",
+        "branch": 89,
+        "reason": "F# compiler generates extra branches for TryGetProperty patterns; toJson serializer branches Re-measured 2026-09-11 on SDK 10.0.400: controlled identical-source/test runs with FSharp.Core 10.1.401 and coverage collector 18.9.0 held fixed changed SDK 10.0.301 branches 66/73 to 60/67, with identical source-line hits. This measured compiler baseline supersedes the earlier macOS branch floor; no padding or line-floor reduction.",
         "platform": "macos"
       },
       {
@@ -51,8 +37,8 @@
     "Grammar.fs": [
       {
         "line": 98,
-        "branch": 84,
-        "reason": "the pure grammar diff is fully covered; the MetadataLoadContext structural walk\u0027s remaining gaps are defensive reflection paths that are unreachable from a test (ReflectionTypeLoadException recovery, an explicitly-null attribute named-arg, a CompilationMappingAttribute ctor arg that is not SourceConstructFlags). Floor = achieved macOS coverage.",
+        "branch": 91,
+        "reason": "the pure grammar diff is fully covered; the MetadataLoadContext structural walk's remaining gaps are defensive reflection paths that are unreachable from a test (ReflectionTypeLoadException recovery, an explicitly-null attribute named-arg, a CompilationMappingAttribute ctor arg that is not SourceConstructFlags). Floor = achieved macOS coverage.",
         "platform": "macos"
       },
       {
@@ -65,8 +51,8 @@
     "Program.fs": [
       {
         "line": 96,
-        "branch": 81,
-        "reason": "CLI entry point using exit and CWD; initCommand prints to stdout",
+        "branch": 72,
+        "reason": "CLI entry point using exit and CWD; initCommand prints to stdout Re-measured 2026-09-11 on SDK 10.0.400: controlled identical-source/test runs with FSharp.Core 10.1.401 and coverage collector 18.9.0 held fixed changed SDK 10.0.301 branches 26/32 to 67/93, with identical source-line hits. This measured compiler baseline supersedes the earlier macOS branch floor; no padding or line-floor reduction.",
         "platform": "macos"
       },
       {
@@ -76,19 +62,11 @@
         "platform": "linux"
       }
     ],
-    "Ratchet.fs": [
-      {
-        "line": 98,
-        "branch": 83,
-        "reason": "loosened automatically",
-        "platform": "macos"
-      }
-    ],
     "Release.fs": [
       {
         "line": 99,
-        "branch": 98,
-        "reason": "InProgress CI timeout branch requires Thread.Sleep in waitForCi; tested at unit level in waitForCi tests",
+        "branch": 96,
+        "reason": "InProgress CI timeout branch requires Thread.Sleep in waitForCi; tested at unit level in waitForCi tests Re-measured 2026-09-11 on SDK 10.0.400: controlled identical-source/test runs with FSharp.Core 10.1.401 and coverage collector 18.9.0 held fixed changed SDK 10.0.301 branches 128/130 to 267/276, with identical source-line hits. This measured compiler baseline supersedes the earlier macOS branch floor; no padding or line-floor reduction.",
         "platform": "macos"
       },
       {
@@ -98,18 +76,10 @@
         "platform": "linux"
       }
     ],
-    "Thresholds.fs": [
-      {
-        "line": 95,
-        "branch": 85,
-        "reason": "loosened automatically",
-        "platform": "macos"
-      }
-    ],
     "Vcs.fs": [
       {
         "line": 98,
-        "branch": 93,
+        "branch": 95,
         "reason": "All functions call jj/git processes",
         "platform": "macos"
       },
@@ -123,8 +93,8 @@
     "Version.fs": [
       {
         "line": 98,
-        "branch": 100,
-        "reason": "Uncovered lines are unreachable match cases",
+        "branch": 96,
+        "reason": "Uncovered lines are unreachable match cases Re-measured 2026-09-11 on SDK 10.0.400: controlled identical-source/test runs with FSharp.Core 10.1.401 and coverage collector 18.9.0 held fixed changed SDK 10.0.301 branches 16/16 to 27/28, with identical source-line hits. This measured compiler baseline supersedes the earlier macOS branch floor; no padding or line-floor reduction.",
         "platform": "macos"
       },
       {

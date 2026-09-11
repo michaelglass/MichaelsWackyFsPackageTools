@@ -3,7 +3,7 @@
     "Program.fs": [
       {
         "line": 95,
-        "branch": 82,
+        "branch": 87,
         "reason": "CLI entry point using exit and CWD",
         "platform": "macos"
       },
