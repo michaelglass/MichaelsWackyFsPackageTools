@@ -10,15 +10,15 @@
       {
         "line": 83,
         "branch": 78,
-        "reason": "settled from CI coverage-thresholds artifact: the jj-backed code paths (runJj, the IsJj resolveCurrentCommit branch, jj store git-log) require the \u0060jj\u0060 binary, which is not installed on the CI runner, so the jj fixtures no-op there and those lines/branches go uncovered on linux; plus the defensive git/jj-subprocess error branches (Process.Start null, launch exception, command-failure None paths) not reachable without a process-mock seam",
+        "reason": "settled from CI coverage-thresholds artifact: the jj-backed code paths (runJj, the IsJj resolveCurrentCommit branch, jj store git-log) require the `jj` binary, which is not installed on the CI runner, so the jj fixtures no-op there and those lines/branches go uncovered on linux; plus the defensive git/jj-subprocess error branches (Process.Start null, launch exception, command-failure None paths) not reachable without a process-mock seam",
         "platform": "linux"
       }
     ],
     "GitDir.fs": [
       {
         "line": 81,
-        "branch": 100,
-        "reason": "Re-baselined 2026-08-13 after branch-instrumentation drift: CI now instruments 12 branches here where the last green run instrumented 10, with line coverage byte-identical at 81.8%, so 10/10 (100%) became 9/12 (75.0%). A 100% branch floor cannot survive a denominator that moves, which is why this one broke first and hardest. Set below the Linux value with headroom. This entry is flat (no platform list); migrating it to the per-platform schema is tracked.",
+        "branch": 75,
+        "reason": "Re-baselined 2026-08-13 after branch-instrumentation drift: CI now instruments 12 branches here where the last green run instrumented 10, with line coverage byte-identical at 81.8%, so 10/10 (100%) became 9/12 (75.0%). A 100% branch floor cannot survive a denominator that moves, which is why this one broke first and hardest. Set below the Linux value with headroom. This entry is flat (no platform list); migrating it to the per-platform schema is tracked. Re-measured 2026-09-11 on SDK 10.0.400: controlled identical-source/test runs with FSharp.Core 10.1.401 and coverage collector 18.9.0 held fixed changed SDK 10.0.301 branches 10/10 to 9/12, with identical source-line hits. This measured compiler baseline supersedes the earlier macOS branch floor; no padding or line-floor reduction.",
         "platform": "macos"
       },
       {
@@ -33,6 +33,12 @@
         "branch": 87,
         "reason": "CLI entry point, not unit tested",
         "platform": "linux"
+      },
+      {
+        "line": 100,
+        "branch": 88,
+        "reason": "Measured macOS SDK 10.0.400 coverage; platform-less fallback retained unchanged.",
+        "platform": "macos"
       },
       {
         "line": 100,
