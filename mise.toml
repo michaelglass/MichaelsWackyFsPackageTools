@@ -154,7 +154,10 @@ run = "dotnet run --project src/FsSemanticTagger/FsSemanticTagger.fsproj --no-bu
 depends = ["build"]
 
 [tasks.docs]
-run = "dotnet fsdocs build --output output/docs --clean"
+run = """
+mkdir -p output/docs
+dotnet fsdocs build --output output/docs --clean
+"""
 depends = ["build", "tool-restore"]
 
 [tasks.docs-watch]
