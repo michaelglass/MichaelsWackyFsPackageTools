@@ -39,6 +39,12 @@
     <RefStampReleaseBuild Condition="'$(RefStampReleaseBuild)' == '' and '$(CI)' == 'true'">true</RefStampReleaseBuild>
   </PropertyGroup>
 
+  <!-- NuGet asks referenced projects for their version without building them.
+       Stamp that result too, so dependencies name the package actually packed. -->
+  <PropertyGroup>
+    <GetPackageVersionDependsOn>$(GetPackageVersionDependsOn);RefStampApplyVersion</GetPackageVersionDependsOn>
+  </PropertyGroup>
+
   <UsingTask TaskName="RefStampComputeSuffix"
              TaskFactory="RoslynCodeTaskFactory"
              AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">

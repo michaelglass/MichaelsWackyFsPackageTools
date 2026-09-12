@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Stamp project-reference dependency versions during local packing so they match the dependency packages produced from the same source. Release dependency versions remain unchanged.
+
 ## 0.1.0-alpha.2 - 2026-07-23
 
 - chore(deps): update dev-tools and external dependencies
