@@ -24,6 +24,8 @@ module RefStamp.Tests.PackFixtureTests
 open System
 open System.Diagnostics
 open System.IO
+open System.IO.Compression
+open System.Xml.Linq
 open System.Text.RegularExpressions
 open Xunit
 open Swensen.Unquote
@@ -380,3 +382,98 @@ let ``a pack whose ref cannot be determined fails loudly`` () =
         test <@ List.isEmpty versions @>
         test <@ output.Contains "RefStamp" @>
         test <@ output.Contains "cannot determine" @>)
+
+// A package reference must name the version that the dependency's own pack
+// produced, including a local ref suffix. Release packs retain base versions.
+[<Xunit.Theory(Timeout = PackTimeoutMs)>]
+[<Xunit.InlineData(false)>]
+[<Xunit.InlineData(true)>]
+let ``project dependency metadata matches the package produced in the same mode`` (release: bool) =
+    withTempDir (fun dir ->
+        File.WriteAllText(Path.Combine(dir, ".gitignore"), "bin/\nobj/\n")
+
+        File.WriteAllText(
+            Path.Combine(dir, "NuGet.Config"),
+            "<configuration><packageSources><clear /></packageSources></configuration>"
+        )
+
+        let writeProject name version reference =
+            let projectDir = Path.Combine(dir, name)
+            Directory.CreateDirectory(projectDir) |> ignore
+            let projectPath = Path.Combine(projectDir, name + ".csproj")
+
+            File.WriteAllText(
+                projectPath,
+                $"""<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="{refStampProps}" />
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>{name}</PackageId>
+    <Version>{version}</Version>
+    <Description>RefStamp dependency fixture</Description>
+    <Authors>fixture</Authors>
+  </PropertyGroup>
+  {reference}
+  <Import Project="{refStampTargets}" />
+</Project>"""
+            )
+
+            projectDir
+
+        let library = writeProject "DependencyFixture" "2.3.4" ""
+
+        let consumer =
+            writeProject
+                "ConsumerFixture"
+                "5.6.7"
+                "<ItemGroup><ProjectReference Include=\"../DependencyFixture/DependencyFixture.csproj\" /></ItemGroup>"
+
+        git dir [ "init"; "-q" ] =! 0
+        git dir [ "add"; "." ] =! 0
+        git dir [ "commit"; "-qm"; "dependency fixture" ] =! 0
+
+        let packMetadata projectDir =
+            let releaseArgs = if release then [ "-p:ReleaseBuild=true" ] else []
+
+            let code, output =
+                run dotnetExe ([ "pack"; "-c"; "Release"; "--nologo" ] @ releaseArgs) projectDir localPackEnv
+
+            Assert.True((code = 0), output)
+
+            let archive =
+                Directory.GetFiles(Path.Combine(projectDir, "bin", "Release"), "*.nupkg")
+                |> Array.exactlyOne
+
+            use package = ZipFile.OpenRead archive
+
+            let entry =
+                package.Entries
+                |> Seq.find (fun entry -> entry.FullName.EndsWith(".nuspec", StringComparison.Ordinal))
+
+            use stream = entry.Open()
+            XDocument.Load stream
+
+        let libraryMetadata = packMetadata library
+        let consumerMetadata = packMetadata consumer
+
+        let version (document: XDocument) =
+            document.Descendants()
+            |> Seq.find (fun node -> node.Name.LocalName = "version")
+            |> fun node -> node.Value
+
+        let dependency =
+            consumerMetadata.Descendants()
+            |> Seq.find (fun node ->
+                node.Name.LocalName = "dependency"
+                && node.Attribute(XName.Get "id").Value = "DependencyFixture")
+
+        let libraryVersion = version libraryMetadata
+
+        if release then
+            Assert.Equal("2.3.4", libraryVersion)
+            Assert.Equal("5.6.7", version consumerMetadata)
+        else
+            Assert.Matches(@"^2\.3\.4-ref\.g[0-9a-f]{12}$", libraryVersion)
+            Assert.Matches(@"^5\.6\.7-ref\.g[0-9a-f]{12}$", version consumerMetadata)
+
+        Assert.Equal(libraryVersion, dependency.Attribute(XName.Get "version").Value))
