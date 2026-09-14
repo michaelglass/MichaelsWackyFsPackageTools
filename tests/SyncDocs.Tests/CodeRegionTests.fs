@@ -434,9 +434,17 @@ let ``discoverStandaloneCodeDocs - excludes paths listed as pair sources`` () =
 
         let docs = discoverStandaloneCodeDocs tmpDir [ readme ]
 
-        // README is a pair source -> excluded; the standalone guide remains
-        test <@ not (docs |> List.exists (fun p -> p = readme)) @>
-        test <@ docs |> List.exists (fun p -> p = guide) @>)
+        // README is a pair source -> excluded; the standalone guide remains.
+        //
+        // Compare canonical paths on both sides, which is what discoverStandaloneCodeDocs
+        // does internally (it maps both through Path.GetFullPath before comparing). The
+        // fixture builds "docs/guide.md" with a forward slash and Path.Combine keeps that
+        // verbatim, while directory enumeration returns a backslash — so raw string
+        // equality compares two spellings of the same file and fails on Windows.
+        let samePath (a: string) (b: string) = Path.GetFullPath a = Path.GetFullPath b
+
+        test <@ not (docs |> List.exists (fun p -> samePath p readme)) @>
+        test <@ docs |> List.exists (fun p -> samePath p guide) @>)
 
 [<Fact>]
 let ``discoverStandaloneCodeDocs - skips bin obj and dot directories`` () =
