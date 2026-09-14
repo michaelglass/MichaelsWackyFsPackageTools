@@ -103,7 +103,7 @@
         //   empty @:                  the PARENT's ref (the described change you just packed)
         string template =
             "if(empty, "
-            + "parents.map(|c| 'ref.' ++ c.change_id().short(8) ++ '.g' ++ c.commit_id().short(12)).join('.'), "
+            + "'ref' ++ parents.map(|c| '.' ++ c.change_id().short(8) ++ '.g' ++ c.commit_id().short(12)).join(''), "
             + "'ref.' ++ change_id.short(8) ++ '.g' ++ commit_id.short(12) ++ if(description, '', '.dirty'))";
         var jj = Run("jj", new[] { "log", "--no-graph", "-r", "@", "-T", template });
         var jjShape = new Regex("^ref(\\.[k-z]{8}\\.g[0-9a-f]{12})+(\\.dirty)?$");
