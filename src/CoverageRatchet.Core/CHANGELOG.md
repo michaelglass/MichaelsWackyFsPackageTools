@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- feat: `ReaderOptions` makes the Cobertura reader's three filters — included extensions, excluded file-name patterns, excluded path patterns — reachable from outside, and every entry point gains a `*With` twin that takes one: `extractRawLinesWith`, `parseXmlWith`, `parseXmlsWith`, `parseFilesWith`, `parseFileWith`. The parameterless forms delegate to their twin with `ReaderOptions.defaults`, which is byte-for-byte what was hard-coded before, so nothing changes for a caller that does not ask.
+- feat: `ReaderOptions.withExtensions` widens the reader to other languages. `Cobertura.extractRawLines` filtered to `.fs` through a private array, which meant a Cobertura report from a C# or VB project returned zero files and there was no way to widen it — even though everything downstream (`RawLine`, `buildCoverage`, `Thresholds.judge`, `Ratchet.ratchet`) is already language-neutral. Renaming `.cs` to `.fs` *inside the XML*, changing nothing else, was enough to make a real C# report parse, which is what showed the filter was the only language-specific thing in the path.
+
 ## 0.1.0-alpha.7 - 2026-08-30
 
 - Finish: AUTOMATION-127 fail when configured coverage floors are unmeasured
