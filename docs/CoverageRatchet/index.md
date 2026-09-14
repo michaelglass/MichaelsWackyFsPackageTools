@@ -86,6 +86,39 @@ Exit 2 also covers a report with no F# file in it at all: the wrong
 `--search-dir`, a collector that wrote nothing, a report read mid-write. Zero
 files examined is not zero files failing.
 
+#### A file the reader never read leaves no name either
+
+The completeness check above closes the gap between the config and the report.
+There is one more gap below it: a file the *reader* filtered out never reaches
+the report-side list at all. It has no coverage row, so it never gets a floor,
+so it is not in `overrides` for the check to miss — it is absent from both the
+numerator and the denominator, and `3/3` reads exactly like `4/4`.
+
+The filters are conventional and usually right — generated files, vendored
+paths, and names containing `Test`. But `Test` is matched anywhere in the name,
+so a production file called `TestKit.fs`, `TestHarness.fs` or `TestServer.fs` is
+dropped too, and those are precisely the files whose coverage someone would want
+ratcheted.
+
+`check` now says how many were dropped:
+
+```
+Result: 3/3 files in the report passed (1 more was excluded by the reader; see `targets`)
+```
+
+and `targets` names them and says which filter decided:
+
+```
+  3 files
+
+  Not read by the coverage reader:
+    TestKit.fs — name contains "Test"
+```
+
+The rule itself is unchanged — this reports what the reader did rather than
+altering it, so an existing project measures exactly the files it measured
+before.
+
 ### Loosen thresholds
 
 If you need `check` to pass right now (e.g., after a big refactor that dropped coverage), loosen sets every file's threshold to its current actual coverage:

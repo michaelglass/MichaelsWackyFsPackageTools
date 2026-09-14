@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- fix: `check` and `targets` now say when the reader dropped a file. A file excluded by the reader's filters is absent from BOTH sides of `Result: N/N files in the report passed` — it never reaches `buildCoverage`, so it never gets a floor, so `unmeasuredFloors` has no obligation to report as missing and `Incomplete` cannot fire for it. `3/3` and `4/4` were therefore indistinguishable to a reader, which is the same failure `NothingMeasured` exists to prevent one level down: the denominator was the filtered evidence rather than the obligation. `check` appends the count to the line it already prints; `targets` names each dropped file and which filter decided, since that is the command you run when you want to know what is measurable and it is not on any CI hot path.
+
+
 ## 0.15.0-alpha.14 - 2026-08-30
 
 - fix: `loosen-from-ci` now accepts completed `skipped` and `neutral` workflow runs alongside at least one genuine success instead of falsely treating a skipped job as the coverage failure and downloading its nonexistent artifact. Skipped/neutral-only runs still cannot pass, while failures and cancellations retain coverage-artifact recovery.

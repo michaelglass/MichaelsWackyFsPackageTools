@@ -143,7 +143,18 @@ let private reportUnmeasuredFloors (configPath: string) (unmeasured: UnmeasuredF
         printfn "    the report was read mid-write. Re-run the full suite."
         printfn "  - the FILE is gone: delete its entry from %s." configPath
 
-let private runCheck (configPath: string) (files: FileCoverage list) =
+/// Say what the reader dropped, in one clause on the line that already reports a
+/// count. A filtered file is missing from BOTH sides of "N/N files passed" — it never
+/// becomes an obligation, so nothing downstream can miss it — which makes 3/3 and 4/4
+/// indistinguishable to a reader. The count alone turns that from silent into merely
+/// surprising; `targets` names the files.
+let private excludedClause (exclusions: ExcludedFile list) =
+    match exclusions.Length with
+    | 0 -> ""
+    | 1 -> " (1 more was excluded by the reader; see `targets`)"
+    | n -> sprintf " (%d more were excluded by the reader; see `targets`)" n
+
+let private runCheck (configPath: string) (exclusions: ExcludedFile list) (files: FileCoverage list) =
     let config = loadConfig configPath
     let verdict = judge config files
 
@@ -175,7 +186,7 @@ let private runCheck (configPath: string) (files: FileCoverage list) =
         // denominator came from the report, so it read identically at 7 files
         // and at 50. It stays, because it is the useful per-run detail — but it
         // no longer decides anything, and it now names the set it counted.
-        printfn "Result: %d/%d files in the report passed" passed.Length allResults.Length
+        printfn "Result: %d/%d files in the report passed%s" passed.Length allResults.Length (excludedClause exclusions)
 
         let countResults = buildCountResults config files
 
@@ -302,7 +313,7 @@ let private runCheckJson (configPath: string) (outputPath: string) (files: FileC
 
     exitCodeOf verdict
 
-let private runTargets (configPath: string) (files: FileCoverage list) =
+let private runTargets (configPath: string) (exclusions: ExcludedFile list) (files: FileCoverage list) =
     let config = loadConfig configPath
     let allResults = buildFileResults config files
 
@@ -320,6 +331,17 @@ let private runTargets (configPath: string) (files: FileCoverage list) =
     printfn "────────────────────────────────────────────────────────────────"
     printfn ""
     printfn "  %d files" sorted.Length
+
+    if not (List.isEmpty exclusions) then
+        printfn ""
+        printfn "  Not read by the coverage reader:"
+
+        for e in exclusions |> List.truncate 20 do
+            printfn "    %s — %s" e.FileName (ExclusionReason.describe e.Reason)
+
+        if exclusions.Length > 20 then
+            printfn "    ... and %d more" (exclusions.Length - 20)
+
     printfn ""
     0
 
@@ -646,17 +668,18 @@ let private runWithCoverageFiles
     (cmd: CoverageFileCommand)
     (configPath: string)
     (xmlPaths: string list)
+    (exclusions: ExcludedFile list)
     (files: FileCoverage list)
     =
     match cmd with
     | CfRatchet -> runRatchet configPath files
-    | CfCheck -> runCheck configPath files
+    | CfCheck -> runCheck configPath exclusions files
     | CfLoosen -> runLoosen configPath files
     | CfBaselineLines -> runBaselineLines configPath files
     | CfCheckJson outputOpt ->
         let outputPath = outputOpt |> Option.defaultValue "coverage-results.json"
         runCheckJson configPath outputPath files
-    | CfTargets -> runTargets configPath files
+    | CfTargets -> runTargets configPath exclusions files
     | CfGaps -> runGaps (xmlPaths |> List.map File.ReadAllText)
 
 let run (command: Command) (searchDir: string) (mergeBaselines: bool) : Result<int, string> =
@@ -712,7 +735,8 @@ let run (command: Command) (searchDir: string) (mergeBaselines: bool) : Result<i
                 Error "No coverage.cobertura.xml found"
             else
                 let files = parseFiles xmlPaths
-                let result = runWithCoverageFiles cmd configPath xmlPaths files
+                let exclusions = extractExclusionsFromFiles xmlPaths
+                let result = runWithCoverageFiles cmd configPath xmlPaths exclusions files
 
                 // If the run just completed a known-full test suite (signalled
                 // by fs-hot-watch via FSHW_RAN_FULL_SUITE=true), advance the
