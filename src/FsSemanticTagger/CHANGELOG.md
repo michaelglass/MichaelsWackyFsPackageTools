@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.8 - 2026-09-15
+
 - fix: **the post-push poll no longer gives up before GitHub has registered the workflow run.** It asked once, three seconds after pushing the tag, and reported the answer. GitHub registers a tag-push run seconds later rather than instantly, so on 2026-09-04 three healthy FsHotWatch releases — core `0.10.0-alpha.28`, Fantomas `0.7.0-alpha.23` and Cli `0.14.0-alpha.42` — were each declared broken while their Release workflows were already running, and each needed a human to work out which half of "the release did not happen / the release happened and the poll gave up" they were looking at. The poll now keeps asking for five minutes (5s x 60), and an unanswerable `gh` is retried like an absent run rather than settled as one.
   - **The advice was the dangerous part.** The give-up printed `git push origin :refs/tags/<tag> && git push origin <tag>`. Following it after a run *had* registered deletes a tag that is mid-publish and pushes it again — a second Release run for a version that is already going out. That remedy is gone. The message now says not to touch the tag, gives the two places to look (`gh run list --branch <tag>`, the Actions tab), and points out that a genuinely runless tag is an orphan the next `release` invocation detects and resumes on its own.
   - **Three outcomes, three exit codes**, the convention the tracked issue set for the NuGet wait applied one stage earlier: `0` every tag has a run, `1` the release demonstrably did not happen (a push failed, or a run exists and has already finished without publishing), `2` the tags are on the remote and no run has appeared yet. `2` and not `1` is the point — "I stopped waiting" is not "it failed", and the old code returned `1` for both.

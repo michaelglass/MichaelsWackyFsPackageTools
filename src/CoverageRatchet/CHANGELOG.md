@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.15.0-alpha.15 - 2026-09-15
+
+- Fix: make the coverage-ratchet JSON writer encoding-stable
+- Finish: update SourceLink to patched 10.0.303
+- Finish: update SourceLink to fix CVE-2026-62900
+
+
 ## 0.15.0-alpha.14 - 2026-08-30
 
 - fix: `loosen-from-ci` now accepts completed `skipped` and `neutral` workflow runs alongside at least one genuine success instead of falsely treating a skipped job as the coverage failure and downloading its nonexistent artifact. Skipped/neutral-only runs still cannot pass, while failures and cancellations retain coverage-artifact recovery.

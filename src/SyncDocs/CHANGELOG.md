@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.13.0-alpha.5 - 2026-09-15
+
+- Finish: update SourceLink to patched 10.0.303
+- Finish: update SourceLink to fix CVE-2026-62900
+
+
 ## 0.13.0-alpha.4 - 2026-07-23
 
 - chore(deps): update dev-tools and external dependencies

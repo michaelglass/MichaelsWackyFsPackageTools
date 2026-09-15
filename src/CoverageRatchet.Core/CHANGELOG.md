@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.8 - 2026-09-15
+
+- Fix: make the coverage-ratchet JSON writer encoding-stable
+- Finish: update SourceLink to patched 10.0.303
+- Finish: update SourceLink to fix CVE-2026-62900
+
+
 ## 0.1.0-alpha.7 - 2026-08-30
 
 - Finish: fail when configured coverage floors are unmeasured
