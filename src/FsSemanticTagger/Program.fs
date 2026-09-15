@@ -72,6 +72,7 @@ let initCommand (rootDir: string) : Result<int, string> =
                 { Packages = packages
                   ReservedVersions = Set.empty
                   PreBuildCmds = []
+                  PublishWorkflows = Config.defaultPublishWorkflows
                   RootDir = rootDir }
 
             File.WriteAllText(jsonPath, Config.toJson config)

@@ -167,7 +167,8 @@ let ``a workflow run that already failed stops the release, and says so as a fai
             reportTagConfirmationFailures
                 [ TagConfirmationFailure.WorkflowRunFailed(
                       "fssemantictagger-v0.14.0-alpha.8",
-                      [ { Name = "Release"
+                      [ { Workflow = PublishWorkflow ".github/workflows/release.yml"
+                          Name = "Release"
                           Url = "https://github.com/example/repo/actions/runs/42"
                           RunId = "42"
                           Status = Completed
@@ -176,6 +177,8 @@ let ``a workflow run that already failed stops the release, and says so as a fai
 
     test <@ result = 1 @>
     test <@ output.Contains("workflow run that FAILED") @>
+    // The refusal names the workflow that refused, by path: that is what gets rerun.
+    test <@ output.Contains("publish workflow .github/workflows/release.yml") @>
     test <@ output.Contains("https://github.com/example/repo/actions/runs/42") @>
     test <@ output.Contains("gh run rerun") @>
     test <@ not (output.Contains("no workflow run YET")) @>
@@ -284,6 +287,7 @@ let ``release - returns 1 when uncommitted changes`` () =
         { Packages = []
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
@@ -306,6 +310,7 @@ let ``release - returns 1 when CI not passing`` () =
         { Packages = []
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
@@ -335,6 +340,7 @@ let ``release - Auto with no previous tags returns 0 with no packages`` () =
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
@@ -385,6 +391,7 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -450,6 +457,7 @@ let ``release - Auto first-releases an untagged package at its declared fsproj v
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
@@ -515,6 +523,7 @@ let ``release - StartAlpha with LocalPublish calls dotnet pack`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -569,6 +578,7 @@ let ``release - Auto with reserved version bumps past it`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.ofList [ "1.0.1" ]
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -618,6 +628,7 @@ let ``release - Auto with own-changed PackAsTool package skips the API-diff (NU1
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -643,6 +654,7 @@ let ``release - non-Auto with reserved version skips package`` () =
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.ofList [ "0.1.0-alpha.1" ]
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let result =
@@ -663,6 +675,7 @@ let ``release - PromoteToBeta with FirstRelease returns 0 no packages`` () =
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let result =
@@ -691,6 +704,7 @@ let ``release - runs preBuildCmds before build`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = [ "dotnet tool restore"; "dotnet tool run paket restore" ]
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -850,6 +864,7 @@ let ``release - skips packages with no changes since last tag`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -907,6 +922,7 @@ let ``release - Auto detects breaking API change and bumps major`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -959,6 +975,7 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = dir }
 
         let result =
@@ -1024,6 +1041,7 @@ let ``release - Auto detects addition and bumps minor`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -1067,6 +1085,7 @@ let ``release - Auto aborts (no bump) when previous API cannot be read`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -1119,6 +1138,7 @@ let ``release - Auto skips an orphan tag and diffs against the last published pr
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let output, result =
@@ -1170,6 +1190,7 @@ let ``release - Auto still aborts on a transient fetch error (does not skip)`` (
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -1213,6 +1234,7 @@ let ``release - Auto when every prior tag is absent on feed bumps conservatively
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -1258,6 +1280,7 @@ let ``release - Auto every prior tag absent honours the reserved-version skip`` 
               // applies and it bumps past it to 1.2.2.
               ReservedVersions = Set.ofList [ "1.2.1" ]
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -1306,6 +1329,7 @@ let ``release - Auto pre-1.0 breaking change bumps minor (UnionConfig 0.3.0 -> 0
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -1363,6 +1387,7 @@ let ``release - does not push tags when post-push CI fails`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -1418,6 +1443,7 @@ let ``release - does not push tags when post-push CI times out`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -1471,6 +1497,7 @@ let ``release - does not push tags when post-push CI has no runs`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -1521,6 +1548,7 @@ let ``release - reconciles coverage via loosen-from-ci after CI is green`` () =
         { Packages = []
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
@@ -1551,6 +1579,7 @@ let ``release - returns 1 when coverageratchet loosen-from-ci fails`` () =
         { Packages = []
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
@@ -1573,6 +1602,7 @@ let ``release - prints coverageratchet error message when loosen-from-ci fails``
         { Packages = []
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let output, result =
@@ -1600,6 +1630,7 @@ let ``release - fails fast with actionable push-first message when commit isn't 
         { Packages = []
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let output, result =
@@ -1658,6 +1689,7 @@ let ``release - with --push pushes the commit then waits for CI when not pushed`
         { Packages = []
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let result =
@@ -1685,6 +1717,7 @@ let ``release - distinguishes a genuine CI failure from an unpushed commit`` () 
         { Packages = []
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let output, result =
@@ -1711,6 +1744,7 @@ let ``release - returns 1 when CI status is Unknown`` () =
         { Packages = []
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
@@ -1734,6 +1768,7 @@ let ``release - waits then returns 1 when pushed CI times out still in progress`
         { Packages = []
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 2
@@ -1755,6 +1790,7 @@ let ``release - returns 1 when the release commit sha can't be determined`` () =
         { Packages = []
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let output, result =
@@ -1780,6 +1816,7 @@ let ``release - pushed commit whose CI run never registers times out`` () =
         { Packages = []
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let output, result =
@@ -1814,6 +1851,7 @@ let ``release - PromoteToRC with HasPreviousRelease succeeds`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -1850,6 +1888,7 @@ let ``release - PromoteToStable with HasPreviousRelease succeeds`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -1886,6 +1925,7 @@ let ``release - PromoteToBeta with HasPreviousRelease succeeds`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -1964,6 +2004,7 @@ let ``release - updates fsProjsSharingSameTag versions too`` () =
                     FsProjsSharingSameTag = [ tmpFileShared ] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -2022,6 +2063,7 @@ let ``release - resumes when fsproj already has target version (idempotent)`` ()
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -2087,6 +2129,7 @@ let ``release - fails fast when resuming and CI has failed`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -2139,6 +2182,7 @@ let ``release - a tag that triggered no workflow run fails the release`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -2202,6 +2246,7 @@ let ``release - resumes and polls when CI is in progress`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -2252,6 +2297,7 @@ let ``release - second run after successful first run produces no changes`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -2300,6 +2346,7 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = Path.GetTempPath() }
 
         let result =
@@ -2362,6 +2409,7 @@ let ``release - dryRun skips uncommitted check and does not write fsproj`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -2405,6 +2453,7 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = tmpDir }
 
         // Bypass the seedTmpChangelog helper; call release directly with rootDir = tmpDir (no CHANGELOG.md there)
@@ -2476,6 +2525,7 @@ let ``release - resume in DryRun mode takes no actions and returns 0`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -2530,6 +2580,7 @@ let ``release - resume with LocalPublish packs without pushing`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -2645,6 +2696,7 @@ let ``release - waits for NuGet after pushing tags and checks the published pack
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkFeedPresence 5
@@ -2675,6 +2727,7 @@ let ``release - an unconfirmed NuGet wait exits 2, not 0`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkFeedPresence 2
@@ -2720,6 +2773,7 @@ let ``release - a fully confirmed NuGet wait still exits 0`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkFeedPresence 2
@@ -2828,6 +2882,7 @@ let ``release - scoped to one package only tags that package`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result = runReleaseTargeting fakeRun config StartAlpha PushTags [ "LibA" ]
@@ -2883,6 +2938,7 @@ let ``release - --only on a multi-package repo uses the per-package CHANGELOG, n
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = rootDir }
 
         let result =
@@ -2950,6 +3006,7 @@ let ``release - scoped to multiple packages tags exactly those`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -2992,6 +3049,7 @@ let ``release - unknown target package aborts with exit 1 before any work`` () =
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let output, result =
@@ -3030,6 +3088,7 @@ let ``release - scoping composes with dry-run (only target previewed)`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let output, result =
@@ -3099,6 +3158,7 @@ let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         // Auto mode with previous API unreadable: the normal path would abort
@@ -3150,6 +3210,7 @@ let ``release - Auto dry-run reports the resume plan instead of 'No packages to 
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let output, result =
@@ -3201,6 +3262,7 @@ let ``release - Auto with fsproj equal to last tag has nothing to do (not a resu
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let output, result =
@@ -3246,6 +3308,7 @@ let private orphanTagConfig (tmpFile: string) =
             FsProjsSharingSameTag = [] } ]
       ReservedVersions = Set.empty
       PreBuildCmds = []
+      PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
       RootDir = "" }
 
 /// Like `runRelease`, but drives the FEED seam — the authority for "is this
@@ -3520,6 +3583,7 @@ let ``release - fresh changes still bump normally (not treated as resume)`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         let result =
@@ -3591,6 +3655,7 @@ let ``release - multi-package mixed: one mid-release resumes, one fresh bumps`` 
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         // LibB is a pre-release alpha: StartAlpha-style auto bump = bumpPreRelease.
@@ -3712,6 +3777,7 @@ let ``release - Auto rebundles when only a bundled dependency changed`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = root }
 
         let result = runReleaseInRoot fakeRun config Auto
@@ -3763,6 +3829,7 @@ let ``release - Auto skips when neither own nor dependency changed`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = root }
 
         let result = runReleaseInRoot fakeRun config Auto
@@ -3818,6 +3885,7 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = root }
 
         let result =
@@ -3884,6 +3952,7 @@ let ``release - explicit command rebundles on dependency-only change`` () =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = root }
 
         // PromoteToBeta requested, but only the bundled dependency changed: the
@@ -3937,6 +4006,7 @@ let ``release - dependency-only rebundle skips a reserved explicit version`` () 
               // The would-be explicit beta target is reserved => the package is skipped.
               ReservedVersions = Set.ofList [ "0.1.0-beta.1" ]
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = root }
 
         let result = runReleaseInRoot fakeRun config PromoteToBeta
@@ -4025,6 +4095,7 @@ let ``release - library does NOT rebundle when only a separately-published depen
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = root }
 
         let result =
@@ -4127,6 +4198,7 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = root }
 
         let result =
@@ -4221,6 +4293,7 @@ let ``release - library rebundles when a non-configured helper dependency change
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = root }
 
         let result =
@@ -4301,6 +4374,7 @@ let ``release - pushes main before creating tags so a push failure leaves no orp
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = "" }
 
         // pushMain uses runOrFail, which throws on failure; the release aborts.
@@ -4372,6 +4446,7 @@ let private seedSinglePackageRepo (rootDir: string) (changelogBody: string) =
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = rootDir }
 
     fsproj, Path.GetDirectoryName(fsproj), changelog, config
@@ -4572,6 +4647,7 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = dir }
 
         let result =
@@ -4645,6 +4721,7 @@ let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative 
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = dir }
 
         let result =
@@ -4716,6 +4793,7 @@ let ``release - PackAsTool CLI aborts when the previous grammar cannot be read``
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = dir }
 
         let result =
@@ -4809,6 +4887,7 @@ let ``calloutCheckPaths - multi-package repo also covers the repo-root changelog
             { Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = dir }
 
         let paths = calloutCheckPaths config config.Packages |> List.map snd
@@ -4826,6 +4905,7 @@ let ``calloutCheckPaths - single-package repo lists the root changelog once, und
             { Packages = [ calloutPkg dir "Solo" ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = dir }
 
         let paths = calloutCheckPaths config config.Packages
@@ -4840,6 +4920,7 @@ let ``release --check - fails when a package changelog buries its callout`` () =
             { Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = dir }
 
         test <@ runCheck config = 1 @>)
@@ -4854,6 +4935,7 @@ let ``release --check - passes when the callout leads the section`` () =
             { Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = dir }
 
         test <@ runCheck config = 0 @>)
@@ -4870,6 +4952,7 @@ let ``release --check - fails when the repo-root aggregate buries its callout`` 
             { Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = dir }
 
         test <@ runCheck config = 1 @>)
@@ -4883,6 +4966,7 @@ let ``calloutOrderProblems - names the package and the buried callout`` () =
             { Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
               RootDir = dir }
 
         let problems = calloutOrderProblems config config.Packages
