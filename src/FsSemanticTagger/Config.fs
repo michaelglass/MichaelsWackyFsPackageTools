@@ -12,11 +12,36 @@ type PackageConfig =
       TagPrefix: string
       FsProjsSharingSameTag: string list }
 
+/// A workflow whose run PUBLISHES a package, named by its path under the repo
+/// (`.github/workflows/release.yml`). The path is the stable identity: display
+/// names are editable and two workflows may share one.
+///
+/// A distinct type rather than a string so the post-push tag check can only ever
+/// be asked about a run from a publishing workflow. A run from
+/// any other workflow the tag triggered — a docs deploy cancelled by its own
+/// `concurrency` group, say — carries no information about publication and must
+/// never refuse a release, and the way to guarantee that is to make such a run
+/// unrepresentable in the check rather than to filter it by name inside it.
+type PublishWorkflow = PublishWorkflow of path: string
+
 type ToolConfig =
-    { Packages: PackageConfig list
-      ReservedVersions: Set<string>
-      PreBuildCmds: string list
-      RootDir: string }
+    {
+        Packages: PackageConfig list
+        ReservedVersions: Set<string>
+        PreBuildCmds: string list
+        /// The workflows whose run on a pushed tag publishes the package. Read from
+        /// `publishWorkflows` in `semantic-tagger.json`; defaults to
+        /// `defaultPublishWorkflows`, the release workflow every repo using this
+        /// tool ships under the same path.
+        PublishWorkflows: PublishWorkflow list
+        RootDir: string
+    }
+
+/// The publish workflow assumed when `semantic-tagger.json` names none: the
+/// tag-triggered release workflow, which lives at this path in every repo this
+/// tool releases (this one and FsHotWatch both).
+let defaultPublishWorkflows: PublishWorkflow list =
+    [ PublishWorkflow ".github/workflows/release.yml" ]
 
 let private assemblyNameRegex =
     Regex(@"<AssemblyName>([^<]+)</AssemblyName>", RegexOptions.Compiled)
@@ -213,6 +238,7 @@ let discover (rootDir: string) : Result<ToolConfig, string> =
                     FsProjsSharingSameTag = [] } ]
               ReservedVersions = Set.empty
               PreBuildCmds = []
+              PublishWorkflows = defaultPublishWorkflows
               RootDir = rootDir }
     | n -> Error $"Found {n} packable .fsproj files; create a semantic-tagger.json to configure multi-package release"
 
@@ -277,9 +303,27 @@ let parseJson (json: string) : ToolConfig =
                   yield item.GetString() ])
         |> Option.defaultValue []
 
+    let publishWorkflows =
+        root
+        |> tryGet "publishWorkflows"
+        |> Option.map (fun prop ->
+            [ for item in prop.EnumerateArray() do
+                  yield PublishWorkflow(item.GetString()) ])
+        |> Option.defaultValue defaultPublishWorkflows
+
+    // An empty set would make every tag unconfirmable — no workflow to ask about, so
+    // no run can ever appear — and that is a configuration mistake, not a release
+    // outcome. Refuse it here, where the operator can read the reason, rather than
+    // after the version-bump commit and the tags have gone out.
+    if List.isEmpty publishWorkflows then
+        invalidArg
+            "json"
+            "semantic-tagger.json: `publishWorkflows` must name at least one workflow path, or be omitted to default to .github/workflows/release.yml"
+
     { Packages = packages
       ReservedVersions = reservedVersions
       PreBuildCmds = preBuildCmds
+      PublishWorkflows = publishWorkflows
       RootDir = "" }
 
 /// Serialize a ToolConfig to JSON string
@@ -320,6 +364,16 @@ let toJson (config: ToolConfig) : string =
 
         for cmd in config.PreBuildCmds do
             writer.WriteStringValue(cmd)
+
+        writer.WriteEndArray()
+
+    // Written only when it differs from the default, so the file a fresh `init`
+    // produces says nothing about a setting the operator has not touched.
+    if config.PublishWorkflows <> defaultPublishWorkflows then
+        writer.WriteStartArray("publishWorkflows")
+
+        for PublishWorkflow path in config.PublishWorkflows do
+            writer.WriteStringValue(path)
 
         writer.WriteEndArray()
 

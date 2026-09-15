@@ -930,6 +930,9 @@ let private noWaitPolicy (attempts: int) : TagPushPolicy =
       RunPollIntervalMs = 0
       RunPollAttempts = 1 }
 
+/// The publish set every repo this tool releases actually has: one release workflow.
+let private releaseOnly = FsSemanticTagger.Config.defaultPublishWorkflows
+
 /// A `gh run list` stub that answers with `answers` in order, repeating the last one
 /// once exhausted. Everything else fails, so a test that reaches for another command
 /// says so instead of quietly passing.
@@ -956,7 +959,7 @@ let ``waitForRunForRef - an empty first answer is not a verdict, it is asked aga
     let run =
         ghRunListAnswers [ "[]"; "[]"; """[{"name":"Release","status":"queued","conclusion":null}]""" ]
 
-    test <@ waitForRunForRef run 0 5 "v1.0.0" = TagRunPresent @>
+    test <@ waitForRunForRef run releaseOnly 0 5 "v1.0.0" = TagRunPresent @>
 
 [<Fact>]
 let ``waitForRunForRef - parses the shape gh actually returns for a release tag`` () =
@@ -969,7 +972,7 @@ let ``waitForRunForRef - parses the shape gh actually returns for a release tag`
     let live =
         """[{"conclusion":"success","databaseId":33899932280,"name":"Release","status":"completed","url":"https://github.com/michaelglass/FsHotWatch/actions/runs/33899932280"}]"""
 
-    match runStatesForRef (ghRunListAnswers [ live ]) "cli-v0.14.0-alpha.42" with
+    match runStatesForRef (ghRunListAnswers [ live ]) releaseOnly "cli-v0.14.0-alpha.42" with
     | Some [ runInfo ] ->
         test <@ runInfo.Name = "Release" @>
         test <@ runInfo.RunId = "33899932280" @>
@@ -977,12 +980,12 @@ let ``waitForRunForRef - parses the shape gh actually returns for a release tag`
         test <@ runInfo.Conclusion = SuccessConclusion @>
     | other -> failwithf "Expected one parsed run, got %A" other
 
-    test <@ waitForRunForRef (ghRunListAnswers [ live ]) 0 1 "cli-v0.14.0-alpha.42" = TagRunPresent @>
+    test <@ waitForRunForRef (ghRunListAnswers [ live ]) releaseOnly 0 1 "cli-v0.14.0-alpha.42" = TagRunPresent @>
 
 [<Fact>]
 let ``waitForRunForRef - a run that never appears is reported absent, not present`` () =
     // The retry must not become a way to wait forever, nor to invent a run.
-    match waitForRunForRef (ghRunListAnswers [ "[]" ]) 0 3 "v1.0.0" with
+    match waitForRunForRef (ghRunListAnswers [ "[]" ]) releaseOnly 0 3 "v1.0.0" with
     | TagRunAbsent(_, everAnswered) -> test <@ everAnswered @>
     | other -> failwithf "Expected TagRunAbsent, got %A" other
 
@@ -992,7 +995,7 @@ let ``waitForRunForRef - the reported wait is measured, not the budget it was gi
     // claimed it had waited thirty minutes. Two questions 400ms apart spend ONE 400ms
     // sleep, while `attempts * interval` reads 800ms — the arithmetic a budget-derived
     // number does. The clock cannot produce 800ms here and the bound cannot produce 400.
-    match waitForRunForRef (ghRunListAnswers [ "[]" ]) 400 2 "v1.0.0" with
+    match waitForRunForRef (ghRunListAnswers [ "[]" ]) releaseOnly 400 2 "v1.0.0" with
     | TagRunAbsent(waited, _) ->
         test <@ waited >= System.TimeSpan.FromMilliseconds 350.0 @>
         test <@ waited < System.TimeSpan.FromMilliseconds 700.0 @>
@@ -1007,7 +1010,7 @@ let ``waitForRunForRef - a run that already finished without publishing is a FAI
     let json =
         """[{"name":"Release","status":"completed","conclusion":"failure","url":"https://example.com/1","databaseId":42}]"""
 
-    match waitForRunForRef (ghRunListAnswers [ json ]) 0 1 "v1.0.0" with
+    match waitForRunForRef (ghRunListAnswers [ json ]) releaseOnly 0 1 "v1.0.0" with
     | TagRunFailed [ runInfo ] ->
         test <@ runInfo.Conclusion = FailureConclusion @>
         test <@ runInfo.RunId = "42" @>
@@ -1020,7 +1023,7 @@ let ``waitForRunForRef - a completed successful run is present, not failed`` () 
     let json =
         """[{"name":"Release","status":"completed","conclusion":"success","url":"https://example.com/1"}]"""
 
-    test <@ waitForRunForRef (ghRunListAnswers [ json ]) 0 1 "v1.0.0" = TagRunPresent @>
+    test <@ waitForRunForRef (ghRunListAnswers [ json ]) releaseOnly 0 1 "v1.0.0" = TagRunPresent @>
 
 [<Fact>]
 let ``waitForRunForRef - a skipped companion workflow does not fail the release`` () =
@@ -1029,7 +1032,7 @@ let ``waitForRunForRef - a skipped companion workflow does not fail the release`
     let json =
         """[{"name":"Deploy Docs","status":"completed","conclusion":"skipped"},{"name":"Release","status":"in_progress","conclusion":null}]"""
 
-    test <@ waitForRunForRef (ghRunListAnswers [ json ]) 0 1 "v1.0.0" = TagRunPresent @>
+    test <@ waitForRunForRef (ghRunListAnswers [ json ]) releaseOnly 0 1 "v1.0.0" = TagRunPresent @>
 
 [<Fact>]
 let ``waitForRunForRef - gh that never answers is distinguished from GitHub saying none`` () =
@@ -1040,7 +1043,7 @@ let ``waitForRunForRef - gh that never answers is distinguished from GitHub sayi
         | "gh" -> Failure("gh: command not found", 127)
         | _ -> Failure("unexpected", 1)
 
-    match waitForRunForRef run 0 2 "v1.0.0" with
+    match waitForRunForRef run releaseOnly 0 2 "v1.0.0" with
     | TagRunAbsent(_, everAnswered) -> test <@ not everAnswered @>
     | other -> failwithf "Expected TagRunAbsent, got %A" other
 
@@ -1050,7 +1053,135 @@ let ``runStatesForRef - well-formed JSON that is not a run list is NOT read as z
     // fine and contains no runs. Counting it as "asked, and there are none" would put a
     // healthy release under the missing-trigger heading on the strength of a message
     // that was never about runs.
-    test <@ runStatesForRef (ghRunListAnswers [ """{"message":"Not Found"}""" ]) "v1.0.0" = None @>
+    test <@ runStatesForRef (ghRunListAnswers [ """{"message":"Not Found"}""" ]) releaseOnly "v1.0.0" = None @>
+
+// only the workflows that PUBLISH are consulted.
+
+/// A `gh run list` stub with one answer per `--workflow <path>`. A question about a
+/// workflow the stub has no answer for FAILS, as does a question with no `--workflow`
+/// at all: an unscoped `run list --branch <tag>` is the defect, and a test must not
+/// pass because the code asked the old question and the stub was generous.
+let private ghRunListByWorkflow (answers: (string * string) list) =
+    fun (cmd: string) (args: string) ->
+        match cmd with
+        | "gh" when args.StartsWith("run list") ->
+            let workflow =
+                answers
+                |> List.tryFind (fun (path, _) -> args.Contains(sprintf " --workflow %s " path))
+
+            match workflow with
+            | Some(_, answer) -> Success answer
+            | None -> Failure(sprintf "no fixture for: gh %s" args, 1)
+        | _ -> Failure("unexpected", 1)
+
+/// The docs run this repo's `concurrency: group: docs-${{ github.sha }}` cancels on
+/// every multi-package release: same commit, several tags, one survivor.
+let private cancelledDocsRun =
+    """[{"name":"Deploy Docs","status":"completed","conclusion":"cancelled","url":"https://example.com/docs","databaseId":11}]"""
+
+let private liveReleaseRun =
+    """[{"name":"Release","status":"in_progress","conclusion":null,"url":"https://example.com/release","databaseId":12}]"""
+
+[<Fact>]
+let ``the default publish set is the release workflow, by path`` () =
+    // Both repos this tool releases keep their tag-triggered publisher at this path.
+    // A rename there must fail here, not on the next release.
+    test
+        <@
+            FsSemanticTagger.Config.defaultPublishWorkflows = [ FsSemanticTagger.Config.PublishWorkflow
+                                                                    ".github/workflows/release.yml" ]
+        @>
+
+[<Fact>]
+let ``waitForRunForRef - a cancelled run of a NON-publishing workflow does not refuse`` () =
+    // The defect: `fssemantictagger-v0.14.0-alpha.8 — Deploy Docs finished
+    // CancelledConclusion` refused a whole release over a docs run that was cancelled
+    // by design and had nothing to say about publication. The docs run sits in the
+    // stub under its own workflow path and is never asked for.
+    let run =
+        ghRunListByWorkflow
+            [ ".github/workflows/docs.yml", cancelledDocsRun
+              ".github/workflows/release.yml", liveReleaseRun ]
+
+    test <@ waitForRunForRef run releaseOnly 0 1 "fssemantictagger-v0.14.0-alpha.8" = TagRunPresent @>
+
+[<Fact>]
+let ``waitForRunForRef - a cancelled run of a PUBLISHING workflow still refuses, naming the workflow`` () =
+    // Positive control: the classification is fail-closed and stays so. The same
+    // cancelled run, now coming from a workflow in the publish set, is a failure — and
+    // the failure says which workflow it was, because that is what the operator reruns.
+    let publishes =
+        [ FsSemanticTagger.Config.PublishWorkflow ".github/workflows/release.yml"
+          FsSemanticTagger.Config.PublishWorkflow ".github/workflows/docs.yml" ]
+
+    let run =
+        ghRunListByWorkflow
+            [ ".github/workflows/docs.yml", cancelledDocsRun
+              ".github/workflows/release.yml", liveReleaseRun ]
+
+    match waitForRunForRef run publishes 0 1 "fssemantictagger-v0.14.0-alpha.8" with
+    | TagRunFailed [ failed ] ->
+        test <@ failed.Workflow = FsSemanticTagger.Config.PublishWorkflow ".github/workflows/docs.yml" @>
+        test <@ failed.Conclusion = CancelledConclusion @>
+        test <@ failed.RunId = "11" @>
+    | other -> failwithf "Expected the docs run to refuse, got %A" other
+
+[<Fact>]
+let ``waitForRunForRef - a tag with runs only from non-publishing workflows is ABSENT, not present`` () =
+    // A docs run on the tag used to count as "a run exists" and the release went on to
+    // wait for a package that no workflow was building. With the check scoped, a tag
+    // that triggered nothing in the publish set is a tag with no run at all.
+    let run =
+        ghRunListByWorkflow
+            [ ".github/workflows/docs.yml", liveReleaseRun
+              ".github/workflows/release.yml", "[]" ]
+
+    match waitForRunForRef run releaseOnly 0 2 "v1.0.0" with
+    | TagRunAbsent(_, everAnswered) -> test <@ everAnswered @>
+    | other -> failwithf "Expected TagRunAbsent, got %A" other
+
+[<Fact>]
+let ``runStatesForRef - asks gh about each publish workflow by path and nothing else`` () =
+    let asked = ResizeArray<string>()
+
+    let run (cmd: string) (args: string) =
+        match cmd with
+        | "gh" ->
+            asked.Add args
+            Success "[]"
+        | _ -> Failure("unexpected", 1)
+
+    let publishes =
+        [ FsSemanticTagger.Config.PublishWorkflow ".github/workflows/release.yml"
+          FsSemanticTagger.Config.PublishWorkflow ".github/workflows/publish-extra.yml" ]
+
+    test <@ runStatesForRef run publishes "v1.0.0" = Some [] @>
+    test <@ asked.Count = 2 @>
+    test <@ asked |> Seq.forall (fun a -> a.Contains("--branch v1.0.0")) @>
+
+    test
+        <@
+            asked
+            |> Seq.exists (fun a -> a.Contains("--workflow .github/workflows/release.yml"))
+        @>
+
+    test
+        <@
+            asked
+            |> Seq.exists (fun a -> a.Contains("--workflow .github/workflows/publish-extra.yml"))
+        @>
+
+[<Fact>]
+let ``runStatesForRef - one unanswerable publish workflow makes the whole question unanswered`` () =
+    // "release.yml has no run" from a query that could not ask about the other publish
+    // workflow is a partial answer, and a partial answer reported as "GitHub says none"
+    // sends the operator to the Actions tab instead of to `gh auth login`.
+    let publishes =
+        [ FsSemanticTagger.Config.PublishWorkflow ".github/workflows/release.yml"
+          FsSemanticTagger.Config.PublishWorkflow ".github/workflows/publish-extra.yml" ]
+
+    let run = ghRunListByWorkflow [ ".github/workflows/release.yml", "[]" ]
+    test <@ runStatesForRef run publishes "v1.0.0" = None @>
 
 [<Fact>]
 let ``pushTagsAndConfirmDetailed - a pushed tag whose run already failed is reported as a FAILED run`` () =
@@ -1067,7 +1198,7 @@ let ``pushTagsAndConfirmDetailed - a pushed tag whose run already failed is repo
         | "gh", a when a.StartsWith("run list") -> Success json
         | _ -> Failure("unexpected", 1)
 
-    match pushTagsAndConfirmDetailed run (noWaitPolicy 1) [ "v1.0.0" ] with
+    match pushTagsAndConfirmDetailed run releaseOnly (noWaitPolicy 1) [ "v1.0.0" ] with
     | [ TagConfirmationFailure.WorkflowRunFailed(tag, [ runInfo ]) ] ->
         test <@ tag = "v1.0.0" @>
         test <@ runInfo.RunId = "7" @>
@@ -1075,7 +1206,7 @@ let ``pushTagsAndConfirmDetailed - a pushed tag whose run already failed is repo
 
     // The names-only surface still lists it: a caller that asked for tags must not be
     // told the release is fine because it did not ask for the reason.
-    test <@ pushTagsAndConfirm run (noWaitPolicy 1) [ "v1.0.0" ] = [ "v1.0.0" ] @>
+    test <@ pushTagsAndConfirm run releaseOnly (noWaitPolicy 1) [ "v1.0.0" ] = [ "v1.0.0" ] @>
 
 [<Fact>]
 let ``pushTagsAndConfirmDetailed - a tag whose run appears on a later question is confirmed`` () =
@@ -1103,7 +1234,7 @@ let ``pushTagsAndConfirmDetailed - a tag whose run appears on a later question i
           RunPollIntervalMs = 0
           RunPollAttempts = 5 }
 
-    test <@ List.isEmpty (pushTagsAndConfirmDetailed run policy [ "v1.0.0" ]) @>
+    test <@ List.isEmpty (pushTagsAndConfirmDetailed run releaseOnly policy [ "v1.0.0" ]) @>
 
 /// A `run` that succeeds at export and push, and answers `gh run list` with
 /// `runsPerTag` entries. Tests pass zero delays so nothing sleeps.
@@ -1127,7 +1258,9 @@ let ``pushTagsAndConfirm - exports and pushes each tag separately`` () =
     let calls = ResizeArray()
     let run = pushRun 1 calls
 
-    pushTagsAndConfirm run (noWaitPolicy 1) [ "v1.0.0"; "v2.0.0" ] |> ignore
+    pushTagsAndConfirm run releaseOnly (noWaitPolicy 1) [ "v1.0.0"; "v2.0.0" ]
+    |> ignore
+
     test <@ calls |> Seq.exists (fun (c, a) -> c = "jj" && a = "git export") @>
     test <@ calls |> Seq.exists (fun (c, a) -> c = "git" && a = "push origin v1.0.0") @>
     test <@ calls |> Seq.exists (fun (c, a) -> c = "git" && a = "push origin v2.0.0") @>
@@ -1135,14 +1268,14 @@ let ``pushTagsAndConfirm - exports and pushes each tag separately`` () =
 [<Fact>]
 let ``pushTagsAndConfirm - a tag whose push triggered a run is confirmed`` () =
     let run = pushRun 1 (ResizeArray())
-    test <@ List.isEmpty (pushTagsAndConfirm run (noWaitPolicy 1) [ "v1.0.0"; "v2.0.0" ]) @>
+    test <@ List.isEmpty (pushTagsAndConfirm run releaseOnly (noWaitPolicy 1) [ "v1.0.0"; "v2.0.0" ]) @>
 
 [<Fact>]
 let ``pushTagsAndConfirm - a tag on the remote with NO run is reported unconfirmed`` () =
     // The failure this change exists for: every push SUCCEEDS, GitHub creates no event,
     // and nothing is ever built or published. Invisible without asking.
     let run = pushRun 0 (ResizeArray())
-    test <@ pushTagsAndConfirm run (noWaitPolicy 1) [ "v1.0.0"; "v2.0.0" ] = [ "v1.0.0"; "v2.0.0" ] @>
+    test <@ pushTagsAndConfirm run releaseOnly (noWaitPolicy 1) [ "v1.0.0"; "v2.0.0" ] = [ "v1.0.0"; "v2.0.0" ] @>
 
 [<Fact>]
 let ``pushTagsAndConfirm - when gh cannot answer, the tag is UNCONFIRMED not assumed fine`` () =
@@ -1156,7 +1289,7 @@ let ``pushTagsAndConfirm - when gh cannot answer, the tag is UNCONFIRMED not ass
         | "gh", _ -> Failure("gh: command not found", 127)
         | _ -> Failure("unexpected", 1)
 
-    test <@ pushTagsAndConfirm run (noWaitPolicy 1) [ "v1.0.0" ] = [ "v1.0.0" ] @>
+    test <@ pushTagsAndConfirm run releaseOnly (noWaitPolicy 1) [ "v1.0.0" ] = [ "v1.0.0" ] @>
 
 [<Fact>]
 let ``pushTagsAndConfirm - unparseable gh output is UNCONFIRMED`` () =
@@ -1167,7 +1300,7 @@ let ``pushTagsAndConfirm - unparseable gh output is UNCONFIRMED`` () =
         | "gh", _ -> Success "not json at all"
         | _ -> Failure("unexpected", 1)
 
-    test <@ pushTagsAndConfirm run (noWaitPolicy 1) [ "v1.0.0" ] = [ "v1.0.0" ] @>
+    test <@ pushTagsAndConfirm run releaseOnly (noWaitPolicy 1) [ "v1.0.0" ] = [ "v1.0.0" ] @>
 
 [<Fact>]
 let ``pushTagsAndConfirm - a transient push failure is retried, not fatal`` () =
@@ -1188,7 +1321,7 @@ let ``pushTagsAndConfirm - a transient push failure is retried, not fatal`` () =
         | "gh", a when a.StartsWith("run list") -> Success "[{\"name\":\"Release\"}]"
         | _ -> Failure("unexpected", 1)
 
-    test <@ List.isEmpty (pushTagsAndConfirm run (noWaitPolicy 3) [ "v1.0.0" ]) @>
+    test <@ List.isEmpty (pushTagsAndConfirm run releaseOnly (noWaitPolicy 3) [ "v1.0.0" ]) @>
     test <@ pushAttempts = 3 @>
 
 [<Fact>]
@@ -1208,7 +1341,7 @@ let ``pushTagsAndConfirm - a push that never succeeds still fails loudly`` () =
         | "git", a when a.StartsWith("push origin") -> Failure("permission denied", 128)
         | _ -> Failure("unexpected", 1)
 
-    test <@ pushTagsAndConfirm run (noWaitPolicy 2) [ "v1.0.0" ] = [ "v1.0.0" ] @>
+    test <@ pushTagsAndConfirm run releaseOnly (noWaitPolicy 2) [ "v1.0.0" ] = [ "v1.0.0" ] @>
 
 [<Fact>]
 let ``pushTagsAndConfirmDetailed - preserves that the tag never reached the remote`` () =
@@ -1221,7 +1354,7 @@ let ``pushTagsAndConfirmDetailed - preserves that the tag never reached the remo
         | "git", "config --get-regexp ^credential" -> Failure("", 1)
         | _ -> Failure("unexpected", 1)
 
-    match pushTagsAndConfirmDetailed run (noWaitPolicy 1) [ "v1.0.0" ] with
+    match pushTagsAndConfirmDetailed run releaseOnly (noWaitPolicy 1) [ "v1.0.0" ] with
     | [ TagConfirmationFailure.PushFailed(tag, reason) ] ->
         test <@ tag = "v1.0.0" @>
         test <@ reason.Contains("credential helper") @>
@@ -1250,7 +1383,7 @@ let ``pushTagsAndConfirm - a tag is pushed through jj, not raw git`` () =
         | "gh", _ -> Success "[{\"name\":\"release\"}]"
         | _ -> Failure("unexpected", 1)
 
-    let unconfirmed = pushTagsAndConfirm run (noWaitPolicy 1) [ "v1.0.0" ]
+    let unconfirmed = pushTagsAndConfirm run releaseOnly (noWaitPolicy 1) [ "v1.0.0" ]
 
     test <@ pushedViaJj @>
     test <@ List.isEmpty unconfirmed @>
@@ -1279,7 +1412,7 @@ let ``pushTagsAndConfirm - raw git is still the fallback when jj is absent`` () 
         | "gh", _ -> Success "[{\"name\":\"release\"}]"
         | _ -> Failure("unexpected", 1)
 
-    let unconfirmed = pushTagsAndConfirm run (noWaitPolicy 1) [ "v1.0.0" ]
+    let unconfirmed = pushTagsAndConfirm run releaseOnly (noWaitPolicy 1) [ "v1.0.0" ]
 
     test <@ pushedViaGit @>
     test <@ List.isEmpty unconfirmed @>
@@ -1308,7 +1441,7 @@ let ``pushTagsAndConfirm - an HTTPS remote with no credential helper is NAMED`` 
         | _ -> Failure("unexpected", 1)
 
     // The tag comes back unconfirmed rather than throwing…
-    test <@ pushTagsAndConfirm run (noWaitPolicy 1) [ "v1.0.0" ] = [ "v1.0.0" ] @>
+    test <@ pushTagsAndConfirm run releaseOnly (noWaitPolicy 1) [ "v1.0.0" ] = [ "v1.0.0" ] @>
 
     // …and the diagnosis names the protocol and the missing helper. Asserted on
     // the pure function so the test does not depend on capturing stderr.

@@ -214,6 +214,7 @@ For monorepos or custom setups, create a `semantic-tagger.json`:
 | `packages[].fsProjsSharingSameTag` | string[]? | Other `.fsproj` files to update with the same version |
 | `reservedVersions` | string[]? | Versions to skip |
 | `preBuildCmds` | string[]? | Commands to run before the build that produces each DLL |
+| `publishWorkflows` | string[]? | Paths of the workflows whose tag-triggered run publishes a package (default: `[".github/workflows/release.yml"]`). After pushing a tag, only runs of these workflows are consulted; a run of any other workflow the tag triggered (a docs deploy, say) cannot refuse the release. Must not be empty. |
 
 ## Pre-release Version Flow
 

@@ -278,19 +278,31 @@ let internal reportTagConfirmationFailures (failures: TagConfirmationFailure lis
             "If abandoning the release, reset the bumped versions and changelog to the last published tags before starting another release."
 
     if not failedRuns.IsEmpty then
-        printfn "Error: %d pushed tag(s) have a workflow run that FAILED:" failedRuns.Length
+        printfn "Error: %d pushed tag(s) have a PUBLISH workflow run that FAILED:" failedRuns.Length
 
         for tag, runs in failedRuns do
             for runInfo in runs do
+                let (Config.PublishWorkflow path) = runInfo.Workflow
+
                 printfn
-                    "  %s — %s finished %A (%s)"
+                    "  %s — publish workflow %s%s finished %A (%s)"
                     tag
-                    (if runInfo.Name = "" then "the workflow" else runInfo.Name)
+                    path
+                    (if runInfo.Name = "" then
+                         ""
+                     else
+                         sprintf " (%s)" runInfo.Name)
                     runInfo.Conclusion
                     (if runInfo.Url = "" then "no url reported" else runInfo.Url)
 
         printfn ""
-        printfn "This is a real failure, not a slow one: the run exists and it is finished, so nothing published."
+
+        printfn
+            "This is a real failure, not a slow one: the publishing run exists and it is finished, so nothing published."
+
+        printfn
+            "Runs of other workflows on the tag (a docs deploy, say) were not consulted; they cannot refuse a release."
+
         printfn "Read the log, fix the cause, then resume the SAME run rather than cutting a new tag:"
         printfn "  gh run rerun <id> --failed"
 
@@ -340,7 +352,8 @@ let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * 
         // A tag can land on the remote and trigger no workflow at all (a batch push
         // does exactly that), so confirm a run exists rather than claiming a release
         // is happening.
-        let unconfirmed = pushTagsAndConfirmDetailed run input.TagPush tags
+        let unconfirmed =
+            pushTagsAndConfirmDetailed run input.Config.PublishWorkflows input.TagPush tags
 
         if not (List.isEmpty unconfirmed) then
             reportTagConfirmationFailures unconfirmed

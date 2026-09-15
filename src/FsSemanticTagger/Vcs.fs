@@ -2,6 +2,7 @@ module FsSemanticTagger.Vcs
 
 open FsSemanticTagger.Shell
 open FsSemanticTagger.Version
+open FsSemanticTagger.Config
 
 let internal runOrFail (run: string -> string -> CommandResult) (cmd: string) (args: string) : string =
     match run cmd args with
@@ -414,56 +415,94 @@ let hasCoverageRatchet (run: string -> string -> CommandResult) : bool =
 
 let pushMain (run: string -> string -> CommandResult) : unit = runOrFail run "jj" "git push" |> ignore
 
-/// One workflow run GitHub reports for a ref, in the terms this poll needs.
+/// One run of a PUBLISHING workflow that GitHub reports for a ref, in the terms this
+/// poll needs.
+///
+/// `Workflow` is the publish workflow the run was asked about, and the only way to
+/// build one of these is to ask about such a workflow. That is the scoping
+/// The tracked issue asks for, done in the type: a run from any other workflow the tag
+/// triggered — this repo's docs deploy cancels all but one run per commit by design,
+/// and a multi-package release puts several tags on one commit — never becomes a
+/// `TagRunState`, so the fail-closed classification below cannot be applied to it.
 ///
 /// Parsed leniently on purpose. The caller asks for a fixed `--json` field set, but a
 /// record missing one of those fields must still COUNT AS A RUN: treating a short
 /// record as unparseable would turn "the release is happening" into "no run appeared",
 /// which is the exact confusion the tracked issue exists to remove.
 type internal TagRunState =
-    { Name: string
+    { Workflow: PublishWorkflow
+      Name: string
       Url: string
       RunId: string
       Status: RunStatus
       Conclusion: RunConclusion }
 
-/// The workflow runs GitHub has for `gitRef`. A TAG name is a valid ref here: a
-/// tag-triggered run reports the tag as its head branch.
+/// The runs of ONE publish workflow that GitHub has for `gitRef`. A TAG name is a
+/// valid ref here: a tag-triggered run reports the tag as its head branch. The
+/// workflow is passed to `gh` by PATH (`--workflow`), the same identity the commit
+/// check uses for `.github/workflows/ci.yml`.
 ///
 /// `None` means "could not find out" — `gh` missing, unauthenticated, rate-limited, or
 /// output we cannot parse. Deliberately distinct from `Some []` ("asked, and there are
 /// none"), because only the latter is evidence about the release.
-let internal runStatesForRef (run: string -> string -> CommandResult) (gitRef: string) : TagRunState list option =
+let private runStatesForWorkflow
+    (run: string -> string -> CommandResult)
+    (workflow: PublishWorkflow)
+    (gitRef: string)
+    : TagRunState list option =
+    let (PublishWorkflow path) = workflow
+
     let args =
-        sprintf "run list --branch %s --json name,status,conclusion,url,databaseId --limit 20" gitRef
+        sprintf "run list --branch %s --workflow %s --json name,status,conclusion,url,databaseId --limit 20" gitRef path
 
-    withJjGitDir (fun () ->
-        match run "gh" args with
-        | Success output ->
-            try
-                use doc = System.Text.Json.JsonDocument.Parse(output)
+    match run "gh" args with
+    | Success output ->
+        try
+            use doc = System.Text.Json.JsonDocument.Parse(output)
 
-                if doc.RootElement.ValueKind = System.Text.Json.JsonValueKind.Array then
-                    Some
-                        [ for elem in doc.RootElement.EnumerateArray() do
-                              let text (field: string) =
-                                  match elem.TryGetProperty(field) with
-                                  | true, value when value.ValueKind = System.Text.Json.JsonValueKind.String ->
-                                      value.GetString()
-                                  | true, value when value.ValueKind = System.Text.Json.JsonValueKind.Number ->
-                                      value.ToString()
-                                  | _ -> ""
+            if doc.RootElement.ValueKind = System.Text.Json.JsonValueKind.Array then
+                Some
+                    [ for elem in doc.RootElement.EnumerateArray() do
+                          let text (field: string) =
+                              match elem.TryGetProperty(field) with
+                              | true, value when value.ValueKind = System.Text.Json.JsonValueKind.String ->
+                                  value.GetString()
+                              | true, value when value.ValueKind = System.Text.Json.JsonValueKind.Number ->
+                                  value.ToString()
+                              | _ -> ""
 
-                              { Name = text "name"
-                                Url = text "url"
-                                RunId = text "databaseId"
-                                Status = RunStatus.ofString (text "status")
-                                Conclusion = RunConclusion.ofString (text "conclusion") } ]
-                else
-                    None
-            with _ ->
+                          { Workflow = workflow
+                            Name = text "name"
+                            Url = text "url"
+                            RunId = text "databaseId"
+                            Status = RunStatus.ofString (text "status")
+                            Conclusion = RunConclusion.ofString (text "conclusion") } ]
+            else
                 None
-        | Failure _ -> None)
+        with _ ->
+            None
+    | Failure _ -> None
+
+/// The runs of every publish workflow that GitHub has for `gitRef`, and ONLY those:
+/// no other workflow is asked about, so no other workflow's run can be misread as a
+/// verdict on publication.
+///
+/// `None` when ANY of the workflows could not be asked about. A partial answer is not
+/// an answer: "release.yml has no run" from a query that also failed to ask about the
+/// other publish workflow would be reported under the wrong heading.
+let internal runStatesForRef
+    (run: string -> string -> CommandResult)
+    (publishWorkflows: PublishWorkflow list)
+    (gitRef: string)
+    : TagRunState list option =
+    withJjGitDir (fun () ->
+        publishWorkflows
+        |> List.fold
+            (fun acc workflow ->
+                match acc, runStatesForWorkflow run workflow gitRef with
+                | Some states, Some more -> Some(states @ more)
+                | _ -> None)
+            (Some []))
 
 /// Whether a run has already finished WITHOUT publishing anything.
 ///
@@ -501,6 +540,7 @@ type internal TagRunOutcome =
 /// asked" send the operator to different places.
 let internal waitForRunForRef
     (run: string -> string -> CommandResult)
+    (publishWorkflows: PublishWorkflow list)
     (pollIntervalMs: int)
     (maxAttempts: int)
     (gitRef: string)
@@ -509,7 +549,7 @@ let internal waitForRunForRef
     let budget = max 1 maxAttempts
 
     let rec ask attempt everAnswered =
-        let answer = runStatesForRef run gitRef
+        let answer = runStatesForRef run publishWorkflows gitRef
         let everAnswered = everAnswered || Option.isSome answer
 
         match answer with
@@ -520,7 +560,7 @@ let internal waitForRunForRef
         | _ ->
             if pollIntervalMs > 0 then
                 printfn
-                    "  no workflow run for %s yet (asked %d of %d); waiting %.0fs"
+                    "  no publish workflow run for %s yet (asked %d of %d); waiting %.0fs"
                     gitRef
                     attempt
                     budget
@@ -633,8 +673,8 @@ let private pushOneTag
 
     go 1
 
-/// Push each tag and CONFIRM each one actually triggered a workflow run. Returns the
-/// tags it could NOT confirm.
+/// Push each tag and CONFIRM each one actually triggered a run of a PUBLISH workflow.
+/// Returns the tags it could NOT confirm.
 ///
 /// Pushing separately is required: a batch push of several tags can leave GitHub
 /// creating no push events at all, so the tags sit on the remote and nothing ever builds
@@ -668,15 +708,17 @@ type TagPushPolicy =
 /// demonstrated failure.
 type internal TagConfirmationFailure =
     | PushFailed of tag: string * reason: string
-    /// The tag reached the remote and a run exists, but that run has already finished
-    /// without publishing.
+    /// The tag reached the remote and a run of a publish workflow exists, but that run
+    /// has already finished without publishing.
     | WorkflowRunFailed of tag: string * runs: TagRunState list
-    /// The tag reached the remote and, after `waited`, GitHub still reports no run.
+    /// The tag reached the remote and, after `waited`, GitHub still reports no run of
+    /// any publish workflow.
     /// `everAnswered` is false when `gh` could not be asked at all.
     | WorkflowTriggerMissing of tag: string * waited: System.TimeSpan * everAnswered: bool
 
 let internal pushTagsAndConfirmDetailed
     (run: string -> string -> CommandResult)
+    (publishWorkflows: PublishWorkflow list)
     (policy: TagPushPolicy)
     (tags: string list)
     : TagConfirmationFailure list =
@@ -704,7 +746,7 @@ let internal pushTagsAndConfirmDetailed
         match pushFailures.TryFind tag with
         | Some reason -> Some(PushFailed(tag, reason))
         | None ->
-            match waitForRunForRef run policy.RunPollIntervalMs policy.RunPollAttempts tag with
+            match waitForRunForRef run publishWorkflows policy.RunPollIntervalMs policy.RunPollAttempts tag with
             | TagRunPresent -> None
             | TagRunFailed runs -> Some(WorkflowRunFailed(tag, runs))
             | TagRunAbsent(waited, everAnswered) -> Some(WorkflowTriggerMissing(tag, waited, everAnswered)))
@@ -714,10 +756,11 @@ let internal pushTagsAndConfirmDetailed
 /// that a workflow run which already failed means the release is under way.
 let pushTagsAndConfirm
     (run: string -> string -> CommandResult)
+    (publishWorkflows: PublishWorkflow list)
     (policy: TagPushPolicy)
     (tags: string list)
     : string list =
-    pushTagsAndConfirmDetailed run policy tags
+    pushTagsAndConfirmDetailed run publishWorkflows policy tags
     |> List.map (function
         | PushFailed(tag, reason) ->
             eprintfn "  %s" reason

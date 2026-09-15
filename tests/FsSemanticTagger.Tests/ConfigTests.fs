@@ -110,6 +110,59 @@ let ``parseJson with preBuildCmds`` () =
     test <@ config.PreBuildCmds = [ "dotnet tool restore"; "dotnet tool run paket restore" ] @>
 
 [<Fact>]
+let ``parseJson reads publishWorkflows as typed paths`` () =
+    let json =
+        """
+        {
+            "packages": [ { "name": "MyLib", "fsproj": "src/MyLib/MyLib.fsproj" } ],
+            "publishWorkflows": [".github/workflows/release.yml", ".github/workflows/publish-docs-package.yml"]
+        }
+        """
+
+    let config = parseJson json
+
+    test
+        <@
+            config.PublishWorkflows = [ PublishWorkflow ".github/workflows/release.yml"
+                                        PublishWorkflow ".github/workflows/publish-docs-package.yml" ]
+        @>
+
+[<Fact>]
+let ``parseJson defaults publishWorkflows to the release workflow`` () =
+    let json =
+        """{ "packages": [ { "name": "MyLib", "fsproj": "src/MyLib/MyLib.fsproj" } ] }"""
+
+    let config = parseJson json
+    test <@ config.PublishWorkflows = defaultPublishWorkflows @>
+    test <@ config.PublishWorkflows = [ PublishWorkflow ".github/workflows/release.yml" ] @>
+
+[<Fact>]
+let ``parseJson refuses an empty publishWorkflows`` () =
+    // No workflow to ask about means no tag can ever be confirmed. That is a config
+    // mistake, and it must surface before the version bump goes out.
+    let json =
+        """{ "packages": [ { "name": "MyLib", "fsproj": "src/MyLib/MyLib.fsproj" } ], "publishWorkflows": [] }"""
+
+    raises<System.ArgumentException> <@ parseJson json @>
+
+[<Fact>]
+let ``toJson roundtrips a non-default publishWorkflows and omits the default`` () =
+    let custom =
+        { Packages = []
+          ReservedVersions = Set.empty
+          PreBuildCmds = []
+          PublishWorkflows = [ PublishWorkflow ".github/workflows/ship.yml" ]
+          RootDir = "" }
+
+    test <@ (parseJson (toJson custom)).PublishWorkflows = custom.PublishWorkflows @>
+
+    let plain =
+        { custom with
+            PublishWorkflows = defaultPublishWorkflows }
+
+    test <@ not ((toJson plain).Contains("publishWorkflows")) @>
+
+[<Fact>]
 let ``parseJson defaults preBuildCmds to empty`` () =
     let json =
         """
@@ -431,6 +484,7 @@ let ``toJson roundtrips through parseJson`` () =
                 FsProjsSharingSameTag = [ "src/Shared/Shared.fsproj" ] } ]
           ReservedVersions = set [ "1.0.0" ]
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let json = toJson config
@@ -474,6 +528,7 @@ let ``toJson includes preBuildCmds when not empty`` () =
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
           PreBuildCmds = [ "dotnet tool restore" ]
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let json = toJson config
@@ -491,6 +546,7 @@ let ``toJson omits empty preBuildCmds`` () =
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let json = toJson config
@@ -507,6 +563,7 @@ let ``toJson omits empty fsProjsSharingSameTag`` () =
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let json = toJson config
@@ -523,6 +580,7 @@ let ``toJson includes reservedVersions when not empty`` () =
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = set [ "1.0.0"; "2.0.0" ]
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let json = toJson config
@@ -622,6 +680,7 @@ let ``toJson omits empty reservedVersions`` () =
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let json = toJson config
@@ -759,6 +818,7 @@ let ``toJson roundtrips with preBuildCmds`` () =
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
           PreBuildCmds = [ "dotnet tool restore"; "dotnet build" ]
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let json = toJson config
@@ -776,6 +836,7 @@ let ``toJson roundtrips with empty collections`` () =
                 FsProjsSharingSameTag = [] } ]
           ReservedVersions = Set.empty
           PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
           RootDir = "" }
 
     let json = toJson config
