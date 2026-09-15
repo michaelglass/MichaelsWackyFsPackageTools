@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.3 - 2026-09-15
+
 - Stamp project-reference dependency versions during local packing so they match the dependency packages produced from the same source. Release dependency versions remain unchanged.
 - Fix local packs from empty jj merge commits by including every parent ref under one valid version prefix.
 
