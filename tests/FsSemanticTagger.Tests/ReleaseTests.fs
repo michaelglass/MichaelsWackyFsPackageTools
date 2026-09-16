@@ -5155,3 +5155,81 @@ let ``release - the NuGet give-up says the tags and Release runs are the evidenc
         test <@ output.Contains("This is NOT a failed publish") @>
     finally
         File.Delete(tmpFile)
+
+[<Fact>]
+let ``formatElapsed - minutes and seconds under a minute read as an operator expects`` () =
+    test <@ formatElapsed (System.TimeSpan.FromSeconds 252.0) = "4m12s" @>
+    test <@ formatElapsed (System.TimeSpan.FromSeconds 65.0) = "1m05s" @>
+    test <@ formatElapsed (System.TimeSpan.FromMilliseconds 300.0) = "0.3s" @>
+
+[<Fact>]
+let ``pollBudget - N checks spend N-1 sleeps, and a zero-check poll is a zero budget`` () =
+    // The number printed as "up to <budget>" before the NuGet wait. 81 checks 15s apart
+    // is twenty minutes, not 20m15s; a degenerate 0-attempt poll must not go negative.
+    test <@ pollBudget 15000 81 = System.TimeSpan.FromMinutes 20.0 @>
+    test <@ pollBudget 15000 1 = System.TimeSpan.Zero @>
+    test <@ pollBudget 15000 0 = System.TimeSpan.Zero @>
+
+[<Fact>]
+let ``a failed publish run still reads as a sentence when GitHub reports no name and no url`` () =
+    // `gh` answers an empty name for a run whose workflow has no `name:`, and an empty
+    // url for a run it could only see in a summary listing. Neither is a reason to print
+    // a dangling " ()" or an unclickable empty parenthesis at the operator.
+    let output, result =
+        withCapturedConsole (fun () ->
+            reportTagConfirmationFailures
+                [ TagConfirmationFailure.WorkflowRunFailed(
+                      "fssemantictagger-v0.14.0-alpha.8",
+                      [ { Workflow = PublishWorkflow ".github/workflows/release.yml"
+                          Name = ""
+                          Url = ""
+                          RunId = "42"
+                          Status = Completed
+                          Conclusion = FailureConclusion } ]
+                  ) ])
+
+    test <@ result = 1 @>
+    test <@ output.Contains("publish workflow .github/workflows/release.yml finished") @>
+    test <@ output.Contains("no url reported") @>
+    test <@ not (output.Contains("release.yml ()")) @>
+
+[<Fact>]
+let ``release - a preBuildCmd with no arguments runs with an empty argument string`` () =
+    // `cmd.Split(' ', 2)` yields ONE part for a bare command name, so the argument
+    // string has to come from the length check rather than `parts[1]` — indexing it
+    // would throw and take the whole release down before the build.
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+
+        let (fakeRun, getCalls) =
+            passingCiRun [ ("restore-tools", "", Success "Restored.") ]
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = [ "restore-tools" ]
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              RootDir = "" }
+
+        let result =
+            runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
+
+        let calls = getCalls ()
+        test <@ result = 0 @>
+
+        let preBuildIdx =
+            calls |> List.findIndex (fun (c, a) -> c = "restore-tools" && a = "")
+
+        let buildIdx =
+            calls |> List.findIndex (fun (c, a) -> c = "dotnet" && a = "build -c Release")
+
+        test <@ preBuildIdx < buildIdx @>
+    finally
+        File.Delete(tmpFile)

@@ -553,3 +553,34 @@ let ``runReleaseWith - returns Ok when config loads (release aborts on uncommitt
                 [ Publish ]
 
         test <@ result = Ok 1 @>)
+
+// the env-override seam the release wiring reads
+
+[<Fact>]
+let ``envVarFrom - unset and empty are None, anything else is Some`` () =
+    // `GetEnvironmentVariable` answers null for unset and "" for exported-but-empty;
+    // both must read as "no override" so the default budget applies.
+    test <@ envVarFrom (fun _ -> null) "FSST_RUN_POLL_ATTEMPTS" = None @>
+    test <@ envVarFrom (fun _ -> "") "FSST_RUN_POLL_ATTEMPTS" = None @>
+
+    test
+        <@
+            envVarFrom
+                (fun name -> if name = "FSHW_NUGET_PROBE_ATTEMPTS" then "81" else null)
+                "FSHW_NUGET_PROBE_ATTEMPTS" = Some "81"
+        @>
+
+[<Fact>]
+let ``runCommand - check-api folds the CLI grammar diff when BOTH dlls expose a command union`` () =
+    // The `Some oldGrammar, Some newGrammar` arm of the grammar fold. The existing
+    // check-api tests compare the test assembly against the tool, and the test
+    // assembly is not a CommandTree consumer, so they only ever take the `_` arm.
+    // Comparing the tool against ITSELF is the smallest case where both sides have a
+    // realized grammar: no API change and no grammar change, so the fold must leave
+    // NoChange rather than invent a bump out of the extracted grammar.
+    let testDll = System.Reflection.Assembly.GetExecutingAssembly().Location
+
+    let tagDll =
+        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(testDll), "FsSemanticTagger.dll")
+
+    test <@ runCommand (CheckApi(tagDll, tagDll)) = Ok 0 @>

@@ -165,6 +165,11 @@ let internal formatElapsed (elapsed: System.TimeSpan) : string =
     else
         sprintf "%.1fs" elapsed.TotalSeconds
 
+/// The wall-clock a poll of `attempts` checks `intervalMs` apart can spend: it sleeps
+/// between checks, not after the last one, so N checks are N-1 sleeps.
+let internal pollBudget (intervalMs: int) (attempts: int) : System.TimeSpan =
+    System.TimeSpan.FromMilliseconds(float (max 0 (attempts - 1)) * float intervalMs)
+
 let internal waitForCi (run: string -> string -> CommandResult) (pollIntervalMs: int) (maxAttempts: int) : CiStatus =
     let rec poll attempt =
         let status = getCiStatus run
@@ -408,11 +413,7 @@ let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * 
             if input.WaitForNuGet then
                 printfn
                     "Waiting for NuGet to index the published package(s) — up to %s (%d checks, %.0fs apart); the index typically lags the Release run by 6-15 min..."
-                    (formatElapsed (
-                        System.TimeSpan.FromMilliseconds(
-                            float (max 0 (input.NuGetMaxAttempts - 1)) * float input.NuGetPollIntervalMs
-                        )
-                    ))
+                    (formatElapsed (pollBudget input.NuGetPollIntervalMs input.NuGetMaxAttempts))
                     input.NuGetMaxAttempts
                     (float input.NuGetPollIntervalMs / 1000.0)
 

@@ -91,6 +91,14 @@ let internal releaseMode (flags: ReleaseFlag list) : Release.ReleaseMode =
     else
         Release.PushTags
 
+/// An environment variable as an override: unset (null) and exported-but-empty ("")
+/// both mean "no override", so the default budget applies.
+let internal envVarFrom (getRaw: string -> string) (name: string) : string option =
+    match getRaw name with
+    | null
+    | "" -> None
+    | value -> Some value
+
 let internal runReleaseWith
     (cwd: string)
     (run: string -> string -> Shell.CommandResult)
@@ -101,11 +109,7 @@ let internal runReleaseWith
     (releaseCmd: Release.ReleaseCommand)
     (flags: ReleaseFlag list)
     : Result<int, string> =
-    let envVar (name: string) : string option =
-        match System.Environment.GetEnvironmentVariable name with
-        | null
-        | "" -> None
-        | value -> Some value
+    let envVar = envVarFrom System.Environment.GetEnvironmentVariable
 
     let nuGetPoll = Release.nuGetPollFromEnv envVar
 
