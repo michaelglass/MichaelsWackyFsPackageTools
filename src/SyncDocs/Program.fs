@@ -2,10 +2,51 @@ module SyncDocs.Program
 
 open SyncDocs.Sync
 
-let private warningMessage (warning: DiscoveryWarning) : string =
-    match warning with
-    | MissingTarget(name, path) -> sprintf "Target docs file missing for %s, create %s" name path
-    | MissingSource(name, path) -> sprintf "Source README missing for %s, create %s" name path
+/// Verdict for one configured package (a README that exists by convention).
+/// Both the exit code and the "compared N of M pairs" line are folded from the
+/// list of these, so the count and the verdict cannot disagree: a pair that was
+/// never compared can neither pass nor be silently dropped from the total.
+type PairOutcome =
+    | Compared of SyncOutcome
+    | TargetMissing of package: string * path: string
+    | SourceMissing of package: string * path: string
+
+type PairSummary =
+    { Compared: int
+      Total: int
+      Failed: bool }
+
+let summarizePairs (outcomes: PairOutcome list) : PairSummary =
+    outcomes
+    |> List.fold
+        (fun acc outcome ->
+            match outcome with
+            | Compared InSync
+            | Compared Updated ->
+                { acc with
+                    Compared = acc.Compared + 1
+                    Total = acc.Total + 1 }
+            | Compared OutOfSync ->
+                { acc with
+                    Compared = acc.Compared + 1
+                    Total = acc.Total + 1
+                    Failed = true }
+            | TargetMissing _
+            | SourceMissing _ ->
+                { acc with
+                    Total = acc.Total + 1
+                    Failed = true })
+        { Compared = 0
+          Total = 0
+          Failed = false }
+
+/// The line printed for an outcome that could not be compared; compared pairs
+/// are reported inline as they are processed.
+let describePairOutcome (outcome: PairOutcome) : string option =
+    match outcome with
+    | Compared _ -> None
+    | TargetMissing(package, path) -> Some(sprintf "ERROR: docs target missing for %s, looked for %s" package path)
+    | SourceMissing(package, path) -> Some(sprintf "ERROR: README source missing for %s, looked for %s" package path)
 
 let private helpText =
     """Usage: syncdocs <command>
@@ -26,8 +67,11 @@ How discovery works:
     README.md              ->  docs/index.md
     src/<Project>/README.md ->  docs/<Project>/index.md
 
-  A pair is processed only when both files exist. Missing source or
-  target files are reported as warnings, not failures.
+  A README that exists is a configured package and MUST have its docs
+  target: a missing target is an error (exit 1) naming the package and
+  the path that was looked for, so a check that compared nothing cannot
+  read as a clean pass. A docs page with no README is only a warning.
+  check ends with "compared N of M pairs".
 
 How sync markers work:
   In the README (source), wrap a section like this:
@@ -49,7 +93,8 @@ How sync markers work:
 
 Exit codes:
   0  success (sync completed, or check found everything in sync)
-  1  drift detected (check), failed sync, or argument error
+  1  drift detected (check), configured package with no docs target,
+     failed sync, or argument error
 
 Examples:
   syncdocs check       # CI-friendly drift check
@@ -68,8 +113,25 @@ let run (argv: string array) (rootDir: string) : Result<int, string> =
     | Ok mode ->
         let discovery = discoverPairsAndWarnings rootDir
 
-        for w in discovery.Warnings do
-            printfn "  Warning: %s" (warningMessage w)
+        // A README with no docs target is a configured package that cannot be
+        // compared: that is an error below, not a warning. Only an orphaned
+        // docs page (target with no README) is still just a warning.
+        let missingTargets =
+            discovery.Warnings
+            |> List.choose (fun w ->
+                match w with
+                | MissingTarget(name, path) -> Some(TargetMissing(name, path))
+                | MissingSource _ -> None)
+
+        let orphanedTargets =
+            discovery.Warnings
+            |> List.choose (fun w ->
+                match w with
+                | MissingSource(name, path) -> Some(name, path)
+                | MissingTarget _ -> None)
+
+        for name, path in orphanedTargets do
+            printfn "  Warning: Source README missing for %s, create %s" name path
 
         let pairSources = discovery.Pairs |> List.map (fun p -> p.Source) |> List.distinct
 
@@ -78,7 +140,7 @@ let run (argv: string array) (rootDir: string) : Result<int, string> =
         // sources so a path that is both is processed exactly once (as a pair).
         let standaloneDocs = discoverStandaloneCodeDocs rootDir pairSources
 
-        if discovery.Pairs.IsEmpty && standaloneDocs.IsEmpty then
+        if discovery.Pairs.IsEmpty && missingTargets.IsEmpty && standaloneDocs.IsEmpty then
             printfn "No README.md -> docs/ pairs found"
             Ok 0
         else
@@ -103,21 +165,29 @@ let run (argv: string array) (rootDir: string) : Result<int, string> =
             let codeResults = (pairSources @ standaloneDocs) |> List.map runCodeRegions
 
             // Stage 2: propagate README sources -> docs targets.
-            let pairResults =
+            let comparedOutcomes =
                 discovery.Pairs
                 |> List.map (fun pair ->
                     let shortSource = System.IO.Path.GetRelativePath(rootDir, pair.Source)
                     let shortTarget = System.IO.Path.GetRelativePath(rootDir, pair.Target)
-                    let result = syncPair mode pair.Source pair.Target
 
-                    match result with
-                    | Ok InSync -> printfn "  %s -> %s: in sync" shortSource shortTarget
-                    | Ok Updated -> printfn "  %s -> %s: updated" shortSource shortTarget
-                    | Ok OutOfSync -> printfn "  %s -> %s: OUT OF SYNC" shortSource shortTarget
-                    | Error(SourceMissing _) -> printfn "  %s: source missing (skipped)" shortSource
-                    | Error(TargetMissing _) -> printfn "  %s -> %s: target missing (skipped)" shortSource shortTarget
+                    match syncPair mode pair.Source pair.Target with
+                    | Ok InSync ->
+                        printfn "  %s -> %s: in sync" shortSource shortTarget
+                        Compared InSync
+                    | Ok Updated ->
+                        printfn "  %s -> %s: updated" shortSource shortTarget
+                        Compared Updated
+                    | Ok OutOfSync ->
+                        printfn "  %s -> %s: OUT OF SYNC" shortSource shortTarget
+                        Compared OutOfSync
+                    | Error(SyncError.SourceMissing _) -> SourceMissing(shortSource, shortSource)
+                    | Error(SyncError.TargetMissing _) -> TargetMissing(shortSource, shortTarget))
 
-                    result)
+            let pairOutcomes = comparedOutcomes @ missingTargets
+
+            for line in pairOutcomes |> List.choose describePairOutcome do
+                printfn "  %s" line
 
             let codeFailure =
                 codeResults
@@ -127,15 +197,16 @@ let run (argv: string array) (rootDir: string) : Result<int, string> =
                     | Error _ -> true
                     | _ -> false)
 
-            let pairFailure =
-                pairResults
-                |> List.exists (fun r ->
-                    match r with
-                    | Ok OutOfSync -> true
-                    | Error _ -> true
-                    | _ -> false)
+            let summary = summarizePairs pairOutcomes
 
-            Ok(if codeFailure || pairFailure then 1 else 0)
+            let verb =
+                match mode with
+                | Check -> "compared"
+                | Apply -> "synced"
+
+            printfn "  %s %d of %d pairs" verb summary.Compared summary.Total
+
+            Ok(if codeFailure || summary.Failed then 1 else 0)
 
 let private isHelpFlag a = a = "--help" || a = "-h" || a = "help"
 
