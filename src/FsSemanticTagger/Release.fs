@@ -552,6 +552,65 @@ let internal changelogPathsFor (config: ToolConfig) (pkg: PackageConfig) : (stri
         |> List.distinct
         |> List.map (fun dir -> pkg.Name, System.IO.Path.Combine(dir, "CHANGELOG.md"))
 
+/// The fsprojs whose dependency changes `changelogPath` records: every fsproj of
+/// the package for a single-package repo's root changelog, otherwise the ones
+/// beside it (the same attribution `changelogPathsFor` uses to find it).
+let internal fsprojsForChangelog (config: ToolConfig) (pkg: PackageConfig) (changelogPath: string) : string list =
+    let fsprojs = pkg.Fsproj :: pkg.FsProjsSharingSameTag
+
+    if config.Packages.Length = 1 then
+        fsprojs
+    else
+        let dir = System.IO.Path.GetDirectoryName changelogPath
+        fsprojs |> List.filter (fun f -> System.IO.Path.GetDirectoryName f = dir)
+
+/// Consumer-visible `<PackageReference>` changes in `fsprojs` between `tag` and
+/// the working copy. An fsproj with no readable baseline at the tag (new since
+/// the release) or none on disk derives nothing: without both sides there is no
+/// change to state, and claiming every reference as "added" would be false.
+let internal dependencyChangesSinceTag
+    (run: string -> string -> CommandResult)
+    (config: ToolConfig)
+    (tag: string)
+    (fsprojs: string list)
+    : Changelog.PackageRefChange list =
+    fsprojs
+    |> List.collect (fun fsproj ->
+        let onDisk = System.IO.Path.Combine(config.RootDir, fsproj)
+
+        let current =
+            if System.IO.File.Exists onDisk then
+                Changelog.packageReferences (System.IO.File.ReadAllText onDisk)
+            else
+                None
+
+        match fileAtRevision run tag fsproj |> Option.bind Changelog.packageReferences, current with
+        | Some before, Some after -> Changelog.diffPackageReferences before after
+        | _ -> [])
+    |> List.distinct
+
+/// The promotion plan for each of `pkg`'s changelogs, as (package name, path,
+/// plan). THE single computation behind both `release --check` and the release's
+/// promotion, so the check can only report what promotion will write. With no
+/// prior tag there is no "since" range: nothing is derived, and the section must
+/// be authored.
+let internal promotionPlans
+    (input: ReleaseInput)
+    (pkg: PackageConfig)
+    (latestTag: string option)
+    : (string * string * Result<Changelog.PromotionPlan, Changelog.ChangelogError>) list =
+    let descriptions, dependencyChangesFor =
+        match latestTag with
+        | Some tag ->
+            descriptionsSinceTag input.Run tag (packageChangeDirs input.Config pkg),
+            dependencyChangesSinceTag input.Run input.Config tag
+        | None -> [], (fun _ -> [])
+
+    changelogPathsFor input.Config pkg
+    |> List.map (fun (pkgName, path) ->
+        let changes = dependencyChangesFor (fsprojsForChangelog input.Config pkg path)
+        pkgName, path, Changelog.planPromotion path descriptions changes)
+
 /// The changelogs whose callout order is checked: every selected package's
 /// changelog, plus the repo-root `CHANGELOG.md` when one exists. The root file
 /// is the reader-facing aggregate — it is where a "read this first" callout
@@ -1160,41 +1219,36 @@ let private executeBumps
     for (pkg, version) in allBumps do
         printfn "  %s -> %s (tag: %s)" pkg.Name (format version) (toTag pkg.TagPrefix version)
 
-    // For an OwnChange bump, the commit descriptions since the package's latest
-    // tag (over its own + bundled-dependency dirs) are the raw material the
-    // changelog is derived from when `## Unreleased` is empty. A first release
-    // (no prior tag) has no "since last release" range, so it derives nothing and
-    // falls back to requiring a hand-authored entry. DependencyChange bumps get
-    // the fixed rebundle bullet, so they need no descriptions.
-    let descriptionsFor (pkg: PackageConfig) (trigger: BumpTrigger) : string list =
-        match trigger with
-        | DependencyChange -> []
-        | OwnChange ->
-            match getSortedTags input.Run pkg.TagPrefix |> List.tryHead with
-            | Some(tag, _) -> descriptionsSinceTag input.Run tag (packageChangeDirs input.Config pkg)
-            | None -> []
-
-    let bumpsWithChangelogs =
+    // Only OwnChange bumps are planned: the same `promotionPlans` `--check` reads,
+    // so the release writes what the check reported. A plan is an error only when
+    // the section is unauthored AND nothing (commit summaries, dependency changes)
+    // derives one. A DependencyChange (rebundle) bump's real change lives in the
+    // dependency's changelog, so it gets the fixed rebundle bullet instead.
+    let ownChangePlans =
         needsBump
-        |> List.map (fun (pkg, v, trigger) ->
-            pkg, v, trigger, changelogPathsFor input.Config pkg, descriptionsFor pkg trigger)
+        |> List.collect (fun (pkg, version, trigger) ->
+            match trigger with
+            | DependencyChange -> []
+            | OwnChange ->
+                let latestTag =
+                    getSortedTags input.Run pkg.TagPrefix |> List.tryHead |> Option.map fst
 
-    // Only OwnChange bumps are subject to `## Unreleased` enforcement, and an empty
-    // section is an error ONLY when it also can't be derived from the commit
-    // descriptions. A hand-authored section always passes; a derivable one is filled
-    // in at promote time. A DependencyChange (rebundle) bump's real change lives in
-    // the dependency's changelog, so its own section may be missing.
+                promotionPlans input pkg latestTag
+                |> List.map (fun (pkgName, path, plan) -> pkgName, path, version, plan))
+
     let emptySectionErrors =
-        bumpsWithChangelogs
-        |> List.filter (fun (_, _, trigger, _, _) -> trigger = OwnChange)
-        |> List.collect (fun (_, _, _, paths, descriptions) ->
-            let derivable = not (Changelog.deriveUnreleasedBullets descriptions |> List.isEmpty)
+        ownChangePlans
+        |> List.choose (fun (pkgName, _, _, plan) ->
+            match plan with
+            | Error err -> Some(pkgName, err)
+            | Ok _ -> None)
 
-            paths
-            |> List.choose (fun (pkgName, path) ->
-                match Changelog.validateUnreleased path with
-                | Ok() -> None
-                | Error err -> if derivable then None else Some(pkgName, err)))
+    let promotions =
+        ownChangePlans
+        |> List.choose (fun (_, path, version, plan) ->
+            match plan with
+            | Ok plan -> Some(path, version, plan)
+            | Error _ -> None)
 
     // Promotion turns `## Unreleased` into a version section, so a callout that
     // has sunk below the entries is about to be frozen there. Checked for every
@@ -1225,18 +1279,13 @@ let private executeBumps
 
         let today = System.DateTime.Today
 
-        for (_, version, trigger, paths, descriptions) in bumpsWithChangelogs do
-            for (_, path) in paths do
-                match trigger with
-                | OwnChange ->
-                    // Never clobbers a hand-authored entry; derives from commits
-                    // when empty. Pre-validated above, so the Error (empty AND not
-                    // derivable) branch is unreachable — fall back defensively to
-                    // the rebundle placeholder rather than crash.
-                    match Changelog.promoteOrDerive path version today descriptions with
-                    | Ok() -> ()
-                    | Error _ -> Changelog.promoteOrInsert path version today rebundleChangelogBullet
-                | DependencyChange -> Changelog.promoteOrInsert path version today rebundleChangelogBullet
+        for (path, version, plan) in promotions do
+            Changelog.applyPromotion path version today plan
+
+        for (pkg, version, trigger) in needsBump do
+            if trigger = DependencyChange then
+                for (_, path) in changelogPathsFor input.Config pkg do
+                    Changelog.promoteOrInsert path version today rebundleChangelogBullet
 
         let versionSummary =
             allBumps
@@ -1263,14 +1312,23 @@ let private executeBumps
         | LocalPublish -> packLocally input.Run allBumps
         | DryRun -> 0
 
+/// The promise `--check` makes, stated with its limits so a pass is not read as
+/// "the promoted changelog covers every commit". Pinned by tests.
+let internal changelogCheckContract: string =
+    "What this check verifies: every changed package has something to promote, and every consumer-visible \
+     PackageReference change is recorded. An authored '## Unreleased' section is promoted as written: \
+     commit summaries are not merged into an authored section (they are used only when the section is empty), \
+     so covering the rest of the release is the author's job."
+
 /// `--check`: fail (exit 1) when a package with own-source changes since its last
-/// tag has an empty/missing `## Unreleased` that ALSO can't be derived from its
-/// commit descriptions. A pre-flight gate for `mise run ci` so an unnotable change
-/// is caught at PR time, not at release. It never builds or diffs API, and is
-/// conservative: a package with no prior tag, or whose section is authored or
-/// derivable, passes. Mirrors the release-time enforcement in `executeBumps`.
+/// tag has nothing to promote — an unauthored `## Unreleased` that neither its
+/// commit summaries nor its dependency changes derive. A pre-flight gate for
+/// `mise run ci`. It never builds or diffs API. It reads the SAME
+/// `promotionPlans` the release applies and prints them, so what it reports is
+/// what promotion writes; a package with no prior tag, or no own-source change,
+/// is not planned.
 let private runChangelogCheck (input: ReleaseInput) (selectedPackages: PackageConfig list) : int =
-    let problems =
+    let plans =
         selectedPackages
         |> List.collect (fun pkg ->
             match getSortedTags input.Run pkg.TagPrefix |> List.tryHead with
@@ -1278,19 +1336,43 @@ let private runChangelogCheck (input: ReleaseInput) (selectedPackages: PackageCo
             | Some(tag, _) ->
                 let ownSrcDir = System.IO.Path.GetDirectoryName pkg.Fsproj
 
-                if not (hasChangesSinceTag input.Run tag ownSrcDir) then
-                    []
+                if hasChangesSinceTag input.Run tag ownSrcDir then
+                    promotionPlans input pkg (Some tag)
                 else
-                    let descriptions =
-                        descriptionsSinceTag input.Run tag (packageChangeDirs input.Config pkg)
+                    [])
 
-                    let derivable = not (Changelog.deriveUnreleasedBullets descriptions |> List.isEmpty)
+    let problems =
+        plans
+        |> List.choose (fun (pkgName, _, plan) ->
+            match plan with
+            | Error err -> Some(pkgName, err)
+            | Ok _ -> None)
 
-                    changelogPathsFor input.Config pkg
-                    |> List.choose (fun (pkgName, path) ->
-                        match Changelog.validateUnreleased path with
-                        | Ok() -> None
-                        | Error err -> if derivable then None else Some(pkgName, err)))
+    let promotions =
+        plans
+        |> List.choose (fun (pkgName, path, plan) ->
+            match plan with
+            | Ok plan -> Some(pkgName, path, plan)
+            | Error _ -> None)
+
+    if not promotions.IsEmpty then
+        printfn "Release will promote:"
+
+    for (pkgName, path, plan) in promotions do
+        match plan.Source with
+        | Changelog.Authored ->
+            printfn "  %s (%s): the authored '## Unreleased' section, promoted as written" pkgName path
+
+            if not plan.DependencyBullets.IsEmpty then
+                printfn "    plus the consumer-visible dependency changes it does not name:"
+        | Changelog.Derived bullets ->
+            printfn "  %s (%s): '## Unreleased' is empty, so release writes these derived entries:" pkgName path
+
+            for bullet in bullets do
+                printfn "      %s" bullet
+
+        for bullet in plan.DependencyBullets do
+            printfn "      %s" bullet
 
     // The callout-order rule is checked for EVERY selected package (and the repo
     // root changelog), not only the changed ones: a merge buries a callout by
@@ -1299,13 +1381,14 @@ let private runChangelogCheck (input: ReleaseInput) (selectedPackages: PackageCo
 
     if problems.IsEmpty && calloutProblems.IsEmpty then
         printfn
-            "Changelog check passed: every changed package has an Unreleased entry (authored or derivable from commits), and no '## Unreleased' callout is buried."
+            "Changelog check passed: every changed package has something to promote, and no '## Unreleased' callout is buried."
 
+        printfn "%s" changelogCheckContract
         0
     else
         if not problems.IsEmpty then
             printfn
-                "\nError: changelog check failed — changed package(s) have an empty '## Unreleased' with no commit descriptions to derive from:"
+                "\nError: changelog check failed — changed package(s) have an empty '## Unreleased' and nothing to derive one from (no commit summaries, no dependency changes):"
 
             for (pkgName, err) in problems do
                 printfn "  %s: %s" pkgName (Changelog.formatError err)

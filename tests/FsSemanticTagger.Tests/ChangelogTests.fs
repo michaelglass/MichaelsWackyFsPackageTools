@@ -316,83 +316,322 @@ let ``deriveUnreleasedBullets skips leading blank lines to find the summary`` ()
     // The summary is the first NON-blank line, so leading blanks are skipped.
     test <@ deriveUnreleasedBullets [ "\n\nfeat: after leading blank" ] = [ "- feat: after leading blank" ] @>
 
-// --- promoteOrDerive ---
+// --- consumer-visible PackageReference changes ---------------------------
+// defect 2: releasing SqlHydra.Query.Pgvector 0.1.0-alpha.5
+// promoted only the authored `## Unreleased` block, so the published changelog
+// omitted the one change a consumer could observe — a PackageReference bump of
+// SqlHydra.Query 4.1.0-beta.2 -> 4.1.0-beta.3. A dependency version is a fact in
+// the fsproj, so it is derived from the fsproj, never from commit prose.
+
+let private fsprojWith (items: string) =
+    sprintf "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup>%s</ItemGroup></Project>" items
 
 [<Fact>]
-let ``promoteOrDerive never clobbers a hand-authored Unreleased entry`` () =
+let ``packageReferences reads Include items with a Version attribute or child element`` () =
+    let xml =
+        fsprojWith
+            "<PackageReference Include=\"SqlHydra.Query\" Version=\"4.1.0-beta.3\" /><PackageReference Include=\"Npgsql\"><Version>8.0.0</Version></PackageReference>"
+
+    test <@ packageReferences xml = Some(Map [ "Npgsql", "8.0.0"; "SqlHydra.Query", "4.1.0-beta.3" ]) @>
+
+[<Fact>]
+let ``packageReferences ignores build-only references, Update items and versionless items`` () =
+    let xml =
+        fsprojWith (
+            "<PackageReference Include=\"Microsoft.SourceLink.GitHub\" Version=\"10.0.301\" PrivateAssets=\"All\" />"
+            + "<PackageReference Include=\"Fantomas\" Version=\"7.0.0\"><PrivateAssets>all</PrivateAssets></PackageReference>"
+            + "<PackageReference Update=\"FSharp.Core\" Version=\"6.0.7\" />"
+            + "<PackageReference Include=\"CentrallyManaged\" />"
+            + "<PackageReference Include=\"Kept\" Version=\"1.0.0\" PrivateAssets=\"compile\" />"
+        )
+
+    test <@ packageReferences xml = Some(Map [ "Kept", "1.0.0" ]) @>
+
+[<Fact>]
+let ``packageReferences reads a namespaced legacy project and joins conditional versions`` () =
+    let xml =
+        "<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\"><ItemGroup>"
+        + "<PackageReference Include=\"Dep\" Version=\"1.0.0\" Condition=\"'$(TargetFramework)' == 'net8.0'\" />"
+        + "<PackageReference Include=\"Dep\" Version=\"2.0.0\" Condition=\"'$(TargetFramework)' == 'net10.0'\" />"
+        + "<PackageReference Include=\"Dep\" Version=\"2.0.0\" />"
+        + "</ItemGroup></Project>"
+
+    test <@ packageReferences xml = Some(Map [ "Dep", "1.0.0, 2.0.0" ]) @>
+
+[<Fact>]
+let ``packageReferences is None for text that is not a project file`` () =
+    test <@ packageReferences "<Project><ItemGroup>" = None @>
+
+[<Fact>]
+let ``diffPackageReferences reports bumps, additions and removals, sorted by id`` () =
+    let before =
+        Map [ "Stays", "1.0.0"; "SqlHydra.Query", "4.1.0-beta.2"; "Gone", "2.0.0" ]
+
+    let after =
+        Map [ "Stays", "1.0.0"; "SqlHydra.Query", "4.1.0-beta.3"; "Arrived", "3.0.0" ]
+
+    test
+        <@
+            diffPackageReferences before after = [ Added("Arrived", "3.0.0")
+                                                   Removed("Gone", "2.0.0")
+                                                   Bumped("SqlHydra.Query", "4.1.0-beta.2", "4.1.0-beta.3") ]
+        @>
+
+[<Fact>]
+let ``diffPackageReferences is empty when nothing a consumer sees changed`` () =
+    let refs = Map [ "Stays", "1.0.0" ]
+    test <@ List.isEmpty (diffPackageReferences refs refs) @>
+
+[<Fact>]
+let ``dependencyBullet names the package and both versions`` () =
+    test
+        <@
+            dependencyBullet (Bumped("SqlHydra.Query", "4.1.0-beta.2", "4.1.0-beta.3")) = "- build(deps): bump SqlHydra.Query from 4.1.0-beta.2 to 4.1.0-beta.3"
+        @>
+
+    test <@ dependencyBullet (Added("Npgsql", "8.0.0")) = "- build(deps): add Npgsql 8.0.0" @>
+    test <@ dependencyBullet (Removed("Old", "1.0.0")) = "- build(deps): remove Old (was 1.0.0)" @>
+
+// --- planPromotion / applyPromotion ---------------------------------------
+// One plan answers "what will promotion write?" for both `--check` and release,
+// so the check can only certify what promotion delivers.
+
+let private sqlHydraBump = Bumped("SqlHydra.Query", "4.1.0-beta.2", "4.1.0-beta.3")
+
+let private sqlHydraBullet =
+    "- build(deps): bump SqlHydra.Query from 4.1.0-beta.2 to 4.1.0-beta.3"
+
+[<Fact>]
+let ``planPromotion promotes an authored section as written and never merges commit summaries into it`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        File.WriteAllText(path, "# Changelog\n\n## Unreleased\n\n- chore: package metadata\n\n## 0.1.0 - 2026-01-01\n")
+
+        test
+            <@
+                planPromotion path [ "docs: trim comments"; "chore: tooling" ] [] = Ok
+                    { Source = Authored
+                      DependencyBullets = [] }
+            @>)
+
+[<Fact>]
+let ``planPromotion adds a dependency bump the authored section does not mention`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        File.WriteAllText(path, "# Changelog\n\n## Unreleased\n\n- chore: package metadata\n\n## 0.1.0 - 2026-01-01\n")
+
+        test
+            <@
+                planPromotion path [] [ sqlHydraBump ] = Ok
+                    { Source = Authored
+                      DependencyBullets = [ sqlHydraBullet ] }
+            @>)
+
+[<Fact>]
+let ``planPromotion leaves out a dependency change the authored section already names with its new version`` () =
     withTempDir (fun dir ->
         let path = Path.Combine(dir, "CHANGELOG.md")
 
-        File.WriteAllText(path, "# Changelog\n\n## Unreleased\n\n- feat: hand-written note\n\n## 0.1.0 - 2026-01-01\n")
+        File.WriteAllText(
+            path,
+            "# Changelog\n\n## Unreleased\n\n- feat!: require sqlhydra.query 4.1.0-beta.3\n- fix: drop Old\n\n## 0.1.0 - 2026-01-01\n\n- mentions Npgsql 8.0.0 in history\n"
+        )
 
-        let result =
-            promoteOrDerive path (v "0.2.0") sampleDate [ "fix: derived thing that must be ignored" ]
+        let plan =
+            planPromotion path [] [ sqlHydraBump; Removed("Old", "1.0.0"); Added("Npgsql", "8.0.0") ]
 
-        test <@ result = Ok() @>
-        let updated = File.ReadAllText path
-        test <@ updated.Contains "## 0.2.0 - 2026-04-22" @>
-        test <@ updated.Contains "- feat: hand-written note" @>
-        // The derived bullet is NOT used when the author wrote the section.
-        test <@ not (updated.Contains "derived thing") @>)
+        // Case-insensitive on the id; a mention in an already-released section
+        // does not count.
+        test
+            <@
+                plan = Ok
+                    { Source = Authored
+                      DependencyBullets = [ "- build(deps): add Npgsql 8.0.0" ] }
+            @>)
 
 [<Fact>]
-let ``promoteOrDerive fills an empty Unreleased from commit descriptions`` () =
+let ``planPromotion still adds a bump when the section names the package but not the new version`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        File.WriteAllText(path, "# Changelog\n\n## Unreleased\n\n- docs: SqlHydra.Query usage example\n")
+
+        test
+            <@
+                planPromotion path [] [ sqlHydraBump ] = Ok
+                    { Source = Authored
+                      DependencyBullets = [ sqlHydraBullet ] }
+            @>)
+
+[<Fact>]
+let ``planPromotion derives an empty section from commit summaries plus unmentioned dependency changes`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        File.WriteAllText(path, "# Changelog\n\n## Unreleased\n\n## 0.1.0 - 2026-01-01\n")
+
+        let plan =
+            planPromotion
+                path
+                [ "chore(deps): update deps (incl. SqlHydra.Query 4.1.0-beta.3)"; "fix: a bug" ]
+                [ sqlHydraBump; Added("Npgsql", "8.0.0") ]
+
+        test
+            <@
+                plan = Ok
+                    { Source =
+                        Derived
+                            [ "- fix: a bug"
+                              "- chore(deps): update deps (incl. SqlHydra.Query 4.1.0-beta.3)" ]
+                      DependencyBullets = [ "- build(deps): add Npgsql 8.0.0" ] }
+            @>)
+
+[<Fact>]
+let ``planPromotion derives from dependency changes alone when commits give nothing`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        File.WriteAllText(path, "# Changelog\n\n## Unreleased\n")
+
+        test
+            <@
+                planPromotion path [ "Bump versions: X 1.0.0" ] [ sqlHydraBump ] = Ok
+                    { Source = Derived []
+                      DependencyBullets = [ sqlHydraBullet ] }
+            @>)
+
+[<Fact>]
+let ``planPromotion is EmptyUnreleasedSection when nothing is authored or derivable`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        File.WriteAllText(path, "# Changelog\n\n## Unreleased\n")
+        test <@ planPromotion path [ "Bump versions: X 1.0.0" ] [] = Error(EmptyUnreleasedSection path) @>)
+
+[<Fact>]
+let ``planPromotion is NoFile when the changelog is missing and nothing is derivable`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        test <@ planPromotion path [] [] = Error(NoFile path) @>)
+
+// POSITIVE CONTROL: an all-authored release promotes byte-for-byte the same as
+// a plain promoteUnreleased.
+[<Fact>]
+let ``applyPromotion of an authored plan with no dependency changes promotes unchanged`` () =
+    withTempDir (fun dir ->
+        let text =
+            "# Changelog\n\n## Unreleased\n\n- chore: package metadata\n\n## 0.1.0 - 2026-01-01\n\n- old\n"
+
+        let viaPlan = Path.Combine(dir, "plan.md")
+        let viaPromote = Path.Combine(dir, "promote.md")
+        File.WriteAllText(viaPlan, text)
+        File.WriteAllText(viaPromote, text)
+
+        applyPromotion
+            viaPlan
+            (v "0.2.0")
+            sampleDate
+            { Source = Authored
+              DependencyBullets = [] }
+
+        promoteUnreleased viaPromote (v "0.2.0") sampleDate
+        test <@ File.ReadAllText viaPlan = File.ReadAllText viaPromote @>)
+
+[<Fact>]
+let ``applyPromotion appends dependency bullets after the authored entries, inside the new version section`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+
+        File.WriteAllText(
+            path,
+            "# Changelog\n\n## Unreleased\n\n> ### Read this first\n\n- chore: package metadata\n\n\n## 0.1.0 - 2026-01-01\n\n- old\n"
+        )
+
+        applyPromotion
+            path
+            (v "0.2.0")
+            sampleDate
+            { Source = Authored
+              DependencyBullets = [ sqlHydraBullet ] }
+
+        let expected =
+            [| "# Changelog"
+               ""
+               "## Unreleased"
+               ""
+               "## 0.2.0 - 2026-04-22"
+               ""
+               "> ### Read this first"
+               ""
+               "- chore: package metadata"
+               sqlHydraBullet
+               ""
+               ""
+               "## 0.1.0 - 2026-01-01"
+               ""
+               "- old" |]
+
+        test <@ File.ReadAllLines path = expected @>)
+
+[<Fact>]
+let ``applyPromotion appends dependency bullets when the authored section is the end of the file`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+        File.WriteAllText(path, "# Changelog\n\n## Unreleased\n\n- chore: note")
+
+        applyPromotion
+            path
+            (v "0.2.0")
+            sampleDate
+            { Source = Authored
+              DependencyBullets = [ sqlHydraBullet ] }
+
+        test
+            <@
+                File.ReadAllLines path = [| "# Changelog"
+                                            ""
+                                            "## Unreleased"
+                                            ""
+                                            "## 0.2.0 - 2026-04-22"
+                                            ""
+                                            "- chore: note"
+                                            sqlHydraBullet |]
+            @>)
+
+[<Fact>]
+let ``applyPromotion writes derived bullets followed by dependency bullets`` () =
     withTempDir (fun dir ->
         let path = Path.Combine(dir, "CHANGELOG.md")
         File.WriteAllText(path, "# Changelog\n\n## Unreleased\n\n## 0.1.0 - 2026-01-01\n\n- old\n")
 
-        let result =
-            promoteOrDerive path (v "0.1.1") sampleDate [ "feat: derived feature"; "fix: derived fix" ]
+        applyPromotion
+            path
+            (v "0.1.1")
+            sampleDate
+            { Source = Derived [ "- feat: derived feature" ]
+              DependencyBullets = [ sqlHydraBullet ] }
 
-        test <@ result = Ok() @>
         let updated = File.ReadAllText path
         test <@ updated.Contains "## 0.1.1 - 2026-04-22" @>
-        test <@ updated.Contains "- feat: derived feature" @>
-        test <@ updated.Contains "- fix: derived fix" @>
-        // Older content preserved and a fresh empty Unreleased remains on top.
-        test <@ updated.Contains "## 0.1.0 - 2026-01-01" @>
-        test <@ validateUnreleased path = Error(EmptyUnreleasedSection path) @>)
+        test <@ updated.IndexOf "- feat: derived feature" < updated.IndexOf sqlHydraBullet @>
+        test <@ updated.IndexOf sqlHydraBullet < updated.IndexOf "## 0.1.0 - 2026-01-01" @>
+        // A fresh empty Unreleased remains on top, exactly once.
+        test <@ validateUnreleased path = Error(EmptyUnreleasedSection path) @>
+        test <@ File.ReadAllLines path |> Array.filter isUnreleasedHeading |> Array.length = 1 @>)
 
 [<Fact>]
-let ``promoteOrDerive fills an empty Unreleased that is the last line of the file`` () =
-    withTempDir (fun dir ->
-        let path = Path.Combine(dir, "CHANGELOG.md")
-        // `## Unreleased` is the FINAL line — no trailing blank or content after it.
-        File.WriteAllText(path, "# Changelog\n\n## Unreleased\n")
-        let result = promoteOrDerive path (v "0.1.1") sampleDate [ "feat: first note" ]
-        test <@ result = Ok() @>
-        let updated = File.ReadAllText path
-        test <@ updated.Contains "## 0.1.1 - 2026-04-22" @>
-        test <@ updated.Contains "- feat: first note" @>
-        // Exactly one Unreleased heading remains (no stray empty one left behind).
-        let lines = File.ReadAllLines path
-        test <@ lines |> Array.filter isUnreleasedHeading |> Array.length = 1 @>)
-
-[<Fact>]
-let ``promoteOrDerive inserts a derived section when there is no Unreleased heading`` () =
+let ``applyPromotion inserts a derived section when there is no Unreleased heading`` () =
     withTempDir (fun dir ->
         let path = Path.Combine(dir, "CHANGELOG.md")
         File.WriteAllText(path, "# Changelog\n\n## 0.1.0 - 2026-01-01\n\n- old\n")
-        let result = promoteOrDerive path (v "0.1.1") sampleDate [ "feat: brand new" ]
-        test <@ result = Ok() @>
+
+        applyPromotion
+            path
+            (v "0.1.1")
+            sampleDate
+            { Source = Derived [ "- feat: brand new" ]
+              DependencyBullets = [] }
+
         let updated = File.ReadAllText path
         test <@ updated.Contains "## 0.1.1 - 2026-04-22" @>
         test <@ updated.Contains "- feat: brand new" @>
         test <@ updated.Contains "## 0.1.0 - 2026-01-01" @>)
-
-[<Fact>]
-let ``promoteOrDerive returns EmptyUnreleasedSection and writes nothing when empty and nothing derivable`` () =
-    withTempDir (fun dir ->
-        let path = Path.Combine(dir, "CHANGELOG.md")
-        let before = "# Changelog\n\n## Unreleased\n\n## 0.1.0 - 2026-01-01\n\n- old\n"
-        File.WriteAllText(path, before)
-        // Only a Bump-versions noise commit -> derives nothing.
-        let result =
-            promoteOrDerive path (v "0.1.1") sampleDate [ "Bump versions: X 1.0.0" ]
-
-        test <@ result = Error(EmptyUnreleasedSection path) @>
-        // No write happened.
-        test <@ File.ReadAllText path = before @>)
 
 // --- callout order -------------------------------------------------------
 // A callout is a blockquote opening with a heading or a GitHub alert marker:
