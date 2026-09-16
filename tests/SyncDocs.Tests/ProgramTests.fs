@@ -4,21 +4,23 @@ open System.IO
 open Xunit
 open Tests.Common
 open Swensen.Unquote
+open SyncDocs.Sync
 open SyncDocs.Program
 open Tests.Common.TestHelpers
 
 [<Fact>]
-let ``run - check prints warnings for incomplete pairs`` () =
+let ``run - check fails when a configured package has no docs target, naming package and path`` () =
     withTempDir (fun tmpDir ->
         let srcDir = Path.Combine(tmpDir, "src", "MyLib")
         Directory.CreateDirectory(srcDir) |> ignore
         File.WriteAllText(Path.Combine(srcDir, "README.md"), "lib readme")
-        // No docs/MyLib/index.md -- should warn
+        // No docs/MyLib/index.md -- a configured package with nothing to compare against
 
         let printed, result = withCapturedConsole (fun () -> run [| "check" |] tmpDir)
-        test <@ result = Ok 0 @>
+        test <@ result = Ok 1 @>
         test <@ printed.Contains "MyLib" @>
-        test <@ printed.Contains "index.md" @>)
+        test <@ printed.Contains(Path.Combine("docs", "MyLib", "index.md")) @>
+        test <@ printed.Contains "compared 0 of 1 pairs" @>)
 
 [<Fact>]
 let ``run - invalid command returns Error`` () =
@@ -481,3 +483,132 @@ let ``run - check processes a standalone doc even when there are no pairs`` () =
 
         let result = run [| "check" |] tmpDir
         test <@ result = Ok 1 @>)
+
+// --- a green check must mean every configured package was compared ---
+
+[<Fact>]
+let ``run - check with two configured packages both present and equal reports compared 2 of 2`` () =
+    withTempDir (fun tmpDir ->
+        write tmpDir "src/LibA/README.md" "a content"
+        write tmpDir "docs/LibA/index.md" "a content"
+        write tmpDir "src/LibB/README.md" "b content"
+        write tmpDir "docs/LibB/index.md" "b content"
+
+        let printed, result = withCapturedConsole (fun () -> run [| "check" |] tmpDir)
+        test <@ result = Ok 0 @>
+        test <@ printed.Contains "compared 2 of 2 pairs" @>)
+
+[<Fact>]
+let ``run - check with two configured packages and one missing target fails with compared 1 of 2`` () =
+    withTempDir (fun tmpDir ->
+        write tmpDir "src/LibA/README.md" "a content"
+        write tmpDir "docs/LibA/index.md" "a content"
+        write tmpDir "src/LibB/README.md" "b content"
+        // docs/LibB/index.md deliberately absent
+
+        let printed, result = withCapturedConsole (fun () -> run [| "check" |] tmpDir)
+        test <@ result = Ok 1 @>
+        test <@ printed.Contains "compared 1 of 2 pairs" @>
+        // the pair that IS present is still reported
+        test <@ printed.Contains(Path.Combine("src", "LibA", "README.md")) @>
+        test <@ printed.Contains "in sync" @>
+        // the missing one is named with the path that was looked for
+        test <@ printed.Contains "LibB" @>
+        test <@ printed.Contains(Path.Combine("docs", "LibB", "index.md")) @>)
+
+[<Fact>]
+let ``run - check still fails a disagreeing pair (positive control) and counts it as compared`` () =
+    withTempDir (fun tmpDir ->
+        write tmpDir "src/LibA/README.md" "new content"
+        write tmpDir "docs/LibA/index.md" "old content"
+
+        let printed, result = withCapturedConsole (fun () -> run [| "check" |] tmpDir)
+        test <@ result = Ok 1 @>
+        test <@ printed.Contains "OUT OF SYNC" @>
+        test <@ printed.Contains "compared 1 of 1 pairs" @>)
+
+[<Fact>]
+let ``run - check with nothing configured is still a clean pass`` () =
+    withTempDir (fun tmpDir ->
+        // No README.md, no src/*/README.md: nothing is configured, so nothing is missing.
+        let printed, result = withCapturedConsole (fun () -> run [| "check" |] tmpDir)
+        test <@ result = Ok 0 @>
+        test <@ printed.Contains "No README.md -> docs/ pairs found" @>)
+
+[<Fact>]
+let ``run - check keeps a docs page with no README as a warning, not a failure`` () =
+    withTempDir (fun tmpDir ->
+        // A docs target without a source README is not a configured package: warn, don't fail.
+        Directory.CreateDirectory(Path.Combine(tmpDir, "src", "Orphan")) |> ignore
+        write tmpDir "docs/Orphan/index.md" "orphan docs"
+        write tmpDir "README.md" "root"
+        write tmpDir "docs/index.md" "root"
+
+        let printed, result = withCapturedConsole (fun () -> run [| "check" |] tmpDir)
+        test <@ result = Ok 0 @>
+        test <@ printed.Contains "Warning" @>
+        test <@ printed.Contains "compared 1 of 1 pairs" @>)
+
+[<Fact>]
+let ``summarizePairs - count and verdict fold from the same outcomes`` () =
+    let outcomes =
+        [ Compared InSync
+          Compared Updated
+          Compared OutOfSync
+          TargetMissing("LibA", "docs/LibA/index.md")
+          SourceMissing("LibB", "src/LibB/README.md") ]
+
+    test
+        <@
+            summarizePairs outcomes = { Compared = 3
+                                        Total = 5
+                                        Failed = true }
+        @>
+
+    test
+        <@
+            summarizePairs [ Compared InSync; Compared Updated ] = { Compared = 2
+                                                                     Total = 2
+                                                                     Failed = false }
+        @>
+
+    test
+        <@
+            summarizePairs [] = { Compared = 0
+                                  Total = 0
+                                  Failed = false }
+        @>
+
+[<Fact>]
+let ``describePairOutcome - only uncompared outcomes render an error line`` () =
+    test <@ describePairOutcome (Compared InSync) = None @>
+    test <@ describePairOutcome (Compared OutOfSync) = None @>
+
+    test
+        <@
+            describePairOutcome (TargetMissing("LibA", "docs/LibA/index.md")) = Some
+                "ERROR: docs target missing for LibA, looked for docs/LibA/index.md"
+        @>
+
+    test
+        <@
+            describePairOutcome (SourceMissing("LibB", "src/LibB/README.md")) = Some
+                "ERROR: README source missing for LibB, looked for src/LibB/README.md"
+        @>
+
+[<Fact>]
+let ``run - sync also fails a configured package with no docs target and reports synced 0 of 1`` () =
+    withTempDir (fun tmpDir ->
+        write tmpDir "src/MyLib/README.md" "lib readme"
+
+        let printed, result = withCapturedConsole (fun () -> run [| "sync" |] tmpDir)
+        test <@ result = Ok 1 @>
+        test <@ printed.Contains "synced 0 of 1 pairs" @>
+        test <@ printed.Contains(Path.Combine("docs", "MyLib", "index.md")) @>)
+
+[<Fact>]
+let ``main - help flags print usage and return 0`` () =
+    for flag in [ "--help"; "-h"; "help" ] do
+        let printed, result = withCapturedConsole (fun () -> main [| flag |])
+        test <@ result = 0 @>
+        test <@ printed.Contains "Usage: syncdocs" @>

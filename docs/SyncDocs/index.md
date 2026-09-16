@@ -39,7 +39,7 @@ Output:
 syncdocs check
 ```
 
-Exits with code 0 if everything is in sync, 1 if any pair is out of sync. Use this in CI to catch forgotten doc updates.
+Exits with code 0 if everything is in sync, 1 if any pair is out of sync **or any configured package has no docs target**. The last line reports `compared N of M pairs`, so a run that compared nothing cannot read as a clean pass. Use this in CI to catch forgotten doc updates.
 
 ## Marking Sections
 
@@ -95,7 +95,7 @@ SyncDocs automatically finds sync pairs based on file location:
 | `src/MyLib/README.md` | `docs/MyLib/index.md` |
 | `src/OtherTool/README.md` | `docs/OtherTool/index.md` |
 
-Both the source and target file must exist for the pair to be discovered. SyncDocs skips missing files rather than creating them.
+A README that exists is a configured package and its docs target must exist too: a missing target fails the run (exit 1) naming the package and the path that was looked for. SyncDocs never creates the missing file for you. A docs page with no README is only a warning.
 
 ## Example Workflow
 
