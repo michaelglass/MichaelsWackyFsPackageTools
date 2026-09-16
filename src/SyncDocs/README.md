@@ -39,7 +39,15 @@ Output:
 syncdocs check
 ```
 
-Exits with code 0 if everything is in sync, 1 if any pair is out of sync. Use this in CI to catch forgotten doc updates.
+Exits with code 0 if everything is in sync, 1 if any pair is out of sync **or any configured package has no docs target**. Use this in CI to catch forgotten doc updates.
+
+The last line always says how many pairs were actually compared, so a run that found nothing to compare cannot read as a clean pass:
+
+```
+  src/MyLib/README.md -> docs/MyLib/index.md: in sync
+  ERROR: docs target missing for OtherLib, looked for docs/OtherLib/index.md
+  compared 1 of 2 pairs
+```
 
 ## Marking Sections
 
@@ -152,10 +160,17 @@ SyncDocs automatically finds sync pairs based on file location:
 | `src/MyLib/README.md` | `docs/MyLib/index.md` |
 | `src/OtherTool/README.md` | `docs/OtherTool/index.md` |
 
-Both the source and target file must exist for the pair to be discovered. If only one side of a pair exists, SyncDocs prints a helpful warning telling you which file to create:
+A README that exists is a **configured package**, and its docs target must exist too. If the target is missing, `check` (and `sync`) fail with exit code 1, naming the package and the path that was looked for -- a green run means every configured package was compared, never that a comparison was quietly skipped:
 
 ```
-  Warning: To sync docs for MyLib, create docs/MyLib/index.md
+  ERROR: docs target missing for MyLib, looked for docs/MyLib/index.md
+  compared 0 of 1 pairs
+```
+
+A docs page whose README is missing is not a configured package, so it is only a warning:
+
+```
+  Warning: Source README missing for MyLib, create src/MyLib/README.md
 ```
 
 ## Example Workflow

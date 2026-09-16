@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: a configured package (a README that exists by convention) whose docs target is missing is now a hard error — `check` and `sync` exit 1 naming the package and the path that was looked for, instead of printing a warning and passing. `check` ends with `compared N of M pairs`, so a run that compared nothing can no longer read as a clean pass. Both the exit code and the count are folded from one per-pair `PairOutcome` (`Compared` / `TargetMissing` / `SourceMissing`), so they cannot disagree. A docs page with no README remains a warning
+
 ## 0.13.0-alpha.5 - 2026-09-15
 
 - Finish: update SourceLink to patched 10.0.303
