@@ -526,6 +526,48 @@ type internal TagRunOutcome =
     /// single question must not claim it waited for the whole window.
     | TagRunAbsent of waited: System.TimeSpan * everAnswered: bool
 
+/// What ONE question to GitHub established about the run for a pushed tag — and the
+/// point of the type is what it cannot say.
+///
+/// a release on 2026-09-16 pushed `v0.1.0-alpha.5`, asked, heard "no
+/// run", and printed `MISSING TRIGGER` — while the Release run registered seconds
+/// later and went green. The observation was true; the CONCLUSION was not, and the
+/// remedy printed with it (re-push the tag) would have published the version twice.
+///
+/// So a single answer of "none" is `NotYet`, never `Absent`. Only the poll may say
+/// `Absent`, and only by `settleAppearance` once its budget is spent. A caller holding
+/// a `NotYet` has nothing to report to an operator except "still waiting".
+type internal TagRunAppearance =
+    /// GitHub lists at least one run of a publish workflow for the tag. Whether that
+    /// run is healthy is a separate question (`saysNothingWasPublished`).
+    | Appeared of TagRunState list
+    /// GitHub lists no run YET (`answered` = true), or could not be asked at all
+    /// (`answered` = false). `elapsed` is measured since the poll began.
+    | NotYet of elapsed: System.TimeSpan * answered: bool
+    /// The budget is spent and no run has been listed. `everAnswered` is false when
+    /// `gh` was never once able to answer, which is not evidence of a missing run.
+    | Absent of elapsed: System.TimeSpan * everAnswered: bool
+
+/// One question, one typed answer. Cannot return `Absent`: see `TagRunAppearance`.
+let internal askOnceForRef
+    (run: string -> string -> CommandResult)
+    (publishWorkflows: PublishWorkflow list)
+    (gitRef: string)
+    : TagRunAppearance =
+    let clock = System.Diagnostics.Stopwatch.StartNew()
+
+    match runStatesForRef run publishWorkflows gitRef with
+    | Some(_ :: _ as states) -> Appeared states
+    | Some [] -> NotYet(clock.Elapsed, true)
+    | None -> NotYet(clock.Elapsed, false)
+
+/// `NotYet` becomes `Absent` exactly when the poll's budget is spent. Pure, so the
+/// one place the two are allowed to be confused can be tested without a clock.
+let internal settleAppearance (budgetSpent: bool) (appearance: TagRunAppearance) : TagRunAppearance =
+    match appearance with
+    | NotYet(elapsed, answered) when budgetSpent -> Absent(elapsed, answered)
+    | other -> other
+
 /// Ask GitHub whether `gitRef` has a workflow run, RETRYING while the answer is "none".
 ///
 /// this was one question, asked three seconds after the push. GitHub
@@ -533,6 +575,11 @@ type internal TagRunOutcome =
 /// FsHotWatch releases on 2026-09-04 were each reported as "no workflow run appeared" —
 /// and the remedy printed alongside that verdict, delete the tag and push it again,
 /// would have published every one of them twice.
+///
+/// the loop is now written over `TagRunAppearance`, so "no run yet"
+/// and "no run will appear" are different constructors rather than the same answer
+/// read at different times. The elapsed time reported on `Absent` is measured from
+/// the first question, never derived from the budget.
 ///
 /// An unanswerable question is retried exactly like an absent run rather than settled:
 /// a rate-limited or briefly unreachable `gh` clears on its own. Whether it was EVER
@@ -549,18 +596,21 @@ let internal waitForRunForRef
     let budget = max 1 maxAttempts
 
     let rec ask attempt everAnswered =
-        let answer = runStatesForRef run publishWorkflows gitRef
-        let everAnswered = everAnswered || Option.isSome answer
+        let appearance =
+            match askOnceForRef run publishWorkflows gitRef with
+            | NotYet(_, answered) -> NotYet(elapsed.Elapsed, everAnswered || answered)
+            | other -> other
+            |> settleAppearance (attempt >= budget)
 
-        match answer with
-        | Some states when states |> List.exists saysNothingWasPublished ->
+        match appearance with
+        | Appeared states when states |> List.exists saysNothingWasPublished ->
             TagRunFailed(states |> List.filter saysNothingWasPublished)
-        | Some(_ :: _) -> TagRunPresent
-        | _ when attempt >= budget -> TagRunAbsent(elapsed.Elapsed, everAnswered)
-        | _ ->
+        | Appeared _ -> TagRunPresent
+        | Absent(waited, everAnswered) -> TagRunAbsent(waited, everAnswered)
+        | NotYet(_, everAnswered) ->
             if pollIntervalMs > 0 then
                 printfn
-                    "  no publish workflow run for %s yet (asked %d of %d); waiting %.0fs"
+                    "  no publish workflow run for %s yet (asked %d of %d); waiting %.0fs — normal for the first minute after a push"
                     gitRef
                     attempt
                     budget
@@ -702,6 +752,31 @@ type TagPushPolicy =
         /// `(RunPollAttempts - 1) * RunPollIntervalMs`.
         RunPollAttempts: int
     }
+
+/// Parse an environment override as a positive int, or keep the default. Garbage or
+/// zero keeps the default rather than producing a poll that never asks.
+let internal envIntOrDefault (getEnv: string -> string option) (name: string) (fallback: int) : int =
+    match getEnv name with
+    | Some raw ->
+        match System.Int32.TryParse(raw.Trim()) with
+        | true, n when n > 0 -> n
+        | _ -> fallback
+    | None -> fallback
+
+/// The production tag-push policy, with the run-poll window overridable from the
+/// environment (`FSST_RUN_POLL_ATTEMPTS`, `FSST_RUN_POLL_DELAY_MS`).
+///
+/// 5s x 120 = a ten-minute window for a workflow run to register. Generous on
+/// purpose: every observed appearance took seconds, and the cost of waiting too long
+/// is a slow release, while the cost of not waiting long enough was healthy releases
+/// reported broken with delete-and-re-push as the advice (the tracked issue,
+/// the tracked issue). The window is bounded so an orphan tag — pushed, and genuinely
+/// never picked up — is still reported rather than waited on forever.
+let tagPushPolicyFromEnv (getEnv: string -> string option) : TagPushPolicy =
+    { PushAttempts = 3
+      PushRetryDelayMs = 3000
+      RunPollIntervalMs = envIntOrDefault getEnv "FSST_RUN_POLL_DELAY_MS" 5000
+      RunPollAttempts = envIntOrDefault getEnv "FSST_RUN_POLL_ATTEMPTS" 121 }
 
 /// The three answers this function can give about ONE tag, and they are three because
 /// the operator's next move differs for each. Only `WorkflowRunFailed` is a

@@ -4980,3 +4980,178 @@ let ``calloutOrderProblems - names the package and the buried callout`` () =
                                  7
                              ) ]
             @>)
+
+// a late-registering run is a green release, end to end
+
+/// `passingCiRun`, except that the tag-run question (`gh run list --branch <tag> ...`)
+/// answers `[]` for the first `emptyRounds` rounds and a queued Release run after.
+/// The commit-CI question (no `--branch`) is untouched.
+let private ciRunWithLateTagRun (emptyRounds: int) =
+    let (base', getCalls) = passingCiRun []
+    let mutable tagAsks = 0
+
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "gh", a when a.StartsWith("run list --branch") ->
+            tagAsks <- tagAsks + 1
+
+            if tagAsks <= emptyRounds then
+                Success "[]"
+            else
+                Success
+                    """[{"name":"Release","status":"queued","conclusion":null,"databaseId":1,"url":"https://example/1"}]"""
+        | _ -> base' cmd args
+
+    run, getCalls
+
+let private singlePackage (tmpFile: string) : ToolConfig =
+    { Packages =
+        [ { Name = "MyLib"
+            Fsproj = tmpFile
+            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+            TagPrefix = "v"
+            FsProjsSharingSameTag = [] } ]
+      ReservedVersions = Set.empty
+      PreBuildCmds = []
+      PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+      RootDir = "" }
+
+let private releaseWithTagPush run config (policy: TagPushPolicy) =
+    seedTmpChangelog ()
+
+    release
+        { Run = run
+          Config =
+            { config with
+                RootDir = Path.GetTempPath() }
+          Command = StartAlpha
+          Mode = PushTags
+          TargetPackages = []
+          ExtractPreviousApi = noPreviousApi
+          ExtractCurrentApi = noCurrentApi
+          ExtractPreviousGrammar = noPreviousGrammar
+          ExtractCurrentGrammar = noCurrentGrammar
+          CiPollIntervalMs = 0
+          CiMaxAttempts = 10
+          TagPush = policy
+          CheckFeedPresence = (fun _ _ -> OnFeed)
+          WaitForNuGet = false
+          NuGetPollIntervalMs = 0
+          NuGetMaxAttempts = 1
+          Push = false
+          Check = false }
+
+[<Fact>]
+let ``release - a Release run that registers a few polls after the push exits 0 and is never MISSING`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        let (run, _) = ciRunWithLateTagRun 3
+
+        let output, result =
+            withCapturedConsole (fun () ->
+                releaseWithTagPush
+                    run
+                    (singlePackage tmpFile)
+                    { PushAttempts = 1
+                      PushRetryDelayMs = 0
+                      RunPollIntervalMs = 0
+                      RunPollAttempts = 10 })
+
+        test <@ result = 0 @>
+        test <@ not (output.Contains("MISSING TRIGGER")) @>
+        test <@ not (output.Contains("no workflow run YET")) @>
+        test <@ output.Contains("a workflow run exists for each") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - a Release run that never appears within the budget is reported, without re-push advice`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        let (run, _) = ciRunWithLateTagRun System.Int32.MaxValue
+
+        let output, result =
+            withCapturedConsole (fun () ->
+                releaseWithTagPush
+                    run
+                    (singlePackage tmpFile)
+                    { PushAttempts = 1
+                      PushRetryDelayMs = 0
+                      RunPollIntervalMs = 0
+                      RunPollAttempts = 3 })
+
+        test <@ result = 2 @>
+        test <@ output.Contains("ARE on the remote") @>
+        test <@ output.Contains("Do NOT delete and re-push") @>
+        test <@ output.Contains("may still be starting") @>
+        test <@ not (output.Contains("MISSING TRIGGER")) @>
+        test <@ not (output.Contains(":refs/tags/")) @>
+    finally
+        File.Delete(tmpFile)
+
+// the NuGet confirmation poll outlasts the index lag
+
+[<Fact>]
+let ``nuGetPollFromEnv - the default budget covers twenty minutes of index lag`` () =
+    // Measured three times on FsHotWatch (2026-09-15/16): the package indexes 6-15
+    // minutes after the Release run finishes. The old 40 x 15s = 10 min gave up inside
+    // that window and printed "Release NOT CONFIRMED" for a release that was fine.
+    let intervalMs, attempts = nuGetPollFromEnv (fun _ -> None)
+    test <@ int64 (attempts - 1) * int64 intervalMs >= 20L * 60L * 1000L @>
+
+[<Fact>]
+let ``nuGetPollFromEnv - honours the same overrides as FsHotWatch's barrier`` () =
+    let intervalMs, attempts =
+        nuGetPollFromEnv (function
+            | "FSHW_NUGET_PROBE_ATTEMPTS" -> Some "5"
+            | "FSHW_NUGET_PROBE_DELAY_MS" -> Some "100"
+            | _ -> None)
+
+    test <@ attempts = 5 @>
+    test <@ intervalMs = 100 @>
+
+    let _, garbageAttempts = nuGetPollFromEnv (fun _ -> Some "soon")
+    let _, defaultAttempts = nuGetPollFromEnv (fun _ -> None)
+    test <@ garbageAttempts = defaultAttempts @>
+
+[<Fact>]
+let ``waitForNuGetTimed - the give-up names the measured wait, not the budget`` () =
+    // 3 attempts 100ms apart spend TWO sleeps: ~200ms. Formatting from the budget
+    // would print 300ms (or, in production, "20 minutes" for a poll that stopped early).
+    let output, (unconfirmed, waited) =
+        withCapturedConsole (fun () -> waitForNuGetTimed (fun _ _ -> NotOnFeed) 100 3 [ "PkgA", "1.0.0" ])
+
+    test <@ unconfirmed = [ "PkgA", "1.0.0" ] @>
+    test <@ waited >= System.TimeSpan.FromMilliseconds 150.0 @>
+    test <@ waited < System.TimeSpan.FromMilliseconds 290.0 @>
+    test <@ output.Contains("Gave up waiting for PkgA 1.0.0 on NuGet after ") @>
+    test <@ output.Contains("(3 checks") @>
+
+[<Fact>]
+let ``release - the NuGet give-up says the tags and Release runs are the evidence and a re-run resumes`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        let (fakeRun, _) = passingCiRun []
+
+        let output, result =
+            withCapturedConsole (fun () ->
+                runReleaseWithNuGetWait fakeRun (singlePackage tmpFile) StartAlpha (fun _ _ -> NotOnFeed) 2)
+
+        // Fail-closed: still 2, never 0 ...
+        test <@ result = 2 @>
+        // ... but it must not read as a failed publish.
+        test <@ output.Contains("Release NOT CONFIRMED") @>
+        test <@ output.Contains("stopped waiting after ") @>
+        test <@ output.Contains("The tags ARE pushed and each has a Release run") @>
+        test <@ output.Contains("Re-running the same release command RESUMES") @>
+        test <@ output.Contains("does not publish a second time") @>
+        test <@ output.Contains("FSHW_NUGET_PROBE_ATTEMPTS") @>
+        test <@ output.Contains("This is NOT a failed publish") @>
+    finally
+        File.Delete(tmpFile)

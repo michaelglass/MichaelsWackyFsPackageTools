@@ -101,6 +101,14 @@ let internal runReleaseWith
     (releaseCmd: Release.ReleaseCommand)
     (flags: ReleaseFlag list)
     : Result<int, string> =
+    let envVar (name: string) : string option =
+        match System.Environment.GetEnvironmentVariable name with
+        | null
+        | "" -> None
+        | value -> Some value
+
+    let nuGetPoll = Release.nuGetPollFromEnv envVar
+
     match Config.load cwd with
     | Error msg -> Error msg
     | Ok config ->
@@ -117,20 +125,15 @@ let internal runReleaseWith
                   ExtractCurrentGrammar = extractCurrentGrammar
                   CiPollIntervalMs = 15000
                   CiMaxAttempts = 60
-                  // 5s x 60 = a five-minute window for a workflow run to register.
-                  // Generous on purpose: every observed appearance took seconds, and
-                  // the cost of waiting too long is a slow release, while the cost of
-                  // not waiting long enough was three healthy releases reported broken
-                  // with delete-and-re-push as the advice.
-                  TagPush =
-                    { PushAttempts = 3
-                      PushRetryDelayMs = 3000
-                      RunPollIntervalMs = 5000
-                      RunPollAttempts = 60 }
+                  // Bounded, configurable, and ten minutes by default: see
+                  // `Vcs.tagPushPolicyFromEnv`.
+                  TagPush = Vcs.tagPushPolicyFromEnv envVar
                   CheckFeedPresence = Api.checkFeedPresence Api.httpGet run
                   WaitForNuGet = not (flags |> List.contains SkipNugetWait)
-                  NuGetPollIntervalMs = 15000
-                  NuGetMaxAttempts = 40
+                  // Twenty minutes by default, the measured NuGet index lag, and the
+                  // same env overrides as FsHotWatch's barrier.
+                  NuGetPollIntervalMs = fst nuGetPoll
+                  NuGetMaxAttempts = snd nuGetPoll
                   Push = flags |> List.contains Push
                   Check = flags |> List.contains Check }
         )
