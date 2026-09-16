@@ -348,7 +348,7 @@ let internal packageCacheSearch
         // An FSharp.Analyzers.SDK analyzer package (IncludeBuildOutput=false,
         // DevelopmentDependency=true) ships its assembly under
         // analyzers/dotnet/fs/<id>.dll with NO lib/, so without this the DLL is
-        // never found and the package reads as an orphan tag (AbsentOnFeed).
+        // never found and the package's API reads as unreadable.
         // Recurse so any nesting (fs/cs, or a TFM sub-folder) is covered.
         let analyzerDirs =
             let analyzersRoot = Path.Combine(pkgDir, "analyzers")
@@ -361,31 +361,58 @@ let internal packageCacheSearch
 
         Some(libToolDirs @ analyzerDirs |> List.sortDescending, dllName)
 
-/// Try to extract API signatures from a previously published NuGet package
-/// under an arbitrary cache root (cacheRoot/<id>/<version>/{lib,tools}/<tfm>/).
-let extractFromCacheRoot (cacheRoot: string) (packageId: string) (version: string) : ApiSignature list option =
+/// What the NuGet cache holds for one package version's public API. Kept apart
+/// from "is this version published?" on purpose: a package that is in the cache
+/// but whose API cannot be read IS a real package — only the feed may say a
+/// version is absent.
+type CachedApi =
+    /// The package version is not in this cache at all.
+    | NotCached
+    /// The public API was read from the cached assembly.
+    | CachedRead of ApiSignature list
+    /// The package version IS cached, but no public API could be read from it:
+    /// no `<id>.dll` in any searched layout (an MSBuild-only package), or the
+    /// assembly failed to load — typically a dependency the load context cannot
+    /// resolve. Carries why, naming the assembly and the load error.
+    | CachedUnreadable of reason: string
+
+/// Read a previously published package's public API from an arbitrary cache
+/// root (cacheRoot/<id>/<version>/{lib,tools,analyzers}/...). The first assembly
+/// that loads wins; a load failure is reported only when no candidate loads.
+let extractFromCacheRoot (cacheRoot: string) (packageId: string) (version: string) : CachedApi =
     match packageCacheSearch cacheRoot packageId version with
-    | None -> None
+    | None -> NotCached
     | Some(searchDirs, dllName) ->
-        searchDirs
-        |> List.tryPick (fun dir ->
-            let dllPath = Path.Combine(dir, dllName)
+        let noAssembly =
+            sprintf
+                "%s %s is in the NuGet cache but ships no %s under lib/, tools/ or analyzers/"
+                packageId
+                version
+                dllName
 
-            if File.Exists(dllPath) then
-                // Degrade gracefully: if a transitive dependency can't be
-                // resolved we return None (callers treat that as "couldn't read
-                // the previous API" and refuse to guess) rather than crashing.
+        // Newest-tfm-first; the first assembly that loads wins. Only when none
+        // loads is the FIRST load failure reported (it names the assembly and the
+        // dependency that could not be resolved).
+        let rec firstReadable (dllPaths: string list) (firstFailure: string option) =
+            match dllPaths with
+            | [] -> CachedUnreadable(defaultArg firstFailure noAssembly)
+            | dllPath :: rest ->
                 try
-                    Some(extractFromAssembly dllPath)
+                    CachedRead(extractFromAssembly dllPath)
                 with ex ->
-                    eprintfn "Warning: could not read API from %s: %s" dllPath ex.Message
-                    None
-            else
-                None)
+                    let failure = sprintf "could not load %s: %s" dllPath ex.Message
+                    firstReadable rest (Some(defaultArg firstFailure failure))
 
-/// Try to extract API signatures from a previously published NuGet package
-/// in the default user-local cache at ~/.nuget/packages/.
-let extractFromNuGetCache (packageId: string) (version: string) : ApiSignature list option =
+        let dllPaths =
+            searchDirs
+            |> List.map (fun dir -> Path.Combine(dir, dllName))
+            |> List.filter File.Exists
+
+        firstReadable dllPaths None
+
+/// Read a previously published package's public API from the default
+/// user-local cache at ~/.nuget/packages/.
+let extractFromNuGetCache (packageId: string) (version: string) : CachedApi =
     let home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
     extractFromCacheRoot (Path.Combine(home, ".nuget", "packages")) packageId version
 
@@ -448,22 +475,31 @@ let private withProbeProject (packageId: string) (version: string) (f: string ->
         with _ ->
             ()
 
-/// Why a previous-release package couldn't be turned into an API surface, kept
-/// distinct so callers can react differently. `Found` carries the API. The two
-/// failure cases differ in blame: `AbsentOnFeed` means the feed answered and the
-/// package/version genuinely isn't there (an orphan tag whose CI publish never
-/// landed — safe to skip and diff against an older published release);
-/// `FetchError` is a transient/network/auth fault where the truth is unknown
-/// (callers MUST abort rather than guess the bump).
+/// What fetching a previous release's API produced. Deliberately says NOTHING
+/// about whether that version is published: the extractor is a proxy for
+/// publication with failure modes of its own, and `checkFeedPresence` is the one
+/// authority on it. A caller that needs "is it published?" must ask the feed.
 type PreviousApiResult =
+    /// The prior release's public API.
     | Found of ApiSignature list
-    | AbsentOnFeed
+    /// The package was obtained (it is in the NuGet cache), but its API could not
+    /// be read: it ships no assembly, or the assembly failed to load (an
+    /// unresolvable dependency). Carries why. This is NOT evidence that the
+    /// version is unpublished — treating it as such is the bug,
+    /// which diffed a release against an older baseline than the one it follows.
+    | Unreadable of reason: string
+    /// `dotnet restore` reported the package or version does not exist (NU1101 /
+    /// NU1102). Carries the restore output. Whether the version is really absent
+    /// is still for the feed to say.
+    | NotRestorable of reason: string
+    /// A transient/network/auth fault where the truth is unknown (callers MUST
+    /// abort rather than guess the bump).
     | FetchError of string
 
-/// Classify a `dotnet restore` failure message into "the package genuinely isn't
-/// on the feed" vs "we couldn't reach the feed to find out". NuGet emits NU1101
+/// Classify a `dotnet restore` failure message into "restore says the package
+/// doesn't exist" vs "we couldn't reach the feed to find out". NuGet emits NU1101
 /// (package not found) / NU1102 (version not found) and the offline/source code
-/// paths say "Unable to find package" — those are AbsentOnFeed. Anything else
+/// paths say "Unable to find package" — those are NotRestorable. Anything else
 /// (HTTP errors, "Unable to load the service index ... 404 (Not Found)",
 /// connection timeouts, auth failures) is a FetchError we must not treat as
 /// absence. We deliberately do NOT match a bare "not found": NU1301 wraps a feed
@@ -477,7 +513,7 @@ let internal classifyRestoreFailure (msg: string) : PreviousApiResult =
         || m.Contains("nu1102")
         || m.Contains("unable to find package")
     then
-        AbsentOnFeed
+        NotRestorable msg
     else
         FetchError msg
 
@@ -682,35 +718,45 @@ let isPublished
     checkFeedPresence fetch run packageId version = OnFeed
 
 /// Extract the previous release's API: try the local NuGet cache first, then
-/// fall back to downloading the published package into the cache. Distinguishes
-/// the orphan-tag case (`AbsentOnFeed` — the feed has no such package/version, so
-/// a caller may walk back to an older published release) from a transient
-/// `FetchError` (offline, feed unreachable, or a private feed without
-/// credentials — callers MUST NOT guess the bump). Callers MUST NOT treat either
-/// failure as "no API change", or a breaking release would ship as a patch.
+/// fall back to downloading the published package into the cache.
+///
+/// A package that is cached but unreadable is `Unreadable` straight away — the
+/// package plainly exists, and restoring it again cannot change its contents.
+/// Neither `Unreadable` nor `NotRestorable` claims the version is unpublished;
+/// callers decide that with `checkFeedPresence`. A transient `FetchError` (offline,
+/// feed unreachable, or a private feed without credentials) means callers MUST
+/// NOT guess the bump. Callers MUST NOT treat any failure as "no API change", or a
+/// breaking release would ship as a patch.
 let extractPreviousFromNuGetResult
     (run: string -> string -> Shell.CommandResult)
     (packageId: string)
     (version: string)
     : PreviousApiResult =
     match extractFromNuGetCache packageId version with
-    | Some api -> Found api
-    | None ->
-        // A restore that succeeds but still yields nothing readable is AbsentOnFeed
-        // (the version isn't materialisable), not a FetchError.
+    | CachedRead api -> Found api
+    | CachedUnreadable reason -> Unreadable reason
+    | NotCached ->
         withProbeProject packageId version (fun proj ->
             match run "dotnet" (probeRestoreArgs (currentNuGetConfig ()) proj) with
             | Shell.Failure(msg, _) -> classifyRestoreFailure msg
             | Shell.Success _ ->
                 match extractFromNuGetCache packageId version with
-                | Some api -> Found api
-                | None -> AbsentOnFeed)
+                | CachedRead api -> Found api
+                | CachedUnreadable reason -> Unreadable reason
+                | NotCached ->
+                    // Restore said yes but the package is not where we read from
+                    // (e.g. a relocated global packages folder). The truth is
+                    // unknown, so this must abort, never walk back.
+                    FetchError(
+                        sprintf
+                            "restore succeeded but %s %s is not in the NuGet cache at ~/.nuget/packages"
+                            packageId
+                            version
+                    ))
 
-/// Extract the previous release's API: try the local NuGet cache first, then
-/// fall back to downloading the published package into the cache. Returns None
-/// only when the package genuinely can't be obtained (offline, unpublished, or
-/// a private feed without credentials) — callers MUST NOT treat None as
-/// "no API change", or a breaking release would be mis-versioned as a patch.
+/// Extract the previous release's API as an option: `None` whenever it could not
+/// be read, for any reason — callers MUST NOT treat None as "no API change", or a
+/// breaking release would be mis-versioned as a patch.
 let extractPreviousFromNuGet
     (run: string -> string -> Shell.CommandResult)
     (packageId: string)
@@ -718,7 +764,8 @@ let extractPreviousFromNuGet
     : ApiSignature list option =
     match extractPreviousFromNuGetResult run packageId version with
     | Found api -> Some api
-    | AbsentOnFeed
+    | Unreadable _
+    | NotRestorable _
     | FetchError _ -> None
 
 /// Compare two API surfaces

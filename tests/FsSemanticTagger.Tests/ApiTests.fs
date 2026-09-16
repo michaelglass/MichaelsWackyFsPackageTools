@@ -278,8 +278,8 @@ let ``compare does not flag new nested type as breaking when parent is new`` () 
     | other -> failwithf "Expected Addition for entirely new type, got %A" other
 
 [<Fact>]
-let ``extractFromNuGetCache returns None for nonexistent package`` () =
-    test <@ extractFromNuGetCache "ThisPackageDoesNotExist12345" "1.0.0" = None @>
+let ``extractFromNuGetCache returns NotCached for nonexistent package`` () =
+    test <@ extractFromNuGetCache "ThisPackageDoesNotExist12345" "1.0.0" = NotCached @>
 
 // downloadToCache / extractPreviousFromNuGet — the prior-API fetch path.
 // These guard the bug where a missing prior package silently became "no change".
@@ -590,17 +590,19 @@ let ``extractPreviousFromNuGet returns cached API without downloading when alrea
     test <@ Option.isSome result @>
     test <@ not downloadAttempted @>
 
-// classifyRestoreFailure — orphan (AbsentOnFeed) vs transient (FetchError)
-// classification of a `dotnet restore` failure. This is what lets the release
-// walk back past an orphan tag but still abort on an outage.
+// classifyRestoreFailure — not-restorable (NotRestorable) vs transient (FetchError)
+// classification of a `dotnet restore` failure. A NotRestorable prior is only
+// walked past when the FEED confirms it is absent; an outage still aborts.
 
 [<Fact>]
-let ``classifyRestoreFailure - NU1101 package-not-found is AbsentOnFeed`` () =
-    test <@ classifyRestoreFailure "error NU1101: Unable to find package Foo. No packages exist." = AbsentOnFeed @>
+let ``classifyRestoreFailure - NU1101 package-not-found is NotRestorable`` () =
+    let msg = "error NU1101: Unable to find package Foo. No packages exist."
+    test <@ classifyRestoreFailure msg = NotRestorable msg @>
 
 [<Fact>]
-let ``classifyRestoreFailure - NU1102 version-not-found is AbsentOnFeed`` () =
-    test <@ classifyRestoreFailure "error NU1102: Unable to find package Foo with version (= 9.9.9)" = AbsentOnFeed @>
+let ``classifyRestoreFailure - NU1102 version-not-found is NotRestorable`` () =
+    let msg = "error NU1102: Unable to find package Foo with version (= 9.9.9)"
+    test <@ classifyRestoreFailure msg = NotRestorable msg @>
 
 [<Fact>]
 let ``classifyRestoreFailure - service-index/connection failure is FetchError`` () =
@@ -610,7 +612,7 @@ let ``classifyRestoreFailure - service-index/connection failure is FetchError`` 
     test <@ classifyRestoreFailure msg = FetchError msg @>
 
 [<Fact>]
-let ``classifyRestoreFailure - NU1301 service-index 404 is FetchError not AbsentOnFeed`` () =
+let ``classifyRestoreFailure - NU1301 service-index 404 is FetchError not NotRestorable`` () =
     // NU1301 wraps a feed outage as "...404 (Not Found)". A bare "not found" match
     // would mis-classify this as absence and walk past a genuinely published prior.
     let msg =
@@ -619,11 +621,24 @@ let ``classifyRestoreFailure - NU1301 service-index 404 is FetchError not Absent
     test <@ classifyRestoreFailure msg = FetchError msg @>
 
 [<Fact>]
-let ``extractPreviousFromNuGetResult - AbsentOnFeed when uncached and restore reports package absent`` () =
-    let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
-        FsSemanticTagger.Shell.Failure("error NU1101: Unable to find package ThisPackageDoesNotExist12345", 1)
+let ``extractPreviousFromNuGetResult - NotRestorable when uncached and restore reports package absent`` () =
+    let msg = "error NU1101: Unable to find package ThisPackageDoesNotExist12345"
 
-    test <@ extractPreviousFromNuGetResult fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = AbsentOnFeed @>
+    let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        FsSemanticTagger.Shell.Failure(msg, 1)
+
+    test <@ extractPreviousFromNuGetResult fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = NotRestorable msg @>
+
+[<Fact>]
+let ``extractPreviousFromNuGetResult - FetchError when restore succeeds but the package is still not cached`` () =
+    // Restore said yes, yet nothing is where we read from (e.g. a relocated global
+    // packages folder). That is not knowledge of absence: it must abort, not walk back.
+    let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        FsSemanticTagger.Shell.Success ""
+
+    match extractPreviousFromNuGetResult fakeRun "ThisPackageDoesNotExist12345" "9.9.9" with
+    | FetchError reason -> test <@ reason.Contains("restore succeeded") @>
+    | other -> failwithf "Expected FetchError, got %A" other
 
 [<Fact>]
 let ``extractPreviousFromNuGetResult - FetchError when uncached and feed unreachable`` () =
@@ -684,8 +699,8 @@ let ``extractFromCacheRoot returns signatures for cached tool package`` () =
 
     try
         match extractFromCacheRoot cacheRoot "FakePkg" "1.0.0" with
-        | Some sigs -> test <@ sigs.Length > 0 @>
-        | None -> failwith "Expected Some signatures from fixture cache"
+        | CachedRead sigs -> test <@ sigs.Length > 0 @>
+        | other -> failwithf "Expected signatures from fixture cache, got %A" other
     finally
         System.IO.Directory.Delete(cacheRoot, true)
 
@@ -694,7 +709,7 @@ let ``extractFromCacheRoot finds an analyzer-packaged assembly under analyzers-d
     // An FSharp.Analyzers.SDK analyzer package (IncludeBuildOutput=false,
     // DevelopmentDependency=true) ships its assembly under analyzers/dotnet/fs/<id>.dll
     // with NO lib/ folder. A resolver that searches only lib/ and tools/ never finds
-    // the DLL, and the package is mis-reported as an orphan tag (AbsentOnFeed).
+    // the DLL, and the package's API is never read.
     //   <root>/fakeanalyzer/1.0.0/analyzers/dotnet/fs/FakeAnalyzer.dll   (and NO lib/)
     let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
 
@@ -718,8 +733,9 @@ let ``extractFromCacheRoot finds an analyzer-packaged assembly under analyzers-d
 
     try
         match extractFromCacheRoot cacheRoot "FakeAnalyzer" "1.0.0" with
-        | Some sigs -> test <@ sigs.Length > 0 @>
-        | None -> failwith "Expected Some signatures from analyzer-packaged fixture cache (analyzers/dotnet/fs)"
+        | CachedRead sigs -> test <@ sigs.Length > 0 @>
+        | other ->
+            failwithf "Expected signatures from analyzer-packaged fixture cache (analyzers/dotnet/fs), got %A" other
     finally
         System.IO.Directory.Delete(cacheRoot, true)
 
@@ -748,16 +764,16 @@ let ``extractFromCacheRoot still finds a lib-packaged assembly (lib layout uncha
 
     try
         match extractFromCacheRoot cacheRoot "FakeLib" "1.0.0" with
-        | Some sigs -> test <@ sigs.Length > 0 @>
-        | None -> failwith "Expected Some signatures from lib-packaged fixture cache"
+        | CachedRead sigs -> test <@ sigs.Length > 0 @>
+        | other -> failwithf "Expected signatures from lib-packaged fixture cache, got %A" other
     finally
         System.IO.Directory.Delete(cacheRoot, true)
 
 [<Fact>]
-let ``extractFromCacheRoot returns None when a cached package has no assembly (real orphan not masked)`` () =
+let ``extractFromCacheRoot reports a cached package with no assembly as unreadable, not as an API`` () =
     // The analyzers/ fallback must not conjure an API out of nothing: a package dir
-    // that exists but ships no <id>.dll under lib/, tools/ or analyzers/ still yields
-    // None, so genuine orphans keep classifying as AbsentOnFeed downstream.
+    // that exists but ships no <id>.dll under lib/, tools/ or analyzers/ is
+    // CachedUnreadable — a real package with no readable API, never "absent".
     let cacheRoot =
         System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fstagger-cache-" + System.Guid.NewGuid().ToString("N"))
 
@@ -769,15 +785,19 @@ let ``extractFromCacheRoot returns None when a cached package has no assembly (r
     System.IO.File.WriteAllText(System.IO.Path.Combine(analyzerDir, "SomethingElse.dll"), "not the package assembly")
 
     try
-        test <@ extractFromCacheRoot cacheRoot "EmptyPkg" "1.0.0" = None @>
+        test
+            <@
+                extractFromCacheRoot cacheRoot "EmptyPkg" "1.0.0" = CachedUnreadable
+                    "EmptyPkg 1.0.0 is in the NuGet cache but ships no EmptyPkg.dll under lib/, tools/ or analyzers/"
+            @>
     finally
         System.IO.Directory.Delete(cacheRoot, true)
 
 [<Fact>]
-let ``extractPreviousFromNuGetResult reports Found (not AbsentOnFeed) for an analyzer-packaged cached package`` () =
+let ``extractPreviousFromNuGetResult reports Found for an analyzer-packaged cached package`` () =
     // End-to-end: an analyzer package whose assembly lives under
     // analyzers/dotnet/fs/ must resolve from the local cache as Found, NOT be
-    // mis-classified as an orphan tag (AbsentOnFeed). Fixture a GUID-named package
+    // reported as unreadable. Fixture a GUID-named package
     // in the real user cache so extractFromNuGetCache (which reads ~/.nuget/packages)
     // sees it, then assert the cache hit short-circuits before any restore.
     let home =
@@ -963,9 +983,9 @@ let ``compare with removed and added returns Breaking prioritizing removals`` ()
     | other -> failwithf "Expected Breaking, got %A" other
 
 [<Fact>]
-let ``extractFromNuGetCache returns None for nonexistent version of real package`` () =
+let ``extractFromNuGetCache returns NotCached for nonexistent version of real package`` () =
     // Package ID might exist but version won't
-    test <@ extractFromNuGetCache "FSharp.Core" "0.0.0-nonexistent" = None @>
+    test <@ extractFromNuGetCache "FSharp.Core" "0.0.0-nonexistent" = NotCached @>
 
 [<Fact>]
 let ``createResolver returns a PathAssemblyResolver`` () =
@@ -1405,7 +1425,7 @@ let ``readNuspecDependencies skips deps without id and defaults missing version`
             ()
 
 [<Fact>]
-let ``extractFromCacheRoot returns None when the cached assembly cannot be read`` () =
+let ``extractFromCacheRoot reports a cached assembly that cannot be read as CachedUnreadable naming it`` () =
     let cacheRoot =
         System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"))
 
@@ -1414,11 +1434,87 @@ let ``extractFromCacheRoot returns None when the cached assembly cannot be read`
 
     try
         // A file with the expected name but not a valid assembly — extraction must
-        // degrade to None rather than throwing.
-        System.IO.File.WriteAllText(System.IO.Path.Combine(libDir, "BadPkg.dll"), "not a real assembly")
-        test <@ extractFromCacheRoot cacheRoot "BadPkg" "1.0.0" = None @>
+        // degrade to CachedUnreadable (naming the assembly) rather than throwing.
+        let badDll = System.IO.Path.Combine(libDir, "BadPkg.dll")
+        System.IO.File.WriteAllText(badDll, "not a real assembly")
+
+        match extractFromCacheRoot cacheRoot "BadPkg" "1.0.0" with
+        | CachedUnreadable reason -> test <@ reason.StartsWith("could not load " + badDll + ": ") @>
+        | other -> failwithf "Expected CachedUnreadable, got %A" other
     finally
         try
             System.IO.Directory.Delete(cacheRoot, true)
         with _ ->
             ()
+
+/// at its source. A published package whose assembly will not load
+/// — here our own DLL cached WITHOUT its System.Reflection.MetadataLoadContext
+/// dependency, the same "Could not find assembly" failure an analyzer hits when
+/// FSharp.Analyzers.SDK does not resolve — used to come back as AbsentOnFeed ("not
+/// published") once a no-op restore succeeded. It is Unreadable, naming the
+/// assembly and the dependency, and no restore is attempted: the package is right
+/// there in the cache.
+[<Fact>]
+let ``extractPreviousFromNuGetResult - a cached assembly that fails to load is Unreadable, never absent`` () =
+    let home =
+        System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
+
+    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
+
+    let srcDll =
+        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+
+    let pkgId = "fsst-unloadable-fixture-" + System.Guid.NewGuid().ToString("N")
+    let pkgRoot = System.IO.Path.Combine(home, ".nuget", "packages", pkgId)
+    let libDir = System.IO.Path.Combine(pkgRoot, "1.0.0", "lib", "net10.0")
+    let dllPath = System.IO.Path.Combine(libDir, pkgId + ".dll")
+    System.IO.Directory.CreateDirectory(libDir) |> ignore
+    System.IO.File.Copy(srcDll, dllPath)
+
+    let mutable restoreAttempted = false
+
+    let restoreRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        restoreAttempted <- true
+        FsSemanticTagger.Shell.Success ""
+
+    try
+        match extractPreviousFromNuGetResult restoreRun pkgId "1.0.0" with
+        | Unreadable reason ->
+            test <@ reason.StartsWith("could not load " + dllPath + ": ") @>
+            test <@ reason.Contains("Could not find assembly 'System.Reflection.MetadataLoadContext") @>
+        | other -> failwithf "Expected Unreadable, got %A" other
+
+        test <@ not restoreAttempted @>
+    finally
+        System.IO.Directory.Delete(pkgRoot, true)
+
+[<Fact>]
+let ``extractPreviousFromNuGetResult - a package restored but unloadable is Unreadable, never absent`` () =
+    // The uncached path: restore brings the package in, and it still will not load.
+    // This is exactly the shape that used to become AbsentOnFeed after a successful
+    // restore.
+    let home =
+        System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
+
+    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
+
+    let srcDll =
+        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+
+    let pkgId = "fsst-unloadable-fixture-" + System.Guid.NewGuid().ToString("N")
+    let pkgRoot = System.IO.Path.Combine(home, ".nuget", "packages", pkgId)
+    let libDir = System.IO.Path.Combine(pkgRoot, "1.0.0", "lib", "net10.0")
+
+    // Restore "downloads" the package into the cache.
+    let restoreRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        System.IO.Directory.CreateDirectory(libDir) |> ignore
+        System.IO.File.Copy(srcDll, System.IO.Path.Combine(libDir, pkgId + ".dll"), true)
+        FsSemanticTagger.Shell.Success ""
+
+    try
+        match extractPreviousFromNuGetResult restoreRun pkgId "1.0.0" with
+        | Unreadable reason -> test <@ reason.Contains("Could not find assembly") @>
+        | other -> failwithf "Expected Unreadable, got %A" other
+    finally
+        if System.IO.Directory.Exists pkgRoot then
+            System.IO.Directory.Delete(pkgRoot, true)

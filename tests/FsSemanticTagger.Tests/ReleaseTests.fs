@@ -41,7 +41,7 @@ let private seedTmpChangelog () =
     let p = Path.Combine(Path.GetTempPath(), "CHANGELOG.md")
     File.WriteAllText(p, "# Changelog\n\n## Unreleased\n\n- test entry\n")
 
-let private runReleaseWithPush run config cmd mode prev cur poll max push =
+let private runReleaseOnFeed run config cmd mode prev cur poll max push checkFeedPresence =
     seedTmpChangelog ()
 
     release
@@ -59,15 +59,24 @@ let private runReleaseWithPush run config cmd mode prev cur poll max push =
           CiPollIntervalMs = poll
           CiMaxAttempts = max
           TagPush = immediateTagPush
-          CheckFeedPresence = (fun _ _ -> OnFeed)
+          CheckFeedPresence = checkFeedPresence
           WaitForNuGet = false
           NuGetPollIntervalMs = 0
           NuGetMaxAttempts = 1
           Push = push
           Check = false }
 
+/// Every prior version is on the feed — the default for tests not about publication.
+let private runReleaseWithPush run config cmd mode prev cur poll max push =
+    runReleaseOnFeed run config cmd mode prev cur poll max push (fun _ _ -> OnFeed)
+
 let private runRelease run config cmd mode prev cur poll max =
     runReleaseWithPush run config cmd mode prev cur poll max false
+
+/// Auto/PushTags with the FEED seam driven by the test: the feed alone decides
+/// whether a prior release is published, and so whether it may be skipped.
+let private runAutoOnFeed run config prev cur checkFeedPresence =
+    runReleaseOnFeed run config Auto PushTags prev cur 0 10 false checkFeedPresence
 
 [<Fact>]
 let ``tag confirmation output does not claim a failed push reached the remote`` () =
@@ -1125,9 +1134,15 @@ let ``release - Auto skips an orphan tag and diffs against the last published pr
 
         let extractPreviousApi (_pkg: string) (version: string) =
             match version with
-            | "1.2.0" -> AbsentOnFeed // orphan tag — never published
+            | "1.2.0" -> NotRestorable "error NU1102: Unable to find package MyLib with version (= 1.2.0)"
             | "1.1.0" -> Found oldApi // the last published prior
             | other -> failwithf "unexpected version fetch: %s" other
+
+        // The FEED is what establishes that v1.2.0 is an orphan.
+        let checkFeedPresence (_pkg: string) (version: string) =
+            match version with
+            | "1.2.0" -> NotOnFeed
+            | _ -> OnFeed
 
         let config =
             { Packages =
@@ -1143,7 +1158,7 @@ let ``release - Auto skips an orphan tag and diffs against the last published pr
 
         let output, result =
             withCapturedConsole (fun () ->
-                runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10)
+                runAutoOnFeed fakeRun config extractPreviousApi (fun _ -> currentApi) checkFeedPresence)
 
         test <@ result = 0 @>
         // A warning naming the skipped orphan tag must be emitted.
@@ -1154,6 +1169,139 @@ let ``release - Auto skips an orphan tag and diffs against the last published pr
         test <@ content.Contains("<Version>1.3.0</Version>") @>
     finally
         File.Delete(tmpFile)
+
+/// The previous release's assembly will not load — the real
+/// failure from releasing MichaelGlass.FSharp.Analyzers 0.1.0-alpha.5 — but the
+/// release IS on the feed. It used to be reported as an orphan tag and skipped, so
+/// the build was diffed against an OLDER baseline. The fetch log, the tags and the
+/// feed below make each of those observable.
+let private unreadableBaselineRun (tmpFile: string) (latest: string) =
+    passingCiRun
+        [ ("git", "tag -l \"v*\"", Success("v1.0.0\nv1.1.0\nv" + latest))
+          ("jj",
+           "diff --from v"
+           + latest
+           + " --to @ --summary \"glob:"
+           + Path.GetDirectoryName(tmpFile)
+           + "/**\"",
+           Success "1 file changed") ]
+
+let private unreadableBaselineConfig (tmpFile: string) =
+    { Packages =
+        [ { Name = "MichaelGlass.FSharp.Analyzers"
+            Fsproj = tmpFile
+            DllPath = "fake.dll"
+            TagPrefix = "v"
+            FsProjsSharingSameTag = [] } ]
+      ReservedVersions = Set.empty
+      PreBuildCmds = []
+      PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+      RootDir = "" }
+
+let private analyzerLoadFailure =
+    "could not load /home/u/.nuget/packages/michaelglass.fsharp.analyzers/1.2.0/analyzers/dotnet/fs/MichaelGlass.FSharp.Analyzers.dll: Could not find assembly 'FSharp.Analyzers.SDK, Version=0.39.0.0, Culture=neutral, PublicKeyToken=null'."
+
+/// Runs Auto against a newest release `latest` whose API is unreadable and a
+/// readable v1.1.0 before it, recording which versions were fetched.
+let private releaseOverUnreadableBaseline (latest: string) (checkFeedPresence: string -> string -> FeedPresence) =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(
+            tmpFile,
+            sprintf "<Project><PropertyGroup><Version>%s</Version></PropertyGroup></Project>" latest
+        )
+
+        let fetched = System.Collections.Generic.List<string>()
+
+        let extractPreviousApi (_pkg: string) (version: string) =
+            fetched.Add version
+
+            if version = latest then
+                Unreadable analyzerLoadFailure
+            else
+                Found [ ApiSignature "type Foo"; ApiSignature "  Foo::Removed(): String" ]
+
+        let currentApi =
+            [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+
+        let (fakeRun, _getCalls) = unreadableBaselineRun tmpFile latest
+
+        let output, result =
+            withCapturedConsole (fun () ->
+                runAutoOnFeed
+                    fakeRun
+                    (unreadableBaselineConfig tmpFile)
+                    extractPreviousApi
+                    (fun _ -> currentApi)
+                    checkFeedPresence)
+
+        output, result, List.ofSeq fetched, File.ReadAllText(tmpFile)
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - Auto fails closed, never walking back, when the published previous release's API cannot be read`` () =
+    let output, result, fetched, fsproj =
+        releaseOverUnreadableBaseline "1.2.0" (fun _ _ -> OnFeed)
+
+    // No false orphan-tag warning for a version that is on the feed.
+    test <@ not (output.Contains("orphan")) @>
+    test <@ not (output.Contains("not on the feed")) @>
+    // The baseline it actually follows is the only one consulted: no walk back to v1.1.0.
+    test <@ fetched = [ "1.2.0" ] @>
+    // Failed closed: the diff decides a stable bump, so refuse to guess.
+    test <@ result = 1 @>
+    test <@ fsproj.Contains("<Version>1.2.0</Version>") @>
+    test <@ output.Contains("cannot determine the version bump") @>
+    // ...naming the release, the assembly, and the dependency that did not resolve.
+    test <@ output.Contains("previous release v1.2.0, which is published") @>
+    test <@ output.Contains("MichaelGlass.FSharp.Analyzers.dll") @>
+    test <@ output.Contains("Could not find assembly 'FSharp.Analyzers.SDK") @>
+
+[<Fact>]
+let ``release - Auto treats an unreachable feed as published when the previous API cannot be read`` () =
+    // Absence must be POSITIVELY established. A feed that does not answer cannot
+    // license skipping the baseline, so this fails closed exactly like OnFeed.
+    let output, result, fetched, _ =
+        releaseOverUnreadableBaseline "1.2.0" (fun _ _ -> FeedUnknown "The operation has timed out.")
+
+    test <@ not (output.Contains("orphan")) @>
+    test <@ fetched = [ "1.2.0" ] @>
+    test <@ result = 1 @>
+
+[<Fact>]
+let ``release - Auto proceeds without walking back when an unreadable baseline cannot change a pre-release bump`` () =
+    // The evidence case itself: an alpha. The next alpha is alpha.N+1 whatever the
+    // diff says, so refusing would block the release for nothing — but it still must
+    // not claim an orphan or diff against an older tag.
+    let output, result, fetched, fsproj =
+        releaseOverUnreadableBaseline "1.2.0-alpha.4" (fun _ _ -> OnFeed)
+
+    test <@ not (output.Contains("orphan")) @>
+    test <@ fetched = [ "1.2.0-alpha.4" ] @>
+    test <@ result = 0 @>
+    test <@ output.Contains("the public API of v1.2.0-alpha.4 could not be read") @>
+    test <@ output.Contains("does not depend on the API diff") @>
+    test <@ fsproj.Contains("<Version>1.2.0-alpha.5</Version>") @>
+
+[<Fact>]
+let ``release - Auto still skips a genuinely unpublished release whose API cannot be read (positive control)`` () =
+    // The feed definitively says v1.2.0 is absent: a real orphan. Handled exactly as
+    // before — warned about by tag and walked past to v1.1.0, whose API is diffed.
+    let checkFeedPresence (_pkg: string) (version: string) =
+        match version with
+        | "1.2.0" -> NotOnFeed
+        | _ -> OnFeed
+
+    let output, result, fetched, fsproj =
+        releaseOverUnreadableBaseline "1.2.0" checkFeedPresence
+
+    test <@ output.Contains("tag v1.2.0 is not on the feed (orphan tag") @>
+    test <@ fetched = [ "1.2.0"; "1.1.0" ] @>
+    test <@ result = 0 @>
+    // v1.1.0 had Foo::Removed, which is gone: Breaking on 1.x => major.
+    test <@ fsproj.Contains("<Version>2.0.0</Version>") @>
 
 [<Fact>]
 let ``release - Auto still aborts on a transient fetch error (does not skip)`` () =
@@ -1220,7 +1368,8 @@ let ``release - Auto when every prior tag is absent on feed bumps conservatively
                    Success "1 file changed") ]
 
         // Every prior tag is an orphan: nothing was ever published to diff against.
-        let extractPreviousApi (_pkg: string) (_version: string) = AbsentOnFeed
+        let extractPreviousApi (_pkg: string) (_version: string) =
+            NotRestorable "error NU1102: Unable to find package MyLib"
 
         let currentApi =
             [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
@@ -1238,7 +1387,7 @@ let ``release - Auto when every prior tag is absent on feed bumps conservatively
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
+            runAutoOnFeed fakeRun config extractPreviousApi (fun _ -> currentApi) (fun _ _ -> NotOnFeed)
 
         // No published prior to diff against => conservative NoChange bump off 1.2.0
         // => patch 1.2.1 (treated like a first release; does not abort).
@@ -1264,7 +1413,8 @@ let ``release - Auto every prior tag absent honours the reserved-version skip`` 
                    + "/**\"",
                    Success "1 file changed") ]
 
-        let extractPreviousApi (_pkg: string) (_version: string) = AbsentOnFeed
+        let extractPreviousApi (_pkg: string) (_version: string) =
+            NotRestorable "error NU1102: Unable to find package MyLib"
 
         let currentApi =
             [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
@@ -1284,7 +1434,7 @@ let ``release - Auto every prior tag absent honours the reserved-version skip`` 
               RootDir = "" }
 
         let result =
-            runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
+            runAutoOnFeed fakeRun config extractPreviousApi (fun _ -> currentApi) (fun _ _ -> NotOnFeed)
 
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
@@ -3458,15 +3608,14 @@ let ``release - unreachable feed on the newest tag never triggers a republish`` 
         File.Delete(tmpFile)
 
 /// REGRESSION, and the reason the orphan decision asks the FEED rather than the
-/// API extractor. `extractPreviousFromNuGetResult` reports `AbsentOnFeed` both
-/// when a package really isn't published and when it is published but no DLL can
-/// be located inside the .nupkg. The second is not hypothetical: `RefStamp`,
-/// released from this very repo, is an MSBuild-only package shipping just
-/// `build/`, and the extractor really does answer `AbsentOnFeed` for its published
-/// newest version (verified against the live feed). Driving a REPUBLISH off that
-/// signal re-releases a perfectly published package on every run.
+/// API extractor. The extractor cannot read the API of a package that IS published
+/// but ships no DLL. That is not hypothetical: `RefStamp`, released from this very
+/// repo, is an MSBuild-only package shipping just `build/`, and the extractor
+/// answers `Unreadable` for its published newest version (it used to answer
+/// `AbsentOnFeed`). Driving a REPUBLISH off that signal re-releases a perfectly
+/// published package on every run.
 ///
-/// So: API says "absent", feed says "published" -> the feed wins and we skip.
+/// So: API unreadable, feed says "published" -> the feed wins and we skip.
 /// The API extractor must not even be consulted for this decision.
 [<Fact>]
 let ``release - a published package whose DLL is unreadable is never republished`` () =
@@ -3480,7 +3629,7 @@ let ``release - a published package whose DLL is unreadable is never republished
         // Exactly what the real extractor returns for a published, DLL-less package.
         let extractPreviousApi (_pkg: string) (_version: string) =
             apiConsulted <- true
-            AbsentOnFeed
+            Unreadable "Falco.UnionRoutes 0.3.4 is in the NuGet cache but ships no Falco.UnionRoutes.dll"
 
         let (fakeRun, getCalls) = orphanTagFakeRun tmpFile
 

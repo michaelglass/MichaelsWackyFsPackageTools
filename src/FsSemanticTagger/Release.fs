@@ -28,10 +28,10 @@ type ReleaseInput =
         /// When non-empty, restrict the run to packages whose `Name` is in this
         /// list (the `--only` filter). Empty = all packages (the default).
         TargetPackages: string list
-        /// Fetch a prior release's public API by (packageName, version). The
-        /// tri-state lets Auto distinguish an orphan tag (`AbsentOnFeed` — walk
-        /// back to an older published release) from a transient `FetchError`
-        /// (abort rather than under-bump).
+        /// Fetch a prior release's public API by (packageName, version). It says
+        /// whether the API could be READ, never whether the version is PUBLISHED —
+        /// that is `CheckFeedPresence`'s question alone. A transient `FetchError`
+        /// aborts rather than under-bumps.
         ExtractPreviousApi: string -> string -> PreviousApiResult
         ExtractCurrentApi: string -> ApiSignature list
         /// Recover a prior release's realized CLI grammar by (packageName, version),
@@ -734,6 +734,43 @@ let private inProgressResumeVersion (input: ReleaseInput) (state: ReleaseState) 
             Some v
         | _ -> None
 
+/// One prior release, as a candidate diff baseline. Readability and publication
+/// are separate facts with separate authorities — the API extractor for the
+/// first, the feed (`CheckFeedPresence`) for the second — and this type keeps the
+/// three that matter apart instead of collapsing two of them into "no API".
+type private PriorRelease =
+    /// Published, and its public API was read.
+    | PublishedWithApi of ApiSignature list
+    /// Not shown to be absent from the feed, but its public API could not be read
+    /// (no assembly in the package, an assembly that will not load, or a restore
+    /// that could not find it). Carries why. It is still the baseline this release
+    /// follows, so it must never be skipped in favour of an older one.
+    | PublishedUnreadable of reason: string
+    /// The feed definitively does not have this version: an orphan tag, whose
+    /// release publish never landed.
+    | NotPublished
+    /// A transient fetch fault: the truth is unknown.
+    | Unknown of fetchError: string
+
+/// Classify one prior release. Absence is established ONLY by the feed — exactly
+/// as `isOrphanRelease` does — and never inferred from a failure to read the API:
+/// `MichaelGlass.FSharp.Analyzers` alpha.1–4 were all on the feed, yet an
+/// unresolvable `FSharp.Analyzers.SDK` made each read fail and each was reported
+/// as an orphan and skipped. `FeedUnknown` counts as published,
+/// for the same asymmetry `isOrphanRelease` documents.
+let private classifyPriorRelease (input: ReleaseInput) (pkg: PackageConfig) (version: Version) : PriorRelease =
+    let unreadableUnlessAbsent reason =
+        match input.CheckFeedPresence pkg.Name (format version) with
+        | NotOnFeed -> NotPublished
+        | OnFeed
+        | FeedUnknown _ -> PublishedUnreadable reason
+
+    match input.ExtractPreviousApi pkg.Name (format version) with
+    | Found api -> PublishedWithApi api
+    | FetchError msg -> Unknown msg
+    | Unreadable reason -> unreadableUnlessAbsent reason
+    | NotRestorable reason -> unreadableUnlessAbsent (sprintf "restore could not find it: %s" reason)
+
 /// The baseline API to diff the current build against, having walked the release
 /// tags newest-first looking for one whose package is actually published.
 type private BaselineApi =
@@ -741,6 +778,11 @@ type private BaselineApi =
     /// (so the same release's grammar can be fetched at the fold point) and its API
     /// surface.
     | BaselineFound of version: Version * api: ApiSignature list
+    /// The newest published prior release — the baseline this release actually
+    /// follows — is published but its API could not be read. Carries its tag and
+    /// why. The walk stops here: diffing against an older release instead would
+    /// compare against the wrong API surface and could under-bump.
+    | BaselineUnreadable of tag: string * reason: string
     /// Every prior tag's package is genuinely absent on the feed (all orphan
     /// tags). There is no published prior to diff against, so the caller falls
     /// back to first-release handling rather than guessing or aborting.
@@ -751,12 +793,11 @@ type private BaselineApi =
     | BaselineFetchError of fetchError: string
 
 /// Resolve the API surface to diff against in Auto mode. Walks `sortedTags`
-/// (newest-first); for each tag whose package is `Found` we diff against it. When
-/// the newest tag's package is `AbsentOnFeed` it is an orphan (the release's CI
-/// publish never landed on NuGet) — log a warning naming it and walk to the
-/// next-newest published tag. Any `FetchError` aborts immediately (a genuine
-/// outage must never be silently skipped). Exhausting the list with only orphans
-/// yields `NoPublishedPrior`.
+/// (newest-first) and stops at the first release that is not an orphan: its API if
+/// readable, `BaselineUnreadable` if not. Only a release the FEED says is absent is
+/// skipped (with a warning naming its tag). Any `FetchError` aborts immediately (a
+/// genuine outage must never be silently skipped). Exhausting the list with only
+/// orphans yields `NoPublishedPrior`.
 let private resolveBaselineApi
     (input: ReleaseInput)
     (pkg: PackageConfig)
@@ -764,10 +805,11 @@ let private resolveBaselineApi
     : BaselineApi =
     sortedTags
     |> List.tryPick (fun (tag, version) ->
-        match input.ExtractPreviousApi pkg.Name (format version) with
-        | Found api -> Some(BaselineFound(version, api))
-        | FetchError msg -> Some(BaselineFetchError msg)
-        | AbsentOnFeed ->
+        match classifyPriorRelease input pkg version with
+        | PublishedWithApi api -> Some(BaselineFound(version, api))
+        | PublishedUnreadable reason -> Some(BaselineUnreadable(tag, reason))
+        | Unknown msg -> Some(BaselineFetchError msg)
+        | NotPublished ->
             printfn
                 "Warning: %s package for tag %s is not on the feed (orphan tag — its release publish never landed on NuGet). Skipping it and diffing against the previous published release."
                 pkg.Name
@@ -776,21 +818,32 @@ let private resolveBaselineApi
             None)
     |> Option.defaultValue NoPublishedPrior
 
+/// Does the version computed from `current` depend on the API diff at all? For an
+/// alpha or beta it does not — the pre-release counter advances whatever the diff
+/// says — so an unreadable baseline cannot change the answer there, and refusing
+/// would block the release for nothing. Asked of `determineBump` itself rather than
+/// by matching on stages, so it stays true if the bump rules change.
+let private bumpDependsOnApiDiff (current: Version) : bool =
+    let probe = ApiSignature ""
+
+    [ Breaking(probe, []); Addition(probe, []) ]
+    |> List.exists (fun change -> determineBump current change <> determineBump current NoChange)
+
 /// Is the release tagged at `version` an ORPHAN — tagged, but its package never
 /// landed on the feed?
 ///
-/// This asks the FEED (`CheckFeedPresence`), not the API extractor, even though
-/// `ExtractPreviousApi` also carries an `AbsentOnFeed`. The question is presence,
-/// not shape, and the API extractor is a proxy with two failure modes of its own:
+/// This asks the FEED (`CheckFeedPresence`), not the API extractor. The question
+/// is presence, not shape, and the API extractor is a proxy with failure modes of
+/// its own:
 ///
 ///   * A `PackAsTool` package can never be API-probed — a `PackageReference` to a
 ///     tool package fails NU1212, which classifies as `FetchError`. The API seam
 ///     can therefore NEVER say "absent" for a tool, and every dotnet tool
 ///     (including this one) would stay wedged.
-///   * `AbsentOnFeed` is also what the extractor reports when the package IS
-///     published but its DLL cannot be located inside the .nupkg (an analyzer
-///     package, for one). Driving a REPUBLISH off that signal re-releases a
-///     perfectly published version on every unrecognised package layout.
+///   * The extractor cannot read the API of a package that IS published but ships
+///     no DLL (an MSBuild-only package) or whose DLL will not load (an analyzer
+///     whose SDK does not resolve). Driving a REPUBLISH off that signal re-releases
+///     a perfectly published version on every such package.
 ///
 /// The feed check has neither failure mode: it reads the published version list
 /// directly and is blind to package internals.
@@ -991,6 +1044,31 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                                     "could not read the public API of the previous release %s (package not in the NuGet cache and download failed — check network/feed access). Refusing to guess the version bump; re-run once the package is reachable, or use an explicit alpha/beta/rc/stable command. (fetch error: %s)"
                                     tag
                                     msg
+                            )
+                        )
+                    | BaselineUnreadable(unreadableTag, reason) when not (bumpDependsOnApiDiff currentVersion) ->
+                        printfn
+                            "Bumping %s: the public API of %s could not be read (%s), but the bump from %s does not depend on the API diff"
+                            pkg.Name
+                            unreadableTag
+                            reason
+                            (format currentVersion)
+
+                        Some(toDecision OwnChange (skipReserved (determineBump currentVersion NoChange)))
+                    | BaselineUnreadable(unreadableTag, reason) ->
+                        // FAIL CLOSED. The release this one follows IS published, so it
+                        // is the only correct baseline; walking back to an older tag
+                        // would diff against the wrong API surface and could ship a
+                        // breaking change as a patch. Fixing the load context is not a
+                        // safe guess (an analyzer package does not declare the SDK it
+                        // builds against), so refuse and say exactly what failed.
+                        Some(
+                            CannotDetermine(
+                                pkg,
+                                sprintf
+                                    "could not read the public API of the previous release %s, which is published: %s. Refusing to diff against an older release instead — that would compare against the wrong API surface and could under-bump a breaking change. Fix the package so its assembly loads from the NuGet cache, or use an explicit alpha/beta/rc/stable command."
+                                    unreadableTag
+                                    reason
                             )
                         )
                     | NoPublishedPrior ->
