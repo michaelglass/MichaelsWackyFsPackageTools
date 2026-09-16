@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.11 - 2026-09-16
+
 - fix: **`release --check` no longer certifies a changelog that promotion does not deliver, and a dependency bump can no longer vanish from a release's changelog** (defect 2). Releasing `SqlHydra.Query.Pgvector` 0.1.0-alpha.5, `alpha --check` passed on its stated contract of an Unreleased entry "authored or derivable", while promotion copied only the authored block and derived nothing from the other 14 commits. The published changelog omitted the one change a consumer could observe: `SqlHydra.Query` 4.1.0-beta.2 → 4.1.0-beta.3.
   - One plan, two readers. `Changelog.planPromotion` computes what promotion will write (`PromotionPlan`: `Source = Authored | Derived of bullets`, plus `DependencyBullets`), `Release.promotionPlans` builds it per changelog, and both `--check` and the release use it. `--check` now prints the plan, so what it reports is what gets written.
   - Consumer-visible dependency changes are derived from the fsproj, not from prose. `Changelog.packageReferences` reads the `<PackageReference Include Version>` items (skipping `PrivateAssets="all"`, `Update` and versionless items), `Vcs.fileAtRevision` reads the fsproj at the last tag, and each addition, removal or version change gets a `- build(deps): ...` bullet after the section's entries unless the section already names the package and its new version. This applies to authored sections too, and an empty section whose only change is a dependency bump now passes and promotes that bump.
