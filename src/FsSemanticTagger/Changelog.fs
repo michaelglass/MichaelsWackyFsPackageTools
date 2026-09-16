@@ -379,28 +379,172 @@ let internal promoteOrInsertLines
 let promoteOrInsert (changelogPath: string) (version: Version) (today: DateTime) (defaultBullet: string) : unit =
     promoteOrInsertLines changelogPath version today [ defaultBullet ]
 
-/// Promote `## Unreleased`, DERIVING the section content from `descriptions`
-/// when — and only when — the section is missing or empty. A hand-authored
-/// `## Unreleased` is NEVER clobbered: if `validateUnreleased` is
-/// `Ok`, this behaves exactly like `promoteUnreleased` and `descriptions` is
-/// ignored. Otherwise the commit descriptions are turned into grouped bullets
-/// (`deriveUnreleasedBullets`) and promoted into a fresh version section. When
-/// there is nothing to promote and nothing derivable (no qualifying commits),
-/// returns `Error(EmptyUnreleasedSection ...)` and writes nothing — the caller
-/// surfaces the enforce error rather than promoting an empty section.
-let promoteOrDerive
+/// A change to a consumer-visible `<PackageReference>` of a packed project
+/// between the last release tag and now. Consumer-visible means it lands in the
+/// package's nuspec as a dependency, so a consumer's restore observes it.
+type PackageRefChange =
+    | Added of id: string * version: string
+    | Removed of id: string * version: string
+    | Bumped of id: string * from: string * ``to``: string
+
+/// The consumer-visible `<PackageReference>` items of an fsproj, as id -> version.
+/// Only `Include` items with a version (attribute or child element) count;
+/// `PrivateAssets="all"` references are build-only and never reach the nuspec,
+/// `Update` items modify an implicit reference, and a versionless item (Central
+/// Package Management) has no version here to compare. An id listed more than
+/// once (conditional per framework) maps to its distinct versions joined by
+/// ", ". `None` when the text is not well-formed XML, so an unreadable project
+/// derives nothing rather than everything.
+let packageReferences (fsprojXml: string) : Map<string, string> option =
+    let child (e: Xml.Linq.XElement) (name: string) =
+        match e.Attribute(Xml.Linq.XName.Get name) with
+        | null ->
+            e.Elements()
+            |> Seq.tryFind (fun c -> c.Name.LocalName = name)
+            |> Option.map (fun c -> c.Value.Trim())
+        | a -> Some(a.Value.Trim())
+
+    try
+        let doc = Xml.Linq.XDocument.Parse fsprojXml
+
+        doc.Descendants()
+        |> Seq.filter (fun e -> e.Name.LocalName = "PackageReference")
+        |> Seq.choose (fun e ->
+            let buildOnly =
+                child e "PrivateAssets"
+                |> Option.exists (fun v -> String.Equals(v, "all", StringComparison.OrdinalIgnoreCase))
+
+            match child e "Include", child e "Version" with
+            | Some id, Some version when not buildOnly -> Some(id, version)
+            | _ -> None)
+        |> Seq.groupBy fst
+        |> Seq.map (fun (id, items) -> id, items |> Seq.map snd |> Seq.distinct |> String.concat ", ")
+        |> Map.ofSeq
+        |> Some
+    with _ ->
+        None
+
+/// The consumer-visible dependency changes from `before` to `after`, by id.
+let diffPackageReferences (before: Map<string, string>) (after: Map<string, string>) : PackageRefChange list =
+    let ids = Set.union (before.Keys |> Set.ofSeq) (after.Keys |> Set.ofSeq)
+
+    ids
+    |> Set.toList
+    |> List.choose (fun id ->
+        match before.TryFind id, after.TryFind id with
+        | None, Some v -> Some(Added(id, v))
+        | Some v, None -> Some(Removed(id, v))
+        | Some a, Some b when a <> b -> Some(Bumped(id, a, b))
+        | _ -> None)
+
+/// The changelog bullet recording a dependency change.
+let dependencyBullet (change: PackageRefChange) : string =
+    match change with
+    | Added(id, v) -> sprintf "- build(deps): add %s %s" id v
+    | Removed(id, v) -> sprintf "- build(deps): remove %s (was %s)" id v
+    | Bumped(id, a, b) -> sprintf "- build(deps): bump %s from %s to %s" id a b
+
+/// `token` occurs in `text` as a whole package id or version, not as part of a
+/// longer one (`4.1.0-beta.3` must not match `4.1.0-beta.30`). Case-insensitive,
+/// as NuGet ids are.
+let private mentionsToken (text: string) (token: string) : bool =
+    let pattern =
+        sprintf @"(?<![\w.-])%s(?![\w-]|\.[\w-])" (Text.RegularExpressions.Regex.Escape token)
+
+    Text.RegularExpressions.Regex.IsMatch(text, pattern, Text.RegularExpressions.RegexOptions.IgnoreCase)
+
+/// A dependency change is already recorded when the text names the package and,
+/// unless it was removed, the version it moved to.
+let private mentionsChange (text: string) (change: PackageRefChange) : bool =
+    match change with
+    | Removed(id, _) -> mentionsToken text id
+    | Added(id, v)
+    | Bumped(id, _, v) -> mentionsToken text id && mentionsToken text v
+
+/// The `## Unreleased` section's non-blank lines as (file line index, text), for
+/// a file already known to have content there (`validateUnreleased` is `Ok`).
+let private unreleasedEntries (lines: string[]) : (int * string)[] =
+    lines
+    |> Array.indexed
+    |> Array.skip (1 + Array.findIndex isUnreleasedHeading lines)
+    |> Array.takeWhile (fun (_, l) -> not (isLevel2Heading l))
+    |> Array.filter (fun (_, l) -> not (String.IsNullOrWhiteSpace l))
+
+/// Where the promoted section's entries come from.
+type UnreleasedSource =
+    /// The hand-authored `## Unreleased` section, promoted as written. Commit
+    /// summaries are NOT merged into it: an author who wrote the section owns it.
+    | Authored
+    /// The section is missing or empty, so it is filled from commit summaries
+    /// (`deriveUnreleasedBullets`, possibly none when only dependencies changed).
+    | Derived of bullets: string list
+
+/// What promoting a changelog will write. Computed once by `planPromotion` and
+/// used by BOTH `release --check` and the release itself, so what the check
+/// reports is, by construction, what promotion delivers.
+type PromotionPlan =
+    {
+        Source: UnreleasedSource
+        /// Consumer-visible dependency changes the section does not already name,
+        /// appended after its entries. Derived from the fsproj, never from prose,
+        /// so a dependency bump cannot vanish behind an authored section.
+        DependencyBullets: string list
+    }
+
+/// Plan the promotion of `changelogPath`'s `## Unreleased` section.
+///
+/// An authored section is promoted as written; `descriptions` are only used
+/// when it is missing or empty. `dependencyChanges` are always recorded unless
+/// the section (authored text, or the derived bullets) already names them.
+/// `Error` — and nothing to write — when the section is unauthored and neither
+/// commits nor dependency changes give anything to derive.
+let planPromotion
     (changelogPath: string)
-    (version: Version)
-    (today: DateTime)
     (descriptions: string list)
-    : Result<unit, ChangelogError> =
+    (dependencyChanges: PackageRefChange list)
+    : Result<PromotionPlan, ChangelogError> =
+    let unmentioned (text: string) =
+        dependencyChanges
+        |> List.filter (fun c -> not (mentionsChange text c))
+        |> List.map dependencyBullet
+
     match validateUnreleased changelogPath with
     | Ok() ->
+        let body =
+            String.Join("\n", unreleasedEntries (File.ReadAllLines changelogPath) |> Seq.map snd)
+
+        Ok
+            { Source = Authored
+              DependencyBullets = unmentioned body }
+    | Error err ->
+        let bullets = deriveUnreleasedBullets descriptions
+        let dependencyBullets = unmentioned (String.concat "\n" bullets)
+
+        if List.isEmpty bullets && List.isEmpty dependencyBullets then
+            Error err
+        else
+            Ok
+                { Source = Derived bullets
+                  DependencyBullets = dependencyBullets }
+
+/// Write `plan` (from `planPromotion` on the same file) as the `version` section.
+/// An authored section keeps its text and order; dependency bullets follow its
+/// last entry, so a leading callout stays first.
+let applyPromotion (changelogPath: string) (version: Version) (today: DateTime) (plan: PromotionPlan) : unit =
+    match plan.Source with
+    | Derived bullets -> promoteOrInsertLines changelogPath version today (bullets @ plan.DependencyBullets)
+    | Authored ->
+        if not (List.isEmpty plan.DependencyBullets) then
+            let lines = File.ReadAllLines changelogPath
+
+            let lastEntry = unreleasedEntries lines |> Seq.map fst |> Seq.last
+
+            let withDependencies =
+                Array.concat
+                    [ lines |> Array.take (lastEntry + 1)
+                      List.toArray plan.DependencyBullets
+                      lines |> Array.skip (lastEntry + 1) ]
+
+            File.WriteAllLines(changelogPath, withDependencies)
+
         promoteUnreleased changelogPath version today
-        Ok()
-    | Error _ ->
-        match deriveUnreleasedBullets descriptions with
-        | [] -> Error(EmptyUnreleasedSection changelogPath)
-        | bullets ->
-            promoteOrInsertLines changelogPath version today bullets
-            Ok()

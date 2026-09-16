@@ -4750,6 +4750,201 @@ let ``release --check passes when the package has no own-source changes since it
         let result = release (releaseInput run config Auto PushTags true)
         test <@ result = 0 @>)
 
+// --- defect 2: --check and promotion agree --------------------
+// `--check` used to pass on "authored OR derivable" while promotion copied only
+// the authored block, so releasing SqlHydra.Query.Pgvector 0.1.0-alpha.5 published
+// a changelog without its one consumer-visible change (a PackageReference bump).
+// Both now read one plan, and the check prints what that plan will write.
+
+let private fsprojWithRefs (refs: string) =
+    sprintf "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup><ItemGroup>%s</ItemGroup></Project>" refs
+
+let private pgvectorRefsAtTag =
+    "<PackageReference Include=\"Microsoft.SourceLink.GitHub\" Version=\"10.0.301\" PrivateAssets=\"All\" /><PackageReference Include=\"SqlHydra.Query\" Version=\"4.1.0-beta.2\" />"
+
+let private pgvectorRefsNow =
+    "<PackageReference Include=\"Microsoft.SourceLink.GitHub\" Version=\"10.0.401\" PrivateAssets=\"All\" /><PackageReference Include=\"SqlHydra.Query\" Version=\"4.1.0-beta.3\" />"
+
+let private pgvectorBumpBullet =
+    "- build(deps): bump SqlHydra.Query from 4.1.0-beta.2 to 4.1.0-beta.3"
+
+/// The dev-tooling / docs commits of that release: all derivable, none authored.
+let private pgvectorCommits =
+    "chore(deps): bump our dev tools"
+    + rs
+    + "docs: trim thinking-out-loud comments"
+    + rs
+    + "style: restore the compact dotnet-tools.json layout"
+    + rs
+
+/// A single-package repo whose fsproj now carries `refsNow` and carried
+/// `refsAtTag` at v1.0.0, with `commits` since the tag. Returns the run stub
+/// (serves both `--check` and a full release), the changelog path and config.
+let private seedReleaseWithRefs (rootDir: string) (changelogBody: string) refsAtTag refsNow commits =
+    let fsproj, ownDir, changelog, config = seedSinglePackageRepo rootDir changelogBody
+    File.WriteAllText(fsproj, fsprojWithRefs refsNow)
+
+    let (run, _) =
+        passingCiRun
+            [ ("git", "tag -l \"v*\"", Success "v1.0.0")
+              ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + ownDir + "/**\"", Success "1 file changed")
+              ("jj", descArgsFor ownDir, Success commits)
+              ("jj", sprintf "file show -r \"v1.0.0\" \"%s\"" fsproj, Success(fsprojWithRefs refsAtTag)) ]
+
+    run, changelog, config
+
+/// Non-blank lines of the first version section below `## Unreleased`.
+let private promotedSection (changelog: string) =
+    File.ReadAllLines changelog
+    |> Array.skipWhile (fun l -> not (l.StartsWith "## Unreleased"))
+    |> Array.skip 1
+    |> Array.skipWhile (fun l -> not (l.StartsWith "## "))
+    |> Array.skip 1
+    |> Array.takeWhile (fun l -> not (l.StartsWith "## "))
+    |> Array.filter (fun l -> l.Trim() <> "")
+    |> Array.toList
+
+/// The entries `--check` announced it would ADD to the changelog: its bullet lines.
+let private announcedEntries (checkOutput: string) =
+    checkOutput.Split('\n')
+    |> Array.map (fun l -> l.Trim())
+    |> Array.filter (fun l -> l.StartsWith "- ")
+    |> Array.toList
+
+[<Fact>]
+let ``--check and release agree: an authored section plus an unauthored dependency bump`` () =
+    withTempDir (fun rootDir ->
+        let authored = "- chore: package metadata for OSS readiness"
+
+        let run, changelog, config =
+            seedReleaseWithRefs
+                rootDir
+                (sprintf "# Changelog\n\n## Unreleased\n\n%s\n\n## 1.0.0 - 2026-01-01\n\n- initial\n" authored)
+                pgvectorRefsAtTag
+                pgvectorRefsNow
+                pgvectorCommits
+
+        let checkOut, checkExit =
+            withCapturedConsole (fun () -> release (releaseInput run config Auto PushTags true))
+
+        test <@ checkExit = 0 @>
+        // The check says what it does NOT certify, rather than implying coverage
+        // of every commit.
+        test <@ checkOut.Contains "promoted as written" @>
+        test <@ checkOut.Contains "commit summaries are not merged into an authored section" @>
+        test <@ announcedEntries checkOut = [ pgvectorBumpBullet ] @>
+
+        let releaseExit = release (releaseInput run config StartAlpha PushTags false)
+        test <@ releaseExit = 0 @>
+
+        let section = promotedSection changelog
+        // Promotion delivers exactly the authored entries plus what the check announced.
+        test <@ section = authored :: announcedEntries checkOut @>
+        // The build-only SourceLink bump is not a consumer-visible change.
+        test <@ not (File.ReadAllText(changelog).Contains "SourceLink") @>
+        test <@ not (File.ReadAllText(changelog).Contains "trim thinking-out-loud") @>)
+
+// POSITIVE CONTROL: all authored, no consumer-visible dependency change — the
+// check still passes and the section is promoted exactly as written.
+[<Fact>]
+let ``--check and release agree: an all-authored release promotes unchanged`` () =
+    withTempDir (fun rootDir ->
+        let authored = [ "- feat: a real feature"; "- fix: a real fix" ]
+
+        let run, changelog, config =
+            seedReleaseWithRefs
+                rootDir
+                (sprintf
+                    "# Changelog\n\n## Unreleased\n\n%s\n\n## 1.0.0 - 2026-01-01\n\n- initial\n"
+                    (String.concat "\n" authored))
+                pgvectorRefsNow
+                pgvectorRefsNow
+                pgvectorCommits
+
+        let checkOut, checkExit =
+            withCapturedConsole (fun () -> release (releaseInput run config Auto PushTags true))
+
+        test <@ checkExit = 0 @>
+        test <@ checkOut.Contains "promoted as written" @>
+        test <@ List.isEmpty (announcedEntries checkOut) @>
+
+        test <@ release (releaseInput run config StartAlpha PushTags false) = 0 @>
+        test <@ promotedSection changelog = authored @>)
+
+[<Fact>]
+let ``--check and release agree: an empty section is derived from commits and dependency changes`` () =
+    withTempDir (fun rootDir ->
+        let run, changelog, config =
+            seedReleaseWithRefs
+                rootDir
+                "# Changelog\n\n## Unreleased\n\n## 1.0.0 - 2026-01-01\n\n- initial\n"
+                pgvectorRefsAtTag
+                pgvectorRefsNow
+                ("Bump versions: MyLib 1.0.0" + rs)
+
+        let checkOut, checkExit =
+            withCapturedConsole (fun () -> release (releaseInput run config Auto PushTags true))
+
+        // Only version-bump noise in the commits, but the dependency bump is a
+        // derivable, consumer-visible entry, so there is something to promote.
+        test <@ checkExit = 0 @>
+        test <@ announcedEntries checkOut = [ pgvectorBumpBullet ] @>
+
+        test <@ release (releaseInput run config StartAlpha PushTags false) = 0 @>
+        test <@ promotedSection changelog = announcedEntries checkOut @>)
+
+[<Fact>]
+let ``fsprojsForChangelog - a multi-package changelog gets only the fsprojs beside it`` () =
+    let pkg =
+        { Name = "Alpha"
+          Fsproj = "src/Alpha/Alpha.fsproj"
+          DllPath = ""
+          TagPrefix = "alpha-v"
+          FsProjsSharingSameTag = [ "src/Alpha.Cli/Alpha.Cli.fsproj" ] }
+
+    let config =
+        { Packages =
+            [ pkg
+              { pkg with
+                  Name = "Beta"
+                  Fsproj = "src/Beta/Beta.fsproj"
+                  FsProjsSharingSameTag = [] } ]
+          ReservedVersions = Set.empty
+          PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          RootDir = "/repo" }
+
+    test <@ fsprojsForChangelog config pkg "src/Alpha.Cli/CHANGELOG.md" = [ "src/Alpha.Cli/Alpha.Cli.fsproj" ] @>
+
+    // A single-package repo's root changelog covers every fsproj of the package.
+    let single = { config with Packages = [ pkg ] }
+
+    let expected = [ "src/Alpha/Alpha.fsproj"; "src/Alpha.Cli/Alpha.Cli.fsproj" ]
+    test <@ fsprojsForChangelog single pkg "/repo/CHANGELOG.md" = expected @>
+
+[<Fact>]
+let ``dependencyChangesSinceTag - an fsproj unreadable at the tag or on disk derives nothing`` () =
+    withTempDir (fun rootDir ->
+        let fsproj = Path.Combine(rootDir, "New.fsproj")
+        File.WriteAllText(fsproj, fsprojWithRefs pgvectorRefsNow)
+
+        let config =
+            { Packages = []
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              RootDir = rootDir }
+
+        let noHistory (_: string) (_: string) = Failure("no such path at tag", 1)
+        // New at this release: no baseline to diff, so nothing is claimed.
+        test <@ List.isEmpty (dependencyChangesSinceTag noHistory config "v1.0.0" [ fsproj ]) @>
+
+        let atTag (_: string) (_: string) =
+            Success(fsprojWithRefs pgvectorRefsAtTag)
+        // Deleted from disk since the tag: likewise nothing.
+        test
+            <@ List.isEmpty (dependencyChangesSinceTag atTag config "v1.0.0" [ Path.Combine(rootDir, "Gone.fsproj") ]) @>)
+
 // =============================================================================
 // A PackAsTool package must still get its CLI grammar diffed. Skipping the API
 // probe (a PackageReference to a tool package fails NU1212) must not also skip

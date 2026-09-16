@@ -128,6 +128,18 @@ let descriptionsSinceTag (run: string -> string -> CommandResult) (tag: string) 
         | Success output -> splitRecords output
         | Failure _ -> []
 
+/// The content of `path` (repo-root-relative) as it was at `rev`. jj-native
+/// first (`jj file show`), falling back to `git show <rev>:<path>`. `None` when
+/// the file did not exist at `rev` or neither VCS can answer — the caller cannot
+/// tell those apart, so it must treat `None` as "no baseline", never as "empty".
+let fileAtRevision (run: string -> string -> CommandResult) (rev: string) (path: string) : string option =
+    match run "jj" (sprintf "file show -r \"%s\" \"%s\"" rev path) with
+    | Success content -> Some content
+    | Failure _ ->
+        match run "git" (sprintf "show \"%s:%s\"" rev path) with
+        | Success content -> Some content
+        | Failure _ -> None
+
 let getCurrentCommitSha (run: string -> string -> CommandResult) : string option =
     let nonEmpty s =
         let trimmed = (s: string).Trim()

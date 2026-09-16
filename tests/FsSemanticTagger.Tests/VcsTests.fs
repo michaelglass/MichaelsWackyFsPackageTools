@@ -429,6 +429,33 @@ let ``descriptionsSinceTag - returns empty when neither jj nor git can answer`` 
 
     test <@ List.isEmpty (descriptionsSinceTag run "v1.0.0" [ "src/MyLib" ]) @>
 
+// fileAtRevision
+
+[<Fact>]
+let ``fileAtRevision - reads the file as it was at the tag via jj`` () =
+    let run =
+        fakeRun [ ("jj", "file show -r \"v1.0.0\" \"src/MyLib/MyLib.fsproj\"", Success "<Project />") ]
+
+    test <@ fileAtRevision run "v1.0.0" "src/MyLib/MyLib.fsproj" = Some "<Project />" @>
+
+[<Fact>]
+let ``fileAtRevision - falls back to git show when jj fails`` () =
+    let run =
+        fakeRun
+            [ ("jj", "file show -r \"v1.0.0\" \"src/MyLib/MyLib.fsproj\"", Failure("no jj", 1))
+              ("git", "show \"v1.0.0:src/MyLib/MyLib.fsproj\"", Success "<Project />") ]
+
+    test <@ fileAtRevision run "v1.0.0" "src/MyLib/MyLib.fsproj" = Some "<Project />" @>
+
+[<Fact>]
+let ``fileAtRevision - is None when the file did not exist at the tag or no VCS can answer`` () =
+    let run =
+        fakeRun
+            [ ("jj", "file show -r \"v1.0.0\" \"src/New/New.fsproj\"", Failure("no such path", 1))
+              ("git", "show \"v1.0.0:src/New/New.fsproj\"", Failure("no such path", 128)) ]
+
+    test <@ fileAtRevision run "v1.0.0" "src/New/New.fsproj" = None @>
+
 // getCurrentCommitSha
 
 [<Fact>]

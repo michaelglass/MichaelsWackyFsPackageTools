@@ -111,7 +111,13 @@ A fresh empty `## Unreleased` heading is inserted above it so the file is ready 
 - **Single-package repos** (one packable fsproj): `CHANGELOG.md` at the repo root.
 - **Multi-package repos**: `CHANGELOG.md` next to each package's fsproj (and next to each path in `fsProjsSharingSameTag`).
 
-**Fail-fast:** if any package needing a bump is missing `CHANGELOG.md`, is missing the `## Unreleased` section, or the section is empty, the release aborts with exit code 1 before any files are modified.
+**What gets promoted** (`release --check` prints exactly this, from the same plan):
+
+- **An authored `## Unreleased` section is promoted as written.** Commit summaries are *not* merged into it: the tool cannot tell which commits an authored entry already describes, so covering the rest of the release is the author's job.
+- **An empty or missing section is derived** from the summary lines of the commits since the package's last tag that touch its source (or bundled-dependency) directories, grouped breaking → feat → fix → other.
+- **Either way, consumer-visible dependency changes are recorded.** A `<PackageReference Include=... Version=...>` added, removed or moved to another version since the last tag, in any of the package's fsprojs, gets a bullet such as `- build(deps): bump SqlHydra.Query from 4.1.0-beta.2 to 4.1.0-beta.3` after the section's entries — unless the section already names the package and its new version. These come from the fsproj itself, never from commit prose. `PrivateAssets="all"` (build-only) references, `Update` items and versionless (Central Package Management) references are not tracked.
+
+**Fail-fast:** if a package needing a bump has an unauthored section and nothing to derive one from (no prior tag, no qualifying commits and no dependency changes), the release aborts with exit code 1 before any files are modified.
 
 ### Callout order
 
@@ -144,9 +150,11 @@ Both `release` (before any writes) and `release --check` enforce it. Unlike an e
 fssemantictagger release --check
 ```
 
-A pre-flight gate for CI (`mise run changelog-check`). It never builds, diffs APIs or writes anything. It fails with exit code 1 when either
+A pre-flight gate for CI (`mise run changelog-check`). It never builds, diffs APIs or writes anything. For every package with source changes since its last tag it prints what release will promote — the authored section, or the derived entries, plus any dependency-change bullets (see [Changelog promotion](#changelog-promotion)). It reads the same plan the release applies, so what it prints is what gets written.
 
-- a package with source changes since its last tag has an empty/missing `## Unreleased` that also can't be derived from its commit summaries, or
+A pass does **not** certify that an authored section covers every commit; it certifies that there is something to promote and that consumer-visible dependency changes are recorded. It fails with exit code 1 when either
+
+- a package with source changes since its last tag has an empty/missing `## Unreleased` and nothing to derive one from (no commit summaries, no dependency changes), or
 - a `## Unreleased` callout is no longer its section's first content.
 
 ### Flags
