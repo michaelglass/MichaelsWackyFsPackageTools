@@ -1750,3 +1750,104 @@ let ``releaseCommitSha - dirty working copy reports the current commit`` () =
               ("jj", "log -r @ --no-graph -T commit_id", Success "worksha\n") ]
 
     test <@ releaseCommitSha run = Some "worksha" @>
+
+// one ask is typed: "not yet" is never "absent"
+
+/// The question GitHub is asked once per poll round, answered with `[]` for the first
+/// `emptyRounds` rounds and with a queued Release run after that. This is the shape of
+/// the 2026-09-16 FsHotWatch release: the tag was pushed, the Release run appeared a
+/// few seconds later, and the tagger had already declared it MISSING.
+let private runAppearsAfter (emptyRounds: int) =
+    ghRunListAnswers (
+        List.replicate emptyRounds "[]"
+        @ [ """[{"name":"Release","status":"queued","conclusion":null,"databaseId":1,"url":"https://example/1"}]""" ]
+    )
+
+[<Fact>]
+let ``askOnceForRef - an empty answer is NotYet, and NotYet is not a verdict`` () =
+    // A single question cannot conclude that no run will ever appear; only the poll,
+    // once its budget is spent, may say `Absent`. Making the two different cases of
+    // one type is what keeps a caller from printing "MISSING" off the first answer.
+    match askOnceForRef (ghRunListAnswers [ "[]" ]) releaseOnly "v0.1.0-alpha.5" with
+    | NotYet(_, answered) -> test <@ answered @>
+    | other -> failwithf "Expected NotYet, got %A" other
+
+[<Fact>]
+let ``askOnceForRef - a run that is there is Appeared, with the run`` () =
+    match askOnceForRef (runAppearsAfter 0) releaseOnly "v0.1.0-alpha.5" with
+    | Appeared [ runInfo ] -> test <@ runInfo.Name = "Release" @>
+    | other -> failwithf "Expected Appeared with one run, got %A" other
+
+[<Fact>]
+let ``askOnceForRef - an unanswerable gh is NotYet with answered false, never Absent`` () =
+    match askOnceForRef (fun _ _ -> Failure("rate limited", 1)) releaseOnly "v0.1.0-alpha.5" with
+    | NotYet(_, answered) -> test <@ not answered @>
+    | other -> failwithf "Expected NotYet, got %A" other
+
+[<Fact>]
+let ``settleAppearance - NotYet becomes Absent only once the budget is spent`` () =
+    let notYet = NotYet(System.TimeSpan.FromSeconds 4.0, true)
+    test <@ settleAppearance false notYet = notYet @>
+    test <@ settleAppearance true notYet = Absent(System.TimeSpan.FromSeconds 4.0, true) @>
+
+[<Fact>]
+let ``pushTagsAndConfirmDetailed - a run that registers a few polls late is confirmed, not MISSING`` () =
+    let gh = runAppearsAfter 3
+
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", "git export" -> Success ""
+        | "jj", a when a.StartsWith("git push --tag") -> Success ""
+        | _ -> gh cmd args
+
+    let policy =
+        { PushAttempts = 1
+          PushRetryDelayMs = 0
+          RunPollIntervalMs = 0
+          RunPollAttempts = 10 }
+
+    test <@ List.isEmpty (pushTagsAndConfirmDetailed run releaseOnly policy [ "v0.1.0-alpha.5" ]) @>
+
+[<Fact>]
+let ``pushTagsAndConfirmDetailed - a run that never appears within the budget is still reported absent`` () =
+    // The positive control for the test above: widening the window must not become
+    // "never report anything".
+    let gh = ghRunListAnswers [ "[]" ]
+
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", "git export" -> Success ""
+        | "jj", a when a.StartsWith("git push --tag") -> Success ""
+        | _ -> gh cmd args
+
+    let policy =
+        { PushAttempts = 1
+          PushRetryDelayMs = 0
+          RunPollIntervalMs = 0
+          RunPollAttempts = 4 }
+
+    match pushTagsAndConfirmDetailed run releaseOnly policy [ "v0.1.0-alpha.5" ] with
+    | [ WorkflowTriggerMissing("v0.1.0-alpha.5", _, true) ] -> ()
+    | other -> failwithf "Expected one WorkflowTriggerMissing, got %A" other
+
+[<Fact>]
+let ``tagPushPolicyFromEnv - the default run-poll window is at least ten minutes and the env can change it`` () =
+    let d = tagPushPolicyFromEnv (fun _ -> None)
+    test <@ int64 (d.RunPollAttempts - 1) * int64 d.RunPollIntervalMs >= 10L * 60L * 1000L @>
+
+    let custom =
+        tagPushPolicyFromEnv (function
+            | "FSST_RUN_POLL_ATTEMPTS" -> Some "7"
+            | "FSST_RUN_POLL_DELAY_MS" -> Some "250"
+            | _ -> None)
+
+    test <@ custom.RunPollAttempts = 7 @>
+    test <@ custom.RunPollIntervalMs = 250 @>
+
+    // Garbage in the environment keeps the default rather than a zero-length poll.
+    let garbage =
+        tagPushPolicyFromEnv (function
+            | "FSST_RUN_POLL_ATTEMPTS" -> Some "lots"
+            | _ -> None)
+
+    test <@ garbage.RunPollAttempts = d.RunPollAttempts @>

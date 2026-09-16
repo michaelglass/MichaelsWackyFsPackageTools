@@ -158,6 +158,13 @@ let readFsprojVersion (fsprojPath: string) : Version option =
     else
         None
 
+/// A wall-clock duration as an operator reads it: `4m12s`, or `0.3s` under a minute.
+let internal formatElapsed (elapsed: System.TimeSpan) : string =
+    if elapsed.TotalMinutes >= 1.0 then
+        sprintf "%dm%02ds" (int elapsed.TotalMinutes) elapsed.Seconds
+    else
+        sprintf "%.1fs" elapsed.TotalSeconds
+
 let internal waitForCi (run: string -> string -> CommandResult) (pollIntervalMs: int) (maxAttempts: int) : CiStatus =
     let rec poll attempt =
         let status = getCiStatus run
@@ -181,11 +188,30 @@ let internal waitForCi (run: string -> string -> CommandResult) (pollIntervalMs:
 
     poll 0
 
+/// The NuGet confirmation poll's budget, overridable from the environment with the
+/// SAME two variables FsHotWatch's between-stage barrier reads
+/// (`FSHW_NUGET_PROBE_ATTEMPTS`, `FSHW_NUGET_PROBE_DELAY_MS`), so one setting tunes
+/// both ends of a release.
+///
+/// 15s x 81 = twenty minutes. The package was measured three times on
+/// FsHotWatch (2026-09-15/16) to index 6-15 minutes AFTER the Release run finished,
+/// and the old 40 x 15s = 10 min gave up inside that window and printed "Release NOT
+/// CONFIRMED" for releases that were fine. FsHotWatch's own barrier was raised to
+/// 80 x 15s for the same reason.
+let internal defaultNuGetPollIntervalMs = 15000
+let internal defaultNuGetMaxAttempts = 81
+
+let nuGetPollFromEnv (getEnv: string -> string option) : int * int =
+    Vcs.envIntOrDefault getEnv "FSHW_NUGET_PROBE_DELAY_MS" defaultNuGetPollIntervalMs,
+    Vcs.envIntOrDefault getEnv "FSHW_NUGET_PROBE_ATTEMPTS" defaultNuGetMaxAttempts
+
 /// Poll NuGet until every (packageId, version) is restorable, or until
-/// `maxAttempts` rounds elapse. Returns true when all packages are available,
-/// false on timeout. `maxAttempts = 1` does exactly one check then times out.
+/// `maxAttempts` rounds elapse. `maxAttempts = 1` does exactly one check then gives up.
+///
 /// RETURNS THE PACKAGES IT COULD NOT CONFIRM, not a bool. Empty
-/// means every package is on the feed.
+/// means every package is on the feed. Also returns how long it
+/// ACTUALLY waited, measured on a stopwatch, and prints that number when it gives up:
+/// a poll that stopped after a minute must not say it waited the twenty it was given.
 ///
 /// This used to return `false` on timeout under a doc comment reading "callers
 /// MUST NOT fail the release on a false result, the tags are already pushed" —
@@ -198,12 +224,14 @@ let internal waitForCi (run: string -> string -> CommandResult) (pollIntervalMs:
 /// code at the caller, so the release can say what it actually knows: the tags
 /// went, the packages have not appeared YET, here is what to check. Returning
 /// the names rather than a bool is what makes that message possible.
-let internal waitForNuGet
+let internal waitForNuGetTimed
     (checkFeedPresence: string -> string -> FeedPresence)
     (pollIntervalMs: int)
     (maxAttempts: int)
     (packages: (string * string) list)
-    : (string * string) list =
+    : (string * string) list * System.TimeSpan =
+    let clock = System.Diagnostics.Stopwatch.StartNew()
+
     let rec poll attempt pending =
         // Only a definite `OnFeed` clears a package from the poll: an unreachable
         // feed is not evidence of arrival, so keep waiting exactly as for absence.
@@ -214,17 +242,32 @@ let internal waitForNuGet
             []
         elif attempt + 1 >= maxAttempts then
             for id, ver in stillPending do
-                printfn "Timed out waiting for %s %s on NuGet after %d attempts" id ver maxAttempts
+                printfn
+                    "Gave up waiting for %s %s on NuGet after %s (%d checks, %.0fs apart)"
+                    id
+                    ver
+                    (formatElapsed clock.Elapsed)
+                    maxAttempts
+                    (float pollIntervalMs / 1000.0)
 
             stillPending
         else
             for id, ver in stillPending do
-                printfn "Waiting for %s %s on NuGet..." id ver
+                printfn "Waiting for %s %s on NuGet... (%s so far)" id ver (formatElapsed clock.Elapsed)
 
             System.Threading.Thread.Sleep(pollIntervalMs)
             poll (attempt + 1) stillPending
 
-    poll 0 packages
+    let unconfirmed = poll 0 packages
+    unconfirmed, clock.Elapsed
+
+let internal waitForNuGet
+    (checkFeedPresence: string -> string -> FeedPresence)
+    (pollIntervalMs: int)
+    (maxAttempts: int)
+    (packages: (string * string) list)
+    : (string * string) list =
+    fst (waitForNuGetTimed checkFeedPresence pollIntervalMs maxAttempts packages)
 
 /// Report what the tag push and its confirmation actually established, and pick the
 /// exit code that matches.
@@ -321,7 +364,8 @@ let internal reportTagConfirmationFailures (failures: TagConfirmationFailure lis
 
         printfn ""
         printfn "The tags ARE on the remote. This is NOT a failed publish, and it may not be a failure at all:"
-        printfn "GitHub registers a tag-push run seconds after the push, and this poll can outrun it."
+        printfn "the run may still be starting. GitHub registers a tag-push run some time after the push, and"
+        printfn "this poll can outrun it (raise FSST_RUN_POLL_ATTEMPTS / FSST_RUN_POLL_DELAY_MS to wait longer)."
         printfn ""
         printfn "Do NOT delete and re-push the tag. If the run had merely not registered yet, that publishes twice."
         printfn "Check first, one of:"
@@ -362,10 +406,22 @@ let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * 
             printfn "Tags pushed, and a workflow run exists for each. GitHub Actions will handle the release."
 
             if input.WaitForNuGet then
-                printfn "Waiting for NuGet to index the published package(s)..."
+                printfn
+                    "Waiting for NuGet to index the published package(s) — up to %s (%d checks, %.0fs apart); the index typically lags the Release run by 6-15 min..."
+                    (formatElapsed (
+                        System.TimeSpan.FromMilliseconds(
+                            float (max 0 (input.NuGetMaxAttempts - 1)) * float input.NuGetPollIntervalMs
+                        )
+                    ))
+                    input.NuGetMaxAttempts
+                    (float input.NuGetPollIntervalMs / 1000.0)
 
-                let unconfirmed =
-                    waitForNuGet input.CheckFeedPresence input.NuGetPollIntervalMs input.NuGetMaxAttempts pkgVersions
+                let unconfirmed, waited =
+                    waitForNuGetTimed
+                        input.CheckFeedPresence
+                        input.NuGetPollIntervalMs
+                        input.NuGetMaxAttempts
+                        pkgVersions
 
                 if List.isEmpty unconfirmed then
                     0
@@ -384,19 +440,36 @@ let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * 
                     // failed": the packages may land minutes later, and calling
                     // that a failure would train people to re-run a release that
                     // already succeeded — a worse habit than the one being fixed.
+                    //
+                    // the number printed is the MEASURED wait, and
+                    // the text names what the evidence of the publish actually is —
+                    // the tags and their Release runs, not this poll.
                     printfn ""
 
                     printfn
-                        "Release NOT CONFIRMED: %d package(s) did not appear on NuGet in time."
+                        "Release NOT CONFIRMED: %d package(s) had not appeared on NuGet when this poll stopped waiting after %s."
                         (List.length unconfirmed)
+                        (formatElapsed waited)
 
                     for id, ver in unconfirmed do
                         printfn "  unconfirmed: %s %s" id ver
 
                     printfn ""
-                    printfn "The tags ARE pushed, so this is not a failed publish — the packages may still be indexing."
-                    printfn "Check https://www.nuget.org/packages/<id>/<version> for each, and if the Release workflow"
+
+                    printfn
+                        "This is NOT a failed publish. The tags ARE pushed and each has a Release run; those are the"
+
+                    printfn
+                        "evidence of the publish. NuGet's index lags the Release run by 6-15 minutes (measured), and"
+
+                    printfn "this poll only stopped watching for it."
+                    printfn ""
+                    printfn "Check https://www.nuget.org/packages/<id>/<version> for each. If the Release run itself"
                     printfn "failed rather than lagged, resume it with:  gh run rerun <id> --failed"
+                    printfn ""
+                    printfn "Re-running the same release command RESUMES this release — it detects the pushed tags and"
+                    printfn "does not publish a second time. To wait longer next time, set FSHW_NUGET_PROBE_ATTEMPTS"
+                    printfn "and/or FSHW_NUGET_PROBE_DELAY_MS."
                     2
             else
                 0

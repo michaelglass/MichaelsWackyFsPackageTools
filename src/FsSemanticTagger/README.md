@@ -155,7 +155,7 @@ All release commands (`release`, `alpha`, `beta`, `rc`, `stable`) accept:
 
 - `--dry-run` — preview version bumps without modifying files or creating tags. Skips the clean-working-copy and CI checks; still builds and compares APIs so the preview is accurate. Missing or empty `## Unreleased` sections are reported as warnings instead of aborting.
 - `--publish` — build and pack locally (`dotnet pack -c Release -o artifacts/`) instead of pushing tags for CI to publish.
-- `--skip-nuget-wait` — after pushing tags, exit immediately instead of polling NuGet until the published package(s) are restorable. By default the command waits for the new version(s) to be indexed; this poll never changes the exit code (a timeout warns and still exits 0).
+- `--skip-nuget-wait` — after pushing tags, exit immediately instead of polling NuGet until the published package(s) are restorable. By default the command waits up to **20 minutes** (81 checks, 15s apart) for the new version(s) to be indexed — NuGet's index typically lags the Release run by 6-15 minutes. If the poll gives up it **exits 2**, prints the wait it actually performed, and says so in terms that are not a failed publish: the tags are pushed and each has a Release run; re-running the same release command resumes rather than re-publishes. Override the budget with `FSHW_NUGET_PROBE_ATTEMPTS` / `FSHW_NUGET_PROBE_DELAY_MS` (the same variables FsHotWatch's release barrier reads).
 - `--only <names>` — restrict the run to specific package(s) by name (comma-separated; e.g. `--only Foo,Bar`). Names match the `name` field of entries in `semantic-tagger.json`. When omitted, **all** packages are processed (the default). Only the selected packages are considered for version computation and tagging; the rest are out of scope entirely (not bumped, not tagged, not even reported as "skipped"). An unknown name aborts with exit code 1 and lists the valid names — it never silently no-ops.
 - `--push` — if the release commit isn't on the remote yet, push it and wait for its CI to finish, then proceed. The default is to **fail fast** with a "push first" message rather than push implicitly (unsafe on a branch-protected / PR-gated `main`). A commit that *is* already pushed is always waited on regardless of this flag. See [Fail-fast CI precondition](#fail-fast-ci-precondition).
 
@@ -181,6 +181,17 @@ fssemantictagger release
 # Push the release commit and wait for its CI, then release (one shot)
 fssemantictagger release --push
 ```
+
+### Post-push waits and their exit codes
+
+After the tags are pushed, `release` confirms each one triggered a run of a publish workflow (`publishWorkflows`, default `.github/workflows/release.yml`) and then waits for NuGet. Both waits are bounded and both distinguish "not yet" from "not happening":
+
+| Wait | Default budget | Override | On give-up |
+|------|----------------|----------|------------|
+| A publish workflow run for each tag | 10 min (121 asks, 5s apart) | `FSST_RUN_POLL_ATTEMPTS`, `FSST_RUN_POLL_DELAY_MS` | exit **2** — the tag IS pushed, the run may still be starting; do **not** delete and re-push the tag (that publishes twice). A run that exists and has already failed is exit **1**. |
+| The package(s) on NuGet | 20 min (81 checks, 15s apart) | `FSHW_NUGET_PROBE_ATTEMPTS`, `FSHW_NUGET_PROBE_DELAY_MS` | exit **2** — the tags and their Release runs are the evidence of the publish; re-running the same release command resumes instead of re-publishing. |
+
+Exit `0` means every tag has a run and (unless `--skip-nuget-wait`) every package is on the feed. Exit `1` is reserved for a release that demonstrably did not happen: CI red, a tag push that failed, or a publish run that finished without publishing.
 
 ## Configuration
 
