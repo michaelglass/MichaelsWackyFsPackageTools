@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.9 - 2026-09-16
+
 - fix: **a workflow run that has not appeared YET is no longer reported as a missing trigger.** On 2026-09-16 `release` pushed `v0.1.0-alpha.5`, heard "no run" from GitHub, and exited 1 with `MISSING TRIGGER` — while the Release run registered seconds later and went green; the natural recovery, re-pushing the tag, would have published the version twice.
   - The post-push poll is now written over a typed `Vcs.TagRunAppearance`: one question answers `Appeared of runs` or `NotYet of elapsed * answered`, and a single ask **cannot** produce `Absent` — only the poll can, via `settleAppearance`, once its budget is spent. "No run yet" and "no run will appear" are different constructors rather than the same answer read at different times.
   - The window is widened from 5 to **10 minutes** (121 asks, 5s apart) and is configurable with `FSST_RUN_POLL_ATTEMPTS` / `FSST_RUN_POLL_DELAY_MS` (`Vcs.tagPushPolicyFromEnv`). It stays bounded so a genuinely orphaned tag is still reported.
