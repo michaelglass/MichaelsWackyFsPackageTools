@@ -1447,7 +1447,8 @@ let ``extractFromCacheRoot reports a cached assembly that cannot be read as Cach
         with _ ->
             ()
 
-/// at its source. A published package whose assembly will not load
+/// The unreadable-assembly misclassification, at its source. A published package
+/// whose assembly will not load
 /// — here our own DLL cached WITHOUT its System.Reflection.MetadataLoadContext
 /// dependency, the same "Could not find assembly" failure an analyzer hits when
 /// FSharp.Analyzers.SDK does not resolve — used to come back as AbsentOnFeed ("not

@@ -46,8 +46,8 @@ type ReleaseInput =
         CiMaxAttempts: int
         /// How hard to push each release tag, and how long to keep asking GitHub
         /// whether that tag produced a workflow run. Injected rather than fixed so a
-        /// test can bound the poll: the production budget is minutes long, and the
-        /// whole point of the tracked issue is that it must be.
+        /// test can bound the poll: the production budget is minutes long, and it must
+        /// be — a poll that gave up after seconds reported healthy releases as broken.
         TagPush: Vcs.TagPushPolicy
         /// Ask the feed whether a (packageName, version) is published. The
         /// three-valued answer is what lets an orphan tag be distinguished from an
@@ -277,14 +277,14 @@ let internal waitForNuGet
 /// Report what the tag push and its confirmation actually established, and pick the
 /// exit code that matches.
 ///
-/// Three outcomes, three exit codes — the convention the tracked issue established for the
+/// Three outcomes, three exit codes — the convention already established for the
 /// NuGet wait, applied to the same question one stage earlier:
 ///
 /// * `0` — every tag has a workflow run (this function is not called).
 /// * `1` — the release DEMONSTRABLY did not happen: a push failed, or a run exists and
 ///   has already finished without publishing. Both stop an ordered release chain.
 /// * `2` — the tags are on the remote and no run has appeared yet. "I stopped waiting"
-///   is not "it failed", and the tracked issue is the cost of confusing the two: three
+///   is not "it failed", and confusing the two has already cost real releases: three
 ///   healthy releases were reported as broken, and the remedy printed with that verdict
 ///   would have published each of them a second time.
 let internal reportTagConfirmationFailures (failures: TagConfirmationFailure list) : int =
