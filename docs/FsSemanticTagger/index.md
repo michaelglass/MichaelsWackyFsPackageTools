@@ -14,6 +14,22 @@ FsSemanticTagger extracts the public API surface from your compiled assembly usi
 | **Addition** (new public API) | Added a new public type | Minor (or patch if < 1.0) |
 | **No API change** | Internal refactoring | Patch |
 
+### What the changelog declares is a floor
+
+The API diff cannot see every breaking change. A `[<Literal>]` constant is inlined into each consumer when it compiles, so changing its value breaks consumers built against the old one, but the public-API dump does not include the value.
+
+So in `auto` mode the release also reads the entries it is about to publish: the authored `## Unreleased` section, or the entries derived from commit summaries when that section is empty (see [Changelog promotion](#changelog-promotion)). Each entry is checked for a conventional-commit marker at its start:
+
+| Entry | Declares | Effect on the bump |
+|-------|----------|--------------------|
+| `feat!:`, `fix!:`, any `<type>!:`, or `BREAKING CHANGE:` | a breaking change | at least Major (or minor if < 1.0) |
+| `feat:` | a feature | at least Minor (or patch if < 1.0) |
+| `fix:`, `chore:`, other recognised types | a patch-level change | no floor |
+
+The bump is the stronger of the declared and the computed change. When the two disagree the release prints a line saying so, in either direction: when the changelog raised the bump, and when the API diff found more than the changelog declares. A changelog with no markers leaves the bump exactly as the API diff computes it. With several changelogs behind one tag (`fsProjsSharingSameTag`), the strongest declaration across them counts. Markers inside fenced code blocks are ignored.
+
+Diffing literal values was considered and not done: it would major-bump every package whose internal constants change (build stamps, thresholds, retry counts) to catch only an author who forgot to declare the break.
+
 ## Installation
 
 ```bash

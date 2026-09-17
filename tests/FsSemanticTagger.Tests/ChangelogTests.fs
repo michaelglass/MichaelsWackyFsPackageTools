@@ -392,6 +392,35 @@ let ``dependencyBullet names the package and both versions`` () =
     test <@ dependencyBullet (Added("Npgsql", "8.0.0")) = "- build(deps): add Npgsql 8.0.0" @>
     test <@ dependencyBullet (Removed("Old", "1.0.0")) = "- build(deps): remove Old (was 1.0.0)" @>
 
+// --- promotedEntryLines -----------------------------------------------------
+// The entries a release will publish, read for the bump they declare.
+
+[<Fact>]
+let ``promotedEntryLines reads an authored section without asking for commit summaries`` () =
+    withTempDir (fun dir ->
+        let path = Path.Combine(dir, "CHANGELOG.md")
+
+        File.WriteAllText(
+            path,
+            "# Changelog\n\n## Unreleased\n\n- feat!: drop v1\n\n  - detail\n\n## 0.1.0 - 2026-01-01\n\n- fix: old\n"
+        )
+
+        let lines =
+            promotedEntryLines path (fun () -> failwith "an authored section must not query commits")
+
+        test <@ lines = [ "- feat!: drop v1"; "  - detail" ] @>)
+
+[<Fact>]
+let ``promotedEntryLines derives the entries of an empty or missing section from commit summaries`` () =
+    withTempDir (fun dir ->
+        let empty = Path.Combine(dir, "CHANGELOG.md")
+        File.WriteAllText(empty, "# Changelog\n\n## Unreleased\n\n## 0.1.0 - 2026-01-01\n\n- fix: old\n")
+        let missing = Path.Combine(dir, "absent", "CHANGELOG.md")
+        let commits () = [ "fix: a"; "feat!: b" ]
+
+        test <@ promotedEntryLines empty commits = [ "- feat!: b"; "- fix: a" ] @>
+        test <@ promotedEntryLines missing commits = [ "- feat!: b"; "- fix: a" ] @>)
+
 // --- planPromotion / applyPromotion ---------------------------------------
 // One plan answers "what will promotion write?" for both `--check` and release,
 // so the check can only certify what promotion delivers.

@@ -1017,6 +1017,175 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
         with _ ->
             ()
 
+/// A throwaway repo dir, removed afterwards.
+let private withReleaseDir (prefix: string) (action: string -> unit) =
+    let dir =
+        Path.Combine(Path.GetTempPath(), prefix + System.Guid.NewGuid().ToString("N"))
+
+    Directory.CreateDirectory(dir) |> ignore
+
+    try
+        action dir
+    finally
+        try
+            Directory.Delete(dir, true)
+        with _ ->
+            ()
+
+/// Auto/PushTags where the public API is byte-identical on both sides, so the API
+/// diff alone would bump a patch: any stronger bump comes from the changelog.
+/// Returns the captured output and the exit code.
+let private releaseWithUnchangedApi (run: string -> string -> CommandResult) (config: ToolConfig) (only: string list) =
+    let api = [ ApiSignature "type Foo" ]
+
+    withCapturedConsole (fun () ->
+        release
+            { Run = run
+              Config = config
+              Command = Auto
+              Mode = PushTags
+              TargetPackages = only
+              ExtractPreviousApi = (fun _ _ -> Found api)
+              ExtractCurrentApi = (fun _ -> api)
+              ExtractPreviousGrammar = noPreviousGrammar
+              ExtractCurrentGrammar = noCurrentGrammar
+              CiPollIntervalMs = 0
+              CiMaxAttempts = 10
+              TagPush = immediateTagPush
+              CheckFeedPresence = (fun _ _ -> OnFeed)
+              WaitForNuGet = false
+              NuGetPollIntervalMs = 0
+              NuGetMaxAttempts = 1
+              Push = false
+              Check = false })
+
+/// A single-package repo in `dir` released at `version`, with `changelog` as its
+/// root CHANGELOG.md.
+let private singlePackageRepo (dir: string) (version: string) (changelog: string) =
+    let fsproj = Path.Combine(dir, "MyLib.fsproj")
+
+    File.WriteAllText(fsproj, sprintf "<Project><PropertyGroup><Version>%s</Version></PropertyGroup></Project>" version)
+
+    File.WriteAllText(Path.Combine(dir, "CHANGELOG.md"), changelog)
+
+    let (fakeRun, _getCalls) =
+        passingCiRun
+            [ ("git", "tag -l \"v*\"", Success("v" + version))
+              ("jj", sprintf "diff --from v%s --to @ --summary \"glob:%s/**\"" version dir, Success "1 file changed") ]
+
+    let config =
+        { Packages =
+            [ { Name = "MyLib"
+                Fsproj = fsproj
+                DllPath = "fake.dll"
+                TagPrefix = "v"
+                FsProjsSharingSameTag = [] } ]
+          ReservedVersions = Set.empty
+          PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          RootDir = dir }
+
+    fsproj, fakeRun, config
+
+[<Fact>]
+let ``release - Auto floors the bump at major when the changelog declares a breaking change the API diff cannot see``
+    ()
+    =
+    // The motivating release: TestPrune.Core 7.0.0 changed a `[<Literal>]`
+    // SchemaVersion, which is inlined into consumers and absent from the API dump.
+    // The diff says NoChange; the author wrote `feat!:`. It must ship as 8.0.0.
+    withReleaseDir "fsst-declared-breaking-" (fun dir ->
+        let fsproj, run, config =
+            singlePackageRepo dir "7.0.0" "# Changelog\n\n## Unreleased\n\n- feat!: SchemaVersion 9 -> 10\n"
+
+        let output, result = releaseWithUnchangedApi run config []
+
+        test <@ result = 0 @>
+        test <@ (File.ReadAllText fsproj).Contains("<Version>8.0.0</Version>") @>
+        test <@ output.Contains "MyLib: " @>
+        test <@ output.Contains "declares a breaking change" @>
+        test <@ output.Contains "- feat!: SchemaVersion 9 -> 10" @>)
+
+[<Fact>]
+let ``release - Auto keeps a declared fix with an unchanged API at a patch, and reports no disagreement`` () =
+    withReleaseDir "fsst-declared-fix-" (fun dir ->
+        let fsproj, run, config =
+            singlePackageRepo dir "7.0.0" "# Changelog\n\n## Unreleased\n\n- fix: handle a null\n"
+
+        let output, result = releaseWithUnchangedApi run config []
+
+        test <@ result = 0 @>
+        test <@ (File.ReadAllText fsproj).Contains("<Version>7.0.1</Version>") @>
+        test <@ not (output.Contains "declares") @>)
+
+[<Fact>]
+let ``release - Auto honours a breaking marker in a section derived from commit summaries`` () =
+    // An empty `## Unreleased` is promoted from commit summaries, so a `feat!:`
+    // commit becomes a `feat!:` entry in the published changelog. The version it is
+    // published under must agree with it.
+    withReleaseDir "fsst-declared-derived-" (fun dir ->
+        let fsproj, baseRun, config =
+            singlePackageRepo dir "1.2.3" "# Changelog\n\n## Unreleased\n\n## 1.2.3 - 2026-01-01\n\n- old\n"
+
+        let run cmd (args: string) =
+            if cmd = "jj" && args.StartsWith("log -r \"v1.2.3..@\"") then
+                Success "feat!: drop the v1 wire format\u001e"
+            else
+                baseRun cmd args
+
+        let output, result = releaseWithUnchangedApi run config []
+
+        test <@ result = 0 @>
+        test <@ (File.ReadAllText fsproj).Contains("<Version>2.0.0</Version>") @>
+        test <@ output.Contains "feat!: drop the v1 wire format" @>)
+
+[<Fact>]
+let ``release - Auto takes the strongest declaration across every changelog behind one tag`` () =
+    // One tag, two fsprojs, two changelogs: the declaration in the SHARED project's
+    // changelog counts as much as the main one's.
+    withReleaseDir "fsst-declared-shared-" (fun dir ->
+        let coreDir = Path.Combine(dir, "core")
+        let cliDir = Path.Combine(dir, "cli")
+        Directory.CreateDirectory coreDir |> ignore
+        Directory.CreateDirectory cliDir |> ignore
+        let coreFsproj = Path.Combine(coreDir, "Core.fsproj")
+        let cliFsproj = Path.Combine(cliDir, "Cli.fsproj")
+
+        for fsproj in [ coreFsproj; cliFsproj ] do
+            File.WriteAllText(fsproj, "<Project><PropertyGroup><Version>2.0.0</Version></PropertyGroup></Project>")
+
+        File.WriteAllText(Path.Combine(coreDir, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n- fix: a\n")
+        File.WriteAllText(Path.Combine(cliDir, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n- feat!: b\n")
+
+        let (run, _getCalls) =
+            passingCiRun
+                [ ("git", "tag -l \"core-v*\"", Success "core-v2.0.0")
+                  ("jj",
+                   sprintf "diff --from core-v2.0.0 --to @ --summary \"glob:%s/**\"" coreDir,
+                   Success "1 file changed") ]
+
+        let package name fsproj prefix shared =
+            { Name = name
+              Fsproj = fsproj
+              DllPath = "fake.dll"
+              TagPrefix = prefix
+              FsProjsSharingSameTag = shared }
+
+        let config =
+            { Packages =
+                [ package "Core" coreFsproj "core-v" [ cliFsproj ]
+                  package "Other" (Path.Combine(dir, "other", "Other.fsproj")) "other-v" [] ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              RootDir = dir }
+
+        let output, result = releaseWithUnchangedApi run config [ "Core" ]
+
+        test <@ result = 0 @>
+        test <@ (File.ReadAllText coreFsproj).Contains("<Version>3.0.0</Version>") @>
+        test <@ output.Contains(Path.Combine(cliDir, "CHANGELOG.md")) @>)
+
 [<Fact>]
 let ``release - Auto detects addition and bumps minor`` () =
     let tmpFile = Path.GetTempFileName()
