@@ -432,7 +432,7 @@ let pushMain (run: string -> string -> CommandResult) : unit = runOrFail run "jj
 ///
 /// `Workflow` is the publish workflow the run was asked about, and the only way to
 /// build one of these is to ask about such a workflow. That is the scoping
-/// The tracked issue asks for, done in the type: a run from any other workflow the tag
+/// to publishing workflows, done in the type: a run from any other workflow the tag
 /// triggered — this repo's docs deploy cancels all but one run per commit by design,
 /// and a multi-package release puts several tags on one commit — never becomes a
 /// `TagRunState`, so the fail-closed classification below cannot be applied to it.
@@ -440,7 +440,7 @@ let pushMain (run: string -> string -> CommandResult) : unit = runOrFail run "jj
 /// Parsed leniently on purpose. The caller asks for a fixed `--json` field set, but a
 /// record missing one of those fields must still COUNT AS A RUN: treating a short
 /// record as unparseable would turn "the release is happening" into "no run appeared",
-/// which is the exact confusion the tracked issue exists to remove.
+/// which is the exact confusion this poll was rewritten to remove.
 type internal TagRunState =
     { Workflow: PublishWorkflow
       Name: string
@@ -541,7 +541,7 @@ type internal TagRunOutcome =
 /// What ONE question to GitHub established about the run for a pushed tag — and the
 /// point of the type is what it cannot say.
 ///
-/// a release on 2026-09-16 pushed `v0.1.0-alpha.5`, asked, heard "no
+/// A release on 2026-09-16 pushed `v0.1.0-alpha.5`, asked, heard "no
 /// run", and printed `MISSING TRIGGER` — while the Release run registered seconds
 /// later and went green. The observation was true; the CONCLUSION was not, and the
 /// remedy printed with it (re-push the tag) would have published the version twice.
@@ -582,13 +582,13 @@ let internal settleAppearance (budgetSpent: bool) (appearance: TagRunAppearance)
 
 /// Ask GitHub whether `gitRef` has a workflow run, RETRYING while the answer is "none".
 ///
-/// this was one question, asked three seconds after the push. GitHub
+/// This was one question, asked three seconds after the push. GitHub
 /// registers a tag-push run seconds later rather than instantly, so three healthy
 /// FsHotWatch releases on 2026-09-04 were each reported as "no workflow run appeared" —
 /// and the remedy printed alongside that verdict, delete the tag and push it again,
 /// would have published every one of them twice.
 ///
-/// the loop is now written over `TagRunAppearance`, so "no run yet"
+/// The loop is now written over `TagRunAppearance`, so "no run yet"
 /// and "no run will appear" are different constructors rather than the same answer
 /// read at different times. The elapsed time reported on `Absent` is measured from
 /// the first question, never derived from the budget.
@@ -643,7 +643,7 @@ let internal waitForRunForRef
 /// tempts you into a batch push that GitHub then ignores entirely.
 /// Why a push failed, in the operator's terms rather than git's.
 ///
-/// raw `git push` against an HTTPS remote with no credential
+/// Raw `git push` against an HTTPS remote with no credential
 /// helper fails with git's generic "Please make sure you have the correct access
 /// rights and the repository exists." Both readings of that sentence were false
 /// in the incident it describes — the SSH agent was loaded and answering, and the
@@ -685,7 +685,7 @@ let internal diagnosePushFailure (run: string -> string -> CommandResult) (error
 /// Push one tag, preferring the repo's own VCS front-end.
 ///
 /// `jj git push --tag` is tried FIRST and raw `git push` only as a fallback,
-/// which is the ordering the tracked issue asks for: jj authenticates in exactly the
+/// because jj authenticates in exactly the
 /// environment where the shelled-out git cannot, so preferring it removes the
 /// credential question rather than diagnosing it. The fallback stays because a
 /// non-jj checkout is still a supported place to run this.
@@ -781,9 +781,10 @@ let internal envIntOrDefault (getEnv: string -> string option) (name: string) (f
 /// 5s x 120 = a ten-minute window for a workflow run to register. Generous on
 /// purpose: every observed appearance took seconds, and the cost of waiting too long
 /// is a slow release, while the cost of not waiting long enough was healthy releases
-/// reported broken with delete-and-re-push as the advice (the tracked issue,
-/// the tracked issue). The window is bounded so an orphan tag — pushed, and genuinely
-/// never picked up — is still reported rather than waited on forever.
+/// reported broken with delete-and-re-push as the advice (three FsHotWatch releases
+/// on 2026-09-04, and another on 2026-09-16). The window is bounded so an orphan
+/// tag — pushed, and genuinely never picked up — is still reported rather than
+/// waited on forever.
 let tagPushPolicyFromEnv (getEnv: string -> string option) : TagPushPolicy =
     { PushAttempts = 3
       PushRetryDelayMs = 3000
