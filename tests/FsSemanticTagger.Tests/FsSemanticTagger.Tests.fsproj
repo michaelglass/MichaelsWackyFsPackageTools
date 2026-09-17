@@ -23,7 +23,9 @@
     <Compile Include="ConfigTests.fs" />
     <Compile Include="ShellTests.fs" />
     <Compile Include="VcsTests.fs" />
+    <Compile Include="ReleaseOrderTests.fs" />
     <Compile Include="ReleaseTests.fs" />
+    <Compile Include="ReleaseWavesTests.fs" />
     <Compile Include="BumpTests.fs" />
     <Compile Include="ProgramTests.fs" />
     <Compile Include="GrammarDiffSpec.fs" />

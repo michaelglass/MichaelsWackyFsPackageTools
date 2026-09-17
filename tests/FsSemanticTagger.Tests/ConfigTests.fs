@@ -1110,3 +1110,35 @@ let ``transitiveBundledRefDirs - skips a missing referenced fsproj`` () =
         // missing file yields nothing further and does not throw.
         test <@ List.contains "src/B" result @>
         test <@ List.contains "src/Ghost" result @>)
+
+// --- transitiveProjectRefFsprojs / repoRelativeFsproj (I/O against a temp tree) ---
+
+[<Fact>]
+let ``transitiveProjectRefFsprojs lists every reachable fsproj, crossing released boundaries`` () =
+    withTempDir (fun root ->
+        // A library root: `transitiveBundledRefDirs` would stop at Core, but the
+        // release order needs to know A reaches Core AND what Core reaches.
+        writeFsprojWith root "src/A/A.fsproj" false [ "../Core/Core.fsproj"; "../B/B.fsproj" ]
+        writeFsprojWith root "src/B/B.fsproj" false [ "../Core/Core.fsproj" ]
+        writeFsprojWith root "src/Core/Core.fsproj" false [ "../Deep/Deep.fsproj" ]
+        writeFsprojWith root "src/Deep/Deep.fsproj" false []
+
+        let result = transitiveProjectRefFsprojs root "src/A/A.fsproj"
+
+        test <@ result = [ "src/Core/Core.fsproj"; "src/B/B.fsproj"; "src/Deep/Deep.fsproj" ] @>)
+
+[<Fact>]
+let ``transitiveProjectRefFsprojs never lists the starting fsproj, even through a cycle`` () =
+    withTempDir (fun root ->
+        writeFsprojWith root "src/A/A.fsproj" false [ "../B/B.fsproj" ]
+        writeFsprojWith root "src/B/B.fsproj" false [ "../A/A.fsproj" ]
+
+        test <@ transitiveProjectRefFsprojs root "src/A/A.fsproj" = [ "src/B/B.fsproj" ] @>)
+
+[<Fact>]
+let ``repoRelativeFsproj gives relative and absolute spellings of one fsproj the same identity`` () =
+    withTempDir (fun root ->
+        let absolute = Path.Combine(root, "src", "A", "A.fsproj")
+
+        test <@ repoRelativeFsproj root "src/A/A.fsproj" = "src/A/A.fsproj" @>
+        test <@ repoRelativeFsproj root absolute = "src/A/A.fsproj" @>)

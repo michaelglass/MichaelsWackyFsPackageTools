@@ -385,95 +385,143 @@ let internal reportTagConfirmationFailures (failures: TagConfirmationFailure lis
 
     if pushFailures.IsEmpty && failedRuns.IsEmpty then 2 else 1
 
-let private waitForCiAndPushTags (input: ReleaseInput) (bumps: (PackageConfig * Version) list) : int =
-    let run = input.Run
+/// Explain a NuGet wait that stopped before every package appeared. Exit 2 at the
+/// caller, never 1: the tags ARE pushed, so "I stopped waiting" is not "it failed".
+let private reportNuGetUnconfirmed (unconfirmed: (string * string) list) (waited: System.TimeSpan) : unit =
+    // Exit 2, and NOT 1. Three outcomes, three answers: 0 confirmed
+    // on the feed, 1 the publish demonstrably failed (CI red, tags not pushed), 2 the
+    // tags went and the packages have not appeared within the window.
+    //
+    // This used to `|> ignore` the result and return 0, so a release that gave up
+    // waiting reported success and the operator learned otherwise by diffing tags
+    // against nuget.org by hand.
+    //
+    // 2 rather than 1 because "I stopped waiting" is not "it failed": the packages
+    // may land minutes later, and calling that a failure would train people to re-run
+    // a release that already succeeded — a worse habit than the one being fixed.
+    //
+    // The number printed is the MEASURED wait, and the text names what
+    // the evidence of the publish actually is — the tags and their Release runs, not
+    // this poll.
+    printfn ""
 
-    let tags = bumps |> List.map (fun (pkg, version) -> toTag pkg.TagPrefix version)
+    printfn
+        "Release NOT CONFIRMED: %d package(s) had not appeared on NuGet when this poll stopped waiting after %s."
+        (List.length unconfirmed)
+        (formatElapsed waited)
 
-    let pkgVersions = bumps |> List.map (fun (pkg, version) -> pkg.Name, format version)
+    for id, ver in unconfirmed do
+        printfn "  unconfirmed: %s %s" id ver
 
+    printfn ""
+
+    printfn "This is NOT a failed publish. The tags ARE pushed and each has a Release run; those are the"
+
+    printfn "evidence of the publish. NuGet's index lags the Release run by 6-15 minutes (measured), and"
+
+    printfn "this poll only stopped watching for it."
+    printfn ""
+    printfn "Check https://www.nuget.org/packages/<id>/<version> for each. If the Release run itself"
+    printfn "failed rather than lagged, resume it with:  gh run rerun <id> --failed"
+    printfn ""
+    printfn "Re-running the same release command RESUMES this release — it detects the pushed tags and"
+    printfn "does not publish a second time. To wait longer next time, set FSHW_NUGET_PROBE_ATTEMPTS"
+    printfn "and/or FSHW_NUGET_PROBE_DELAY_MS."
+
+/// Push the release's tags wave by wave (`ReleaseOrder.waves`), so a package is never
+/// made visible before a separately released dependency that ships in the same
+/// release.
+///
+/// Every tag of a wave is pushed and its publish run confirmed, as for a single-wave
+/// release. When a later wave is waiting on this one, the exact versions of this wave
+/// must then be ON the feed before any later tag is pushed. That wait is not optional:
+/// `--skip-nuget-wait` skips only the final confirmation, because skipping a gate
+/// would let a dependent run race its dependency. When the gate gives up, the
+/// dependents' tags stay unpushed and the release exits 2; re-running the same
+/// command resumes it.
+let private pushTagsInWaves (input: ReleaseInput) (waves: (PackageConfig * Version) list list) : int =
+    let rec publish (remaining: (PackageConfig * Version) list list) =
+        match remaining with
+        | [] -> 0
+        | wave :: later ->
+            let tags = wave |> List.map (fun (pkg, version) -> toTag pkg.TagPrefix version)
+            let pkgVersions = wave |> List.map (fun (pkg, version) -> pkg.Name, format version)
+
+            // A tag can land on the remote and trigger no workflow at all (a batch push
+            // does exactly that), so confirm a run exists rather than claiming a release
+            // is happening.
+            let unconfirmedTags =
+                pushTagsAndConfirmDetailed input.Run input.Config.PublishWorkflows input.TagPush tags
+
+            if not (List.isEmpty unconfirmedTags) then
+                if not (List.isEmpty later) then
+                    printfn
+                        "Not pushing the tags of the packages that depend on them: %s"
+                        (later
+                         |> List.concat
+                         |> List.map (fun (pkg, version) -> toTag pkg.TagPrefix version)
+                         |> String.concat ", ")
+
+                reportTagConfirmationFailures unconfirmedTags
+            else
+                printfn "Tags pushed, and a workflow run exists for each. GitHub Actions will handle the release."
+
+                let gatesLater = not (List.isEmpty later)
+
+                if gatesLater || input.WaitForNuGet then
+                    if gatesLater then
+                        printfn
+                            "Waiting for %s on NuGet before pushing the packages that depend on them — up to %s (%d checks, %.0fs apart)..."
+                            (pkgVersions |> List.map (fun (id, ver) -> id + " " + ver) |> String.concat ", ")
+                            (formatElapsed (pollBudget input.NuGetPollIntervalMs input.NuGetMaxAttempts))
+                            input.NuGetMaxAttempts
+                            (float input.NuGetPollIntervalMs / 1000.0)
+                    else
+                        printfn
+                            "Waiting for NuGet to index the published package(s) — up to %s (%d checks, %.0fs apart); the index typically lags the Release run by 6-15 min..."
+                            (formatElapsed (pollBudget input.NuGetPollIntervalMs input.NuGetMaxAttempts))
+                            input.NuGetMaxAttempts
+                            (float input.NuGetPollIntervalMs / 1000.0)
+
+                    let unconfirmed, waited =
+                        waitForNuGetTimed
+                            input.CheckFeedPresence
+                            input.NuGetPollIntervalMs
+                            input.NuGetMaxAttempts
+                            pkgVersions
+
+                    if List.isEmpty unconfirmed then
+                        publish later
+                    else
+                        reportNuGetUnconfirmed unconfirmed waited
+
+                        if gatesLater then
+                            printfn ""
+
+                            printfn
+                                "The packages that depend on them were NOT published, so none can reach the feed ahead of its dependency. Their tags exist locally but are not pushed:"
+
+                            for pkg, version in List.concat later do
+                                printfn "  held back: %s" (toTag pkg.TagPrefix version)
+
+                            printfn
+                                "Re-running the same release command pushes them once the dependencies are on NuGet."
+
+                        2
+                else
+                    0
+
+    publish waves
+
+let private waitForCiAndPushTags
+    (input: ReleaseInput)
+    (graph: ReleaseOrder.ReleaseGraph)
+    (bumps: (PackageConfig * Version) list)
+    : int =
     printfn "Waiting for CI on the version-bump commit to pass before pushing the tag (expected, ~1-2 min)..."
 
-    let ciStatus = waitForCi run input.CiPollIntervalMs input.CiMaxAttempts
-
-    match ciStatus with
-    | Passed ->
-        // A tag can land on the remote and trigger no workflow at all (a batch push
-        // does exactly that), so confirm a run exists rather than claiming a release
-        // is happening.
-        let unconfirmed =
-            pushTagsAndConfirmDetailed run input.Config.PublishWorkflows input.TagPush tags
-
-        if not (List.isEmpty unconfirmed) then
-            reportTagConfirmationFailures unconfirmed
-        else
-
-            printfn "Tags pushed, and a workflow run exists for each. GitHub Actions will handle the release."
-
-            if input.WaitForNuGet then
-                printfn
-                    "Waiting for NuGet to index the published package(s) — up to %s (%d checks, %.0fs apart); the index typically lags the Release run by 6-15 min..."
-                    (formatElapsed (pollBudget input.NuGetPollIntervalMs input.NuGetMaxAttempts))
-                    input.NuGetMaxAttempts
-                    (float input.NuGetPollIntervalMs / 1000.0)
-
-                let unconfirmed, waited =
-                    waitForNuGetTimed
-                        input.CheckFeedPresence
-                        input.NuGetPollIntervalMs
-                        input.NuGetMaxAttempts
-                        pkgVersions
-
-                if List.isEmpty unconfirmed then
-                    0
-                else
-                    // exit 2, and NOT 1. Three outcomes, three
-                    // answers: 0 confirmed on the feed, 1 the publish demonstrably
-                    // failed (CI red, tags not pushed), 2 the tags went and the
-                    // packages have not appeared within the window.
-                    //
-                    // This used to `|> ignore` the result and return 0, so a
-                    // release that gave up waiting reported success and the
-                    // operator learned otherwise by diffing tags against
-                    // nuget.org by hand.
-                    //
-                    // 2 rather than 1 because "I stopped waiting" is not "it
-                    // failed": the packages may land minutes later, and calling
-                    // that a failure would train people to re-run a release that
-                    // already succeeded — a worse habit than the one being fixed.
-                    //
-                    // the number printed is the MEASURED wait, and
-                    // the text names what the evidence of the publish actually is —
-                    // the tags and their Release runs, not this poll.
-                    printfn ""
-
-                    printfn
-                        "Release NOT CONFIRMED: %d package(s) had not appeared on NuGet when this poll stopped waiting after %s."
-                        (List.length unconfirmed)
-                        (formatElapsed waited)
-
-                    for id, ver in unconfirmed do
-                        printfn "  unconfirmed: %s %s" id ver
-
-                    printfn ""
-
-                    printfn
-                        "This is NOT a failed publish. The tags ARE pushed and each has a Release run; those are the"
-
-                    printfn
-                        "evidence of the publish. NuGet's index lags the Release run by 6-15 minutes (measured), and"
-
-                    printfn "this poll only stopped watching for it."
-                    printfn ""
-                    printfn "Check https://www.nuget.org/packages/<id>/<version> for each. If the Release run itself"
-                    printfn "failed rather than lagged, resume it with:  gh run rerun <id> --failed"
-                    printfn ""
-                    printfn "Re-running the same release command RESUMES this release — it detects the pushed tags and"
-                    printfn "does not publish a second time. To wait longer next time, set FSHW_NUGET_PROBE_ATTEMPTS"
-                    printfn "and/or FSHW_NUGET_PROBE_DELAY_MS."
-                    2
-            else
-                0
+    match waitForCi input.Run input.CiPollIntervalMs input.CiMaxAttempts with
+    | Passed -> pushTagsInWaves input (ReleaseOrder.waves graph (fun (pkg: PackageConfig, _) -> pkg.Name) bumps)
     | Failed runs ->
         printfn "Error: CI failed on version bump commit. Not pushing tags."
 
@@ -1179,7 +1227,11 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                     Some(NeedsBump(pkg, v, OwnChange))
             | _ -> explicitBump OwnChange
 
-let private resumeAlreadyBumped (input: ReleaseInput) (alreadyBumped: (PackageConfig * Version) list) : int =
+let private resumeAlreadyBumped
+    (input: ReleaseInput)
+    (graph: ReleaseOrder.ReleaseGraph)
+    (alreadyBumped: (PackageConfig * Version) list)
+    : int =
     printfn "\nResuming in-progress release (versions already bumped, tags not yet pushed):"
 
     for (pkg, version) in alreadyBumped do
@@ -1199,7 +1251,7 @@ let private resumeAlreadyBumped (input: ReleaseInput) (alreadyBumped: (PackageCo
             if not (tagExists input.Run tag) then
                 tagRevision input.Run tag "main"
 
-        waitForCiAndPushTags input alreadyBumped
+        waitForCiAndPushTags input graph alreadyBumped
     | LocalPublish -> packLocally input.Run alreadyBumped
 
 /// The changelog bullet auto-inserted for a dependency-triggered rebundle bump
@@ -1209,6 +1261,7 @@ let internal rebundleChangelogBullet =
 
 let private executeBumps
     (input: ReleaseInput)
+    (graph: ReleaseOrder.ReleaseGraph)
     (needsBump: (PackageConfig * Version * BumpTrigger) list)
     (alreadyBumped: (PackageConfig * Version) list)
     : int =
@@ -1218,6 +1271,15 @@ let private executeBumps
 
     for (pkg, version) in allBumps do
         printfn "  %s -> %s (tag: %s)" pkg.Name (format version) (toTag pkg.TagPrefix version)
+
+    match ReleaseOrder.waves graph (fun (pkg: PackageConfig, _) -> pkg.Name) allBumps with
+    | [ _ ] -> ()
+    | waves ->
+        printfn "\nPublication order (each wave waits for the previous one to be on NuGet):"
+
+        waves
+        |> List.iteri (fun index wave ->
+            printfn "  %d. %s" (index + 1) (wave |> List.map (fun (pkg, _) -> pkg.Name) |> String.concat ", "))
 
     // Only OwnChange bumps are planned: the same `promotionPlans` `--check` reads,
     // so the release writes what the check reported. A plan is an error only when
@@ -1308,7 +1370,7 @@ let private executeBumps
                 let tag = toTag pkg.TagPrefix version
                 tagRevision input.Run tag "main"
 
-            waitForCiAndPushTags input allBumps
+            waitForCiAndPushTags input graph allBumps
         | LocalPublish -> packLocally input.Run allBumps
         | DryRun -> 0
 
@@ -1439,37 +1501,48 @@ let release (input: ReleaseInput) : int =
                 if needsBuild then
                     runPreBuild input
 
-                let decisions = selectedPackages |> List.choose (decideBump input)
-
-                let cannotDetermine =
-                    decisions
-                    |> List.choose (function
-                        | CannotDetermine(p, reason) -> Some(p, reason)
-                        | _ -> None)
-
-                let needsBump =
-                    decisions
-                    |> List.choose (function
-                        | NeedsBump(p, v, trigger) -> Some(p, v, trigger)
-                        | _ -> None)
-
-                let alreadyBumped =
-                    decisions
-                    |> List.choose (function
-                        | AlreadyBumped(p, v) -> Some(p, v)
-                        | _ -> None)
-
-                if not cannotDetermine.IsEmpty then
-                    printfn "\nError: cannot determine the version bump. Aborting before any writes."
-
-                    for (pkg, reason) in cannotDetermine do
-                        printfn "  %s: %s" pkg.Name reason
-
+                // The publication order is derived from the WHOLE repo's packages, not the
+                // `--only` selection: a dependency that is not being released still
+                // links a dependent to a dependency behind it. Decided before any write,
+                // so a cycle or an fsproj owned by two packages refuses the release while
+                // nothing has changed.
+                match ReleaseOrder.fromConfig input.Config with
+                | Error reason ->
+                    printfn "\nError: cannot order the release: %s Aborting before any writes." reason
                     1
-                elif needsBump.IsEmpty && alreadyBumped.IsEmpty then
-                    printfn "No packages to release"
-                    0
-                elif needsBump.IsEmpty then
-                    resumeAlreadyBumped input alreadyBumped
-                else
-                    executeBumps input needsBump alreadyBumped
+                | Ok graph ->
+
+                    let decisions = selectedPackages |> List.choose (decideBump input)
+
+                    let cannotDetermine =
+                        decisions
+                        |> List.choose (function
+                            | CannotDetermine(p, reason) -> Some(p, reason)
+                            | _ -> None)
+
+                    let needsBump =
+                        decisions
+                        |> List.choose (function
+                            | NeedsBump(p, v, trigger) -> Some(p, v, trigger)
+                            | _ -> None)
+
+                    let alreadyBumped =
+                        decisions
+                        |> List.choose (function
+                            | AlreadyBumped(p, v) -> Some(p, v)
+                            | _ -> None)
+
+                    if not cannotDetermine.IsEmpty then
+                        printfn "\nError: cannot determine the version bump. Aborting before any writes."
+
+                        for (pkg, reason) in cannotDetermine do
+                            printfn "  %s: %s" pkg.Name reason
+
+                        1
+                    elif needsBump.IsEmpty && alreadyBumped.IsEmpty then
+                        printfn "No packages to release"
+                        0
+                    elif needsBump.IsEmpty then
+                        resumeAlreadyBumped input graph alreadyBumped
+                    else
+                        executeBumps input graph needsBump alreadyBumped

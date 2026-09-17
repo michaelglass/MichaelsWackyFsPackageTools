@@ -43,6 +43,7 @@
     <Compile Include="Api.fs" />
     <Compile Include="Grammar.fs" />
     <Compile Include="Config.fs" />
+    <Compile Include="ReleaseOrder.fs" />
     <Compile Include="Vcs.fs" />
     <Compile Include="Release.fs" />
     <Compile Include="Program.fs" />
