@@ -163,7 +163,7 @@ All release commands (`release`, `alpha`, `beta`, `rc`, `stable`) accept:
 
 - `--dry-run` — preview version bumps without modifying files or creating tags. Skips the clean-working-copy and CI checks; still builds and compares APIs so the preview is accurate. Missing or empty `## Unreleased` sections are reported as warnings instead of aborting.
 - `--publish` — build and pack locally (`dotnet pack -c Release -o artifacts/`) instead of pushing tags for CI to publish.
-- `--skip-nuget-wait` — after pushing tags, exit immediately instead of polling NuGet until the published package(s) are restorable. By default the command waits up to **20 minutes** (81 checks, 15s apart) for the new version(s) to be indexed — NuGet's index typically lags the Release run by 6-15 minutes. If the poll gives up it **exits 2**, prints the wait it actually performed, and says so in terms that are not a failed publish: the tags are pushed and each has a Release run; re-running the same release command resumes rather than re-publishes. Override the budget with `FSHW_NUGET_PROBE_ATTEMPTS` / `FSHW_NUGET_PROBE_DELAY_MS` (the same variables FsHotWatch's release barrier reads).
+- `--skip-nuget-wait` — after pushing tags, exit immediately instead of polling NuGet until the published package(s) are restorable. By default the command waits up to **20 minutes** (81 checks, 15s apart) for the new version(s) to be indexed — NuGet's index typically lags the Release run by 6-15 minutes. If the poll gives up it **exits 2**, prints the wait it actually performed, and says so in terms that are not a failed publish: the tags are pushed and each has a Release run; re-running the same release command resumes rather than re-publishes. Override the budget with `FSHW_NUGET_PROBE_ATTEMPTS` / `FSHW_NUGET_PROBE_DELAY_MS` (the same variables FsHotWatch's release barrier reads). In a release where one package depends on another, this flag skips only the confirmation of the last wave: the wait between a dependency and its dependents is never skipped (see [Publication order](#publication-order)).
 - `--only <names>` — restrict the run to specific package(s) by name (comma-separated; e.g. `--only Foo,Bar`). Names match the `name` field of entries in `semantic-tagger.json`. When omitted, **all** packages are processed (the default). Only the selected packages are considered for version computation and tagging; the rest are out of scope entirely (not bumped, not tagged, not even reported as "skipped"). An unknown name aborts with exit code 1 and lists the valid names — it never silently no-ops.
 - `--push` — if the release commit isn't on the remote yet, push it and wait for its CI to finish, then proceed. The default is to **fail fast** with a "push first" message rather than push implicitly (unsafe on a branch-protected / PR-gated `main`). A commit that *is* already pushed is always waited on regardless of this flag. See [Fail-fast CI precondition](#fail-fast-ci-precondition).
 
@@ -189,6 +189,20 @@ fssemantictagger release
 # Push the release commit and wait for its CI, then release (one shot)
 fssemantictagger release --push
 ```
+
+### Publication order
+
+Each package is published by its own tag, and each tag starts its own Release run, so nothing in CI orders them. When a release includes a package and a separately released package it references (directly or through other projects' `<ProjectReference>`s), `release` publishes in **waves**:
+
+1. The tags of every package with no dependency in this release are pushed, and each tag's publish run is confirmed.
+2. The exact version of each of those packages must be **on NuGet** before any tag of the next wave is pushed.
+3. The next wave is the packages whose dependencies are now all published, and so on.
+
+The order comes from the `<ProjectReference>` graph on disk, not from the order of `packages` in `semantic-tagger.json`: a CLI listed before a library it references is still published after it. Packages that do not depend on each other share a wave and are pushed in config order. A dependency that is not part of this release adds no wait, but a dependency reached through it still does. `--dry-run` prints the waves when there is more than one.
+
+The graph is checked before anything is written. `release` refuses to start (exit **1**) when packages depend on each other in a cycle, when one fsproj belongs to two packages (as a package's `fsproj` or in `fsProjsSharingSameTag`), or when two packages share a name.
+
+If a dependency does not reach NuGet in time, its dependents' tags are **not pushed** and the release exits **2**. The tags exist locally; running the same release command again resumes and pushes them once the dependency is published.
 
 ### Post-push waits and their exit codes
 

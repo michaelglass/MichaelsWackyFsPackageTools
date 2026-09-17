@@ -95,7 +95,9 @@ let deriveDllPath (fsprojPath: string) : string =
 /// whitespace. The raw Include string is returned verbatim (back- or
 /// forward-slashes preserved); path normalisation is the caller's job.
 let parseProjectReferenceIncludes (content: string) : string list =
-    [ for m in projectReferenceIncludeRegex.Matches(content) -> m.Groups[1].Value ]
+    projectReferenceIncludeRegex.Matches(content)
+    |> Seq.map (fun m -> m.Groups[1].Value)
+    |> List.ofSeq
 
 /// Normalise an arbitrary path to a repo-root-relative directory using forward
 /// slashes and no trailing slash. `rootDir` and `absolutePath` are both
@@ -114,6 +116,51 @@ let private toRepoRelativeDir (rootDir: string) (absolutePath: string) : string 
 let private toRepoRelativeFsproj (rootDir: string) (absolutePath: string) : string =
     let full = Path.GetFullPath(absolutePath)
     Path.GetRelativePath(Path.GetFullPath(rootDir), full).Replace('\\', '/')
+
+/// Walk the `<ProjectReference>` graph breadth-first from `fsprojRelPath`
+/// (relative to `rootDir`) and return every reference edge the walk follows, as
+/// `(repoRelativeFsproj, absoluteFsproj)` pairs in discovery order (duplicates
+/// possible when two projects reference the same one). See
+/// `transitiveBundledRefDirs` for the bundling rule and traversal semantics.
+let private walkBundledReferences
+    (rootDir: string)
+    (fsprojRelPath: string)
+    (isSeparatelyReleased: string -> bool)
+    : (string * string) list =
+    let rootFsprojFull = Path.GetFullPath(Path.Combine(rootDir, fsprojRelPath))
+
+    let rootIsTool =
+        File.Exists(rootFsprojFull) && isPackAsTool (File.ReadAllText(rootFsprojFull))
+
+    let visited = System.Collections.Generic.HashSet<string>()
+    let followed = ResizeArray<string * string>()
+
+    // Breadth-first traversal: a project's *direct* references are recorded (in
+    // declaration order) before descending into any of them. This yields a
+    // stable "siblings before descendants" order — e.g. the diamond
+    // A -> {B, C} -> D lists [B; C; D] rather than the depth-first [B; D; C].
+    let queue = System.Collections.Generic.Queue<string>()
+    queue.Enqueue(rootFsprojFull)
+
+    while queue.Count > 0 do
+        let key = Path.GetFullPath(queue.Dequeue())
+
+        if visited.Add(key) && File.Exists(key) then
+            let content = File.ReadAllText(key)
+            let referencingDir = Path.GetDirectoryName(key)
+
+            for incl in parseProjectReferenceIncludes content do
+                let normalisedIncl = incl.Replace('\\', '/')
+                let refFull = Path.GetFullPath(Path.Combine(referencingDir, normalisedIncl))
+                let refRel = toRepoRelativeFsproj rootDir refFull
+
+                // A separately-published reference is a NuGet-dependency boundary:
+                // skip it and do not recurse past it.
+                if rootIsTool || not (isSeparatelyReleased refRel) then
+                    followed.Add((refRel, refFull))
+                    queue.Enqueue(refFull)
+
+    List.ofSeq followed
 
 /// Resolve the transitive `<ProjectReference>` closure of `fsprojRelPath`
 /// (relative to `rootDir`) restricted to the references whose DLL actually
@@ -146,47 +193,13 @@ let transitiveBundledRefDirs
     (fsprojRelPath: string)
     (isSeparatelyReleased: string -> bool)
     : string list =
-    let rootFsprojFull = Path.GetFullPath(Path.Combine(rootDir, fsprojRelPath))
-    let ownDir = toRepoRelativeDir rootDir rootFsprojFull
+    let ownDir =
+        toRepoRelativeDir rootDir (Path.GetFullPath(Path.Combine(rootDir, fsprojRelPath)))
 
-    let rootIsTool =
-        File.Exists(rootFsprojFull) && isPackAsTool (File.ReadAllText(rootFsprojFull))
-
-    let visited = System.Collections.Generic.HashSet<string>()
-    let ordered = ResizeArray<string>()
-    let seenDirs = System.Collections.Generic.HashSet<string>()
-
-    // Breadth-first traversal: a project's *direct* references are recorded (in
-    // declaration order) before descending into any of them. This yields a
-    // stable "siblings before descendants" order — e.g. the diamond
-    // A -> {B, C} -> D lists [B; C; D] rather than the depth-first [B; D; C].
-    let queue = System.Collections.Generic.Queue<string>()
-    queue.Enqueue(rootFsprojFull)
-
-    while queue.Count > 0 do
-        let key = Path.GetFullPath(queue.Dequeue())
-
-        if visited.Add(key) && File.Exists(key) then
-            let content = File.ReadAllText(key)
-            let referencingDir = Path.GetDirectoryName(key)
-
-            for incl in parseProjectReferenceIncludes content do
-                let normalisedIncl = incl.Replace('\\', '/')
-                let refFull = Path.GetFullPath(Path.Combine(referencingDir, normalisedIncl))
-                let refDir = toRepoRelativeDir rootDir refFull
-                let refRel = toRepoRelativeFsproj rootDir refFull
-
-                // A separately-published reference is a NuGet-dependency boundary:
-                // skip it and do not recurse past it.
-                let bundled = rootIsTool || not (isSeparatelyReleased refRel)
-
-                if bundled then
-                    if refDir <> ownDir && seenDirs.Add(refDir) then
-                        ordered.Add(refDir)
-
-                    queue.Enqueue(refFull)
-
-    List.ofSeq ordered
+    walkBundledReferences rootDir fsprojRelPath isSeparatelyReleased
+    |> List.map (fun (_, refFull) -> toRepoRelativeDir rootDir refFull)
+    |> List.filter (fun dir -> dir <> ownDir)
+    |> List.distinct
 
 /// Resolve the FULL transitive `<ProjectReference>` closure of `fsprojRelPath`
 /// (relative to `rootDir`), with no dependency boundaries. Equivalent to
@@ -194,6 +207,24 @@ let transitiveBundledRefDirs
 /// function for traversal semantics.
 let transitiveProjectRefDirs (rootDir: string) (fsprojRelPath: string) : string list =
     transitiveBundledRefDirs rootDir fsprojRelPath (fun _ -> false)
+
+/// The repo-root-relative fsproj path (forward slashes) of `fsprojPath`, which may
+/// be relative to `rootDir` or absolute. The identity a `semantic-tagger.json`
+/// `fsproj` value and a resolved `<ProjectReference>` are compared by.
+let repoRelativeFsproj (rootDir: string) (fsprojPath: string) : string =
+    toRepoRelativeFsproj rootDir (Path.Combine(rootDir, fsprojPath))
+
+/// Every fsproj reachable from `fsprojRelPath` through `<ProjectReference>`, with
+/// no dependency boundaries, as de-duplicated repo-root-relative fsproj paths in
+/// breadth-first discovery order. The starting fsproj itself is not listed, even
+/// when a reference cycle leads back to it.
+let transitiveProjectRefFsprojs (rootDir: string) (fsprojRelPath: string) : string list =
+    let own = repoRelativeFsproj rootDir fsprojRelPath
+
+    walkBundledReferences rootDir fsprojRelPath (fun _ -> false)
+    |> List.map fst
+    |> List.filter (fun fsproj -> fsproj <> own)
+    |> List.distinct
 
 /// Find all packable fsproj files, returning (packageName, relativePath) list.
 ///

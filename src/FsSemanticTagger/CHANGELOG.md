@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- fix: **a package is no longer published before a separately released dependency that ships in the same release.** Tags were pushed in `semantic-tagger.json` order with nothing waiting between them, and each tag starts its own Release run. On FsHotWatch the CLI is listed before `FsHotWatch.TestPrune`, which it references; both runs started within two seconds of each other, and TestPrune reached NuGet first only because its run happened to finish 37 seconds sooner.
+  - New `ReleaseOrder` module. `ReleaseOrder.fromConfig` reads each package's `<ProjectReference>` closure (its own fsproj and its `fsProjsSharingSameTag`) and builds a `ReleaseGraph` of which packages depend on which, directly or transitively. `ReleaseOrder.build` is the pure part and refuses a dependency cycle (naming the loop), an fsproj claimed by two packages, or two packages with one name. `ReleaseOrder.waves` groups the packages being released so each dependency is in an earlier wave than its dependents; packages that do not depend on each other share a wave and keep their config order.
+  - `release` builds the graph before any write and exits 1 if it is refused. Tags are then pushed wave by wave: each wave's publish runs are confirmed, and the exact versions must be on NuGet before the next wave's tags are pushed. If they do not appear in time, the dependents' tags are held back (listed as `held back:`) and the release exits 2; running the same command again resumes. If a dependency's tag push or publish run fails, its dependents' tags are not pushed.
+  - `--skip-nuget-wait` now skips only the confirmation of the last wave. The wait between a dependency and its dependents cannot be skipped. The help text, which still said the poll never changes the exit code, is corrected.
+  - `--dry-run` and the release plan print the publication waves when there is more than one.
+  - `Config.transitiveProjectRefFsprojs` (every fsproj reachable through `<ProjectReference>`) and `Config.repoRelativeFsproj` are new. `transitiveBundledRefDirs` now uses the same traversal and returns the same result.
+
 ## 0.14.0-alpha.11 - 2026-09-16
 
 - fix: **`release --check` no longer certifies a changelog that promotion does not deliver, and a dependency bump can no longer vanish from a release's changelog** (defect 2). Releasing `SqlHydra.Query.Pgvector` 0.1.0-alpha.5, `alpha --check` passed on its stated contract of an Unreleased entry "authored or derivable", while promotion copied only the authored block and derived nothing from the other 14 commits. The published changelog omitted the one change a consumer could observe: `SqlHydra.Query` 4.1.0-beta.2 → 4.1.0-beta.3.

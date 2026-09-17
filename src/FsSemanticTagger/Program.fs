@@ -266,7 +266,8 @@ Flags:
                      itself)
   --skip-nuget-wait  after pushing tags, exit immediately instead of
                      polling NuGet until the published package(s) are
-                     restorable (the poll never changes the exit code)
+                     restorable (a package's dependents still wait for
+                     it to be on NuGet before their tags are pushed)
   --only <names>     restrict the run to specific package(s) by name
                      (comma-separated, e.g. --only Foo,Bar). Names match
                      the "name" field in semantic-tagger.json. Absent =
