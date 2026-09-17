@@ -68,7 +68,7 @@ When adding a feature or breaking change that sibling repos consume:
 
 1. Ship it in this monorepo first (new version).
 2. Wait for NuGet indexing (check `https://api.nuget.org/v3-flatcontainer/<package>/index.json` — usually <5 min for alpha).
-3. Open PRs in sibling repos to bump their `.config/dotnet-tools.json` (and `mise.toml` if the CLI changed). Sibling list is in `.claude/projects/.../memory/project_oss_repos.md` or just check `ls /Users/michaelglass/Developer/opensource/`.
+3. Open PRs in sibling repos to bump their `.config/dotnet-tools.json` (and `mise.toml` if the CLI changed). To find them, search the author's GitHub repositories for consumers of the changed tool (its `.config/dotnet-tools.json` entry).
 
 ## Don'ts
 
