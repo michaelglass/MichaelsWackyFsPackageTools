@@ -9,6 +9,12 @@
   - `--dry-run` and the release plan print the publication waves when there is more than one.
   - `Config.transitiveProjectRefFsprojs` (every fsproj reachable through `<ProjectReference>`) and `Config.repoRelativeFsproj` are new. `transitiveBundledRefDirs` now uses the same traversal and returns the same result.
 
+- feat: **a breaking change declared in the changelog can no longer ship as a patch.** The API diff cannot see a changed `[<Literal>]`, which is inlined into consumers when they compile. A package changed its `SchemaVersion` literal, declared it with a `feat!:` entry, and `release` planned a patch because it never read that entry.
+  - `release` in auto mode now reads the entries it will publish (the authored `## Unreleased` section, or the entries derived from commit summaries when the section is empty) for conventional-commit markers at the start of an entry. `<type>!:` or `BREAKING CHANGE:` sets a floor of a breaking change, and `feat:` a floor of an addition. The bump is the stronger of the declared and the computed change, taken across every changelog behind the tag.
+  - Every disagreement is printed, in either direction: when the changelog raised the bump, and when the API diff found more than the changelog declares. A changelog with no markers bumps exactly as before.
+  - New pure module `DeclaredBump` (`markerLevel`, `declare`, `strongest`, `floor`) and `Changelog.promotedEntryLines`.
+  - Comparing `[<Literal>]` values in the API diff was considered and deferred: it would major-bump every package whose internal constants move, to catch only an author who forgot to declare.
+
 ## 0.14.0-alpha.11 - 2026-09-16
 
 - fix: **`release --check` no longer certifies a changelog that promotion does not deliver, and a dependency bump can no longer vanish from a release's changelog** (defect 2). Releasing `SqlHydra.Query.Pgvector` 0.1.0-alpha.5, `alpha --check` passed on its stated contract of an Unreleased entry "authored or derivable", while promotion copied only the authored block and derived nothing from the other 14 commits. The published changelog omitted the one change a consumer could observe: `SqlHydra.Query` 4.1.0-beta.2 → 4.1.0-beta.3.

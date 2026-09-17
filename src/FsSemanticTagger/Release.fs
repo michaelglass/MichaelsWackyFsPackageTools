@@ -1036,6 +1036,23 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
             let ownChanged = hasChangesSinceTag input.Run tag ownSrcDir
             let depChanged = depDirs |> List.exists (hasChangesSinceTag input.Run tag)
 
+            // An own-change Auto bump from the computed `change`, floored by what the
+            // changelog(s) behind this tag declare (`DeclaredBump`): the API diff cannot
+            // see a changed `[<Literal>]`, but an author who wrote `feat!:` has said it
+            // breaks. Every disagreement is printed; no markers leaves `change` as is.
+            let ownChangeBump (change: ApiChange) =
+                let declared =
+                    changelogPathsFor input.Config pkg
+                    |> List.choose (fun (_, path) ->
+                        Changelog.promotedEntryLines path (fun () ->
+                            descriptionsSinceTag input.Run tag (packageChangeDirs input.Config pkg))
+                        |> DeclaredBump.declare path)
+                    |> DeclaredBump.strongest
+
+                let floored, report = DeclaredBump.floor change declared
+                report |> Option.iter (printfn "%s: %s" pkg.Name)
+                Some(toDecision OwnChange (skipReserved (determineBump currentVersion floored)))
+
             match ownChanged, depChanged with
             | false, false ->
                 // Nothing left to BUILD — but that is a FINISHED release only if the
@@ -1103,7 +1120,7 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                             pkg.Name
                             tag
 
-                        Some(toDecision OwnChange (skipReserved (determineBump currentVersion change)))
+                        ownChangeBump change
                     | None, Some _ ->
                         // FAIL CLOSED. This package HAS a CLI grammar, but the previous
                         // release's could not be read — the extractor is cache-only and
@@ -1134,7 +1151,7 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                             pkg.Name
                             tag
 
-                        Some(toDecision OwnChange (skipReserved (determineBump currentVersion NoChange)))
+                        ownChangeBump NoChange
                 | Auto, false ->
                     // Diff against the most recent *published* prior release,
                     // walking back past any orphan tags (whose package never landed
@@ -1161,7 +1178,7 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                             reason
                             (format currentVersion)
 
-                        Some(toDecision OwnChange (skipReserved (determineBump currentVersion NoChange)))
+                        ownChangeBump NoChange
                     | BaselineUnreadable(unreadableTag, reason) ->
                         // FAIL CLOSED. The release this one follows IS published, so it
                         // is the only correct baseline; walking back to an older tag
@@ -1183,7 +1200,7 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                         // against, and so no breaking-change risk to guard (no consumer
                         // ever received those releases). Bump conservatively off the
                         // latest tag rather than aborting.
-                        Some(toDecision OwnChange (skipReserved (determineBump currentVersion NoChange)))
+                        ownChangeBump NoChange
                     | BaselineFound(baselineVersion, oldApi) ->
                         let currentApi = input.ExtractCurrentApi pkg.DllPath
                         let apiChange = compare oldApi currentApi
@@ -1201,7 +1218,7 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                                 Grammar.foldIntoApi apiChange (Grammar.compare previousGrammar currentGrammar)
                             | _ -> apiChange
 
-                        Some(toDecision OwnChange (skipReserved (determineBump currentVersion change)))
+                        ownChangeBump change
                 | _ -> explicitBump OwnChange
         | FirstRelease ->
             match input.Command with

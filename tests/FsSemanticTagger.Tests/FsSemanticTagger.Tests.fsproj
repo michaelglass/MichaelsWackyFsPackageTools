@@ -27,6 +27,7 @@
     <Compile Include="ReleaseTests.fs" />
     <Compile Include="ReleaseWavesTests.fs" />
     <Compile Include="BumpTests.fs" />
+    <Compile Include="DeclaredBumpTests.fs" />
     <Compile Include="ProgramTests.fs" />
     <Compile Include="GrammarDiffSpec.fs" />
   </ItemGroup>

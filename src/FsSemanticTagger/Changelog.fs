@@ -189,7 +189,7 @@ let validateCalloutOrder (changelogPath: string) : Result<unit, ChangelogError> 
 
 /// Conventional-commit types recognised for changelog grouping. An unrecognised
 /// prefix (or no prefix) falls into the "other" group and is kept verbatim.
-let private conventionalTypes =
+let internal conventionalTypes =
     set
         [ "feat"
           "fix"
@@ -206,7 +206,7 @@ let private conventionalTypes =
 /// Matches a conventional-commit prefix at the start of a summary line:
 /// `<type>` (letters), an optional `(scope)`, an optional `!` breaking marker,
 /// then a colon. Captures the type (1) and the breaking marker (3).
-let private conventionalPrefixRegex =
+let internal conventionalPrefixRegex =
     System.Text.RegularExpressions.Regex(
         @"^([a-zA-Z]+)(\([^)]*\))?(!)?:",
         System.Text.RegularExpressions.RegexOptions.Compiled
@@ -469,6 +469,18 @@ let private unreleasedEntries (lines: string[]) : (int * string)[] =
     |> Array.skip (1 + Array.findIndex isUnreleasedHeading lines)
     |> Array.takeWhile (fun (_, l) -> not (isLevel2Heading l))
     |> Array.filter (fun (_, l) -> not (String.IsNullOrWhiteSpace l))
+
+/// The entry lines promotion will publish as `changelogPath`'s release notes,
+/// before dependency bullets: the authored `## Unreleased` entries when the section
+/// has content, otherwise the bullets derived from `descriptions` — the same choice
+/// `planPromotion` makes. `descriptions` is only called when the section is
+/// unauthored, so an authored changelog costs no VCS query. Read for the bump a
+/// release declares (`DeclaredBump`); dependency bullets are tool-written, not
+/// declared, so they are not included.
+let promotedEntryLines (changelogPath: string) (descriptions: unit -> string list) : string list =
+    match validateUnreleased changelogPath with
+    | Ok() -> unreleasedEntries (File.ReadAllLines changelogPath) |> Seq.map snd |> Seq.toList
+    | Error _ -> deriveUnreleasedBullets (descriptions ())
 
 /// Where the promoted section's entries come from.
 type UnreleasedSource =
