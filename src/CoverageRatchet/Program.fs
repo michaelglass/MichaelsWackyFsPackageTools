@@ -101,7 +101,7 @@ let private reportCountFailures (configPath: string) (failed: CountResult list) 
     printfn "  - you deliberately deleted covered code -> re-baseline it:"
     printfn "      coverageratchet baseline-lines %s" configPath
 
-/// the cheap half: a coverage report with no F# file in it used
+/// Unmeasured floors, the cheap half: a coverage report with no F# file in it used
 /// to print one line and exit 0.
 ///
 /// Zero files examined is not zero files failing. Every way of arriving here is
@@ -117,7 +117,7 @@ let private reportNothingMeasured () =
     printfn "  - the test run collected no coverage (collector off, or the run crashed)"
     printfn "  - the report was read while it was still being written"
 
-/// the expensive half: name every configured floor the report
+/// Unmeasured floors, the expensive half: name every configured floor the report
 /// could not speak to. No-ops on an empty list so callers need no guard.
 let private reportUnmeasuredFloors (configPath: string) (unmeasured: UnmeasuredFloor list) =
     if not (List.isEmpty unmeasured) then

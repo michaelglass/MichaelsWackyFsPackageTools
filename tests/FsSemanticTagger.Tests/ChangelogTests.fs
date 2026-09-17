@@ -317,7 +317,7 @@ let ``deriveUnreleasedBullets skips leading blank lines to find the summary`` ()
     test <@ deriveUnreleasedBullets [ "\n\nfeat: after leading blank" ] = [ "- feat: after leading blank" ] @>
 
 // --- consumer-visible PackageReference changes ---------------------------
-// defect 2: releasing SqlHydra.Query.Pgvector 0.1.0-alpha.5
+// Releasing SqlHydra.Query.Pgvector 0.1.0-alpha.5
 // promoted only the authored `## Unreleased` block, so the published changelog
 // omitted the one change a consumer could observe — a PackageReference bump of
 // SqlHydra.Query 4.1.0-beta.2 -> 4.1.0-beta.3. A dependency version is a fact in

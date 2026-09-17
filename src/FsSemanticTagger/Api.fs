@@ -485,8 +485,8 @@ type PreviousApiResult =
     /// The package was obtained (it is in the NuGet cache), but its API could not
     /// be read: it ships no assembly, or the assembly failed to load (an
     /// unresolvable dependency). Carries why. This is NOT evidence that the
-    /// version is unpublished — treating it as such is the bug,
-    /// which diffed a release against an older baseline than the one it follows.
+    /// version is unpublished — treating it as such was the bug
+    /// that diffed a release against an older baseline than the one it follows.
     | Unreadable of reason: string
     /// `dotnet restore` reported the package or version does not exist (NU1101 /
     /// NU1102). Carries the restore output. Whether the version is really absent

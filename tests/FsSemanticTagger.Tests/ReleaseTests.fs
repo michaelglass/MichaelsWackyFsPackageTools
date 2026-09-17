@@ -14,7 +14,7 @@ open FsSemanticTagger.Api
 open FsSemanticTagger.Vcs
 
 /// Zero waits everywhere, and ONE question about the workflow run — the behaviour
-/// The tracked issue replaced in production. Tests that care about the poll pass their
+/// the bounded run poll replaced in production. Tests that care about the poll pass their
 /// own policy; every other test just must not sleep for five minutes.
 let private immediateTagPush: TagPushPolicy =
     { PushAttempts = 1
@@ -107,7 +107,7 @@ let ``tag confirmation output keeps a missing trigger distinct from a failed pus
                       true
                   ) ])
 
-    // 2, not 1. "No run has appeared yet" is not "the release failed",
+    // Exit 2, not 1. "No run has appeared yet" is not "the release failed",
     // and this used to exit 1 — which is how three healthy FsHotWatch releases on
     // 2026-09-04 each looked identical to a broken one from the exit code alone.
     test <@ result = 2 @>
@@ -2927,7 +2927,7 @@ let ``waitForNuGet - returns NO unconfirmed packages when all are already publis
 
     let result = waitForNuGet checkFeedPresence 0 5 [ "PkgA", "1.0.0"; "PkgB", "2.0.0" ]
 
-    // the unconfirmed LIST, empty when everything is on the feed.
+    // The unconfirmed LIST, empty when everything is on the feed.
     test <@ List.isEmpty result @>
     // One check per package, no polling rounds beyond the first.
     test <@ checks = 2 @>
@@ -4919,7 +4919,7 @@ let ``release --check passes when the package has no own-source changes since it
         let result = release (releaseInput run config Auto PushTags true)
         test <@ result = 0 @>)
 
-// --- defect 2: --check and promotion agree --------------------
+// --- --check and promotion agree ------------------------------
 // `--check` used to pass on "authored OR derivable" while promotion copied only
 // the authored block, so releasing SqlHydra.Query.Pgvector 0.1.0-alpha.5 published
 // a changelog without its one consumer-visible change (a PackageReference bump).

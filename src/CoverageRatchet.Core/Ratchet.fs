@@ -209,7 +209,7 @@ let ratchetCountFloorsRaw (raw: RawConfig) (files: FileCoverage list) : RawConfi
 /// Baselined floors are written PLATFORM-LESS, so one baseline run guards every
 /// platform. The alternative — tagging them with the machine that measured them —
 /// would make a floor baselined on macOS invisible to a Linux-only CI, which is
-/// the failure mode the tracked issue records for percentage floors.
+/// exactly how a red macOS percentage floor went unseen by remote CI.
 let baselineCountFloorsRaw (raw: RawConfig) (files: FileCoverage list) : RawConfig =
     let resolved = resolveConfig raw
     let baselined = baselineCountFloors resolved files
