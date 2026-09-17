@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.12 - 2026-09-17
+
 - fix: **a package is no longer published before a separately released dependency that ships in the same release.** Tags were pushed in `semantic-tagger.json` order with nothing waiting between them, and each tag starts its own Release run. On FsHotWatch the CLI is listed before `FsHotWatch.TestPrune`, which it references; both runs started within two seconds of each other, and TestPrune reached NuGet first only because its run happened to finish 37 seconds sooner.
   - New `ReleaseOrder` module. `ReleaseOrder.fromConfig` reads each package's `<ProjectReference>` closure (its own fsproj and its `fsProjsSharingSameTag`) and builds a `ReleaseGraph` of which packages depend on which, directly or transitively. `ReleaseOrder.build` is the pure part and refuses a dependency cycle (naming the loop), an fsproj claimed by two packages, or two packages with one name. `ReleaseOrder.waves` groups the packages being released so each dependency is in an earlier wave than its dependents; packages that do not depend on each other share a wave and keep their config order.
   - `release` builds the graph before any write and exits 1 if it is refused. Tags are then pushed wave by wave: each wave's publish runs are confirmed, and the exact versions must be on NuGet before the next wave's tags are pushed. If they do not appear in time, the dependents' tags are held back (listed as `held back:`) and the release exits 2; running the same command again resumes. If a dependency's tag push or publish run fails, its dependents' tags are not pushed.
