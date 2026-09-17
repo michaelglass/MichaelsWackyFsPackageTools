@@ -8,7 +8,7 @@
 /// override matching the current platform, so a red macOS floor is structurally
 /// invisible to remote CI. When `release` depended on `build` instead of `ci`,
 /// a release could be cut from a tree whose local gate was red and nothing
-/// anywhere would say so. That is the half of that mattered: a
+/// anywhere would say so. That is the half of the release gate that mattered: a
 /// floor that can be crossed without anything failing is not a floor.
 ///
 /// What it asserts, against `mise` itself rather than a hand-parsed mise.toml:

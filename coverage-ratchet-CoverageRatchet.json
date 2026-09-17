@@ -66,7 +66,7 @@
       {
         "line": 96,
         "branch": 94,
-        "reason": "Branch floor is the ACTUAL achieved 32/34 (94.1%) on macOS, lowered from 96. That change added the countFloors config section and folded the old inline \u0060TryGetProperty(\u0022overrides\u0022)\u0060 match into a shared generic \u0060parseSection\u0060, which shrank the total branch count and left the two remaining uncovered points as compiler-generated ones: the \u0060use doc = JsonDocument.Parse\u0060 disposal path, and a residual list-pattern arm in \u0060sectionToDict\u0060. Neither is reachable from an honest test, so the floor records what is really achieved rather than padding it or excluding the file. Line coverage, which rose to 96.2%, remains the real guard.",
+        "reason": "Branch floor is the ACTUAL achieved 32/34 (94.1%) on macOS, lowered from 96 when the countFloors config section was added and the old inline \u0060TryGetProperty(\u0022overrides\u0022)\u0060 match was folded into a shared generic \u0060parseSection\u0060, which shrank the total branch count and left the two remaining uncovered points as compiler-generated ones: the \u0060use doc = JsonDocument.Parse\u0060 disposal path, and a residual list-pattern arm in \u0060sectionToDict\u0060. Neither is reachable from an honest test, so the floor records what is really achieved rather than padding it or excluding the file. Line coverage, which rose to 96.2%, remains the real guard.",
         "platform": "macos"
       },
       {

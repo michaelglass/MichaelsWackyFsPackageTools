@@ -221,7 +221,7 @@ let unmeasuredFloors (config: Config) (files: FileCoverage list) : UnmeasuredFlo
           HasPercentageFloor = Map.containsKey name config.Overrides
           HasCountFloor = Map.containsKey name config.CountFloors })
 
-/// what one `check` run is ENTITLED to conclude.
+/// What one `check` run is ENTITLED to conclude.
 ///
 /// `CheckResult` and `CountCheckResult` above answer "did anything I looked at
 /// fail?". That is the wrong question, and answering it was the bug: both take

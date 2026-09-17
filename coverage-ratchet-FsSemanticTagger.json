@@ -44,7 +44,7 @@
       {
         "line": 98,
         "branch": 84,
-        "reason": "the pure grammar diff is fully covered; the MetadataLoadContext structural walk\u0027s remaining gaps are defensive reflection paths that are unreachable from a test (ReflectionTypeLoadException recovery, an explicitly-null attribute named-arg, a CompilationMappingAttribute ctor arg that is not SourceConstructFlags). Floor = achieved macOS coverage.",
+        "reason": "The pure grammar diff is fully covered; the MetadataLoadContext structural walk\u0027s remaining gaps are defensive reflection paths that are unreachable from a test (ReflectionTypeLoadException recovery, an explicitly-null attribute named-arg, a CompilationMappingAttribute ctor arg that is not SourceConstructFlags). Floor = achieved macOS coverage.",
         "platform": "macos"
       },
       {

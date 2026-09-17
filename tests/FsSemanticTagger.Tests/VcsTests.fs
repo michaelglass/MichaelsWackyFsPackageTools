@@ -993,7 +993,7 @@ let ``waitForRunForRef - parses the shape gh actually returns for a release tag`
     // Captured verbatim on 2026-09-05 from
     //   gh run list -R michaelglass/FsHotWatch --branch cli-v0.14.0-alpha.42 \
     //     --json name,status,conclusion,url,databaseId --limit 20
-    // one of the three runs the tracked issue reported as "no workflow run appeared".
+    // one of the three runs that were wrongly reported as "no workflow run appeared".
     // `databaseId` arrives as a JSON NUMBER, not a string, which is exactly the sort of
     // detail a hand-written fixture gets wrong and a live capture cannot.
     let live =
@@ -1354,7 +1354,7 @@ let ``pushTagsAndConfirm - a transient push failure is retried, not fatal`` () =
 [<Fact>]
 let ``pushTagsAndConfirm - a push that never succeeds still fails loudly`` () =
     // The retry must not become a way to swallow a real, persistent failure —
-    // but the tracked issue: it must not ABORT either. It used to `failwith`, which
+    // but it must not ABORT either. It used to `failwith`, which
     // escaped to main and killed the process with SIGABRT *after* the
     // version-bump commit had already been pushed. Two release attempts died
     // that way and left in-tree versions ahead of the newest published tag with
@@ -1389,7 +1389,7 @@ let ``pushTagsAndConfirmDetailed - preserves that the tag never reached the remo
 
 [<Fact>]
 let ``pushTagsAndConfirm - a tag is pushed through jj, not raw git`` () =
-    // the primary fix. `jj git push` authenticates in exactly the
+    // The primary tag-push fix: `jj git push` authenticates in exactly the
     // environment where the shelled-out git cannot, so preferring it removes the
     // credential question rather than diagnosing it. The control is that raw git
     // is a hard failure here: if the implementation reached for it, this test
