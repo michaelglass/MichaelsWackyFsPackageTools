@@ -232,7 +232,7 @@ let private runRatchet (configPath: string) (files: FileCoverage list) =
         eprintfn "Coverage below threshold for: %s" (String.concat ", " failedFiles)
         2
 
-let private runBaselineLines (configPath: string) (files: FileCoverage list) =
+let private baselineFiles (configPath: string) (files: FileCoverage list) =
     let raw = loadRawConfig configPath
     let before = resolveConfig raw
     let newRaw = baselineCountFloorsRaw raw files
@@ -258,6 +258,26 @@ let private runBaselineLines (configPath: string) (files: FileCoverage list) =
         printfn "covered code — review the diff to %s before committing it." configPath
 
     0
+
+/// `scope` names the files whose floors this run re-baselines; empty means every
+/// file in the report. A scoped run that names a file the report did not measure
+/// writes nothing: a floor for the wrong file is worse than no change, and the
+/// number it would have written is not that file's count.
+let private runBaselineLines (configPath: string) (scope: string list) (allFiles: FileCoverage list) =
+    let measured = allFiles |> List.map (fun f -> f.FileName) |> Set.ofList
+    let unmeasured = scope |> List.filter (fun name -> not (Set.contains name measured))
+
+    if not (List.isEmpty unmeasured) then
+        eprintfn "baseline-lines: this run did not measure %s; nothing written." (String.concat ", " unmeasured)
+        2
+    else
+        let files =
+            if List.isEmpty scope then
+                allFiles
+            else
+                allFiles |> List.filter (fun f -> List.contains f.FileName scope)
+
+        baselineFiles configPath files
 
 let private runLoosen (configPath: string) (files: FileCoverage list) =
     let raw = loadRawConfig configPath
@@ -637,7 +657,7 @@ type CoverageFileCommand =
     | CfRatchet
     | CfCheck
     | CfLoosen
-    | CfBaselineLines
+    | CfBaselineLines of scope: string list
     | CfCheckJson of output: string option
     | CfTargets
     | CfGaps
@@ -652,15 +672,32 @@ let private runWithCoverageFiles
     | CfRatchet -> runRatchet configPath files
     | CfCheck -> runCheck configPath files
     | CfLoosen -> runLoosen configPath files
-    | CfBaselineLines -> runBaselineLines configPath files
+    | CfBaselineLines scope -> runBaselineLines configPath scope files
     | CfCheckJson outputOpt ->
         let outputPath = outputOpt |> Option.defaultValue "coverage-results.json"
         runCheckJson configPath outputPath files
     | CfTargets -> runTargets configPath files
     | CfGaps -> runGaps (xmlPaths |> List.map File.ReadAllText)
 
-let run (command: Command) (searchDir: string) (mergeBaselines: bool) : Result<int, string> =
+/// `fileScope` is the `--file` list: the files a `baseline-lines` run is limited to.
+/// No other command takes one, and refusing it there is cheaper than a run that
+/// silently ignored it.
+let runScoped
+    (fileScope: string list)
+    (command: Command)
+    (searchDir: string)
+    (mergeBaselines: bool)
+    : Result<int, string> =
     match command with
+    | Merge _
+    | RefreshBaseline
+    | Ratchet _
+    | Check _
+    | Loosen _
+    | CheckJson _
+    | Targets _
+    | Gaps _
+    | LoosenFromCi _ when not (List.isEmpty fileScope) -> Error "--file applies to baseline-lines only"
     | Merge { Baseline = baseline
               Partial = partialFile
               Output = output } ->
@@ -689,7 +726,7 @@ let run (command: Command) (searchDir: string) (mergeBaselines: bool) : Result<i
             | Ratchet _ -> Some CfRatchet
             | Check _ -> Some CfCheck
             | Loosen _ -> Some CfLoosen
-            | BaselineLines _ -> Some CfBaselineLines
+            | BaselineLines _ -> Some(CfBaselineLines fileScope)
             | CheckJson(output = outputOpt) -> Some(CfCheckJson outputOpt)
             | Targets _ -> Some CfTargets
             | Gaps _ -> Some CfGaps
@@ -726,6 +763,22 @@ let run (command: Command) (searchDir: string) (mergeBaselines: bool) : Result<i
                     Merge.refreshBaselines searchDir
 
                 Ok result
+
+let run (command: Command) (searchDir: string) (mergeBaselines: bool) : Result<int, string> =
+    runScoped [] command searchDir mergeBaselines
+
+/// Pull every `--file <name>` out of argv before the command parser sees it. A
+/// trailing `--file` with no value is left in place for the parser to reject.
+let extractFileScope (argv: string array) : string list * string array =
+    let rec loop i files remaining =
+        if i >= argv.Length then
+            List.rev files, Array.ofList (List.rev remaining)
+        elif argv.[i] = "--file" && i + 1 < argv.Length then
+            loop (i + 2) (argv.[i + 1] :: files) remaining
+        else
+            loop (i + 1) files (argv.[i] :: remaining)
+
+    loop 0 [] []
 
 let extractFlags (argv: string array) : string * bool * string array =
     let rec loop i searchDir mergeBaselines remaining =
@@ -796,6 +849,15 @@ the count, and the only signal that would tell them apart is the very
 number that drifts. So after deliberately removing covered code, run
 this and review the diff. That is the intended, routine workflow.
 
+Limit the write to named files with --file <name> (repeatable):
+
+  coverageratchet baseline-lines ratchet.json --file Foo.fs
+
+Only those files' entries change, and only the entry for the platform
+this run measured — a Linux floor captured from CI is never touched by a
+macOS run. Naming a file the report did not measure writes nothing and
+exits 2.
+
 Run against a FULL test run, or with --merge-baselines. An impact-
 filtered partial run covers less, so its counts are not the file's
 real counts.
@@ -865,6 +927,8 @@ Global flags (can appear anywhere):
                         coverage.baseline.xml (max hits per line) so
                         partial test runs cannot lower the ratchet.
                         Bootstraps a baseline on first use.
+  --file <name>         (baseline-lines only; repeatable) re-baseline
+                        only this file's count floor.
 
 Config file format (default: coverage-ratchet.json):
   {
@@ -914,6 +978,7 @@ let private normalizeHelpFlags (argv: string array) : string array =
 let main argv =
     let argv = normalizeHelpFlags argv
     let searchDir, mergeBaselines, argv = extractFlags argv
+    let fileScope, argv = extractFileScope argv
 
     let tree =
         CommandReflection.fromUnion<Command> "Per-file coverage enforcement that only goes up"
@@ -929,7 +994,7 @@ let main argv =
             | None -> ()
 
     if Array.isEmpty argv then
-        match run (Ratchet None) searchDir mergeBaselines with
+        match runScoped fileScope (Ratchet None) searchDir mergeBaselines with
         | Ok exitCode -> exitCode
         | Error msg ->
             eprintfn "Error: %s" msg
@@ -937,7 +1002,7 @@ let main argv =
     else
         match CommandTree.parse tree argv with
         | Ok cmd ->
-            match run cmd searchDir mergeBaselines with
+            match runScoped fileScope cmd searchDir mergeBaselines with
             | Ok exitCode -> exitCode
             | Error msg ->
                 eprintfn "Error: %s" msg

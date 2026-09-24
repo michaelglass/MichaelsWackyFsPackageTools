@@ -414,3 +414,45 @@ let ``ratchetRawWithStatus is NoChanges when counts already sit at the floor`` (
     let result = ratchetRawWithStatus raw [ makeFileWithCounts "Foo.fs" 300 300 0 0 ]
 
     test <@ result = NoChanges @>
+
+[<Fact>]
+let ``baselineCountFloorsRaw beside another platform's floor records only the measured platform`` () =
+    // The file has a Linux floor captured from CI and nothing for this machine. The
+    // run measured THIS platform, so the floor it writes must say so: a platform-less
+    // entry next to a Linux one would claim every platform except the one that was
+    // actually measured.
+    let theirs =
+        { CoveredLines = 999
+          CoveredBranches = 99
+          Reason = Some "from CI"
+          Platform = Some otherPlatform }
+
+    let raw =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides = Map.empty
+          RawCountFloors = Map.ofList [ "Foo.fs", [ theirs ] ] }
+
+    let result = baselineCountFloorsRaw raw [ makeFileWithCounts "Foo.fs" 55 60 5 6 ]
+
+    let entries = result.RawCountFloors.["Foo.fs"]
+
+    test <@ entries.Length = 2 @>
+    test <@ List.head entries = theirs @>
+
+    let mine = entries |> List.find (fun e -> e.Platform = Some Platform.current)
+    test <@ mine.CoveredLines = 55 @>
+
+[<Fact>]
+let ``baselineCountFloorsRaw on a file with no floor at all still writes it platform-less`` () =
+    // Positive control for the test above: the platform tag is earned by the presence
+    // of other platforms' entries, never applied by default.
+    let raw =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides = Map.empty
+          RawCountFloors = Map.empty }
+
+    let result = baselineCountFloorsRaw raw [ makeFileWithCounts "Foo.fs" 55 60 5 6 ]
+
+    test <@ result.RawCountFloors.["Foo.fs"] = [ countFloor 55 5 ] @>

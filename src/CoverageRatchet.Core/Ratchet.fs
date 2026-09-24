@@ -67,10 +67,13 @@ let ratchetWithStatus (config: Config) (files: FileCoverage list) : RatchetStatu
 /// Shared by percentage overrides and count floors so the two cannot drift apart:
 /// `copyValues` is the only part that knows which numbers a floor kind carries.
 ///
-/// An entry present in `after` but not `before` is NEW, and is written
-/// platform-less via `setPlatform None`: a platform-tagged floor is invisible to
-/// every other platform's CI, so nothing may synthesise one implicitly. Only
-/// `mergeFromCi`, which knows which platform measured the numbers, tags an entry.
+/// An entry present in `after` but not `before` is NEW. For a file with no
+/// floor at all it is written platform-less: a platform-tagged floor is
+/// invisible to every other platform's CI, so nothing may synthesise one
+/// implicitly. For a file that already carries other platforms' floors — a
+/// Linux count captured from CI, say — the new entry is tagged with the
+/// platform this run measured, because a platform-less entry beside a Linux
+/// one would claim every platform except the one that was measured.
 let private mergeRawSection
     (platformOf: 'a -> Platform option)
     (setPlatform: Platform option -> 'a -> 'a)
@@ -115,7 +118,14 @@ let private mergeRawSection
     for kv in after do
         if not (Map.containsKey kv.Key before) then
             let existingEntries = Map.tryFind kv.Key rawEntries |> Option.defaultValue []
-            let newEntry = setPlatform None kv.Value
+
+            let platform =
+                if existingEntries |> List.exists (fun e -> (platformOf e).IsSome) then
+                    Some Platform.current
+                else
+                    None
+
+            let newEntry = setPlatform platform kv.Value
             result <- Map.add kv.Key (existingEntries @ [ newEntry ]) result
 
     result
@@ -206,10 +216,12 @@ let ratchetCountFloorsRaw (raw: RawConfig) (files: FileCoverage list) : RawConfi
     let ratcheted = ratchetCountFloors resolved files
     mergeRawCountFloors raw resolved ratcheted
 
-/// Baselined floors are written PLATFORM-LESS, so one baseline run guards every
-/// platform. The alternative — tagging them with the machine that measured them —
-/// would make a floor baselined on macOS invisible to a Linux-only CI, which is
-/// exactly how a red macOS percentage floor went unseen by remote CI.
+/// A floor baselined for a file that had none is written PLATFORM-LESS, so one
+/// baseline run guards every platform. The alternative — tagging it with the
+/// machine that measured it — would make a floor baselined on macOS invisible
+/// to a Linux-only CI, which is exactly how a red macOS percentage floor went
+/// unseen by remote CI. A file that already carries another platform's floor
+/// gets an entry for the measured platform instead; see `mergeRawSection`.
 let baselineCountFloorsRaw (raw: RawConfig) (files: FileCoverage list) : RawConfig =
     let resolved = resolveConfig raw
     let baselined = baselineCountFloors resolved files

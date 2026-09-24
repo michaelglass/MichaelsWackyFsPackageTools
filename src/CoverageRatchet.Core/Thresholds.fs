@@ -4,6 +4,7 @@ open System.IO
 open System.Runtime.InteropServices
 open System.Text.Encodings.Web
 open System.Text.Json
+open System.Text.Json.Nodes
 open CoverageRatchet.Cobertura
 
 type Platform =
@@ -455,27 +456,96 @@ let private countFloorToDict (floor: CountFloor) =
     addReasonAndPlatform floor.Reason floor.Platform entry
 
 /// Collapse a single platform-less entry to an object; keep anything else as an array.
-let private sectionToDict (platformOf: 'a -> Platform option) (toDict: 'a -> _) (entries: Map<string, 'a list>) =
-    let sectionDict = System.Collections.Generic.Dictionary<string, obj>()
+let private entriesToNode (platformOf: 'a -> Platform option) (toDict: 'a -> _) (entries: 'a list) : JsonNode =
+    match entries with
+    | [ single ] when platformOf single = None -> JsonSerializer.SerializeToNode(toDict single, jsonOptions)
+    | many -> JsonSerializer.SerializeToNode(many |> List.map toDict |> List.toArray, jsonOptions)
 
-    for kv in entries do
-        match kv.Value with
-        | [ single ] when platformOf single = None -> sectionDict.[kv.Key] <- toDict single
-        | many -> sectionDict.[kv.Key] <- (many |> List.map toDict |> List.toArray)
+/// Bring one section of the document up to `updated`, touching only the keys whose
+/// entries differ from what the file already says.
+///
+/// A key whose parsed entries equal its new entries keeps the node that was read
+/// from disk — its property order, its number spellings, any annotation this tool
+/// does not know about. A changed key gets a freshly built node, a key absent from
+/// `updated` is removed, and a new key is appended after the existing ones. The
+/// section is created when the document lacks it and `updated` has content.
+let private updateSection
+    (doc: JsonObject)
+    (name: string)
+    (original: Map<string, 'a list>)
+    (updated: Map<string, 'a list>)
+    (toNode: 'a list -> JsonNode)
+    =
+    let section =
+        match doc.[name] with
+        | :? JsonObject as existing -> existing
+        | _ ->
+            let created = JsonObject()
+            doc.[name] <- created
+            created
 
-    sectionDict
+    let stale = section |> Seq.map (fun kv -> kv.Key) |> Seq.toList
 
+    for key in stale do
+        if not (Map.containsKey key updated) then
+            section.Remove(key) |> ignore
+
+    for kv in updated do
+        if Map.tryFind kv.Key original <> Some kv.Value then
+            section.[kv.Key] <- toNode kv.Value
+
+/// The document on disk and whether it ended in a newline, or an empty document
+/// when there is nothing to edit yet.
+let private loadDocument (path: string) : JsonObject * bool =
+    let text = if File.Exists(path) then File.ReadAllText(path) else ""
+
+    let doc =
+        if System.String.IsNullOrWhiteSpace(text) then
+            JsonObject()
+        else
+            JsonNode.Parse(text).AsObject()
+
+    doc, text.EndsWith("\n")
+
+/// Write `config` into the file at `path` as an EDIT of the document already there,
+/// never as a fresh rendering of it.
+///
+/// The file carries floors this machine cannot measure — a Linux floor is captured
+/// from Linux CI and only passes through a macOS box — so every entry the caller did
+/// not change has to reach the disk exactly as it left it. Rebuilding the document
+/// from a map re-sorted every hand-appended key and re-spelled every value, and a
+/// one-number change arrived as a diff over the whole file with the unmeasured
+/// entries somewhere inside it.
+///
+/// What still normalises: the whole document goes back out through one writer, so
+/// indentation and string escaping are the writer's (literal UTF-8, two-space indent).
+/// A file this tool wrote is therefore a fixed point; a file with other whitespace is
+/// reformatted once and then stable. The one formatting choice the writer takes from
+/// the file is its trailing newline, because editors add one and diffs show it.
 let saveRawConfig (path: string) (config: RawConfig) : unit =
-    let dict = System.Collections.Generic.Dictionary<string, obj>()
-
-    dict.["overrides"] <- sectionToDict (fun (o: Override) -> o.Platform) overrideToDict config.RawOverrides
+    let original = loadRawConfig path
+    let doc, trailingNewline = loadDocument path
 
     // Only emit the section when it has content, so configs that never adopted
     // count floors round-trip byte-identically.
-    if not (Map.isEmpty config.RawCountFloors) then
-        dict.["countFloors"] <- sectionToDict (fun (f: CountFloor) -> f.Platform) countFloorToDict config.RawCountFloors
+    updateSection
+        doc
+        "overrides"
+        original.RawOverrides
+        config.RawOverrides
+        (entriesToNode (fun (o: Override) -> o.Platform) overrideToDict)
 
-    let json = JsonSerializer.Serialize(dict, jsonOptions)
-    File.WriteAllText(path, json)
+    if Map.isEmpty config.RawCountFloors then
+        doc.Remove("countFloors") |> ignore
+    else
+        updateSection
+            doc
+            "countFloors"
+            original.RawCountFloors
+            config.RawCountFloors
+            (entriesToNode (fun (f: CountFloor) -> f.Platform) countFloorToDict)
+
+    let json = JsonSerializer.Serialize(doc, jsonOptions)
+    File.WriteAllText(path, (if trailingNewline then json + "\n" else json))
 
 let saveConfig (path: string) (config: Config) : unit = saveRawConfig path (toRawConfig config)
