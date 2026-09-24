@@ -301,7 +301,7 @@ Files not listed in `overrides` must have 100% line and branch coverage.
 
 Files not listed in `countFloors` have **no** count floor — counts are opt-in per file, added by `baseline-lines`.
 
-**A platform-tagged count floor must be written by hand.** `baseline-lines` always writes floors platform-less, and there is no `loosen-from-ci` equivalent for counts: the `coverage-thresholds` artifact carries percentages only. This is deliberate — a floor tagged `macos` is invisible to a Linux-only CI, so nothing tags one on your behalf. If you do hand-write a platform-tagged count floor, remember that every platform without an entry then has *no* count floor for that file, and that you are responsible for keeping a number you cannot measure locally up to date.
+**A platform-tagged count floor starts by hand.** `baseline-lines` writes a file's first floor platform-less, and there is no `loosen-from-ci` equivalent for counts: the `coverage-thresholds` artifact carries percentages only. This is deliberate — a floor tagged `macos` is invisible to a Linux-only CI, so nothing tags one on your behalf. Once a file carries a platform-tagged floor (say a `linux` count captured from CI), `baseline-lines` keeps the split: it updates the entry for the platform it ran on, adds one tagged with that platform if none exists, and never touches the other platforms' entries. Remember that every platform without an entry then has *no* count floor for that file, and that you are responsible for keeping a number you cannot measure locally up to date.
 
 ## Count floors
 
@@ -341,6 +341,14 @@ coverageratchet baseline-lines
 
 It reports how many floors went **down**, and the lowered floors show up in your config diff for review. Treat a re-baseline as routine, not exceptional.
 
+To re-baseline one file rather than every file in the report, name it with `--file` (repeatable):
+
+```bash
+coverageratchet baseline-lines --file Foo.fs
+```
+
+Only the named files' entries change, and only for the platform the run measured. Naming a file the report did not measure writes nothing and exits 2. Either way the config is edited in place: entries the run did not change — including floors for platforms it cannot measure — keep their bytes, their order and any annotation you added by hand.
+
 Run `baseline-lines` against a **full** test run, or with `--merge-baselines`. An impact-filtered partial run covers less code, so its counts are not the file's real counts.
 
 ### Platform-specific overrides
@@ -363,7 +371,7 @@ Resolution rules:
 - Otherwise, a platform-agnostic entry (no `platform` field) is used as fallback.
 - If no entry matches, the file defaults to 100%/100%.
 
-The `loosen` command creates **platform-agnostic** overrides for new files. Only `loosen-from-ci` introduces platform-specific entries, since it integrates coverage results from CI runners on different platforms — and it handles **percentage floors only**. Count floors written by `baseline-lines` are always platform-agnostic.
+The `loosen` command creates **platform-agnostic** overrides for files that have none. Only `loosen-from-ci` introduces platform-specific entries for such files, since it integrates coverage results from CI runners on different platforms — and it handles **percentage floors only**. A file that already has entries for other platforms is the exception: `loosen` and `baseline-lines` then add an entry tagged with the platform they ran on, so a floor never silently claims a platform that did not measure it.
 
 ### Multi-platform workflow
 

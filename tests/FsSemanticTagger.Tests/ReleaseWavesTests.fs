@@ -21,9 +21,10 @@ type private Repo =
 
 /// Write one package (fsproj at 0.0.0 referencing `refs`, plus a changelog with an
 /// Unreleased entry) under `root/src/<name>`.
-let private writePackage (root: string) (name: string) (refs: string list) : PackageConfig =
+let private writePackageWith (packAsTool: bool) (root: string) (name: string) (refs: string list) : PackageConfig =
     let dir = Path.Combine(root, "src", name)
     Directory.CreateDirectory(dir) |> ignore
+    let tool = if packAsTool then "<PackAsTool>true</PackAsTool>" else ""
 
     let references =
         refs
@@ -33,7 +34,8 @@ let private writePackage (root: string) (name: string) (refs: string list) : Pac
     File.WriteAllText(
         Path.Combine(dir, name + ".fsproj"),
         sprintf
-            "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup><ItemGroup>%s</ItemGroup></Project>"
+            "<Project><PropertyGroup><Version>0.0.0</Version>%s</PropertyGroup><ItemGroup>%s</ItemGroup></Project>"
+            tool
             references
     )
 
@@ -46,11 +48,16 @@ let private writePackage (root: string) (name: string) (refs: string list) : Pac
       TagPrefix = name.ToLowerInvariant() + "-v"
       FsProjsSharingSameTag = [] }
 
-/// Packages in config order, each with the packages it references.
-let private withRepo (packages: (string * string list) list) (action: Repo -> unit) =
+let private writePackage = writePackageWith false
+
+/// Packages in config order, each with the packages it references. Names listed in
+/// `tools` are written as `<PackAsTool>true</PackAsTool>` projects.
+let private withRepoOf (tools: string list) (packages: (string * string list) list) (action: Repo -> unit) =
     withTempDir (fun root ->
         let config =
-            { Packages = packages |> List.map (fun (name, refs) -> writePackage root name refs)
+            { Packages =
+                packages
+                |> List.map (fun (name, refs) -> writePackageWith (List.contains name tools) root name refs)
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = defaultPublishWorkflows
@@ -60,6 +67,8 @@ let private withRepo (packages: (string * string list) list) (action: Repo -> un
             { Root = root
               Config = config
               Timeline = ResizeArray() })
+
+let private withRepo packages action = withRepoOf [] packages action
 
 /// A remote on which CI is green, every tag push succeeds (except `rejectedTags`), and
 /// every pushed tag has a green publish run. Tag pushes land on the timeline.
@@ -95,8 +104,9 @@ let private remote (timeline: ResizeArray<string>) (rejectedTags: string list) (
     | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
 /// A feed on which each package appears only after it has been asked about
-/// `checksUntilPublished` times (absent names never appear). Checks land on the timeline.
-let private feed (timeline: ResizeArray<string>) (checksUntilPublished: Map<string, int>) =
+/// `checksUntilPublished` times (absent names never appear). Checks land on the timeline
+/// under `label`, so the presence probe and the restorability probe can be told apart.
+let private probe (label: string) (timeline: ResizeArray<string>) (checksUntilPublished: Map<string, int>) =
     let asked = System.Collections.Generic.Dictionary<string, int>()
 
     fun (id: string) (version: string) ->
@@ -112,10 +122,25 @@ let private feed (timeline: ResizeArray<string>) (checksUntilPublished: Map<stri
             | Some needed when count >= needed -> OnFeed
             | _ -> NotOnFeed
 
-        timeline.Add(sprintf "feed %s %s %A" id version presence)
+        timeline.Add(sprintf "%s %s %s %A" label id version presence)
         presence
 
-let private releaseInput (repo: Repo) (rejectedTags: string list) checkFeed waitForNuGet mode =
+/// The presence probe (`CheckFeedPresence`): what the index says.
+let private feed timeline checksUntilPublished =
+    probe "feed" timeline checksUntilPublished
+
+/// The restorability probe (`CheckRestorable`), which also records whether it was
+/// asked about a tool package, since a tool has a different strongest answer.
+let private restorable (timeline: ResizeArray<string>) (checksUntilPublished: Map<string, int>) =
+    let inner = probe "restorable" timeline checksUntilPublished
+
+    fun (isTool: bool) (id: string) (version: string) ->
+        if isTool then
+            timeline.Add(sprintf "restorable(tool) %s %s" id version)
+
+        inner id version
+
+let private releaseInputWith (repo: Repo) (rejectedTags: string list) checkFeed checkRestorable waitForNuGet mode =
     { Run = remote repo.Timeline rejectedTags
       Config = repo.Config
       Command = StartAlpha
@@ -133,11 +158,17 @@ let private releaseInput (repo: Repo) (rejectedTags: string list) checkFeed wait
           RunPollIntervalMs = 0
           RunPollAttempts = 1 }
       CheckFeedPresence = checkFeed
+      CheckRestorable = checkRestorable
       WaitForNuGet = waitForNuGet
       NuGetPollIntervalMs = 0
       NuGetMaxAttempts = 5
       Push = false
       Check = false }
+
+/// The common shape: one probe answers both questions, so a test about ordering
+/// alone does not have to script the index and restorability separately.
+let private releaseInput (repo: Repo) (rejectedTags: string list) checkFeed waitForNuGet mode =
+    releaseInputWith repo rejectedTags checkFeed (fun _ id ver -> checkFeed id ver) waitForNuGet mode
 
 let private indexOf (timeline: ResizeArray<string>) (entry: string) =
     let index = timeline.IndexOf entry
@@ -153,29 +184,77 @@ let private pushes (timeline: ResizeArray<string>) =
 [<Theory>]
 [<InlineData(true)>]
 [<InlineData(false)>]
-let ``a dependent's tag is not pushed until its delayed dependency is on the feed`` (waitForNuGet: bool) =
+let ``a dependent's tag is not pushed until its delayed dependency is restorable`` (waitForNuGet: bool) =
     // Listed dependent-first, as FsHotWatch lists its CLI before TestPrune. The
-    // dependency's package takes three checks to appear. `--skip-nuget-wait` must not
+    // dependency takes three checks to become restorable. `--skip-nuget-wait` must not
     // lift the gate: it only skips confirming the last wave.
     withRepo [ "Cli", [ "TestPrune" ]; "TestPrune", [] ] (fun repo ->
-        let checkFeed = feed repo.Timeline (Map [ "TestPrune", 3; "Cli", 1 ])
+        let checkFeed = feed repo.Timeline (Map [ "TestPrune", 1; "Cli", 1 ])
+        let checkRestorable = restorable repo.Timeline (Map [ "TestPrune", 3 ])
 
         let output, result =
-            withCapturedConsole (fun () -> release (releaseInput repo [] checkFeed waitForNuGet PushTags))
+            withCapturedConsole (fun () ->
+                release (releaseInputWith repo [] checkFeed checkRestorable waitForNuGet PushTags))
 
         let t = repo.Timeline
         test <@ result = 0 @>
         test <@ pushes t = [ "push testprune-v0.1.0-alpha.1"; "push cli-v0.1.0-alpha.1" ] @>
 
-        let dependencyPublished = indexOf t "feed TestPrune 0.1.0-alpha.1 OnFeed"
+        let dependencyRestorable = indexOf t "restorable TestPrune 0.1.0-alpha.1 OnFeed"
         let dependentPushed = indexOf t "push cli-v0.1.0-alpha.1"
 
-        test <@ indexOf t "feed TestPrune 0.1.0-alpha.1 NotOnFeed" < dependencyPublished @>
-        test <@ dependencyPublished < dependentPushed @>
+        test <@ indexOf t "restorable TestPrune 0.1.0-alpha.1 NotOnFeed" < dependencyRestorable @>
+        test <@ dependencyRestorable < dependentPushed @>
         test <@ output.Contains "Publication order" @>
 
-        // The final wave is confirmed only when asked to be.
-        test <@ t.Contains "feed Cli 0.1.0-alpha.1 OnFeed" = waitForNuGet @>)
+        // The gate asks one question of one probe: the index is not consulted about
+        // the dependency at all, so there is one wait per wave, not two.
+        test <@ not (t |> Seq.exists (fun e -> e.StartsWith "feed TestPrune")) @>
+        test <@ not (t |> Seq.exists (fun e -> e.StartsWith "restorable(tool)")) @>
+
+        // The final wave is confirmed only when asked to be, and by the index: the
+        // consumer's own barrier is the restorability authority for the last wave.
+        test <@ t.Contains "feed Cli 0.1.0-alpha.1 OnFeed" = waitForNuGet @>
+        test <@ not (t.Contains "restorable Cli 0.1.0-alpha.1 OnFeed") @>)
+
+[<Fact>]
+let ``a dependency the index already lists is still held until it is restorable`` () =
+    // The index lists a version minutes before a restore of it succeeds. The next
+    // wave's nuspec names this exact version, so "listed" is not enough to push it.
+    withRepo [ "Cli", [ "TestPrune" ]; "TestPrune", [] ] (fun repo ->
+        let checkFeed = feed repo.Timeline (Map [ "TestPrune", 1; "Cli", 1 ])
+        let checkRestorable = restorable repo.Timeline (Map [ "TestPrune", 4 ])
+
+        let output, result =
+            withCapturedConsole (fun () -> release (releaseInputWith repo [] checkFeed checkRestorable false PushTags))
+
+        let t = repo.Timeline
+        test <@ result = 0 @>
+
+        let notYet =
+            t
+            |> Seq.filter (fun e -> e = "restorable TestPrune 0.1.0-alpha.1 NotOnFeed")
+            |> Seq.length
+
+        test <@ notYet = 3 @>
+        test <@ indexOf t "restorable TestPrune 0.1.0-alpha.1 OnFeed" < indexOf t "push cli-v0.1.0-alpha.1" @>
+        test <@ output.Contains "restorable from NuGet" @>)
+
+[<Fact>]
+let ``a dependency that is a tool is gated as a tool`` () =
+    // A PackAsTool package cannot be proven by a PackageReference restore, so the gate
+    // must say which kind of package it is asking about rather than let every tool
+    // dependency wait out the full budget and hold its dependents back.
+    withRepoOf [ "Tool" ] [ "Cli", [ "Tool" ]; "Tool", [] ] (fun repo ->
+        let checkFeed = feed repo.Timeline (Map [ "Tool", 1; "Cli", 1 ])
+        let checkRestorable = restorable repo.Timeline (Map [ "Tool", 1 ])
+
+        let _, result =
+            withCapturedConsole (fun () -> release (releaseInputWith repo [] checkFeed checkRestorable false PushTags))
+
+        let t = repo.Timeline
+        test <@ result = 0 @>
+        test <@ indexOf t "restorable(tool) Tool 0.1.0-alpha.1" < indexOf t "push cli-v0.1.0-alpha.1" @>)
 
 [<Fact>]
 let ``a dependency that never reaches the feed holds its dependent's tag back and exits 2`` () =

@@ -133,6 +133,7 @@ let internal runReleaseWith
                   // `Vcs.tagPushPolicyFromEnv`.
                   TagPush = Vcs.tagPushPolicyFromEnv envVar
                   CheckFeedPresence = Api.checkFeedPresence Api.httpGet run
+                  CheckRestorable = Api.checkRestorable Api.httpGet run
                   WaitForNuGet = not (flags |> List.contains SkipNugetWait)
                   // Twenty minutes by default, the measured NuGet index lag, and the
                   // same env overrides as FsHotWatch's barrier.
@@ -153,10 +154,21 @@ let private runRelease (releaseCmd: Release.ReleaseCommand) (flags: ReleaseFlag 
         releaseCmd
         flags
 
+/// The version this build runs as: the entry assembly's informational version,
+/// `<Version>` from the fsproj plus SourceLink's `+<sha>`.
+let internal ownVersion: string = CommandTree.entryAssemblyVersion ()
+
+/// Dispatch a release verb only on a tagger new enough to honour a declared bump;
+/// an older one is refused before any config is read or anything is built.
 let internal runCommandWith
+    (ownVersion: string)
     (releaseHandler: Release.ReleaseCommand -> ReleaseFlag list -> Result<int, string>)
     (cmd: Command)
     : Result<int, string> =
+    let release releaseCmd opts =
+        DeclaredBump.requireSupport ownVersion
+        |> Result.bind (fun () -> releaseHandler releaseCmd opts)
+
     match cmd with
     | Init -> initCommand (Directory.GetCurrentDirectory())
     | ExtractApi dll ->
@@ -200,13 +212,14 @@ let internal runCommandWith
         | Api.NoChange ->
             printfn "No API changes"
             Ok 0
-    | Release opts -> releaseHandler Release.Auto opts
-    | Alpha opts -> releaseHandler Release.StartAlpha opts
-    | Beta opts -> releaseHandler Release.PromoteToBeta opts
-    | Rc opts -> releaseHandler Release.PromoteToRC opts
-    | Stable opts -> releaseHandler Release.PromoteToStable opts
+    | Release opts -> release Release.Auto opts
+    | Alpha opts -> release Release.StartAlpha opts
+    | Beta opts -> release Release.PromoteToBeta opts
+    | Rc opts -> release Release.PromoteToRC opts
+    | Stable opts -> release Release.PromoteToStable opts
 
-let runCommand (cmd: Command) : Result<int, string> = runCommandWith runRelease cmd
+let runCommand (cmd: Command) : Result<int, string> =
+    runCommandWith ownVersion runRelease cmd
 
 let private subcommandExtras (path: string list) : string option =
     match path with
@@ -266,8 +279,10 @@ Flags:
                      itself)
   --skip-nuget-wait  after pushing tags, exit immediately instead of
                      polling NuGet until the published package(s) are
-                     restorable (a package's dependents still wait for
-                     it to be on NuGet before their tags are pushed)
+                     indexed (a package's dependents still wait for it
+                     to be restorable before their tags are pushed; use
+                     this when your own release runs a restorability
+                     barrier afterwards, so NuGet is asked once)
   --only <names>     restrict the run to specific package(s) by name
                      (comma-separated, e.g. --only Foo,Bar). Names match
                      the "name" field in semantic-tagger.json. Absent =

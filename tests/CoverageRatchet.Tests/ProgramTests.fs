@@ -2260,3 +2260,196 @@ let ``run - ratchet exits 2 when a count floor is breached`` () =
 let ``main with baseline-lines --help returns 0`` () =
     let result = main [| "baseline-lines"; "--help" |]
     test <@ result = 0 @>
+
+// --- baseline-lines scoped to a file ---
+//
+// The floor file carries entries this machine cannot measure (Linux floors are
+// captured from Linux CI). A re-baseline of ONE file's count must therefore touch
+// that file's entry for the measured platform and nothing else; every other byte
+// of the document is somebody else's evidence.
+
+let private platformName = Platform.toString Platform.current
+let private otherPlatformName = Platform.toString otherPlatform
+
+let private makeCountCoverageXml (files: (string * int * int) list) =
+    let classes =
+        files
+        |> List.map (fun (name, covered, total) ->
+            let lines =
+                [ for i in 1..covered -> sprintf """<line number="%d" hits="1" />""" i ]
+                @ [ for i in (covered + 1) .. total -> sprintf """<line number="%d" hits="0" />""" i ]
+
+            sprintf
+                """        <class filename="/src/%s">
+          <lines>
+%s
+          </lines>
+        </class>"""
+                name
+                (String.concat "\n" lines))
+
+    sprintf
+        """<?xml version="1.0" encoding="utf-8"?>
+<coverage>
+  <packages>
+    <package>
+      <classes>
+%s
+      </classes>
+    </package>
+  </packages>
+</coverage>"""
+        (String.concat "\n" classes)
+
+let private twoPlatformDocument =
+    sprintf
+        """{
+  "overrides": {
+    "Zeta.fs": [
+      {
+        "line": 90,
+        "branch": 100,
+        "platform": "%s"
+      },
+      {
+        "line": 80,
+        "branch": 100,
+        "reason": "floor from CI — cannot be measured here",
+        "platform": "%s"
+      }
+    ],
+    "Alpha.fs": [
+      {
+        "line": 50,
+        "branch": 100,
+        "platform": "%s"
+      }
+    ]
+  },
+  "countFloors": {
+    "Zeta.fs": [
+      {
+        "coveredLines": 9,
+        "coveredBranches": 0,
+        "platform": "%s"
+      },
+      {
+        "coveredLines": 8,
+        "coveredBranches": 0,
+        "reason": "count from CI",
+        "platform": "%s"
+      }
+    ],
+    "Alpha.fs": [
+      {
+        "coveredLines": 7,
+        "coveredBranches": 0,
+        "platform": "%s"
+      },
+      {
+        "coveredLines": 6,
+        "coveredBranches": 0,
+        "platform": "%s"
+      }
+    ]
+  }
+}"""
+        platformName
+        otherPlatformName
+        otherPlatformName
+        platformName
+        otherPlatformName
+        otherPlatformName
+        platformName
+
+[<Fact>]
+let ``runScoped - baseline-lines --file touches one file's entry for this platform and no other byte`` () =
+    withTempDir (fun tmpDir ->
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        // Zeta dropped from 9 to 7 covered lines; Alpha ROSE from 6 to 9. Only Zeta was asked for.
+        File.WriteAllText(xmlPath, makeCountCoverageXml [ "Zeta.fs", 7, 10; "Alpha.fs", 9, 10 ])
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, twoPlatformDocument)
+
+        let result =
+            runScoped [ "Zeta.fs" ] (BaselineLines(config = Some configPath)) tmpDir false
+
+        test <@ result = Ok 0 @>
+
+        let written = File.ReadAllText(configPath)
+
+        let expected =
+            twoPlatformDocument.Replace(
+                sprintf
+                    "\"coveredLines\": 9,\n        \"coveredBranches\": 0,\n        \"platform\": \"%s\""
+                    platformName,
+                sprintf
+                    "\"coveredLines\": 7,\n        \"coveredBranches\": 0,\n        \"platform\": \"%s\""
+                    platformName
+            )
+
+        test <@ expected <> twoPlatformDocument @>
+        test <@ written = expected @>)
+
+[<Fact>]
+let ``runScoped - baseline-lines keeps the trailing newline an editor left on the config`` () =
+    withTempDir (fun tmpDir ->
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        File.WriteAllText(xmlPath, makeCountCoverageXml [ "Zeta.fs", 7, 10; "Alpha.fs", 9, 10 ])
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, twoPlatformDocument + "\n")
+
+        let result =
+            runScoped [ "Zeta.fs" ] (BaselineLines(config = Some configPath)) tmpDir false
+
+        test <@ result = Ok 0 @>
+
+        let written = File.ReadAllText(configPath)
+        test <@ written.EndsWith("}\n") @>
+        test <@ not (written.EndsWith("\n\n")) @>)
+
+[<Fact>]
+let ``runScoped - baseline-lines --file names a file the report did not measure and refuses`` () =
+    withTempDir (fun tmpDir ->
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        File.WriteAllText(xmlPath, makeCountCoverageXml [ "Zeta.fs", 7, 10 ])
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, twoPlatformDocument)
+
+        let result =
+            runScoped [ "Missing.fs" ] (BaselineLines(config = Some configPath)) tmpDir false
+
+        test <@ result = Ok 2 @>
+        test <@ File.ReadAllText(configPath) = twoPlatformDocument @>)
+
+[<Fact>]
+let ``runScoped - --file on a command other than baseline-lines is an error`` () =
+    withTempDir (fun tmpDir ->
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        File.WriteAllText(xmlPath, makeCountCoverageXml [ "Zeta.fs", 7, 10 ])
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, twoPlatformDocument)
+
+        let result = runScoped [ "Zeta.fs" ] (Check(config = Some configPath)) tmpDir false
+
+        test <@ Result.isError result @>
+        test <@ File.ReadAllText(configPath) = twoPlatformDocument @>)
+
+[<Fact>]
+let ``extractFileScope - collects every --file and leaves the rest of argv in place`` () =
+    let files, remaining =
+        extractFileScope [| "baseline-lines"; "--file"; "Zeta.fs"; "r.json"; "--file"; "Alpha.fs" |]
+
+    test <@ files = [ "Zeta.fs"; "Alpha.fs" ] @>
+    test <@ remaining = [| "baseline-lines"; "r.json" |] @>
+
+[<Fact>]
+let ``extractFileScope - a trailing --file with no value is left for the parser to reject`` () =
+    let files, remaining = extractFileScope [| "baseline-lines"; "--file" |]
+
+    test <@ List.isEmpty files @>
+    test <@ remaining = [| "baseline-lines"; "--file" |] @>
