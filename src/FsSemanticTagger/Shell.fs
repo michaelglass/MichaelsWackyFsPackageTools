@@ -93,32 +93,37 @@ let runLogged (cwd: string) (command: string) (timeout: System.TimeSpan) (logPat
     System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName logPath)
     |> ignore
 
-    use log = new System.IO.StreamWriter(logPath, append = true)
-    log.WriteLine(sprintf "$ %s   (in %s)" command cwd)
-    log.Flush()
-    let gate = obj ()
+    // An explicit try/finally rather than `use`, and a synchronized writer
+    // rather than `lock`: both compile to guards (a null check before Dispose, a
+    // lock-taken check before Monitor.Exit) whose other arm cannot be reached.
+    let file = new System.IO.StreamWriter(logPath, append = true, AutoFlush = true)
 
-    let pump (reader: System.IO.StreamReader) =
-        Task.Run(fun () ->
-            let mutable line = reader.ReadLine()
+    try
+        // Both pumps write whole lines through one synchronized writer, so the
+        // log interleaves stdout and stderr line by line.
+        let log = System.IO.TextWriter.Synchronized file
+        log.WriteLine(sprintf "$ %s   (in %s)" command cwd)
 
-            while not (isNull line) do
-                lock gate (fun () ->
+        let pump (reader: System.IO.StreamReader) =
+            Task.Run(fun () ->
+                let mutable line = reader.ReadLine()
+
+                while not (isNull line) do
                     log.WriteLine line
-                    log.Flush())
+                    line <- reader.ReadLine())
 
-                line <- reader.ReadLine())
+        let p = Process.Start(psi)
+        let stdoutTask = pump p.StandardOutput
+        let stderrTask = pump p.StandardError
 
-    let p = Process.Start(psi)
-    let stdoutTask = pump p.StandardOutput
-    let stderrTask = pump p.StandardError
-
-    if p.WaitForExit(timeout) then
-        Task.WaitAll [| stdoutTask; stderrTask |]
-        Exited p.ExitCode
-    else
-        p.Kill(entireProcessTree = true)
-        p.WaitForExit()
-        Task.WaitAll [| stdoutTask; stderrTask |]
-        log.WriteLine(sprintf "[fssemantictagger] killed after %dm%ds" (int timeout.TotalMinutes) timeout.Seconds)
-        TimedOut timeout
+        if p.WaitForExit(timeout) then
+            Task.WaitAll [| stdoutTask; stderrTask |]
+            Exited p.ExitCode
+        else
+            p.Kill(entireProcessTree = true)
+            p.WaitForExit()
+            Task.WaitAll [| stdoutTask; stderrTask |]
+            log.WriteLine(sprintf "[fssemantictagger] killed after %dm%ds" (int timeout.TotalMinutes) timeout.Seconds)
+            TimedOut timeout
+    finally
+        file.Dispose()
