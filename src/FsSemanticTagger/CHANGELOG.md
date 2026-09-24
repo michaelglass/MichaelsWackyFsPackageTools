@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.13 - 2026-09-24
+
 - feat: **a tagger too old to honour a declared bump refuses to release.** Two repos were still pinned to 0.14.0-alpha.4 and 0.14.0-alpha.10, where a `feat!:` entry in `## Unreleased` is never read and the declared breaking change ships as whatever the API diff computes.
   - `DeclaredBump.introducedIn` (0.14.0-alpha.12) is the one place the minimum is written down, and `DeclaredBump.requireSupport` compares the running build's own version against it, ignoring SourceLink's `+<sha>` and a RefStamp `-ref.` suffix. A version that cannot be read is refused rather than trusted.
   - `release`, `alpha`, `beta`, `rc` and `stable` check this before reading the config or building; the refusal names the running version, the minimum, why it matters, and the manifest to pin. `init`, `extract-api` and `check-api` are unaffected.
