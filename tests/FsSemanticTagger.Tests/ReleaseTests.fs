@@ -35,6 +35,16 @@ let private noPreviousGrammar (_pkg: string) (_version: string) : Grammar option
 
 let private noCurrentGrammar (_dll: string) : Grammar option = None
 
+/// No machine-local canary config, and a host that must never be reached.
+let private noCanary: ConsumerCanary.Settings =
+    { ConfigPath = Path.Combine(Path.GetTempPath(), "no-such-fssemantictagger.json")
+      Skip = false
+      LogDir = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-logs")
+      PackagesCache = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-cache")
+      Ops =
+        { RunIn = fun _ cmd _ -> failwithf "unexpected canary process: %s" cmd
+          RunGate = fun _ command _ _ -> failwithf "unexpected canary gate: %s" command } }
+
 /// Release tests put fsproj files in the system temp dir, so CHANGELOG.md
 /// also lives there. Re-seeds before every release call (promotion mutates it).
 let private seedTmpChangelog () =
@@ -65,7 +75,8 @@ let private runReleaseOnFeed run config cmd mode prev cur poll max push checkFee
           NuGetPollIntervalMs = 0
           NuGetMaxAttempts = 1
           Push = push
-          Check = false }
+          Check = false
+          Canary = noCanary }
 
 /// Every prior version is on the feed — the default for tests not about publication.
 let private runReleaseWithPush run config cmd mode prev cur poll max push =
@@ -1008,7 +1019,8 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
                   Push = false
-                  Check = false }
+                  Check = false
+                  Canary = noCanary }
 
         test <@ result = 0 @>
         // Grammar break drives a major bump => 2.0.0, despite the unchanged API.
@@ -1060,7 +1072,8 @@ let private releaseWithUnchangedApi (run: string -> string -> CommandResult) (co
               NuGetPollIntervalMs = 0
               NuGetMaxAttempts = 1
               Push = false
-              Check = false })
+              Check = false
+              Canary = noCanary })
 
 /// A single-package repo in `dir` released at `version`, with `changelog` as its
 /// root CHANGELOG.md.
@@ -2691,7 +2704,8 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
                   Push = false
-                  Check = false }
+                  Check = false
+                  Canary = noCanary }
 
         test <@ result = 1 @>
         // fsproj untouched
@@ -2801,7 +2815,8 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
                       NuGetPollIntervalMs = 0
                       NuGetMaxAttempts = 1
                       Push = false
-                      Check = false })
+                      Check = false
+                      Canary = noCanary })
 
         test <@ result = 0 @>
 
@@ -2996,7 +3011,8 @@ let private runReleaseWithNuGetWait run config cmd checkFeedPresence maxAttempts
           NuGetPollIntervalMs = 0
           NuGetMaxAttempts = maxAttempts
           Push = false
-          Check = false }
+          Check = false
+          Canary = noCanary }
 
 [<Fact>]
 let ``release - waits for NuGet after pushing tags and checks the published package`` () =
@@ -3181,7 +3197,8 @@ let private runReleaseTargeting run config cmd mode targets =
           NuGetPollIntervalMs = 0
           NuGetMaxAttempts = 1
           Push = false
-          Check = false }
+          Check = false
+          Canary = noCanary }
 
 [<Fact>]
 let ``release - scoped to one package only tags that package`` () =
@@ -3287,7 +3304,8 @@ let ``release - --only on a multi-package repo uses the per-package CHANGELOG, n
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
                   Push = false
-                  Check = false }
+                  Check = false
+                  Canary = noCanary }
 
         let calls = getCalls ()
         // Per-package changelog found + validated → release proceeded and tagged LibA.
@@ -3670,7 +3688,8 @@ let private runReleaseWithFeed run config checkFeedPresence =
           NuGetPollIntervalMs = 0
           NuGetMaxAttempts = 1
           Push = false
-          Check = false }
+          Check = false
+          Canary = noCanary }
 
 /// A plain library, and a `PackAsTool` CLI. Every orphan-recovery test below runs
 /// against BOTH: a dotnet tool cannot be API-probed at all (a PackageReference to
@@ -3837,7 +3856,8 @@ let ``release - a published package whose DLL is unreadable is never republished
                       NuGetPollIntervalMs = 0
                       NuGetMaxAttempts = 1
                       Push = false
-                      Check = false })
+                      Check = false
+                      Canary = noCanary })
 
         let calls = getCalls ()
 
@@ -4064,7 +4084,8 @@ let private runReleaseInRoot run config cmd =
           NuGetPollIntervalMs = 0
           NuGetMaxAttempts = 1
           Push = false
-          Check = false }
+          Check = false
+          Canary = noCanary }
 
 [<Fact>]
 let ``release - Auto rebundles when only a bundled dependency changed`` () =
@@ -4237,7 +4258,8 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
                   Push = false
-                  Check = false }
+                  Check = false
+                  Canary = noCanary }
 
         test <@ result = 0 @>
         test <@ File.ReadAllText(toolFsproj).Contains("<Version>1.1.0</Version>") @>)
@@ -4448,7 +4470,8 @@ let ``release - library does NOT rebundle when only a separately-published depen
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
                   Push = false
-                  Check = false }
+                  Check = false
+                  Canary = noCanary }
 
         test <@ result = 0 @>
         // Lib's closure excludes Core (separately published) => no dep change =>
@@ -4552,7 +4575,8 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
                   Push = false
-                  Check = false }
+                  Check = false
+                  Canary = noCanary }
 
         test <@ result = 0 @>
         // PackAsTool bundles Core => Core's change triggers a rebundle patch bump.
@@ -4648,7 +4672,8 @@ let ``release - library rebundles when a non-configured helper dependency change
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
                   Push = false
-                  Check = false }
+                  Check = false
+                  Canary = noCanary }
 
         test <@ result = 0 @>
         // Helper is bundled (not separately published) => rebundle patch bump.
@@ -4759,7 +4784,8 @@ let private releaseInput run config cmd mode check : ReleaseInput =
       NuGetPollIntervalMs = 0
       NuGetMaxAttempts = 1
       Push = false
-      Check = check }
+      Check = check
+      Canary = noCanary }
 
 /// A single-package repo rooted at `rootDir` with `<Version>1.0.0</Version>` and
 /// the given CHANGELOG body. Returns (fsproj, ownDir, changelogPath, config).
@@ -5203,7 +5229,8 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
                   Push = false
-                  Check = false }
+                  Check = false
+                  Canary = noCanary }
 
         test <@ result = 0 @>
         // The grammar break must drive a MAJOR bump, not the patch the API diff
@@ -5275,7 +5302,8 @@ let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative 
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
                   Push = false
-                  Check = false }
+                  Check = false
+                  Canary = noCanary }
 
         test <@ result = 0 @>
         test <@ (File.ReadAllText fsproj).Contains("<Version>1.0.1</Version>") @>
@@ -5349,7 +5377,8 @@ let ``release - PackAsTool CLI aborts when the previous grammar cannot be read``
                   NuGetPollIntervalMs = 0
                   NuGetMaxAttempts = 1
                   Push = false
-                  Check = false }
+                  Check = false
+                  Canary = noCanary }
 
         test <@ result = 1 @>
         // Version untouched — refusing to guess must not half-apply a bump.
@@ -5411,7 +5440,8 @@ let private runCheck (config: ToolConfig) =
           NuGetPollIntervalMs = 0
           NuGetMaxAttempts = 1
           Push = false
-          Check = true }
+          Check = true
+          Canary = noCanary }
 
 [<Fact>]
 let ``calloutCheckPaths - multi-package repo also covers the repo-root changelog`` () =
@@ -5573,7 +5603,8 @@ let private releaseWithTagPush run config (policy: TagPushPolicy) =
           NuGetPollIntervalMs = 0
           NuGetMaxAttempts = 1
           Push = false
-          Check = false }
+          Check = false
+          Canary = noCanary }
 
 [<Fact>]
 let ``release - a Release run that registers a few polls after the push exits 0 and is never MISSING`` () =

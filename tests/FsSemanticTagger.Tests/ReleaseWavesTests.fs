@@ -14,6 +14,16 @@ open FsSemanticTagger.Api
 open FsSemanticTagger.Release
 open Tests.Common.TestHelpers
 
+/// No machine-local canary config, and a host that must never be reached.
+let private noCanary: ConsumerCanary.Settings =
+    { ConfigPath = Path.Combine(Path.GetTempPath(), "no-such-fssemantictagger.json")
+      Skip = false
+      LogDir = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-logs")
+      PackagesCache = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-cache")
+      Ops =
+        { RunIn = fun _ cmd _ -> failwithf "unexpected canary process: %s" cmd
+          RunGate = fun _ command _ _ -> failwithf "unexpected canary gate: %s" command } }
+
 type private Repo =
     { Root: string
       Config: ToolConfig
@@ -163,7 +173,8 @@ let private releaseInputWith (repo: Repo) (rejectedTags: string list) checkFeed 
       NuGetPollIntervalMs = 0
       NuGetMaxAttempts = 5
       Push = false
-      Check = false }
+      Check = false
+      Canary = noCanary }
 
 /// The common shape: one probe answers both questions, so a test about ordering
 /// alone does not have to script the index and restorability separately.

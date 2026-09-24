@@ -25,6 +25,7 @@
     <Compile Include="VcsTests.fs" />
     <Compile Include="ReleaseOrderTests.fs" />
     <Compile Include="ReleaseTests.fs" />
+    <Compile Include="ConsumerCanaryTests.fs" />
     <Compile Include="ReleaseWavesTests.fs" />
     <Compile Include="BumpTests.fs" />
     <Compile Include="DeclaredBumpTests.fs" />

@@ -46,6 +46,7 @@
     <Compile Include="Config.fs" />
     <Compile Include="ReleaseOrder.fs" />
     <Compile Include="Vcs.fs" />
+    <Compile Include="ConsumerCanary.fs" />
     <Compile Include="Release.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

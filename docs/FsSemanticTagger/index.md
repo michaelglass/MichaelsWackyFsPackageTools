@@ -98,9 +98,10 @@ The `release` command:
 4. Builds in Release configuration
 5. Compares API against the previous release tag
 6. Validates each bumped package's `CHANGELOG.md` has a non-empty `## Unreleased` section
-7. Updates the version in your `.fsproj` file(s)
-8. Promotes the `## Unreleased` section to `## <version> - YYYY-MM-DD` and inserts a fresh empty `## Unreleased` above it
-9. Creates a VCS tag (supports both Git and [Jujutsu](https://jj-vcs.github.io/jj/))
+7. Runs the gates of the consumers configured on this machine against the candidate (see [Consumer canary](#consumer-canary)); a red gate refuses the release here, before any write
+8. Updates the version in your `.fsproj` file(s)
+9. Promotes the `## Unreleased` section to `## <version> - YYYY-MM-DD` and inserts a fresh empty `## Unreleased` above it
+10. Creates a VCS tag (supports both Git and [Jujutsu](https://jj-vcs.github.io/jj/))
 
 ### Fail-fast CI precondition
 
@@ -183,6 +184,7 @@ All release commands (`release`, `alpha`, `beta`, `rc`, `stable`) accept:
 - `--publish` — build and pack locally (`dotnet pack -c Release -o artifacts/`) instead of pushing tags for CI to publish.
 - `--skip-nuget-wait` — after pushing tags, exit immediately instead of polling NuGet until the published package(s) are indexed. By default the command waits up to **20 minutes** (81 checks, 15s apart) for the new version(s) to appear on the index — NuGet's index typically lags the Release run by 6-15 minutes. If the poll gives up it **exits 2**, prints the wait it actually performed, and says so in terms that are not a failed publish: the tags are pushed and each has a Release run; re-running the same release command resumes rather than re-publishes. Override the budget with `FSHW_NUGET_PROBE_ATTEMPTS` / `FSHW_NUGET_PROBE_DELAY_MS` (the same variables FsHotWatch's release barrier reads). In a release where one package depends on another, this flag skips only the confirmation of the last wave: the wait between a dependency and its dependents is never skipped (see [Publication order](#publication-order)). Pass it when your own release runs a stronger check after this command — FsHotWatch's `scripts/wait-for-nuget.fsx` installs and runs the published tool — so NuGet is asked about each package **once**: this command's index poll would otherwise spend up to 20 minutes on the weaker question first.
 - `--only <names>` — restrict the run to specific package(s) by name (comma-separated; e.g. `--only Foo,Bar`). Names match the `name` field of entries in `semantic-tagger.json`. When omitted, **all** packages are processed (the default). Only the selected packages are considered for version computation and tagging; the rest are out of scope entirely (not bumped, not tagged, not even reported as "skipped"). An unknown name aborts with exit code 1 and lists the valid names — it never silently no-ops.
+- `--skip-consumer-canary` — break-glass: push the tags without running the configured consumers' gates on the candidate. Prints loudly; the skip is recorded in the release output. See [Consumer canary](#consumer-canary).
 - `--push` — if the release commit isn't on the remote yet, push it and wait for its CI to finish, then proceed. The default is to **fail fast** with a "push first" message rather than push implicitly (unsafe on a branch-protected / PR-gated `main`). A commit that *is* already pushed is always waited on regardless of this flag. See [Fail-fast CI precondition](#fail-fast-ci-precondition).
 
 ```bash
@@ -207,6 +209,57 @@ fssemantictagger release
 # Push the release commit and wait for its CI, then release (one shot)
 fssemantictagger release --push
 ```
+
+### Consumer canary
+
+A repo's own gate runs its own suite on its own tree; a regression that only appears at a consumer's scale is invisible to it. Before any tag is pushed, `release` can run the gates of consumers checked out on this machine against the release candidate. Which consumers exist is a fact about the machine, so the configuration is machine-local: `~/.fssemantictagger.json`.
+
+```json
+{
+  "localFeed": "~/Developer/opensource/.nuget-local",
+  "consumers": [
+    {
+      "package": "FsHotWatch.Cli",
+      "repo": "~/Developer/work/thellma/intelligence",
+      "pin": ".config/dotnet-tools.json",
+      "gate": "./build.fsx check",
+      "timeoutMinutes": 90
+    },
+    {
+      "package": "TestPrune.Core",
+      "repo": "~/Developer/opensource/FsHotWatch",
+      "pin": "src/FsHotWatch.TestPrune/FsHotWatch.TestPrune.fsproj",
+      "gate": "mise run ci",
+      "timeoutMinutes": 30,
+      "revision": "main"
+    }
+  ]
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `localFeed` | The directory the candidate is packed into and the consumer restores from. Optional; default `~/.fssemantictagger/feed`. |
+| `consumers[].package` | The package id, matched case-insensitively against the release plan. |
+| `consumers[].repo` | The consumer's checkout (`~` is expanded). A `.jj` directory makes it a jj consumer, a `.git` entry a git one. |
+| `consumers[].pin` | The file that pins the package, relative to `repo`: a `dotnet-tools.json` manifest (its `"version"` is rewritten) or an MSBuild project/props file (the `<PackageReference Include="..." Version="...">` is rewritten). Every other byte of the file is kept. |
+| `consumers[].gate` | The command that decides, run through `/bin/sh -c` in the workspace. Exit 0 is the only pass. |
+| `consumers[].timeoutMinutes` | The budget for the restore and for the gate, each. Exceeding it refuses the release. |
+| `consumers[].revision` | The revision the fresh workspace is created from. Optional; default `main`. |
+
+After the plan is decided and the changelogs validated — before the fsproj is bumped, before anything is committed, tagged or pushed — for every package in the plan with a consumer:
+
+1. The candidate is packed at its **planned** version into `localFeed` (`dotnet pack -p:Version=<planned> -p:ReleaseBuild=true`, so [RefStamp](../RefStamp/README.md) emits the clean version), and NuGet's cached copy of that id+version is evicted, because NuGet never re-extracts a version it has already cached.
+2. Per consumer, a fresh workspace is created beside the checkout at `<repo>-canary-<package>` — `jj workspace add` or `git worktree add --detach`, from `revision`. A workspace left by an earlier run is replaced.
+3. The pin is bumped to the planned version and the workspace's `nuget.config` gains `localFeed` as a source (an existing file keeps its other sources; the feed is added after any `<clear />`).
+4. The pin is restored (`dotnet tool restore` or `dotnet restore <pin>`), then the gate runs. Both append to `artifacts/consumer-canary/<package>-<version>-<consumer>.log` in the releasing repo.
+
+Any failure — pack, workspace, pin, restore, a non-zero gate, a timeout — **refuses the release** with exit 1, naming the consumer, the exit code (or the budget), the log, and the workspace, which is left for inspection. Nothing has been written, tagged or pushed. The canary cannot tell a regression from a consumer whose `main` is red on its own: confirm with the consumer's gate on an unpinned workspace, then decide.
+
+- No `~/.fssemantictagger.json`, or no consumer of the packages being released: skipped with a one-line note naming the path. The canary is never a requirement on a machine without consumers.
+- `--dry-run` lists the consumers that would run, without packing or running anything.
+- `--publish` pushes no tag, so the canary does not run.
+- `--skip-consumer-canary` is break-glass: the tags are pushed without any consumer gate. It prints loudly and the release output records the skip.
 
 ### Publication order
 
