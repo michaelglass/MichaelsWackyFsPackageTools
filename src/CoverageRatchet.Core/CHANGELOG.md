@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- fix: `saveRawConfig` edits the document on disk instead of rebuilding it from the map. A key whose entries are unchanged keeps the JSON node that was read — bytes, property order, unknown properties — a changed key is replaced, a removed key is deleted, a new key is appended, and a trailing newline is preserved. Whitespace and string escaping still normalise to the writer's, so a file the tool wrote is a fixed point.
+- fix: `mergeRawSection` (behind `loosenRaw`, `ratchetRaw` and `baselineCountFloorsRaw`) tags a NEW entry with `Platform.current` when the file already carries platform-tagged entries; a file with no entries still gets a platform-less one.
+
 ## 0.1.0-alpha.8 - 2026-09-15
 
 - Fix: make the coverage-ratchet JSON writer encoding-stable

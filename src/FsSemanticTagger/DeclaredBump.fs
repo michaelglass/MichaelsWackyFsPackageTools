@@ -158,3 +158,51 @@ let floor (computed: ApiChange) (declared: Declaration option) : ApiChange * str
                 d.Entry
         )
     | Some _ -> computed, None
+
+/// The FsSemanticTagger release that first honoured a declaration. A tagger older
+/// than this never reads the changelog for markers, so it releases a declared
+/// breaking change as whatever the API diff computes: a patch, or a minor. This is
+/// the one place that version is written down.
+let introducedIn: Version.Version = Version.parse "0.14.0-alpha.12"
+
+/// The release version inside an assembly's informational version: build
+/// metadata (`+<sha>`, added by SourceLink) and a RefStamp local-pack suffix
+/// (`-ref.<change>.g<commit>[.dirty]`) both follow the release version and say
+/// nothing about which features the build has.
+let private releaseVersionRegex =
+    Regex(@"^(\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)(?:$|\+|-ref\.)", RegexOptions.Compiled)
+
+/// Whether the tagger running as `ownVersion` honours declared bumps: `Error` with
+/// the reason when it is older than `introducedIn`, or when its version cannot be
+/// read at all. An unreadable version is refused rather than trusted, because the
+/// refusal exists to keep an old tagger from releasing, and an old tagger that
+/// cannot be identified is still an old tagger.
+let requireSupport (ownVersion: string) : Result<unit, string> =
+    let minimum = Version.format introducedIn
+
+    let parsed =
+        let m = releaseVersionRegex.Match(ownVersion.Trim())
+
+        if m.Success then
+            Version.tryParse m.Groups[1].Value
+        else
+            Error ownVersion
+
+    match parsed with
+    | Error _ ->
+        Error(
+            sprintf
+                "fssemantictagger cannot read its own version (%A), so it cannot show it is %s or newer, the first release that honours a breaking change declared in the changelog. Pin fssemantictagger to %s or newer in .config/dotnet-tools.json."
+                ownVersion
+                minimum
+                minimum
+        )
+    | Ok own when Version.sortKey own < Version.sortKey introducedIn ->
+        Error(
+            sprintf
+                "fssemantictagger %s is too old to release: a breaking change declared in the changelog (`feat!:`, `BREAKING CHANGE:`) is only honoured as a floor on the bump from %s, and this version would release it as whatever the API diff computes, a patch or a minor. Pin fssemantictagger to %s or newer in .config/dotnet-tools.json and run `dotnet tool restore`."
+                (Version.format own)
+                minimum
+                minimum
+        )
+    | Ok _ -> Ok()
