@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.15.0-alpha.16 - 2026-09-24
+
 - fix: **the config file is edited in place, never re-rendered.** `baseline-lines`, `ratchet`, `loosen` and `loosen-from-ci` all wrote the whole document back from a sorted map, so a one-number change re-ordered every hand-appended entry and re-spelled every value — and the entries this machine cannot measure (Linux floors captured from Linux CI) were somewhere inside that diff. Entries the run did not change now keep their bytes, their order and any property the tool does not know about; a trailing newline is kept too.
 - feat: `baseline-lines --file <name>` (repeatable) re-baselines only the named files. Naming a file the report did not measure writes nothing and exits 2. `--file` on any other command is an error.
 - fix: a floor written for a file that already carries other platforms' entries is tagged with the platform that measured it, instead of platform-less. A platform-less entry beside a `linux` one claimed every platform except the one that produced the number.
