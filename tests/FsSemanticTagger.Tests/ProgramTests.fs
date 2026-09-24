@@ -439,6 +439,25 @@ let ``runReleaseWith - returns Error when config missing`` () =
             @>)
 
 [<Fact>]
+let ``runCommandWith - a release verb on a tagger below the declared-bump minimum is refused before dispatch`` () =
+    let mutable called = false
+
+    let fake _ _ =
+        called <- true
+        Ok 0
+
+    for cmd in [ Release []; Alpha []; Beta []; Rc []; Stable [] ] do
+        match runCommandWith "0.14.0-alpha.11" fake cmd with
+        | Ok _ -> failwithf "%A should have been refused" cmd
+        | Error msg -> test <@ msg.Contains "0.14.0-alpha.12" @>
+
+    test <@ not called @>
+
+[<Fact>]
+let ``runCommandWith - the running build's own version is accepted`` () =
+    test <@ DeclaredBump.requireSupport ownVersion = Ok() @>
+
+[<Fact>]
 let ``runCommandWith - Release dispatches with Auto`` () =
     let mutable captured = None
 
@@ -446,7 +465,7 @@ let ``runCommandWith - Release dispatches with Auto`` () =
         captured <- Some(cmd, opts)
         Ok 42
 
-    let result = runCommandWith fake (Release [])
+    let result = runCommandWith ownVersion fake (Release [])
     test <@ result = Ok 42 @>
     test <@ captured = Some(Release.Auto, []) @>
 
@@ -458,7 +477,7 @@ let ``runCommandWith - Alpha dispatches with StartAlpha`` () =
         captured <- Some(cmd, opts)
         Ok 0
 
-    runCommandWith fake (Alpha [ Publish ]) |> ignore
+    runCommandWith ownVersion fake (Alpha [ Publish ]) |> ignore
     test <@ captured = Some(Release.StartAlpha, [ Publish ]) @>
 
 [<Fact>]
@@ -469,7 +488,7 @@ let ``runCommandWith - Beta dispatches with PromoteToBeta`` () =
         captured <- Some(cmd, opts)
         Ok 0
 
-    runCommandWith fake (Beta []) |> ignore
+    runCommandWith ownVersion fake (Beta []) |> ignore
     test <@ captured = Some(Release.PromoteToBeta, []) @>
 
 [<Fact>]
@@ -480,7 +499,7 @@ let ``runCommandWith - Rc dispatches with PromoteToRC`` () =
         captured <- Some(cmd, opts)
         Ok 0
 
-    runCommandWith fake (Rc []) |> ignore
+    runCommandWith ownVersion fake (Rc []) |> ignore
     test <@ captured = Some(Release.PromoteToRC, []) @>
 
 [<Fact>]
@@ -491,7 +510,7 @@ let ``runCommandWith - Stable dispatches with PromoteToStable`` () =
         captured <- Some(cmd, opts)
         Ok 0
 
-    runCommandWith fake (Stable [ Publish ]) |> ignore
+    runCommandWith ownVersion fake (Stable [ Publish ]) |> ignore
     test <@ captured = Some(Release.PromoteToStable, [ Publish ]) @>
 
 [<Fact>]

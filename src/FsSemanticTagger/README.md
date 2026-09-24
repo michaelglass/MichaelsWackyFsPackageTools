@@ -28,6 +28,8 @@ So in `auto` mode the release also reads the entries it is about to publish: the
 
 The bump is the stronger of the declared and the computed change. When the two disagree the release prints a line saying so, in either direction: when the changelog raised the bump, and when the API diff found more than the changelog declares. A changelog with no markers leaves the bump exactly as the API diff computes it. With several changelogs behind one tag (`fsProjsSharingSameTag`), the strongest declaration across them counts. Markers inside fenced code blocks are ignored.
 
+Support for declarations arrived in 0.14.0-alpha.12. A release verb (`release`, `alpha`, `beta`, `rc`, `stable`) run by an older tagger, or by one whose own version cannot be read, is refused before anything is read or built, with a message naming that minimum and where to pin it (`.config/dotnet-tools.json`).
+
 Diffing literal values was considered and not done: it would major-bump every package whose internal constants change (build stamps, thresholds, retry counts) to catch only an author who forgot to declare the break.
 
 ## Installation

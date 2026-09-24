@@ -184,3 +184,45 @@ let ``replay: a declared breaking change with an invisible API change plans 8.0.
 let ``a declared breaking change before 1.0 floors at a minor bump`` () =
     let change, _ = floor NoChange (declared DeclaresBreaking)
     test <@ determineBump (parse "0.3.2") change = parse "0.4.0" @>
+
+// requireSupport: a tagger older than the release that introduced declared bumps
+// refuses to release, because it would ship a declared breaking change as whatever
+// the API diff computes.
+
+[<Fact>]
+let ``the release that introduced declared bumps is 0_14_0-alpha_12`` () =
+    test <@ introducedIn = parse "0.14.0-alpha.12" @>
+
+[<Theory>]
+[<InlineData("0.14.0-alpha.11")>]
+[<InlineData("0.14.0-alpha.4")>]
+[<InlineData("0.13.0-alpha.20")>]
+[<InlineData("0.14.0-alpha.11+6e098cb4299d85d2d30c7e5d2f649b171b05cc2b")>]
+let ``a tagger below the minimum is refused, naming the minimum and why`` (own: string) =
+    match requireSupport own with
+    | Ok() -> failwithf "%s should have been refused" own
+    | Error msg ->
+        test <@ msg.Contains(own.Split('+').[0]) @>
+        test <@ msg.Contains "0.14.0-alpha.12" @>
+        test <@ msg.Contains "declared" @>
+        test <@ msg.Contains "dotnet-tools.json" @>
+
+[<Theory>]
+[<InlineData("0.14.0-alpha.12")>]
+[<InlineData("0.14.0-alpha.13")>]
+[<InlineData("0.14.0")>]
+[<InlineData("1.0.0")>]
+[<InlineData("0.14.0-alpha.12+6e098cb4299d85d2d30c7e5d2f649b171b05cc2b")>]
+[<InlineData("0.14.0-alpha.12-ref.sswvtpyo.gfd723dd3.dirty")>]
+let ``a tagger at or above the minimum runs`` (own: string) = test <@ requireSupport own = Ok() @>
+
+[<Theory>]
+[<InlineData("")>]
+[<InlineData("dev")>]
+[<InlineData("0.14")>]
+let ``a tagger whose own version cannot be read is refused rather than trusted`` (own: string) =
+    match requireSupport own with
+    | Ok() -> failwithf "%A should have been refused" own
+    | Error msg ->
+        test <@ msg.Contains "0.14.0-alpha.12" @>
+        test <@ msg.Contains "cannot read" @>

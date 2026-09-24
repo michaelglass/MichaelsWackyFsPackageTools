@@ -153,10 +153,21 @@ let private runRelease (releaseCmd: Release.ReleaseCommand) (flags: ReleaseFlag 
         releaseCmd
         flags
 
+/// The version this build runs as: the entry assembly's informational version,
+/// `<Version>` from the fsproj plus SourceLink's `+<sha>`.
+let internal ownVersion: string = CommandTree.entryAssemblyVersion ()
+
+/// Dispatch a release verb only on a tagger new enough to honour a declared bump;
+/// an older one is refused before any config is read or anything is built.
 let internal runCommandWith
+    (ownVersion: string)
     (releaseHandler: Release.ReleaseCommand -> ReleaseFlag list -> Result<int, string>)
     (cmd: Command)
     : Result<int, string> =
+    let release releaseCmd opts =
+        DeclaredBump.requireSupport ownVersion
+        |> Result.bind (fun () -> releaseHandler releaseCmd opts)
+
     match cmd with
     | Init -> initCommand (Directory.GetCurrentDirectory())
     | ExtractApi dll ->
@@ -200,13 +211,14 @@ let internal runCommandWith
         | Api.NoChange ->
             printfn "No API changes"
             Ok 0
-    | Release opts -> releaseHandler Release.Auto opts
-    | Alpha opts -> releaseHandler Release.StartAlpha opts
-    | Beta opts -> releaseHandler Release.PromoteToBeta opts
-    | Rc opts -> releaseHandler Release.PromoteToRC opts
-    | Stable opts -> releaseHandler Release.PromoteToStable opts
+    | Release opts -> release Release.Auto opts
+    | Alpha opts -> release Release.StartAlpha opts
+    | Beta opts -> release Release.PromoteToBeta opts
+    | Rc opts -> release Release.PromoteToRC opts
+    | Stable opts -> release Release.PromoteToStable opts
 
-let runCommand (cmd: Command) : Result<int, string> = runCommandWith runRelease cmd
+let runCommand (cmd: Command) : Result<int, string> =
+    runCommandWith ownVersion runRelease cmd
 
 let private subcommandExtras (path: string list) : string option =
     match path with
