@@ -525,6 +525,72 @@ let ``checkFeedPresence - an unreachable feed stays Unknown when the probe canno
             | _ -> false
         @>
 
+// ---------------------------------------------------------------------------
+// checkRestorable: the question a wave gate asks. Unlike checkFeedPresence, the
+// index listing a version is NOT enough for a library — the next wave's nuspec
+// names this exact version, so it must restore.
+// ---------------------------------------------------------------------------
+
+let private restoreSucceeds (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+    FsSemanticTagger.Shell.Success ""
+
+let private restoreFails (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+    FsSemanticTagger.Shell.Failure("error NU1102: Unable to find package SomePackage with version (= 1.2.3)", 1)
+
+let private indexLists (_url: string) : HttpResult = HttpOk """{"versions":["1.2.3"]}"""
+let private indexLacks (_url: string) : HttpResult = HttpOk """{"versions":["1.2.2"]}"""
+
+[<Fact>]
+let ``checkRestorable - a library the index lists but restore cannot fetch is NotOnFeed`` () =
+    // Measured on FsHotWatch: the index served a new version four minutes before a
+    // restore of it succeeded. A gate that cleared on the listing would push the
+    // dependents into that window.
+    test <@ checkRestorable indexLists restoreFails false "SomePackage" "1.2.3" = NotOnFeed @>
+
+[<Fact>]
+let ``checkRestorable - a library that restores is OnFeed whatever the public index says`` () =
+    // A privately published package never appears on nuget.org's flat container;
+    // the restore probe honours the repo nuget.config, so it decides.
+    test <@ checkRestorable indexLacks restoreSucceeds false "SomePackage" "1.2.3" = OnFeed @>
+    test <@ checkRestorable (fun _ -> HttpFailed "offline") restoreSucceeds false "SomePackage" "1.2.3" = OnFeed @>
+
+[<Fact>]
+let ``checkRestorable - a library asks the restore probe, never only the index`` () =
+    let mutable restores = 0
+
+    let counting (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        restores <- restores + 1
+        FsSemanticTagger.Shell.Success ""
+
+    checkRestorable indexLists counting false "SomePackage" "1.2.3" |> ignore
+    test <@ restores = 1 @>
+
+[<Fact>]
+let ``checkRestorable - a tool is decided by the index, since a PackageReference probe of it always fails`` () =
+    let nu1212 (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        FsSemanticTagger.Shell.Failure("error NU1212: Invalid project-package combination for SomeTool 1.2.3.", 1)
+
+    test <@ checkRestorable indexLists nu1212 true "SomeTool" "1.2.3" = OnFeed @>
+    test <@ checkRestorable indexLacks nu1212 true "SomeTool" "1.2.3" = NotOnFeed @>
+
+    test
+        <@
+            match checkRestorable (fun _ -> HttpFailed "offline") nu1212 true "SomeTool" "1.2.3" with
+            | FeedUnknown _ -> true
+            | _ -> false
+        @>
+
+[<Fact>]
+let ``checkRestorable - a tool never runs the restore probe`` () =
+    let mutable restores = 0
+
+    let counting (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        restores <- restores + 1
+        FsSemanticTagger.Shell.Success ""
+
+    checkRestorable indexLists counting true "SomeTool" "1.2.3" |> ignore
+    test <@ restores = 0 @>
+
 [<Fact>]
 let ``probeAvailabilityArgs appends --no-http-cache and keeps --configfile when present`` () =
     let args = probeAvailabilityArgs (Some "/repo/nuget.config") "/tmp/probe.csproj"

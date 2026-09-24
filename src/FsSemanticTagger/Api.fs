@@ -703,6 +703,32 @@ let checkFeedPresence
         else
             verdict
 
+/// Is this exact package version RESTORABLE right now? The question the gate
+/// between publication waves asks, as opposed to `checkFeedPresence`'s "is it
+/// published". The two differ by minutes: the flat container lists a version
+/// well before a restore of it succeeds (measured on FsHotWatch, four minutes
+/// for a CLI), and the next wave's nuspec names this exact version, so a gate
+/// that clears on the listing pushes the dependents into that window.
+///
+/// For a library the `dotnet restore` probe decides, alone. It honours the repo's
+/// `nuget.config`, so a privately published package passes without the public
+/// index ever listing it, and the index listing a version does not pass a package
+/// the probe cannot fetch.
+///
+/// For a `PackAsTool` package the probe is structurally useless (a
+/// `PackageReference` to a tool fails NU1212 whether or not it is published), so
+/// the flat container is the strongest answer available and decides instead.
+let checkRestorable
+    (fetch: string -> HttpResult)
+    (run: string -> string -> Shell.CommandResult)
+    (isTool: bool)
+    (packageId: string)
+    (version: string)
+    : FeedPresence =
+    if isTool then flatContainerPresence fetch packageId version
+    elif isPublishedViaRestore run packageId version then OnFeed
+    else NotOnFeed
+
 /// Is this exact package version live right now? The two-valued view of
 /// `checkFeedPresence`. No production caller remains — the post-push availability
 /// poll (`Release.waitForNuGet`) consumes `FeedPresence` directly so that
