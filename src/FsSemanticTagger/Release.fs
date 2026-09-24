@@ -54,6 +54,13 @@ type ReleaseInput =
         /// unreachable feed, so ONE seam serves both the post-push availability
         /// poll and the orphan-tag detection.
         CheckFeedPresence: string -> string -> FeedPresence
+        /// Ask whether a (isTool, packageName, version) is RESTORABLE — the gate
+        /// between publication waves, whose next wave's nuspec names this exact
+        /// version. A separate seam from `CheckFeedPresence` because it is a
+        /// stronger question: the index lists a version minutes before a restore
+        /// of it succeeds. `isTool` is passed because a tool cannot be probed by
+        /// restore at all and has a different strongest answer.
+        CheckRestorable: bool -> string -> string -> FeedPresence
         WaitForNuGet: bool
         NuGetPollIntervalMs: int
         NuGetMaxAttempts: int
@@ -434,11 +441,19 @@ let private reportNuGetUnconfirmed (unconfirmed: (string * string) list) (waited
 ///
 /// Every tag of a wave is pushed and its publish run confirmed, as for a single-wave
 /// release. When a later wave is waiting on this one, the exact versions of this wave
-/// must then be ON the feed before any later tag is pushed. That wait is not optional:
+/// must then be RESTORABLE before any later tag is pushed — `CheckRestorable`, not
+/// `CheckFeedPresence`, because the next wave's nuspec names these versions and the
+/// index lists a version minutes before it restores. That wait is not optional:
 /// `--skip-nuget-wait` skips only the final confirmation, because skipping a gate
 /// would let a dependent run race its dependency. When the gate gives up, the
 /// dependents' tags stay unpushed and the release exits 2; re-running the same
 /// command resumes it.
+///
+/// NuGet is asked about each package ONCE per wave. The final wave's confirmation
+/// uses the index (`CheckFeedPresence`) and is what `--skip-nuget-wait` drops, so a
+/// consumer whose release runs its own restorability barrier after this command
+/// (FsHotWatch's `scripts/wait-for-nuget.fsx`) asks the stronger question exactly
+/// once for that wave too, instead of this poll asking the weaker one first.
 let private pushTagsInWaves (input: ReleaseInput) (waves: (PackageConfig * Version) list list) : int =
     let rec publish (remaining: (PackageConfig * Version) list list) =
         match remaining with
@@ -469,9 +484,21 @@ let private pushTagsInWaves (input: ReleaseInput) (waves: (PackageConfig * Versi
                 let gatesLater = not (List.isEmpty later)
 
                 if gatesLater || input.WaitForNuGet then
+                    let tools =
+                        wave
+                        |> List.filter (fun (pkg, _) -> isPackAsTool (System.IO.File.ReadAllText pkg.Fsproj))
+                        |> List.map (fun (pkg, _) -> pkg.Name)
+                        |> Set.ofList
+
+                    let check =
+                        if gatesLater then
+                            fun id ver -> input.CheckRestorable (Set.contains id tools) id ver
+                        else
+                            input.CheckFeedPresence
+
                     if gatesLater then
                         printfn
-                            "Waiting for %s on NuGet before pushing the packages that depend on them — up to %s (%d checks, %.0fs apart)..."
+                            "Waiting for %s to be restorable from NuGet before pushing the packages that depend on them — up to %s (%d checks, %.0fs apart)..."
                             (pkgVersions |> List.map (fun (id, ver) -> id + " " + ver) |> String.concat ", ")
                             (formatElapsed (pollBudget input.NuGetPollIntervalMs input.NuGetMaxAttempts))
                             input.NuGetMaxAttempts
@@ -484,11 +511,7 @@ let private pushTagsInWaves (input: ReleaseInput) (waves: (PackageConfig * Versi
                             (float input.NuGetPollIntervalMs / 1000.0)
 
                     let unconfirmed, waited =
-                        waitForNuGetTimed
-                            input.CheckFeedPresence
-                            input.NuGetPollIntervalMs
-                            input.NuGetMaxAttempts
-                            pkgVersions
+                        waitForNuGetTimed check input.NuGetPollIntervalMs input.NuGetMaxAttempts pkgVersions
 
                     if List.isEmpty unconfirmed then
                         publish later

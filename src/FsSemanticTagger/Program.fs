@@ -133,6 +133,7 @@ let internal runReleaseWith
                   // `Vcs.tagPushPolicyFromEnv`.
                   TagPush = Vcs.tagPushPolicyFromEnv envVar
                   CheckFeedPresence = Api.checkFeedPresence Api.httpGet run
+                  CheckRestorable = Api.checkRestorable Api.httpGet run
                   WaitForNuGet = not (flags |> List.contains SkipNugetWait)
                   // Twenty minutes by default, the measured NuGet index lag, and the
                   // same env overrides as FsHotWatch's barrier.
@@ -266,8 +267,10 @@ Flags:
                      itself)
   --skip-nuget-wait  after pushing tags, exit immediately instead of
                      polling NuGet until the published package(s) are
-                     restorable (a package's dependents still wait for
-                     it to be on NuGet before their tags are pushed)
+                     indexed (a package's dependents still wait for it
+                     to be restorable before their tags are pushed; use
+                     this when your own release runs a restorability
+                     barrier afterwards, so NuGet is asked once)
   --only <names>     restrict the run to specific package(s) by name
                      (comma-separated, e.g. --only Foo,Bar). Names match
                      the "name" field in semantic-tagger.json. Absent =
