@@ -814,8 +814,10 @@ let ``loosenRaw adds new file with platform-agnostic entry`` () =
     test <@ entries.[0].Branch = 50.0 @>
 
 [<Fact>]
-let ``loosenRaw preserves other-platform-only entry when adding agnostic entry for same file`` () =
-    // File has only an other-platform entry. Loosen adds a platform-agnostic entry alongside it.
+let ``loosenRaw preserves other-platform-only entry when adding this platform's entry for same file`` () =
+    // File has only an other-platform entry. Loosen adds an entry for the platform it
+    // measured alongside it — a platform-less entry next to the other platform's would
+    // claim every platform except the one that produced the number.
     let raw: RawConfig =
         { DefaultLine = 100.0
           DefaultBranch = 100.0
@@ -834,9 +836,9 @@ let ``loosenRaw preserves other-platform-only entry when adding agnostic entry f
 
     test <@ entries.Length = 2 @>
     let other = entries |> List.find (fun o -> o.Platform = Some otherPlatform)
-    let agnostic = entries |> List.find (fun o -> o.Platform = None)
+    let mine = entries |> List.find (fun o -> o.Platform = Some Platform.current)
     test <@ other.Line = 0.0 @>
-    test <@ agnostic.Line = 60.0 @>
+    test <@ mine.Line = 60.0 @>
 
 [<Fact>]
 let ``loosenRaw preserves other-platform-only entry when current platform meets defaults`` () =

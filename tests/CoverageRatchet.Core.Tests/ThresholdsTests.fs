@@ -575,3 +575,189 @@ let ``saveRawConfig - rewriting a config that changed no floor produces the same
         test <@ secondWrite = firstWrite @>
     finally
         File.Delete(path)
+
+// --- entry-scoped writes ---
+//
+// The floor file holds entries this machine cannot measure: Linux floors are captured
+// from Linux CI and only ever pass through a macOS box. A writer that rebuilds the
+// whole document from a sorted map re-orders every hand-appended entry and re-encodes
+// every value, so a one-number change arrives as a diff over the whole file, and the
+// entries nobody measured are exactly the ones that get lost in it.
+
+/// Keys deliberately out of sorted order, a property order the tool would not choose,
+/// and an annotation the tool does not know about: everything a whole-document rewrite
+/// would normalise away.
+let private twoPlatformDocument =
+    """{
+  "overrides": {
+    "Zeta.fs": [
+      {
+        "line": 97,
+        "branch": 83,
+        "reason": "measured on macOS",
+        "platform": "macos"
+      },
+      {
+        "platform": "linux",
+        "line": 97,
+        "branch": 85,
+        "reason": "Linux floor from CI — cannot be measured here"
+      }
+    ],
+    "Alpha.fs": [
+      {
+        "line": 100,
+        "branch": 96,
+        "reason": "Linux floor from CI",
+        "platform": "linux"
+      }
+    ]
+  },
+  "countFloors": {
+    "Zeta.fs": [
+      {
+        "coveredLines": 40,
+        "coveredBranches": 6,
+        "platform": "macos"
+      },
+      {
+        "coveredLines": 44,
+        "coveredBranches": 8,
+        "reason": "Linux count from CI",
+        "platform": "linux"
+      }
+    ],
+    "Alpha.fs": [
+      {
+        "coveredLines": 28,
+        "coveredBranches": 6,
+        "note": "kept by hand",
+        "platform": "linux"
+      },
+      {
+        "coveredLines": 30,
+        "coveredBranches": 7,
+        "platform": "macos"
+      }
+    ],
+    "Mid.fs": {
+      "coveredLines": 12,
+      "coveredBranches": 0
+    }
+  }
+}"""
+
+[<Fact>]
+let ``saveRawConfig - changing one platform's floor for one file leaves every other byte alone`` () =
+    let path = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(path, twoPlatformDocument)
+        let raw = loadRawConfig path
+
+        // Positive control: the parse really saw the platform-tagged entries the
+        // assertions below claim to protect.
+        test <@ raw.RawCountFloors.["Zeta.fs"].Length = 2 @>
+
+        let lowered =
+            { raw with
+                RawCountFloors =
+                    raw.RawCountFloors
+                    |> Map.add
+                        "Zeta.fs"
+                        (raw.RawCountFloors.["Zeta.fs"]
+                         |> List.map (fun f ->
+                             if f.Platform = Some MacOS then
+                                 { f with CoveredLines = 38 }
+                             else
+                                 f)) }
+
+        saveRawConfig path lowered
+        let written = File.ReadAllText(path)
+
+        let expected =
+            twoPlatformDocument.Replace("\"coveredLines\": 40,", "\"coveredLines\": 38,")
+
+        test <@ expected <> twoPlatformDocument @>
+        test <@ written = expected @>
+    finally
+        File.Delete(path)
+
+[<Fact>]
+let ``saveRawConfig - a new file's floor is appended without disturbing existing entries`` () =
+    let path = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(path, twoPlatformDocument)
+        let raw = loadRawConfig path
+
+        let enrolled =
+            { raw with
+                RawCountFloors =
+                    raw.RawCountFloors
+                    |> Map.add
+                        "New.fs"
+                        [ { CoveredLines = 5
+                            CoveredBranches = 1
+                            Reason = None
+                            Platform = None } ] }
+
+        saveRawConfig path enrolled
+        let written = File.ReadAllText(path)
+
+        let expected =
+            twoPlatformDocument.Replace(
+                "      \"coveredBranches\": 0\n    }\n  }",
+                "      \"coveredBranches\": 0\n    },\n    \"New.fs\": {\n      \"coveredLines\": 5,\n      \"coveredBranches\": 1\n    }\n  }"
+            )
+
+        test <@ expected <> twoPlatformDocument @>
+        test <@ written = expected @>
+    finally
+        File.Delete(path)
+
+[<Fact>]
+let ``saveRawConfig - dropping a file's last floor removes only that key`` () =
+    let path = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(path, twoPlatformDocument)
+        let raw = loadRawConfig path
+
+        let dropped =
+            { raw with
+                RawCountFloors = raw.RawCountFloors |> Map.remove "Mid.fs" }
+
+        saveRawConfig path dropped
+        let written = File.ReadAllText(path)
+
+        let expected =
+            twoPlatformDocument.Replace(
+                "    ],\n    \"Mid.fs\": {\n      \"coveredLines\": 12,\n      \"coveredBranches\": 0\n    }\n  }",
+                "    ]\n  }"
+            )
+
+        test <@ expected <> twoPlatformDocument @>
+        test <@ written = expected @>
+    finally
+        File.Delete(path)
+
+[<Fact>]
+let ``saveRawConfig - a file that ended in a newline still does`` () =
+    let path = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(path, twoPlatformDocument + "\n")
+        let raw = loadRawConfig path
+
+        let dropped =
+            { raw with
+                RawCountFloors = raw.RawCountFloors |> Map.remove "Mid.fs" }
+
+        saveRawConfig path dropped
+        let written = File.ReadAllText(path)
+
+        test <@ written.EndsWith("}\n") @>
+        test <@ not (written.EndsWith("\n\n")) @>
+    finally
+        File.Delete(path)
