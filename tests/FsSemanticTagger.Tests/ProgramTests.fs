@@ -383,6 +383,24 @@ let ``targetPackages - empty entries are dropped`` () =
     test <@ targetPackages [ Only "Foo,,  ,Bar" ] = [ "Foo"; "Bar" ] @>
 
 [<Fact>]
+let ``parse - --skip-consumer-canary and -s keep their own meanings`` () =
+    let tree = CommandTree.CommandReflection.fromUnion<Command> "test"
+
+    let flagsOf argv =
+        match CommandTree.CommandTree.parse tree argv with
+        | Ok(Release flags) -> flags
+        | other -> failwithf "unexpected %A" other
+
+    test <@ flagsOf [| "release"; "--skip-consumer-canary" |] = [ SkipConsumerCanary ] @>
+    test <@ flagsOf [| "release"; "-s" |] = [ SkipNugetWait ] @>
+
+    test
+        <@
+            flagsOf [| "release"; "--skip-nuget-wait"; "--skip-consumer-canary" |] = [ SkipNugetWait
+                                                                                       SkipConsumerCanary ]
+        @>
+
+[<Fact>]
 let ``run - release --only parses without error`` () =
     // Unknown-package validation happens inside release (needs a config); this
     // just proves the flag parses and threads through the CLI surface.

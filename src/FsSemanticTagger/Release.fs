@@ -72,6 +72,9 @@ type ReleaseInput =
         /// `--check`: run only the changelog pre-flight (`runChangelogCheck`) and
         /// exit — no preconditions, no build, no writes, no tags.
         Check: bool
+        /// The consumer canary: which consumers' gates to run on the release
+        /// candidate before any tag is pushed, and through which processes.
+        Canary: ConsumerCanary.Settings
     }
 
 /// Restrict `packages` to those whose `Name` appears in `targetNames`.
@@ -560,6 +563,45 @@ let private waitForCiAndPushTags
         printfn "Error: could not determine CI status. Not pushing tags."
         printfn "Run the release command again to resume."
         1
+
+/// Run the consumer canary on the plan. Called before anything is written or
+/// pushed, so a refusal leaves nothing to undo. The verdict — including a
+/// break-glass skip — is printed so the release output records it.
+let private consumerCanaryGate (input: ReleaseInput) (plan: (PackageConfig * Version) list) : Result<unit, int> =
+    printfn ""
+
+    match ConsumerCanary.decide input.Canary input.Config.RootDir plan with
+    | Ok verdict ->
+        printfn "%s" (ConsumerCanary.formatVerdict verdict)
+        Ok()
+    | Error message ->
+        printfn "\nError: %s" message
+        Error 1
+
+/// What a dry run says about the canary: the consumers it would exercise.
+let private describeConsumerCanary (input: ReleaseInput) (plan: (PackageConfig * Version) list) : unit =
+    printfn ""
+
+    if input.Canary.Skip then
+        printfn "%s" (ConsumerCanary.formatVerdict (ConsumerCanary.Skipped ConsumerCanary.BreakGlass))
+    else
+        match ConsumerCanary.loadConfig input.Canary.ConfigPath with
+        | Error message -> printfn "  Warning: %s" message
+        | Ok(ConsumerCanary.NoConfig path) ->
+            printfn "%s" (ConsumerCanary.formatVerdict (ConsumerCanary.Skipped(ConsumerCanary.NoConsumerConfig path)))
+        | Ok(ConsumerCanary.Loaded config) ->
+            match ConsumerCanary.describePlan config plan with
+            | [] ->
+                printfn
+                    "%s"
+                    (ConsumerCanary.formatVerdict (
+                        ConsumerCanary.Skipped(ConsumerCanary.NoConsumersForPlan input.Canary.ConfigPath)
+                    ))
+            | lines ->
+                printfn "Consumer canary would run:"
+
+                for line in lines do
+                    printfn "%s" line
 
 let private packLocally (run: string -> string -> CommandResult) (bumps: (PackageConfig * Version) list) : int =
     for (pkg, _version) in bumps do
@@ -1278,20 +1320,25 @@ let private resumeAlreadyBumped
         printfn "  %s: resuming in-progress release -> tag %s" pkg.Name (toTag pkg.TagPrefix version)
 
     match input.Mode with
-    | DryRun -> 0
+    | DryRun ->
+        describeConsumerCanary input alreadyBumped
+        0
     | PushTags ->
-        // Re-push main first: if the original run failed at `pushMain`, the bump
-        // commit is still local-only here. `jj git push` is idempotent, so pushing
-        // again is safe and closes the partial-failure window before tagging.
-        pushMain input.Run
+        match consumerCanaryGate input alreadyBumped with
+        | Error code -> code
+        | Ok() ->
+            // Re-push main first: if the original run failed at `pushMain`, the bump
+            // commit is still local-only here. `jj git push` is idempotent, so pushing
+            // again is safe and closes the partial-failure window before tagging.
+            pushMain input.Run
 
-        for (pkg, version) in alreadyBumped do
-            let tag = toTag pkg.TagPrefix version
+            for (pkg, version) in alreadyBumped do
+                let tag = toTag pkg.TagPrefix version
 
-            if not (tagExists input.Run tag) then
-                tagRevision input.Run tag "main"
+                if not (tagExists input.Run tag) then
+                    tagRevision input.Run tag "main"
 
-        waitForCiAndPushTags input graph alreadyBumped
+            waitForCiAndPushTags input graph alreadyBumped
     | LocalPublish -> packLocally input.Run alreadyBumped
 
 /// The changelog bullet auto-inserted for a dependency-triggered rebundle bump
@@ -1364,6 +1411,7 @@ let private executeBumps
         for (pkgName, err) in changelogErrors do
             printfn "  Warning [%s]: %s" pkgName (Changelog.formatError err)
 
+        describeConsumerCanary input allBumps
         0
     | _ when not changelogErrors.IsEmpty ->
         printfn "\nError: CHANGELOG validation failed. Aborting release before any writes."
@@ -1372,6 +1420,9 @@ let private executeBumps
             printfn "  %s: %s" pkgName (Changelog.formatError err)
 
         1
+    // The canary runs before the first write: a refusal leaves the tree exactly
+    // as the plan found it. Only a tag push publishes, so `--publish` skips it.
+    | PushTags when (consumerCanaryGate input allBumps |> Result.isError) -> 1
     | mode ->
         for (pkg, version, _) in needsBump do
             updateFsprojVersion pkg.Fsproj version

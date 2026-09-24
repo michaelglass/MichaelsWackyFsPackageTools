@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- feat: **a consumer canary runs configured consumers' gates on the release candidate before any tag is pushed.** The release gate is the repo's own suite on its own tree, and three FsHotWatch releases in one day shipped regressions that only a consumer's gate could see.
+  - New machine-local `~/.fssemantictagger.json`: a `localFeed` and a `consumers` list of `{ package, repo, pin, gate, timeoutMinutes, revision? }`. After the plan is decided and the changelogs validated, and before the fsproj is bumped or anything is committed, tagged or pushed, each planned package with a consumer is packed at its planned version into the feed (`-p:Version`, `-p:ReleaseBuild=true`) and its NuGet cache entry evicted; then per consumer a fresh workspace (`jj workspace add` or `git worktree add --detach`, from `revision`) beside the checkout gets the pin bumped — a `dotnet-tools.json` `"version"` or an MSBuild `<PackageReference Version>`, every other byte kept — and a `nuget.config` naming the feed, is restored, and runs the gate through `/bin/sh -c` with its output in `artifacts/consumer-canary/<package>-<version>-<consumer>.log`.
+  - A non-zero gate, a timeout, or any earlier failure refuses the release (exit 1) naming the consumer, the exit code or budget, the log and the workspace, which is left for inspection. No config, or no consumer of the packages being released, skips with a note naming the path. `--dry-run` lists the consumers that would run. New `--skip-consumer-canary` is break-glass: it prints loudly and the release output records the skip. New `ReleaseInput.Canary` seam (`ConsumerCanary.Settings`) and `Shell.runIn` / `Shell.runLogged`.
+
 ## 0.14.0-alpha.13 - 2026-09-24
 
 - feat: **a tagger too old to honour a declared bump refuses to release.** Two repos were still pinned to 0.14.0-alpha.4 and 0.14.0-alpha.10, where a `feat!:` entry in `## Unreleased` is never read and the declared breaking change ships as whatever the API diff computes.

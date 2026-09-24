@@ -6,10 +6,16 @@ open CommandTree
 type ReleaseFlag =
     | [<CmdFlag(Description = "Build and pack locally instead of pushing tags for CI")>] Publish
     | [<CmdFlag(Description = "Preview version bumps without modifying files or creating tags")>] DryRun
-    | [<CmdFlag(Description = "Skip polling NuGet for the published package(s) after pushing tags")>] SkipNugetWait
+    // `-s` is pinned: CommandTree derives short aliases from the long name, and
+    // `--skip-consumer-canary` would otherwise contend for the same letter and
+    // silently cost `--skip-nuget-wait` the alias it has always had.
+    | [<CmdFlag(Short = "s", Description = "Skip polling NuGet for the published package(s) after pushing tags")>] SkipNugetWait
     | [<CmdFlag(Description = "Restrict the run to specific package(s) by name (comma-separated)")>] Only of string
     | [<CmdFlag(Description = "If the release commit isn't pushed yet, push it and wait for CI instead of failing fast")>] Push
     | [<CmdFlag(Description = "Only check, and print, what release would promote into each changed package's changelog, then exit (for CI)")>] Check
+    // An explicit short: the derived `-s` would collide with `--skip-nuget-wait`.
+    | [<CmdFlag(Short = "b",
+                Description = "Break-glass: push tags without running the configured consumers' gates on the candidate")>] SkipConsumerCanary
 
 /// Parse the comma-separated value of `--only` (the `Only` flag) into a list of
 /// package names, trimming whitespace and dropping empty entries. Returns [] when
@@ -140,7 +146,8 @@ let internal runReleaseWith
                   NuGetPollIntervalMs = fst nuGetPoll
                   NuGetMaxAttempts = snd nuGetPoll
                   Push = flags |> List.contains Push
-                  Check = flags |> List.contains Check }
+                  Check = flags |> List.contains Check
+                  Canary = ConsumerCanary.defaultSettings (flags |> List.contains SkipConsumerCanary) cwd }
         )
 
 let private runRelease (releaseCmd: Release.ReleaseCommand) (flags: ReleaseFlag list) : Result<int, string> =
@@ -308,6 +315,16 @@ Flags:
                      changed package has an empty section and nothing to
                      derive one from; exit 0 otherwise. A pass does NOT
                      mean an authored section covers every commit.
+  --skip-consumer-canary
+                     break-glass: push the tags without running the
+                     consumer canary. Prints loudly and is recorded in the
+                     release output. Without it, every package in the plan
+                     with a consumer in ~/.fssemantictagger.json is packed
+                     at its planned version into the local feed and each
+                     consumer's gate is run on it in a fresh workspace
+                     before any tag is pushed; a red gate refuses the
+                     release. No config, or no consumer of the packages
+                     being released, skips with a note.
 """
     | _ -> None
 
