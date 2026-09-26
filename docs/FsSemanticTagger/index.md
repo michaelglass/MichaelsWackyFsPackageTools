@@ -315,10 +315,16 @@ For monorepos or custom setups, create a `semantic-tagger.json`:
 | `packages[].fsproj` | string | Path to the project file |
 | `packages[].dllPath` | string? | Path to compiled DLL (auto-derived if omitted) |
 | `packages[].tagPrefix` | string? | Git/jj tag prefix (default: `"v"`) |
-| `packages[].fsProjsSharingSameTag` | string[]? | Other `.fsproj` files to update with the same version |
+| `packages[].fsProjsSharingSameTag` | string[]? | Other `.fsproj` files released under the same tag and version. They are the package's own source: a change in any of them, or in any project their `<ProjectReference>` closure bundles, releases the package (see below) |
 | `reservedVersions` | string[]? | Versions to skip |
 | `preBuildCmds` | string[]? | Commands to run before the build that produces each DLL |
 | `publishWorkflows` | string[]? | Paths of the workflows whose tag-triggered run publishes a package (default: `[".github/workflows/release.yml"]`). After pushing a tag, only runs of these workflows are consulted; a run of any other workflow the tag triggered (a docs deploy, say) cannot refuse the release. Must not be empty. |
+
+### Projects sharing a tag
+
+Every project behind a tag — `fsproj` and each `fsProjsSharingSameTag` entry — counts for change detection, together with the `<ProjectReference>` closure each of them bundles (a closure stops at another package's `fsproj` or `fsProjsSharingSameTag` project, except under a `PackAsTool` project, which ships its whole closure). A change anywhere in that set releases the package; a change outside it is skipped.
+
+The computed bump comes from the primary `fsproj` only: its public API diff, and its CLI grammar diff when it has one. A sharing project has no baseline the tagger can fetch, and a tool project has no library API, so a change confined to sharing projects computes as a **patch**. Declare anything bigger in that project's changelog (`feat:` or `feat!:`, see above); the strongest declaration across every changelog behind the tag sets the floor.
 
 ## Pre-release Version Flow
 

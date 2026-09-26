@@ -5798,3 +5798,137 @@ let ``release - a preBuildCmd with no arguments runs with an empty argument stri
         test <@ preBuildIdx < buildIdx @>
     finally
         File.Delete(tmpFile)
+
+// --- fsProjsSharingSameTag projects are part of the package ---
+
+/// A repo with one tag (`core-v`) shipping two fsprojs: the library `src/Core`
+/// (primary) and the PackAsTool CLI `src/Cli` (in `fsProjsSharingSameTag`), which
+/// references a helper `src/CliHelper` that only the CLI uses. `src/Unrelated`
+/// belongs to no package's closure. A second package makes the repo multi-package,
+/// so each fsproj has its own changelog. Returns the primary fsproj and the config.
+let private writeSharedTagRepo (root: string) =
+    let dirOf name = Path.Combine(root, "src", name)
+
+    for name in [ "Core"; "Cli"; "CliHelper"; "Unrelated"; "Other" ] do
+        Directory.CreateDirectory(dirOf name) |> ignore
+
+    let fsproj name =
+        Path.Combine(dirOf name, name + ".fsproj")
+
+    let project (props: string) (refs: string list) =
+        let items =
+            refs
+            |> List.map (sprintf "    <ProjectReference Include=\"%s\" />")
+            |> String.concat "\n"
+
+        sprintf
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>%s</PropertyGroup>\n  <ItemGroup>\n%s\n  </ItemGroup>\n</Project>"
+            props
+            items
+
+    File.WriteAllText(fsproj "Core", project "<Version>2.0.0</Version>" [])
+
+    File.WriteAllText(
+        fsproj "Cli",
+        project
+            "<Version>2.0.0</Version><PackAsTool>true</PackAsTool>"
+            [ "../Core/Core.fsproj"; "../CliHelper/CliHelper.fsproj" ]
+    )
+
+    File.WriteAllText(fsproj "CliHelper", project "" [])
+    File.WriteAllText(fsproj "Unrelated", project "" [])
+    File.WriteAllText(fsproj "Other", project "<Version>1.0.0</Version>" [])
+
+    for name in [ "Core"; "Cli" ] do
+        File.WriteAllText(Path.Combine(dirOf name, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n- fix: a\n")
+
+    let config =
+        { Packages =
+            [ { Name = "Core"
+                Fsproj = fsproj "Core"
+                DllPath = "fake.dll"
+                TagPrefix = "core-v"
+                FsProjsSharingSameTag = [ fsproj "Cli" ] }
+              { Name = "Other"
+                Fsproj = fsproj "Other"
+                DllPath = "fake.dll"
+                TagPrefix = "other-v"
+                FsProjsSharingSameTag = [] } ]
+          ReservedVersions = Set.empty
+          PreBuildCmds = []
+          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          RootDir = root }
+
+    fsproj "Core", config
+
+/// A run for `writeSharedTagRepo` where the only change since `core-v2.0.0` is
+/// under the directory whose path ends with `changedDir`. Every other
+/// `jj diff --from` is answered "no change" explicitly: an unanswered one fails,
+/// and `hasChangesSinceTag` reads a failure as "changed".
+let private sharedTagRun (changedDir: string) =
+    let fakeRun, _calls = passingCiRun []
+
+    fun (cmd: string) (args: string) ->
+        if cmd = "git" && args = "tag -l \"core-v*\"" then
+            Success "core-v2.0.0"
+        elif cmd = "jj" && args.StartsWith "diff --from core-v2.0.0" then
+            if args.Contains(changedDir + "/**") then
+                Success("M " + changedDir + "/Program.fs")
+            else
+                Success ""
+        else
+            fakeRun cmd args
+
+[<Fact>]
+let ``packageChangeDirs includes every fsProjsSharingSameTag project and its ProjectReference closure`` () =
+    withReleaseDir "fsst-shared-dirs-" (fun root ->
+        let _, config = writeSharedTagRepo root
+        let core = config.Packages.Head
+        let dirs = packageChangeDirs config core |> List.map (fun d -> d.Replace('\\', '/'))
+
+        let endsWith (suffix: string) =
+            dirs |> List.exists (fun d -> d.EndsWith suffix)
+
+        test <@ endsWith "src/Core" @>
+        test <@ endsWith "src/Cli" @>
+        test <@ endsWith "src/CliHelper" @>
+        test <@ not (endsWith "src/Unrelated") @>
+        test <@ not (endsWith "src/Other") @>)
+
+[<Fact>]
+let ``release - Auto releases a patch when only a fsProjsSharingSameTag project changed`` () =
+    // The primary library is untouched and its API is unchanged; the fix lives only
+    // in the CLI that ships under the same tag. It must release, as a patch.
+    withReleaseDir "fsst-shared-only-" (fun root ->
+        let coreFsproj, config = writeSharedTagRepo root
+
+        let output, result =
+            releaseWithUnchangedApi (sharedTagRun (Path.Combine(root, "src", "Cli"))) config [ "Core" ]
+
+        test <@ result = 0 @>
+        test <@ not (output.Contains "Skipping Core") @>
+        test <@ (File.ReadAllText coreFsproj).Contains("<Version>2.0.1</Version>") @>)
+
+[<Fact>]
+let ``release - Auto releases a patch when only a sharing project's bundled reference changed`` () =
+    withReleaseDir "fsst-shared-closure-" (fun root ->
+        let coreFsproj, config = writeSharedTagRepo root
+
+        let output, result =
+            releaseWithUnchangedApi (sharedTagRun "src/CliHelper") config [ "Core" ]
+
+        test <@ result = 0 @>
+        test <@ not (output.Contains "Skipping Core") @>
+        test <@ (File.ReadAllText coreFsproj).Contains("<Version>2.0.1</Version>") @>)
+
+[<Fact>]
+let ``release - Auto still skips a package when the change is outside every closure behind its tag`` () =
+    withReleaseDir "fsst-shared-unrelated-" (fun root ->
+        let coreFsproj, config = writeSharedTagRepo root
+
+        let output, result =
+            releaseWithUnchangedApi (sharedTagRun "src/Unrelated") config [ "Core" ]
+
+        test <@ result = 0 @>
+        test <@ output.Contains "Skipping Core: no changes since core-v2.0.0" @>
+        test <@ (File.ReadAllText coreFsproj).Contains("<Version>2.0.0</Version>") @>)
