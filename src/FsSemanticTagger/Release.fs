@@ -634,25 +634,51 @@ type BumpDecision =
     /// computed. We refuse to guess (a breaking change must not ship as a patch).
     | CannotDetermine of PackageConfig * reason: string
 
-/// The bundled-dependency directories whose changes count toward `pkg`: its
-/// transitive `<ProjectReference>` closure, pruned at every separately-released
-/// package boundary (those are NuGet `<dependency>` boundaries, not bundled).
-/// Repo-root-relative, forward slashes. Shared by change-detection and changelog
-/// derivation so both attribute commits to a package identically.
+/// Every fsproj released under `pkg`'s tag: its own `fsproj` followed by each of
+/// its `fsProjsSharingSameTag`. All of them are the package's OWN source — they
+/// ship under its tag and carry their own changelogs — so a change to any of
+/// them is an own change, never a mere dependency change.
+let internal packageFsprojs (pkg: PackageConfig) : string list = pkg.Fsproj :: pkg.FsProjsSharingSameTag
+
+/// The source directories of every fsproj released under `pkg`'s tag (see
+/// `packageFsprojs`), de-duplicated, in config order.
+let internal packageOwnDirs (pkg: PackageConfig) : string list =
+    packageFsprojs pkg |> List.map System.IO.Path.GetDirectoryName |> List.distinct
+
+/// The bundled-dependency directories whose changes count toward `pkg`: the
+/// union of the transitive `<ProjectReference>` closures of EVERY fsproj behind
+/// its tag (`packageFsprojs`), each pruned at every separately-released package
+/// boundary (those are NuGet `<dependency>` boundaries, not bundled). A project
+/// listed in any package's `fsProjsSharingSameTag` ships in that package, so it
+/// is a boundary exactly like a package's primary fsproj. The package's own
+/// directories are excluded (they are `packageOwnDirs`). Repo-root-relative,
+/// forward slashes. Shared by change-detection and changelog derivation so both
+/// attribute commits to a package identically.
 let internal packageDepDirs (config: ToolConfig) (pkg: PackageConfig) : string list =
+    let normalise (path: string) = path.Replace('\\', '/')
+
     let separatelyReleased =
-        config.Packages |> List.map (fun p -> p.Fsproj.Replace('\\', '/')) |> Set.ofList
+        config.Packages
+        |> List.collect packageFsprojs
+        |> List.map normalise
+        |> Set.ofList
 
     let isSeparatelyReleased (fsprojRel: string) =
-        separatelyReleased.Contains(fsprojRel.Replace('\\', '/'))
+        separatelyReleased.Contains(normalise fsprojRel)
 
-    transitiveBundledRefDirs config.RootDir pkg.Fsproj isSeparatelyReleased
+    let ownDirs = packageOwnDirs pkg |> List.map normalise |> Set.ofList
 
-/// Every directory whose changes are attributed to `pkg`: its own source dir
-/// plus its bundled-dependency dirs. The change/description closure used when
-/// deriving the `## Unreleased` section from commits since the last tag.
+    packageFsprojs pkg
+    |> List.collect (fun fsproj -> transitiveBundledRefDirs config.RootDir fsproj isSeparatelyReleased)
+    |> List.distinct
+    |> List.filter (fun dir -> not (ownDirs.Contains dir))
+
+/// Every directory whose changes are attributed to `pkg`: the source dir of each
+/// fsproj behind its tag plus their bundled-dependency dirs. The change/description
+/// closure used when deriving the `## Unreleased` section from commits since the
+/// last tag.
 let internal packageChangeDirs (config: ToolConfig) (pkg: PackageConfig) : string list =
-    System.IO.Path.GetDirectoryName(pkg.Fsproj) :: packageDepDirs config pkg
+    packageOwnDirs pkg @ packageDepDirs config pkg
 
 /// Collect (packageName, changelogPath) pairs for a package.
 /// Single-package repos use repo-root CHANGELOG.md; multi-package repos use per-fsproj-dir.
@@ -660,16 +686,14 @@ let internal changelogPathsFor (config: ToolConfig) (pkg: PackageConfig) : (stri
     if config.Packages.Length = 1 then
         [ pkg.Name, System.IO.Path.Combine(config.RootDir, "CHANGELOG.md") ]
     else
-        pkg.Fsproj :: pkg.FsProjsSharingSameTag
-        |> List.map System.IO.Path.GetDirectoryName
-        |> List.distinct
+        packageOwnDirs pkg
         |> List.map (fun dir -> pkg.Name, System.IO.Path.Combine(dir, "CHANGELOG.md"))
 
 /// The fsprojs whose dependency changes `changelogPath` records: every fsproj of
 /// the package for a single-package repo's root changelog, otherwise the ones
 /// beside it (the same attribution `changelogPathsFor` uses to find it).
 let internal fsprojsForChangelog (config: ToolConfig) (pkg: PackageConfig) (changelogPath: string) : string list =
-    let fsprojs = pkg.Fsproj :: pkg.FsProjsSharingSameTag
+    let fsprojs = packageFsprojs pkg
 
     if config.Packages.Length = 1 then
         fsprojs
@@ -1039,7 +1063,9 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
         | (_, version) :: _ -> HasPreviousRelease version
         | [] -> FirstRelease
 
-    let ownSrcDir = System.IO.Path.GetDirectoryName(pkg.Fsproj)
+    // Every fsproj behind the tag is own source: the primary and each
+    // `fsProjsSharingSameTag` project (see `packageOwnDirs`).
+    let ownSrcDirs = packageOwnDirs pkg
 
     // A referenced project contributes to this package's change-detection closure
     // only if its DLL actually ships inside the package — see `packageDepDirs`.
@@ -1098,7 +1124,15 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
         match state with
         | HasPreviousRelease currentVersion ->
             let tag = toTag pkg.TagPrefix currentVersion
-            let ownChanged = hasChangesSinceTag input.Run tag ownSrcDir
+            // A change confined to a `fsProjsSharingSameTag` project is an own change:
+            // it releases, with strict changelog validation. The computed bump still
+            // comes from the PRIMARY fsproj's API (and CLI grammar) diff only — the
+            // tagger knows no published identity for a sharing project to fetch a
+            // baseline from, and a tool project has no library API anyway — so an
+            // unchanged primary API yields a patch. A sharing project's breaking or
+            // additive change is declared in its changelog (`feat!:` / `feat:`),
+            // which `ownChangeBump` floors the bump with.
+            let ownChanged = ownSrcDirs |> List.exists (hasChangesSinceTag input.Run tag)
             let depChanged = depDirs |> List.exists (hasChangesSinceTag input.Run tag)
 
             // An own-change Auto bump from the computed `change`, floored by what the
@@ -1487,9 +1521,7 @@ let private runChangelogCheck (input: ReleaseInput) (selectedPackages: PackageCo
             match getSortedTags input.Run pkg.TagPrefix |> List.tryHead with
             | None -> []
             | Some(tag, _) ->
-                let ownSrcDir = System.IO.Path.GetDirectoryName pkg.Fsproj
-
-                if hasChangesSinceTag input.Run tag ownSrcDir then
+                if packageOwnDirs pkg |> List.exists (hasChangesSinceTag input.Run tag) then
                     promotionPlans input pkg (Some tag)
                 else
                     [])

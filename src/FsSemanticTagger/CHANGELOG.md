@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- fix: **a change to a `fsProjsSharingSameTag` project releases its package.** Change detection read only the primary `fsproj`'s directory and its `<ProjectReference>` closure, so a fix confined to a CLI shipped under a library's tag printed `Skipping <package>: no changes since <tag>` and never shipped.
+  - Every fsproj behind the tag is now the package's own source: `release` and `release --check` look at each one's directory, and the bundled-dependency closure (`packageDepDirs`), which also feeds the commit summaries derived for `## Unreleased`, is the union of every one's closure. A project in any package's `fsProjsSharingSameTag` is now a dependency boundary for other packages, as a primary `fsproj` already was.
+  - The rule for the bump: a sharing project's change is an own change (its changelog is validated strictly), and the computed bump still comes from the primary's API and CLI grammar diff only, so a change confined to sharing projects is a patch unless a changelog behind the tag declares more with `feat:` or `feat!:`. New internal `Release.packageFsprojs` and `Release.packageOwnDirs`.
+
 ## 0.14.0-alpha.14 - 2026-09-25
 
 - feat: **a consumer canary runs configured consumers' gates on the release candidate before any tag is pushed.** The release gate is the repo's own suite on its own tree, and three FsHotWatch releases in one day shipped regressions that only a consumer's gate could see.
