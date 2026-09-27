@@ -32,6 +32,8 @@ The split of responsibilities:
 
 Common trap: after a release, `loosen-from-ci` writes a linux-only entry for some file. Locally on macOS, `mise run check` then fails because the file falls back to 100% on macOS. Fix: `mise run coverage-loosen`, then `mise run coverage-ratchet` to settle. Don't hand-edit the JSON.
 
+SDK band: branch counts depend on the .NET SDK feature band (10.0.3xx and 10.0.4xx count different branches for the same code), so `global.json` pins 10.0.4xx and the CI build job uses the same band. Run `mise run ci` from a plain shell. A shell exporting `DOTNET_ROOT` for another SDK overrides mise, and the pin refuses it by design. Never re-baseline floors from a measurement taken on a different band.
+
 ## Tests
 
 - Tests live in `tests/<Tool>.Tests/`.
