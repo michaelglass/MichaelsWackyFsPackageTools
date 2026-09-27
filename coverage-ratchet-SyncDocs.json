@@ -3,8 +3,8 @@
     "Program.fs": [
       {
         "line": 98,
-        "branch": 95,
-        "reason": "CLI entry point using exit and CWD",
+        "branch": 93,
+        "reason": "CLI entry point using exit and CWD. Re-measured 2026-09-27 on macOS: SDK 10.0.302 (FSharp.Core 10.1.302) counted 42/44 branches; SDK 10.0.400 (FSharp.Core 10.1.400) counts 58/62, byte-identical to Linux CI on SDK 10.0.401, with identical line hits. Branch floor 93 is the measured 10.0.4xx value. global.json now pins the 10.0.4xx SDK band so macOS and Linux measure the same compiler output; the earlier floor was a 10.0.3xx measurement (the 2026-09-11 10.0.400 re-measure had been undone by merge 5aadcce1).",
         "platform": "macos"
       },
       {
