@@ -532,6 +532,115 @@ let private passingCiRun (extraResponses: (string * string * CommandResult) list
 
     (fakeRun, (fun () -> calls))
 
+/// The version-bump commit's CI outlasting the old fixed budget (60 checks) but
+/// finishing inside the history-sized one. Both waits — on the release commit and
+/// on the bump commit — must take their budget from `CiWait`; a bump wait on a
+/// fixed budget times out here and refuses to push the tags.
+[<Fact>]
+let ``release - the version-bump commit's CI wait uses the history-sized budget, like the release commit's`` () =
+    let tmpFile = Path.GetTempFileName()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
+        let (baseRun, getCalls) = passingCiRun []
+
+        let oldFixedChecks = 60
+        let bumpCiRunningChecks = oldFixedChecks + 10
+        let mutable bumped = false
+        let mutable bumpCiChecks = 0
+
+        let ciAnswer status conclusion =
+            sprintf
+                """[{"status":"%s","conclusion":%s,"name":"CI","url":"https://example.com/1","databaseId":1,"attempt":1,"createdAt":"2026-09-27T10:00:00Z","workflowDatabaseId":7}]"""
+                status
+                conclusion
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            match cmd, args with
+            | "jj", a when a.StartsWith("commit") ->
+                bumped <- true
+                baseRun cmd args
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success(if bumped then "wc2" else "wc1")
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success(if bumped then "bump1" else "release1")
+            | "gh", a when a.Contains("--commit wc1") || a.Contains("--commit wc2") -> Success "[]"
+            | "gh", a when a.Contains("--commit release1") -> Success(ciAnswer "completed" "\"success\"")
+            | "gh", a when a.Contains("--commit bump1") ->
+                bumpCiChecks <- bumpCiChecks + 1
+
+                if bumpCiChecks <= bumpCiRunningChecks then
+                    Success(ciAnswer "in_progress" "null")
+                else
+                    Success(ciAnswer "completed" "\"success\"")
+            | _ -> baseRun cmd args
+
+        // A history-sized budget: 120 checks at the test's zero interval, well past
+        // the bump commit's 70 but double the old fixed 60.
+        let mutable budgetRequests = 0
+
+        let historySized () : CiWait.Budget =
+            budgetRequests <- budgetRequests + 1
+
+            { Timeout = System.TimeSpan.FromMilliseconds 119.0
+              Basis = CiWait.FromHistory(System.TimeSpan.FromMilliseconds 60.0, 10) }
+
+        let config =
+            { Packages =
+                [ { Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = [] } ]
+              ReservedVersions = Set.empty
+              PreBuildCmds = []
+              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
+              RootDir = Path.GetTempPath() }
+
+        seedTmpChangelog ()
+
+        let output, result =
+            withCapturedConsole (fun () ->
+                release
+                    { Run = fakeRun
+                      Config = config
+                      Command = StartAlpha
+                      Mode = PushTags
+                      TargetPackages = []
+                      ExtractPreviousApi = noPreviousApi
+                      ExtractCurrentApi = noCurrentApi
+                      ExtractPreviousGrammar = noPreviousGrammar
+                      ExtractCurrentGrammar = noCurrentGrammar
+                      CiPollIntervalMs = 0
+                      CiWait = historySized
+                      TagPush = immediateTagPush
+                      CheckFeedPresence = (fun _ _ -> OnFeed)
+                      CheckRestorable = (fun _ _ _ -> OnFeed)
+                      WaitForNuGet = false
+                      NuGetPollIntervalMs = 0
+                      NuGetMaxAttempts = 1
+                      Push = false
+                      Check = false
+                      Canary = noCanary })
+
+        test <@ result = 0 @>
+        test <@ not (output.Contains("CI still running after timeout")) @>
+        // Both waits asked for the sized budget, and both announced it.
+        test <@ budgetRequests = 2 @>
+        test <@ output.Contains("Waiting for CI on the release commit to pass before releasing (expected ~") @>
+
+        test
+            <@ output.Contains("Waiting for CI on the version-bump commit to pass before pushing the tag (expected ~") @>
+        // The bump commit's CI really did outlast the old budget before passing.
+        test <@ bumpCiChecks = bumpCiRunningChecks + 1 @>
+
+        test
+            <@
+                getCalls ()
+                |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))
+            @>
+    finally
+        File.Delete(tmpFile)
+
 [<Fact>]
 let ``release - StartAlpha with LocalPublish calls dotnet pack`` () =
     let tmpFile = Path.GetTempFileName()
