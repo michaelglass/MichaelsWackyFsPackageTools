@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.10 - 2026-09-27
+
 - feat: `resolveConfigFor platform raw` resolves the floors a named platform enforces (what a CI runner on that platform checks), whichever machine reads the file; `resolveConfig` is now `resolveConfigFor Platform.current`.
 - feat: `overrideEntriesToJson` renders one file's percentage-floor entries exactly as `saveRawConfig` writes them, without writing anything.
 
