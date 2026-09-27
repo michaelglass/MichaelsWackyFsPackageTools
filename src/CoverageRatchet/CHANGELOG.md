@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.15.0-alpha.17 - 2026-09-27
+
 - feat: `propose-from-ci <run-id> [output]` reads a CI run's `coverage-thresholds` artifact and lists every file below the floor that run's platform enforces, across every project at once, with a drafted `overrides` entry for each: lowered only where it fell, to the measured value rounded down, tagged with the platform, and a reason citing the run, the commit and the numbers. It is read-only: it never edits a floor file, never commits and never pushes. A whole-number measurement against a fractional floor is reported as undetermined rather than drafted.
 
 ## 0.15.0-alpha.16 - 2026-09-24
