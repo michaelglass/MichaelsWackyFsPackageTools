@@ -34,6 +34,10 @@ type ToolConfig =
         /// `defaultPublishWorkflows`, the release workflow every repo using this
         /// tool ships under the same path.
         PublishWorkflows: PublishWorkflow list
+        /// How long `release` waits for CI on the release commit before refusing.
+        /// Read from `ciTimeoutMinutes` in `semantic-tagger.json`; `None` sizes the
+        /// wait from the repo's own CI history (see `CiWait.size`).
+        CiTimeout: System.TimeSpan option
         RootDir: string
     }
 
@@ -270,6 +274,7 @@ let discover (rootDir: string) : Result<ToolConfig, string> =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = defaultPublishWorkflows
+              CiTimeout = None
               RootDir = rootDir }
     | n -> Error $"Found {n} packable .fsproj files; create a semantic-tagger.json to configure multi-package release"
 
@@ -351,10 +356,19 @@ let parseJson (json: string) : ToolConfig =
             "json"
             "semantic-tagger.json: `publishWorkflows` must name at least one workflow path, or be omitted to default to .github/workflows/release.yml"
 
+    let ciTimeout =
+        root
+        |> tryGet "ciTimeoutMinutes"
+        |> Option.map (fun prop ->
+            match prop.ValueKind with
+            | JsonValueKind.Number when prop.GetDouble() > 0.0 -> System.TimeSpan.FromMinutes(prop.GetDouble())
+            | _ -> invalidArg "json" "semantic-tagger.json: `ciTimeoutMinutes` must be a positive number of minutes")
+
     { Packages = packages
       ReservedVersions = reservedVersions
       PreBuildCmds = preBuildCmds
       PublishWorkflows = publishWorkflows
+      CiTimeout = ciTimeout
       RootDir = "" }
 
 /// Serialize a ToolConfig to JSON string
@@ -407,6 +421,10 @@ let toJson (config: ToolConfig) : string =
             writer.WriteStringValue(path)
 
         writer.WriteEndArray()
+
+    match config.CiTimeout with
+    | Some timeout -> writer.WriteNumber("ciTimeoutMinutes", timeout.TotalMinutes)
+    | None -> ()
 
     writer.WriteEndObject()
     writer.Flush()
