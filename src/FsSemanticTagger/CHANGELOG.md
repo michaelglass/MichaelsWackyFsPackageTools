@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.17 - 2026-09-28
+
 - fix: **a resumed release no longer leaves a bumped dependency unpublished.** A release tags every bumped package locally before it waits for CI on the bump commit. When that wait gave up, the re-run treated a package with no changes since its local, never-pushed tag as released unless the feed answered a definite "absent". An unreachable feed, or a restore that found the version in a local package cache, answered otherwise. In FsHotWatch's alpha.73 release this pushed the plugin's and the CLI's tags but never core's, so a published plugin named a core version that was not on NuGet.
   - A tag the remote does not have (`git ls-remote --tags origin`) is now an unfinished release: the re-run pushes it at the same version, in dependency order, whatever the feed says. An unlistable remote leaves the decision to the feed, as before. New `Vcs.remoteTags`.
   - New preflight in `release` and `alpha`, before anything is written or pushed. The release refuses when a package's declared `<Version>` has no tag, a tag that was never pushed, or a pushed tag whose package is not on NuGet, and this release would not publish that version. The refusal names the package, the version and the repair (for example `jj git push --tag core-v0.10.0-alpha.55`). It applies only when another package in the repo depends on the unpublished one. Otherwise it is a warning, and moving past an orphan tag works as before. `--publish` skips the preflight.
