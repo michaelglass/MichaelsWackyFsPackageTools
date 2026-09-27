@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- feat: `resolveConfigFor platform raw` resolves the floors a named platform enforces (what a CI runner on that platform checks), whichever machine reads the file; `resolveConfig` is now `resolveConfigFor Platform.current`.
+- feat: `overrideEntriesToJson` renders one file's percentage-floor entries exactly as `saveRawConfig` writes them, without writing anything.
+
 ## 0.1.0-alpha.9 - 2026-09-24
 
 - fix: `saveRawConfig` edits the document on disk instead of rebuilding it from the map. A key whose entries are unchanged keeps the JSON node that was read — bytes, property order, unknown properties — a changed key is replaced, a removed key is deleted, a new key is appended, and a trailing newline is preserved. Whitespace and string escaping still normalise to the writer's, so a file the tool wrote is a fixed point.

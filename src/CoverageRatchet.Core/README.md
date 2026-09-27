@@ -142,7 +142,7 @@ match checkCounts config files with
         printfn $"{r.File.FileName}: {r.File.LinesCovered} covered lines < floor {r.Floor.CoveredLines}"
 ```
 
-For multi-platform configs (where the same file may have different thresholds per OS), use `RawConfig`/`loadRawConfig`/`saveRawConfig` to preserve all platform entries. `resolveConfig` collapses a `RawConfig` to a `Config` for the current platform; `toRawConfig` widens one back (it cannot invent platform entries that resolving discarded).
+For multi-platform configs (where the same file may have different thresholds per OS), use `RawConfig`/`loadRawConfig`/`saveRawConfig` to preserve all platform entries. `resolveConfig` collapses a `RawConfig` to a `Config` for the current platform, and `resolveConfigFor` for a named one (what a CI runner on that platform enforces); `overrideEntriesToJson` renders one file's entries exactly as `saveRawConfig` would write them; `toRawConfig` widens one back (it cannot invent platform entries that resolving discarded).
 
 ### `CoverageRatchet.Ratchet`
 

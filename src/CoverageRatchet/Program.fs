@@ -47,6 +47,11 @@ type Command =
         CmdExample("coverage/MyProj/coverage.baseline.xml coverage/MyProj/coverage.cobertura.xml coverage/MyProj/coverage.cobertura.xml")>] Merge of
         MergeArgs
     | [<Cmd("Copy each coverage.cobertura.xml to coverage.baseline.xml in the search dir")>] RefreshBaseline
+    | [<Cmd("Draft floors for every file a CI run measured below its floor (writes no floor file)");
+        CmdArg("GitHub Actions run id");
+        CmdArg("Write the proposal here instead of stdout", FieldIndex = 1)>] ProposeFromCi of
+        runId: string *
+        output: string option
 
 let formatFileResult (r: FileResult) =
     let branchStr =
@@ -446,7 +451,9 @@ let internal pollCi
 
                             let dlResult =
                                 withJjGitDir (fun () ->
-                                    run "gh" (sprintf "run download %d -n coverage-thresholds -D %s" runId tmpDir))
+                                    run
+                                        "gh"
+                                        (sprintf "run download %d -n %s -D %s" runId ProposeFromCi.ArtifactName tmpDir))
 
                             match dlResult with
                             | Success _ -> CiCoverageFailure tmpDir
@@ -548,14 +555,9 @@ let internal runLoosenFromCi (runShell: string -> string -> CommandResult) (conf
                 let json = File.ReadAllText(thresholdFile)
                 let ciPlatform, ciResults = parseCiThresholds json
 
-                let projectName =
-                    Path.GetFileNameWithoutExtension(thresholdFile).Replace("coverage-thresholds-", "")
-
                 let localConfigPath =
-                    if projectName = "" || projectName = "default" then
-                        configPath
-                    else
-                        sprintf "coverage-ratchet-%s.json" projectName
+                    ProposeFromCi.projectOfThresholdFile thresholdFile
+                    |> ProposeFromCi.configPathForProject configPath
 
                 Ok(localConfigPath, ciPlatform, ciResults)
             with ex ->
@@ -697,7 +699,8 @@ let runScoped
     | CheckJson _
     | Targets _
     | Gaps _
-    | LoosenFromCi _ when not (List.isEmpty fileScope) -> Error "--file applies to baseline-lines only"
+    | LoosenFromCi _
+    | ProposeFromCi _ when not (List.isEmpty fileScope) -> Error "--file applies to baseline-lines only"
     | Merge { Baseline = baseline
               Partial = partialFile
               Output = output } ->
@@ -707,6 +710,19 @@ let runScoped
     | RefreshBaseline ->
         Merge.refreshBaselines searchDir
         Ok 0
+    | ProposeFromCi(runId, output) ->
+        let runInRepo cmd args =
+            withJjGitDir (fun () -> Shell.run cmd args)
+
+        Ok(
+            ProposeFromCi.runProposeFromCi
+                runInRepo
+                (printfn "%s")
+                (Directory.GetCurrentDirectory())
+                defaultConfigPath
+                runId
+                output
+        )
     | _ ->
         let configPath =
             match command with
@@ -719,7 +735,8 @@ let runScoped
             | Gaps(config = c)
             | LoosenFromCi(config = c) -> c |> Option.defaultValue defaultConfigPath
             | Merge _
-            | RefreshBaseline -> defaultConfigPath
+            | RefreshBaseline
+            | ProposeFromCi _ -> defaultConfigPath
 
         let coverageFileCmd =
             match command with
@@ -732,7 +749,8 @@ let runScoped
             | Gaps _ -> Some CfGaps
             | LoosenFromCi _ -> None
             | Merge _
-            | RefreshBaseline -> None
+            | RefreshBaseline
+            | ProposeFromCi _ -> None
 
         match coverageFileCmd with
         | None -> Ok(runLoosenFromCi Shell.run configPath)
@@ -894,6 +912,25 @@ Requires:
   - gh CLI authenticated to the repo
   - CI workflow that uploads a 'coverage-thresholds' artifact built
     by 'check-json' (one coverage-thresholds-<project>.json per project)
+"""
+    | [ "propose-from-ci" ] ->
+        Some
+            """
+Read-only. Downloads the 'coverage-thresholds' artifact of CI run
+<run-id>, judges every coverage-thresholds-<project>.json in it against
+the floor that artifact's platform enforces in coverage-ratchet-<project>.json
+(in the current directory), and drafts an entry for every file below
+it: lowered only where it fell, to the measured value rounded down,
+tagged with the platform, with a reason citing the run, the commit and
+the numbers.
+
+Never edits a floor file, never commits, never pushes. Prints the
+proposal, or writes it to [output] (which may not be a floor file).
+
+Exit 0 = nothing below a floor. Exit 1 = proposal drafted.
+Exit 2 = the run or its artifact could not be read.
+
+Requires the gh CLI; set GH_REPO=owner/repo to read another repo's run.
 """
     | [ "merge" ] ->
         Some

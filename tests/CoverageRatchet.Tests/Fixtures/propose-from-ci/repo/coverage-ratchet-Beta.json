@@ -1,0 +1,9 @@
+{
+  "overrides": {
+    "Probe.fs": {
+      "line": 95,
+      "branch": 100,
+      "reason": "probe timeouts"
+    }
+  }
+}

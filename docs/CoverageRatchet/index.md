@@ -14,6 +14,7 @@ Per-file code coverage enforcement that only goes up. CoverageRatchet reads your
 6. **`baseline-lines`** records each file's current *covered-line count* as a floor (see [Count floors](#count-floors)).
 7. **`targets`** lists files sorted by coverage to find improvement opportunities.
 8. **`gaps`** shows uncovered branch points per file with line numbers.
+9. **`propose-from-ci`** lists every file a red CI run measured below its floor and drafts evidence-backed floors — without writing any.
 
 The default threshold for every file is **100% line and branch coverage**. Files that can't easily reach 100% (like CLI entry points) can get per-file overrides with a documented reason.
 
@@ -154,6 +155,65 @@ suffix of the local `coverage-ratchet-<project>.json` config; files named
 `coverage-thresholds-default.json` (or `coverage-thresholds-.json`) merge
 into the default `coverage-ratchet.json` config. The reusable build workflow
 `michaels-wacky-build.yml` produces this artifact automatically.
+
+### Propose floors from a red CI run
+
+```bash
+coverageratchet propose-from-ci <run-id> [output]
+```
+
+Read-only. Reads the `coverage-thresholds` artifact of GitHub Actions run `<run-id>` (same [artifact contract](#artifact-contract) as `loosen-from-ci`) and, for every project in it, compares each measured file with the floor **the artifact's platform** enforces in `coverage-ratchet-<project>.json` in the current directory — not the floor your own machine would pick. `check` stops at the first failing project, so one red run used to reveal one project's shortfall per round trip; this lists every file below its floor in every project at once.
+
+For each file below its floor it drafts an `overrides` entry, ready to paste:
+
+- only the run's platform entry changes, added tagged with that platform if the file has none — entries for other platforms and a platform-less entry stay as they are;
+- only the dimension that fell moves, down to the measured value rounded down;
+- the `reason` cites the run id, the commit and the numbers.
+
+It never edits a floor file, never commits and never pushes. The proposal goes to stdout, or to `[output]`, which may not be a floor file. Before applying an entry, prefer a test that closes the gap; a floor lowered for a gap only one platform sees stays an explained exception, so extend its reason with why before committing it.
+
+`check-json` writes whole percentages rounded down, so a measured `69` means somewhere in `[69, 70)`. Against a fractional floor such as `69.1` that cannot say whether the file held: such a file is listed as **undetermined** and gets no drafted entry. The artifact carries percentages only, so count floors are not judged.
+
+| Exit code | Meaning |
+|-----------|---------|
+| 0 | Every measured file is at or above its floor |
+| 1 | A proposal was drafted, or a file is undetermined |
+| 2 | The run or its artifact could not be read, or the run id or output path was refused |
+
+Requires the `gh` CLI. To read a run from another repository, set `GH_REPO=owner/repo`.
+
+Example, for a run where one file fell below its Linux floor:
+
+````markdown
+# Coverage floor proposal from CI run 36301519967
+
+- run: https://github.com/michaelglass/TestPrune/actions/runs/36301519967
+- workflow: CI (failure)
+- commit: fc6f03d6c87fa984e9430ba8616c6aee9f1ead5a
+
+1 file(s) below their floor across 1 project(s).
+
+## coverage-ratchet-TestPrune.Trace.json — 1 of 32 measured file(s) below the linux floor
+
+### SiteProbes.fs
+
+- measured: line 94%, branch 94%
+- linux floor: line 100%, branch 94% (the linux entry)
+- reason it replaces: Linux floor: ...
+
+Proposed `overrides` entry in coverage-ratchet-TestPrune.Trace.json:
+
+```json
+"SiteProbes.fs": [
+  {
+    "line": 94,
+    "branch": 94,
+    "reason": "linux CI run 36301519967 (commit fc6f03d6) measured line 94%, branch 94% against a floor of line 100%, branch 94%; floor set to the measured value, rounded down.",
+    "platform": "linux"
+  }
+]
+```
+````
 
 ### Partial-run survival with baselines
 

@@ -41,6 +41,7 @@
   <ItemGroup>
     <Compile Include="../Shared/GitDir.fs" Link="GitDir.fs" />
     <Compile Include="Shell.fs" />
+    <Compile Include="ProposeFromCi.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 </Project>
