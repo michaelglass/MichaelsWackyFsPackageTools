@@ -440,6 +440,29 @@ let isCommitPushed (run: string -> string -> CommandResult) (sha: string) : bool
             | Some out -> out.Trim() <> ""
             | None -> false)
 
+/// Parse `git ls-remote --tags` output into tag names. A line is
+/// `<sha>\trefs/tags/<name>`; an annotated tag also appears peeled, as
+/// `refs/tags/<name>^{}`, which names the same tag.
+let internal parseRemoteTags (output: string) : Set<string> =
+    splitLines output
+    |> Array.choose (fun line ->
+        match line.Split('\t') with
+        | [| _; ref |] when ref.StartsWith "refs/tags/" -> Some(ref.Substring("refs/tags/".Length).Replace("^{}", ""))
+        | _ -> None)
+    |> Set.ofArray
+
+/// The tags on the remote, or why they could not be listed.
+///
+/// `getSortedTags` and `tagExists` read LOCAL tags, and a release creates its tags
+/// locally before it waits for CI and pushes them. So a release interrupted between
+/// the two leaves tags that look released and are not: a local tag is a plan, a tag on
+/// the remote is what triggered a publish. This asks the remote.
+let remoteTags (run: string -> string -> CommandResult) : Result<Set<string>, string> =
+    withJjGitDir (fun () ->
+        match run "git" "ls-remote --tags origin" with
+        | Success output -> Ok(parseRemoteTags output)
+        | Failure(error, _) -> Error(error.Trim()))
+
 /// The release-commit sha that CI must have run on. In jj, `@` is the working
 /// copy (never itself the pushed/CI'd commit when clean) — the real commit is
 /// `@-`. So when the working copy is clean we report the parent; otherwise the

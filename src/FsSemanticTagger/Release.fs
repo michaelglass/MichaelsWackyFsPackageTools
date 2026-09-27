@@ -1072,7 +1072,18 @@ let private isOrphanRelease (input: ReleaseInput) (pkg: PackageConfig) (version:
     | OnFeed
     | FeedUnknown _ -> false
 
-let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision option =
+/// Was `tag` created locally but never pushed? Only a remote that answered can say so;
+/// an unlistable remote answers false, which leaves the decision to the feed, as before.
+let private neverPushed (remote: Result<Set<string>, string>) (tag: string) : bool =
+    match remote with
+    | Ok tags -> not (tags.Contains tag)
+    | Error _ -> false
+
+let private decideBump
+    (input: ReleaseInput)
+    (remote: Result<Set<string>, string>)
+    (pkg: PackageConfig)
+    : BumpDecision option =
     let sortedTags = getSortedTags input.Run pkg.TagPrefix
 
     let state =
@@ -1185,10 +1196,23 @@ let private decideBump (input: ReleaseInput) (pkg: PackageConfig) : BumpDecision
                 // Guarded on the fsproj declaring that same version, because the
                 // resume publishes whatever `<Version>` the tree carries: a tree that
                 // says something else would ship the wrong version.
-                if
-                    declaredFsprojVersion pkg = Some currentVersion
-                    && isOrphanRelease input pkg currentVersion
-                then
+                //
+                // A tag the REMOTE lacks is unfinished whatever the feed says. The
+                // release tags locally before it waits for CI, so a run that stops in
+                // that wait leaves a local tag that no workflow ever saw. Asking the
+                // feed about it cannot settle it: an unreachable feed counts as
+                // "published", and so does a restore that finds the version in a
+                // local package cache.
+                let declaresTagVersion = declaredFsprojVersion pkg = Some currentVersion
+
+                if declaresTagVersion && neverPushed remote tag then
+                    printfn
+                        "Resuming %s: tag %s exists locally but was never pushed to the remote (an interrupted release). Finishing that release rather than skipping."
+                        pkg.Name
+                        tag
+
+                    Some(AlreadyBumped(pkg, currentVersion))
+                elif declaresTagVersion && isOrphanRelease input pkg currentVersion then
                     printfn
                         "Resuming %s: tag %s exists but its package never landed on the feed (orphan tag). Finishing that release rather than skipping."
                         pkg.Name
@@ -1607,6 +1631,133 @@ let private runChangelogCheck (input: ReleaseInput) (selectedPackages: PackageCo
 
         1
 
+/// A version the tree declares that an earlier release bumped but never published: an
+/// ORPHANED BUMP. Carries what is missing and how to supply it.
+type private OrphanedBump =
+    { Package: PackageConfig
+      Version: Version
+      Tag: string
+      Missing: string
+      Repair: string }
+
+/// Is `pkg`'s declared `<Version>` an orphaned bump? Only a version at or ahead of the
+/// newest tag is examined (an older one is not what the next release builds on), and a
+/// package with no tag at all is a first release, not an orphan.
+let private orphanedBump
+    (input: ReleaseInput)
+    (remote: Result<Set<string>, string>)
+    (pkg: PackageConfig)
+    : OrphanedBump option =
+    match declaredFsprojVersion pkg, getSortedTags input.Run pkg.TagPrefix with
+    | Some version, ((_, latest) :: _ as tags) when sortKey version >= sortKey latest ->
+        let tag = toTag pkg.TagPrefix version
+
+        let onRemote =
+            match remote with
+            | Ok remoteTags -> remoteTags.Contains tag
+            | Error _ -> false
+
+        let tagged = onRemote || tags |> List.exists (fun (t, _) -> t = tag)
+
+        let orphan missing repair =
+            Some
+                { Package = pkg
+                  Version = version
+                  Tag = tag
+                  Missing = missing
+                  Repair = repair }
+
+        if not tagged then
+            orphan
+                (sprintf "there is no tag %s" tag)
+                (sprintf
+                    "tag the commit that bumped %s to %s and push it: `jj tag set %s -r <bump commit>` then `jj git push --tag %s` (the bump commit is the newest one to change %s)"
+                    pkg.Name
+                    (format version)
+                    tag
+                    tag
+                    pkg.Fsproj)
+        elif neverPushed remote tag then
+            orphan
+                (sprintf "tag %s exists locally but was never pushed" tag)
+                (sprintf "push it (it already sits on the bump commit): `jj git push --tag %s`" tag)
+        elif isOrphanRelease input pkg version then
+            orphan
+                (sprintf "tag %s was pushed but %s %s is not on NuGet" tag pkg.Name (format version))
+                (sprintf "re-run the publish workflow run for %s, and wait for the package to reach NuGet" tag)
+        else
+            None
+    | _ -> None
+
+/// THE INVARIANT a release keeps: every package version the tree declares is either
+/// already published or published by THIS release, at that version. A plan that would
+/// move past an orphaned bump, or leave it out, is refused here, before anything is
+/// written or pushed.
+///
+/// Refused only when another package in the repo depends on the orphaned one: a
+/// dependent released alongside the bump names that exact version in its nuspec, so
+/// moving past it leaves a published package that cannot be restored. A package with
+/// no dependents gets a warning instead — nothing can name its missing version, and
+/// the walk back past an orphan tag (`resolveBaselineApi`) exists for exactly that case.
+///
+/// Skipped for `--publish`, which pushes no tag and publishes nothing.
+let private refuseOrphanedBumps
+    (input: ReleaseInput)
+    (graph: ReleaseOrder.ReleaseGraph)
+    (remote: Result<Set<string>, string>)
+    (decisions: BumpDecision list)
+    : Result<unit, int> =
+    let finishing =
+        decisions
+        |> List.choose (function
+            | AlreadyBumped(pkg, version) -> Some(pkg.Name, version)
+            | _ -> None)
+        |> Set.ofList
+
+    let dependentsOf (pkg: PackageConfig) =
+        input.Config.Packages
+        |> List.filter (fun other ->
+            other.Name <> pkg.Name
+            && ReleaseOrder.dependenciesOf graph other.Name |> Set.contains pkg.Name)
+        |> List.map (fun other -> other.Name)
+
+    let orphans =
+        if input.Mode = LocalPublish then
+            []
+        else
+            input.Config.Packages
+            |> List.filter (fun pkg ->
+                match declaredFsprojVersion pkg with
+                | Some version -> not (finishing.Contains(pkg.Name, version))
+                | None -> false)
+            |> List.choose (orphanedBump input remote)
+            |> List.map (fun orphan -> orphan, dependentsOf orphan.Package)
+
+    for orphan, _ in orphans |> List.filter (fun (_, dependents) -> List.isEmpty dependents) do
+        printfn
+            "Warning: %s %s was never published (%s). No package here depends on it, so this release goes ahead without it."
+            orphan.Package.Name
+            (format orphan.Version)
+            orphan.Missing
+
+    match orphans |> List.filter (fun (_, dependents) -> not (List.isEmpty dependents)) with
+    | [] -> Ok()
+    | refused ->
+        printfn
+            "\nError: an earlier release bumped a package's <Version> but never published it, and this release would not publish it either. Aborting before any writes."
+
+        for orphan, dependents in refused do
+            printfn
+                "  %s %s: %s. %s depend on it, so their published packages may name this version."
+                orphan.Package.Name
+                (format orphan.Version)
+                orphan.Missing
+                (String.concat ", " dependents)
+
+            printfn "    Repair: %s. Then re-run the release." orphan.Repair
+
+        Error 1
+
 /// Main release orchestration
 let release (input: ReleaseInput) : int =
     if input.Mode = DryRun then
@@ -1652,7 +1803,8 @@ let release (input: ReleaseInput) : int =
                     1
                 | Ok graph ->
 
-                    let decisions = selectedPackages |> List.choose (decideBump input)
+                    let remote = remoteTags input.Run
+                    let decisions = selectedPackages |> List.choose (decideBump input remote)
 
                     let cannotDetermine =
                         decisions
@@ -1672,17 +1824,23 @@ let release (input: ReleaseInput) : int =
                             | AlreadyBumped(p, v) -> Some(p, v)
                             | _ -> None)
 
-                    if not cannotDetermine.IsEmpty then
-                        printfn "\nError: cannot determine the version bump. Aborting before any writes."
+                    // Before the cannot-determine refusal: an orphaned bump is often WHY a
+                    // previous release's API cannot be fetched, and the repair is its own.
+                    match refuseOrphanedBumps input graph remote decisions with
+                    | Error code -> code
+                    | Ok() ->
 
-                        for (pkg, reason) in cannotDetermine do
-                            printfn "  %s: %s" pkg.Name reason
+                        if not cannotDetermine.IsEmpty then
+                            printfn "\nError: cannot determine the version bump. Aborting before any writes."
 
-                        1
-                    elif needsBump.IsEmpty && alreadyBumped.IsEmpty then
-                        printfn "No packages to release"
-                        0
-                    elif needsBump.IsEmpty then
-                        resumeAlreadyBumped input graph alreadyBumped
-                    else
-                        executeBumps input graph needsBump alreadyBumped
+                            for (pkg, reason) in cannotDetermine do
+                                printfn "  %s: %s" pkg.Name reason
+
+                            1
+                        elif needsBump.IsEmpty && alreadyBumped.IsEmpty then
+                            printfn "No packages to release"
+                            0
+                        elif needsBump.IsEmpty then
+                            resumeAlreadyBumped input graph alreadyBumped
+                        else
+                            executeBumps input graph needsBump alreadyBumped

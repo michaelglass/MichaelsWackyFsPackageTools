@@ -28,6 +28,7 @@
     <Compile Include="ReleaseTests.fs" />
     <Compile Include="ConsumerCanaryTests.fs" />
     <Compile Include="ReleaseWavesTests.fs" />
+    <Compile Include="OrphanedBumpTests.fs" />
     <Compile Include="BumpTests.fs" />
     <Compile Include="DeclaredBumpTests.fs" />
     <Compile Include="ProgramTests.fs" />
