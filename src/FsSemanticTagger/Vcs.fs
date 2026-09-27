@@ -351,6 +351,44 @@ let checkCiStatusForSha (run: string -> string -> CommandResult) (sha: string) :
                     Failed runs
         | Failure _ -> Unknown)
 
+/// How long each of the last `limit` successful runs of the required CI workflow
+/// took, newest first: from the run's start to its last update, which for a
+/// finished run is when it finished. A run with no positive duration is left out.
+///
+/// An `Error` means the history could not be read (no `gh`, no auth, an answer
+/// that does not parse). That is kept distinct from `Ok []`, a repo with no
+/// successful run yet, because the two warrant different waits.
+let successfulRunDurations
+    (run: string -> string -> CommandResult)
+    (limit: int)
+    : Result<System.TimeSpan list, string> =
+    let args =
+        sprintf
+            "run list --workflow .github/workflows/ci.yml --status success --limit %d --json startedAt,updatedAt"
+            limit
+
+    withJjGitDir (fun () ->
+        match run "gh" args with
+        | Failure(message, _) -> Error message
+        | Success output ->
+            try
+                use doc = System.Text.Json.JsonDocument.Parse(output)
+
+                [ for elem in doc.RootElement.EnumerateArray() do
+                      let at (name: string) =
+                          System.DateTimeOffset.Parse(
+                              elem.GetProperty(name).GetString(),
+                              System.Globalization.CultureInfo.InvariantCulture
+                          )
+
+                      let duration = at "updatedAt" - at "startedAt"
+
+                      if duration > System.TimeSpan.Zero then
+                          yield duration ]
+                |> Ok
+            with ex ->
+                Error(sprintf "unreadable `gh run list` answer: %s" ex.Message))
+
 let private checkCiForSha (run: string -> string -> CommandResult) (sha: string) : bool =
     match checkCiStatusForSha run sha with
     | Passed -> true

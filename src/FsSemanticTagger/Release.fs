@@ -43,7 +43,9 @@ type ReleaseInput =
         ExtractPreviousGrammar: string -> string -> Grammar option
         ExtractCurrentGrammar: string -> Grammar option
         CiPollIntervalMs: int
-        CiMaxAttempts: int
+        /// The budget for a wait on CI, asked for when a wait starts. Production
+        /// sizes it from the repo's CI history (`CiWait.size`); a test fixes it.
+        CiWait: unit -> CiWait.Budget
         /// How hard to push each release tag, and how long to keep asking GitHub
         /// whether that tag produced a workflow run. Injected rather than fixed so a
         /// test can bound the poll: the production budget is minutes long, and it must
@@ -169,11 +171,7 @@ let readFsprojVersion (fsprojPath: string) : Version option =
         None
 
 /// A wall-clock duration as an operator reads it: `4m12s`, or `0.3s` under a minute.
-let internal formatElapsed (elapsed: System.TimeSpan) : string =
-    if elapsed.TotalMinutes >= 1.0 then
-        sprintf "%dm%02ds" (int elapsed.TotalMinutes) elapsed.Seconds
-    else
-        sprintf "%.1fs" elapsed.TotalSeconds
+let internal formatElapsed (elapsed: System.TimeSpan) : string = CiWait.formatDuration elapsed
 
 /// The wall-clock a poll of `attempts` checks `intervalMs` apart can spend: it sleeps
 /// between checks, not after the last one, so N checks are N-1 sleeps.
@@ -202,6 +200,17 @@ let internal waitForCi (run: string -> string -> CommandResult) (pollIntervalMs:
         | other -> other
 
     poll 0
+
+/// Wait for CI within `budget`, first telling the operator what is being waited
+/// for and how long that is expected to take.
+let private waitForCiWithin
+    (run: string -> string -> CommandResult)
+    (pollIntervalMs: int)
+    (budget: CiWait.Budget)
+    (what: string)
+    : CiStatus =
+    printfn "%s (%s)..." what (CiWait.describe budget)
+    waitForCi run pollIntervalMs (CiWait.attempts pollIntervalMs budget)
 
 /// The NuGet confirmation poll's budget, overridable from the environment with the
 /// SAME two variables FsHotWatch's between-stage barrier reads
@@ -544,9 +553,13 @@ let private waitForCiAndPushTags
     (graph: ReleaseOrder.ReleaseGraph)
     (bumps: (PackageConfig * Version) list)
     : int =
-    printfn "Waiting for CI on the version-bump commit to pass before pushing the tag (expected, ~1-2 min)..."
-
-    match waitForCi input.Run input.CiPollIntervalMs input.CiMaxAttempts with
+    match
+        waitForCiWithin
+            input.Run
+            input.CiPollIntervalMs
+            (input.CiWait())
+            "Waiting for CI on the version-bump commit to pass before pushing the tag"
+    with
     | Passed -> pushTagsInWaves input (ReleaseOrder.waves graph (fun (pkg: PackageConfig, _) -> pkg.Name) bumps)
     | Failed runs ->
         printfn "Error: CI failed on version bump commit. Not pushing tags."
@@ -795,9 +808,13 @@ let internal notPushedMessage: string =
 /// reported as itself: a run that never registered is not a run that failed, and
 /// neither is the unpushed precondition.
 let private waitForReleaseCi (input: ReleaseInput) : Result<unit, int> =
-    printfn "Waiting for CI on the release commit to pass before releasing (expected, ~1-2 min)..."
-
-    match waitForCi input.Run input.CiPollIntervalMs input.CiMaxAttempts with
+    match
+        waitForCiWithin
+            input.Run
+            input.CiPollIntervalMs
+            (input.CiWait())
+            "Waiting for CI on the release commit to pass before releasing"
+    with
     | Passed -> Ok()
     | Failed runs ->
         printfn "Error: CI failed for the release commit. Fix CI before releasing."

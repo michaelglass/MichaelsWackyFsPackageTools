@@ -67,7 +67,7 @@ let private runReleaseOnFeed run config cmd mode prev cur poll max push checkFee
           ExtractPreviousGrammar = noPreviousGrammar
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = poll
-          CiMaxAttempts = max
+          CiWait = CiWaitTests.fixedCiWait poll max
           TagPush = immediateTagPush
           CheckFeedPresence = checkFeedPresence
           CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -309,6 +309,7 @@ let ``release - returns 1 when uncommitted changes`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
@@ -332,6 +333,7 @@ let ``release - returns 1 when CI not passing`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
@@ -362,6 +364,7 @@ let ``release - Auto with no previous tags returns 0 with no packages`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
@@ -413,6 +416,7 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -479,6 +483,7 @@ let ``release - Auto first-releases an untagged package at its declared fsproj v
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
@@ -545,6 +550,7 @@ let ``release - StartAlpha with LocalPublish calls dotnet pack`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -600,6 +606,7 @@ let ``release - Auto with reserved version bumps past it`` () =
               ReservedVersions = Set.ofList [ "1.0.1" ]
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -650,6 +657,7 @@ let ``release - Auto with own-changed PackAsTool package skips the API-diff (NU1
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -676,6 +684,7 @@ let ``release - non-Auto with reserved version skips package`` () =
           ReservedVersions = Set.ofList [ "0.1.0-alpha.1" ]
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let result =
@@ -697,6 +706,7 @@ let ``release - PromoteToBeta with FirstRelease returns 0 no packages`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let result =
@@ -726,6 +736,7 @@ let ``release - runs preBuildCmds before build`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = [ "dotnet tool restore"; "dotnet tool run paket restore" ]
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -886,6 +897,7 @@ let ``release - skips packages with no changes since last tag`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -944,6 +956,7 @@ let ``release - Auto detects breaking API change and bumps major`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -997,6 +1010,7 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = dir }
 
         let result =
@@ -1011,7 +1025,7 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
                   ExtractPreviousGrammar = (fun _ _ -> Some previousGrammar)
                   ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
                   CiPollIntervalMs = 0
-                  CiMaxAttempts = 10
+                  CiWait = CiWaitTests.fixedCiWait 0 10
                   TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -1064,7 +1078,7 @@ let private releaseWithUnchangedApi (run: string -> string -> CommandResult) (co
               ExtractPreviousGrammar = noPreviousGrammar
               ExtractCurrentGrammar = noCurrentGrammar
               CiPollIntervalMs = 0
-              CiMaxAttempts = 10
+              CiWait = CiWaitTests.fixedCiWait 0 10
               TagPush = immediateTagPush
               CheckFeedPresence = (fun _ _ -> OnFeed)
               CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -1099,6 +1113,7 @@ let private singlePackageRepo (dir: string) (version: string) (changelog: string
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = dir }
 
     fsproj, fakeRun, config
@@ -1194,6 +1209,7 @@ let ``release - Auto takes the strongest declaration across every changelog behi
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = dir }
 
         let output, result = releaseWithUnchangedApi run config [ "Core" ]
@@ -1236,6 +1252,7 @@ let ``release - Auto detects addition and bumps minor`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -1280,6 +1297,7 @@ let ``release - Auto aborts (no bump) when previous API cannot be read`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -1339,6 +1357,7 @@ let ``release - Auto skips an orphan tag and diffs against the last published pr
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let output, result =
@@ -1381,6 +1400,7 @@ let private unreadableBaselineConfig (tmpFile: string) =
       ReservedVersions = Set.empty
       PreBuildCmds = []
       PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+      CiTimeout = None
       RootDir = "" }
 
 let private analyzerLoadFailure =
@@ -1524,6 +1544,7 @@ let ``release - Auto still aborts on a transient fetch error (does not skip)`` (
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -1569,6 +1590,7 @@ let ``release - Auto when every prior tag is absent on feed bumps conservatively
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -1616,6 +1638,7 @@ let ``release - Auto every prior tag absent honours the reserved-version skip`` 
               ReservedVersions = Set.ofList [ "1.2.1" ]
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -1665,6 +1688,7 @@ let ``release - Auto pre-1.0 breaking change bumps minor (UnionConfig 0.3.0 -> 0
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -1723,6 +1747,7 @@ let ``release - does not push tags when post-push CI fails`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -1779,6 +1804,7 @@ let ``release - does not push tags when post-push CI times out`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -1833,6 +1859,7 @@ let ``release - does not push tags when post-push CI has no runs`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -1884,6 +1911,7 @@ let ``release - reconciles coverage via loosen-from-ci after CI is green`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
@@ -1915,6 +1943,7 @@ let ``release - returns 1 when coverageratchet loosen-from-ci fails`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
@@ -1938,6 +1967,7 @@ let ``release - prints coverageratchet error message when loosen-from-ci fails``
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let output, result =
@@ -1966,6 +1996,7 @@ let ``release - fails fast with actionable push-first message when commit isn't 
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let output, result =
@@ -2025,6 +2056,7 @@ let ``release - with --push pushes the commit then waits for CI when not pushed`
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let result =
@@ -2053,6 +2085,7 @@ let ``release - distinguishes a genuine CI failure from an unpushed commit`` () 
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let output, result =
@@ -2080,6 +2113,7 @@ let ``release - returns 1 when CI status is Unknown`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
@@ -2104,6 +2138,7 @@ let ``release - waits then returns 1 when pushed CI times out still in progress`
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 2
@@ -2126,6 +2161,7 @@ let ``release - returns 1 when the release commit sha can't be determined`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let output, result =
@@ -2152,6 +2188,7 @@ let ``release - pushed commit whose CI run never registers times out`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let output, result =
@@ -2160,6 +2197,9 @@ let ``release - pushed commit whose CI run never registers times out`` () =
     test <@ result = 1 @>
     test <@ output.Contains("no CI run registered") @>
     test <@ not (output.Contains("CI failed")) @>
+    // The wait announces the budget it was given rather than a fixed guess.
+    test <@ output.Contains("giving up after") @>
+    test <@ not (output.Contains("~1-2 min")) @>
 
 [<Fact>]
 let ``release - PromoteToRC with HasPreviousRelease succeeds`` () =
@@ -2187,6 +2227,7 @@ let ``release - PromoteToRC with HasPreviousRelease succeeds`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -2224,6 +2265,7 @@ let ``release - PromoteToStable with HasPreviousRelease succeeds`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -2261,6 +2303,7 @@ let ``release - PromoteToBeta with HasPreviousRelease succeeds`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -2340,6 +2383,7 @@ let ``release - updates fsProjsSharingSameTag versions too`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -2399,6 +2443,7 @@ let ``release - resumes when fsproj already has target version (idempotent)`` ()
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -2465,6 +2510,7 @@ let ``release - fails fast when resuming and CI has failed`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -2518,6 +2564,7 @@ let ``release - a tag that triggered no workflow run fails the release`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -2582,6 +2629,7 @@ let ``release - resumes and polls when CI is in progress`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -2633,6 +2681,7 @@ let ``release - second run after successful first run produces no changes`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -2682,6 +2731,7 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = Path.GetTempPath() }
 
         let result =
@@ -2696,7 +2746,7 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
                   ExtractPreviousGrammar = noPreviousGrammar
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
-                  CiMaxAttempts = 10
+                  CiWait = CiWaitTests.fixedCiWait 0 10
                   TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -2747,6 +2797,7 @@ let ``release - dryRun skips uncommitted check and does not write fsproj`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -2791,6 +2842,7 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = tmpDir }
 
         // Bypass the seedTmpChangelog helper; call release directly with rootDir = tmpDir (no CHANGELOG.md there)
@@ -2807,7 +2859,7 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
                       ExtractPreviousGrammar = noPreviousGrammar
                       ExtractCurrentGrammar = noCurrentGrammar
                       CiPollIntervalMs = 0
-                      CiMaxAttempts = 10
+                      CiWait = CiWaitTests.fixedCiWait 0 10
                       TagPush = immediateTagPush
                       CheckFeedPresence = (fun _ _ -> OnFeed)
                       CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -2865,6 +2917,7 @@ let ``release - resume in DryRun mode takes no actions and returns 0`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -2920,6 +2973,7 @@ let ``release - resume with LocalPublish packs without pushing`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -3003,7 +3057,7 @@ let private runReleaseWithNuGetWait run config cmd checkFeedPresence maxAttempts
           ExtractPreviousGrammar = noPreviousGrammar
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
-          CiMaxAttempts = 10
+          CiWait = CiWaitTests.fixedCiWait 0 10
           TagPush = immediateTagPush
           CheckFeedPresence = checkFeedPresence
           CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -3038,6 +3092,7 @@ let ``release - waits for NuGet after pushing tags and checks the published pack
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkFeedPresence 5
@@ -3069,6 +3124,7 @@ let ``release - an unconfirmed NuGet wait exits 2, not 0`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkFeedPresence 2
@@ -3115,6 +3171,7 @@ let ``release - a fully confirmed NuGet wait still exits 0`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkFeedPresence 2
@@ -3189,7 +3246,7 @@ let private runReleaseTargeting run config cmd mode targets =
           ExtractPreviousGrammar = noPreviousGrammar
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
-          CiMaxAttempts = 10
+          CiWait = CiWaitTests.fixedCiWait 0 10
           TagPush = immediateTagPush
           CheckFeedPresence = (fun _ _ -> OnFeed)
           CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -3226,6 +3283,7 @@ let ``release - scoped to one package only tags that package`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result = runReleaseTargeting fakeRun config StartAlpha PushTags [ "LibA" ]
@@ -3282,6 +3340,7 @@ let ``release - --only on a multi-package repo uses the per-package CHANGELOG, n
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = rootDir }
 
         let result =
@@ -3296,7 +3355,7 @@ let ``release - --only on a multi-package repo uses the per-package CHANGELOG, n
                   ExtractPreviousGrammar = noPreviousGrammar
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
-                  CiMaxAttempts = 10
+                  CiWait = CiWaitTests.fixedCiWait 0 10
                   TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -3352,6 +3411,7 @@ let ``release - scoped to multiple packages tags exactly those`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -3395,6 +3455,7 @@ let ``release - unknown target package aborts with exit 1 before any work`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let output, result =
@@ -3434,6 +3495,7 @@ let ``release - scoping composes with dry-run (only target previewed)`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let output, result =
@@ -3504,6 +3566,7 @@ let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         // Auto mode with previous API unreadable: the normal path would abort
@@ -3556,6 +3619,7 @@ let ``release - Auto dry-run reports the resume plan instead of 'No packages to 
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let output, result =
@@ -3608,6 +3672,7 @@ let ``release - Auto with fsproj equal to last tag has nothing to do (not a resu
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let output, result =
@@ -3654,6 +3719,7 @@ let private orphanTagConfig (tmpFile: string) =
       ReservedVersions = Set.empty
       PreBuildCmds = []
       PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+      CiTimeout = None
       RootDir = "" }
 
 /// Like `runRelease`, but drives the FEED seam — the authority for "is this
@@ -3680,7 +3746,7 @@ let private runReleaseWithFeed run config checkFeedPresence =
           ExtractPreviousGrammar = noPreviousGrammar
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
-          CiMaxAttempts = 10
+          CiWait = CiWaitTests.fixedCiWait 0 10
           TagPush = immediateTagPush
           CheckFeedPresence = checkFeedPresence
           CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -3847,7 +3913,7 @@ let ``release - a published package whose DLL is unreadable is never republished
                       ExtractPreviousGrammar = noPreviousGrammar
                       ExtractCurrentGrammar = noCurrentGrammar
                       CiPollIntervalMs = 0
-                      CiMaxAttempts = 10
+                      CiWait = CiWaitTests.fixedCiWait 0 10
                       TagPush = immediateTagPush
                       // The feed is the authority, and it says the version IS there.
                       CheckFeedPresence = (fun _ _ -> OnFeed)
@@ -3932,6 +3998,7 @@ let ``release - fresh changes still bump normally (not treated as resume)`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -4004,6 +4071,7 @@ let ``release - multi-package mixed: one mid-release resumes, one fresh bumps`` 
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         // LibB is a pre-release alpha: StartAlpha-style auto bump = bumpPreRelease.
@@ -4076,7 +4144,7 @@ let private runReleaseInRoot run config cmd =
           ExtractPreviousGrammar = noPreviousGrammar
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
-          CiMaxAttempts = 10
+          CiWait = CiWaitTests.fixedCiWait 0 10
           TagPush = immediateTagPush
           CheckFeedPresence = (fun _ _ -> OnFeed)
           CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -4128,6 +4196,7 @@ let ``release - Auto rebundles when only a bundled dependency changed`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = root }
 
         let result = runReleaseInRoot fakeRun config Auto
@@ -4180,6 +4249,7 @@ let ``release - Auto skips when neither own nor dependency changed`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = root }
 
         let result = runReleaseInRoot fakeRun config Auto
@@ -4236,6 +4306,7 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = root }
 
         let result =
@@ -4250,7 +4321,7 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
                   ExtractPreviousGrammar = noPreviousGrammar
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
-                  CiMaxAttempts = 10
+                  CiWait = CiWaitTests.fixedCiWait 0 10
                   TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -4305,6 +4376,7 @@ let ``release - explicit command rebundles on dependency-only change`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = root }
 
         // PromoteToBeta requested, but only the bundled dependency changed: the
@@ -4359,6 +4431,7 @@ let ``release - dependency-only rebundle skips a reserved explicit version`` () 
               ReservedVersions = Set.ofList [ "0.1.0-beta.1" ]
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = root }
 
         let result = runReleaseInRoot fakeRun config PromoteToBeta
@@ -4448,6 +4521,7 @@ let ``release - library does NOT rebundle when only a separately-published depen
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = root }
 
         let result =
@@ -4462,7 +4536,7 @@ let ``release - library does NOT rebundle when only a separately-published depen
                   ExtractPreviousGrammar = noPreviousGrammar
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
-                  CiMaxAttempts = 10
+                  CiWait = CiWaitTests.fixedCiWait 0 10
                   TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -4553,6 +4627,7 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = root }
 
         let result =
@@ -4567,7 +4642,7 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
                   ExtractPreviousGrammar = noPreviousGrammar
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
-                  CiMaxAttempts = 10
+                  CiWait = CiWaitTests.fixedCiWait 0 10
                   TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -4650,6 +4725,7 @@ let ``release - library rebundles when a non-configured helper dependency change
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = root }
 
         let result =
@@ -4664,7 +4740,7 @@ let ``release - library rebundles when a non-configured helper dependency change
                   ExtractPreviousGrammar = noPreviousGrammar
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
-                  CiMaxAttempts = 10
+                  CiWait = CiWaitTests.fixedCiWait 0 10
                   TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -4733,6 +4809,7 @@ let ``release - pushes main before creating tags so a push failure leaves no orp
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         // pushMain uses runOrFail, which throws on failure; the release aborts.
@@ -4776,7 +4853,7 @@ let private releaseInput run config cmd mode check : ReleaseInput =
       ExtractPreviousGrammar = noPreviousGrammar
       ExtractCurrentGrammar = noCurrentGrammar
       CiPollIntervalMs = 0
-      CiMaxAttempts = 10
+      CiWait = CiWaitTests.fixedCiWait 0 10
       TagPush = immediateTagPush
       CheckFeedPresence = (fun _ _ -> OnFeed)
       CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -4807,6 +4884,7 @@ let private seedSinglePackageRepo (rootDir: string) (changelogBody: string) =
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = rootDir }
 
     fsproj, Path.GetDirectoryName(fsproj), changelog, config
@@ -5123,6 +5201,7 @@ let ``fsprojsForChangelog - a multi-package changelog gets only the fsprojs besi
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "/repo" }
 
     test <@ fsprojsForChangelog config pkg "src/Alpha.Cli/CHANGELOG.md" = [ "src/Alpha.Cli/Alpha.Cli.fsproj" ] @>
@@ -5144,6 +5223,7 @@ let ``dependencyChangesSinceTag - an fsproj unreadable at the tag or on disk der
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = rootDir }
 
         let noHistory (_: string) (_: string) = Failure("no such path at tag", 1)
@@ -5203,6 +5283,7 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = dir }
 
         let result =
@@ -5221,7 +5302,7 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
                   ExtractPreviousGrammar = (fun _ _ -> Some previousGrammar)
                   ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
                   CiPollIntervalMs = 0
-                  CiMaxAttempts = 10
+                  CiWait = CiWaitTests.fixedCiWait 0 10
                   TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -5279,6 +5360,7 @@ let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative 
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = dir }
 
         let result =
@@ -5294,7 +5376,7 @@ let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative 
                   ExtractPreviousGrammar = noPreviousGrammar
                   ExtractCurrentGrammar = noCurrentGrammar
                   CiPollIntervalMs = 0
-                  CiMaxAttempts = 10
+                  CiWait = CiWaitTests.fixedCiWait 0 10
                   TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -5353,6 +5435,7 @@ let ``release - PackAsTool CLI aborts when the previous grammar cannot be read``
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = dir }
 
         let result =
@@ -5369,7 +5452,7 @@ let ``release - PackAsTool CLI aborts when the previous grammar cannot be read``
                   ExtractPreviousGrammar = noPreviousGrammar
                   ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
                   CiPollIntervalMs = 0
-                  CiMaxAttempts = 10
+                  CiWait = CiWaitTests.fixedCiWait 0 10
                   TagPush = immediateTagPush
                   CheckFeedPresence = (fun _ _ -> OnFeed)
                   CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -5432,7 +5515,7 @@ let private runCheck (config: ToolConfig) =
           ExtractPreviousGrammar = noPreviousGrammar
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
-          CiMaxAttempts = 1
+          CiWait = CiWaitTests.fixedCiWait 0 1
           TagPush = immediateTagPush
           CheckFeedPresence = (fun _ _ -> OnFeed)
           CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -5451,6 +5534,7 @@ let ``calloutCheckPaths - multi-package repo also covers the repo-root changelog
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = dir }
 
         let paths = calloutCheckPaths config config.Packages |> List.map snd
@@ -5469,6 +5553,7 @@ let ``calloutCheckPaths - single-package repo lists the root changelog once, und
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = dir }
 
         let paths = calloutCheckPaths config config.Packages
@@ -5484,6 +5569,7 @@ let ``release --check - fails when a package changelog buries its callout`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = dir }
 
         test <@ runCheck config = 1 @>)
@@ -5499,6 +5585,7 @@ let ``release --check - passes when the callout leads the section`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = dir }
 
         test <@ runCheck config = 0 @>)
@@ -5516,6 +5603,7 @@ let ``release --check - fails when the repo-root aggregate buries its callout`` 
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = dir }
 
         test <@ runCheck config = 1 @>)
@@ -5530,6 +5618,7 @@ let ``calloutOrderProblems - names the package and the buried callout`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = dir }
 
         let problems = calloutOrderProblems config config.Packages
@@ -5577,6 +5666,7 @@ let private singlePackage (tmpFile: string) : ToolConfig =
       ReservedVersions = Set.empty
       PreBuildCmds = []
       PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+      CiTimeout = None
       RootDir = "" }
 
 let private releaseWithTagPush run config (policy: TagPushPolicy) =
@@ -5595,7 +5685,7 @@ let private releaseWithTagPush run config (policy: TagPushPolicy) =
           ExtractPreviousGrammar = noPreviousGrammar
           ExtractCurrentGrammar = noCurrentGrammar
           CiPollIntervalMs = 0
-          CiMaxAttempts = 10
+          CiWait = CiWaitTests.fixedCiWait 0 10
           TagPush = policy
           CheckFeedPresence = (fun _ _ -> OnFeed)
           CheckRestorable = (fun _ _ _ -> OnFeed)
@@ -5781,6 +5871,7 @@ let ``release - a preBuildCmd with no arguments runs with an empty argument stri
               ReservedVersions = Set.empty
               PreBuildCmds = [ "restore-tools" ]
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+              CiTimeout = None
               RootDir = "" }
 
         let result =
@@ -5857,6 +5948,7 @@ let private writeSharedTagRepo (root: string) =
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = root }
 
     fsproj "Core", config

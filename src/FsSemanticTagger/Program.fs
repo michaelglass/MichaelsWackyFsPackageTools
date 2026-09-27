@@ -79,6 +79,7 @@ let initCommand (rootDir: string) : Result<int, string> =
                   ReservedVersions = Set.empty
                   PreBuildCmds = []
                   PublishWorkflows = Config.defaultPublishWorkflows
+                  CiTimeout = None
                   RootDir = rootDir }
 
             File.WriteAllText(jsonPath, Config.toJson config)
@@ -134,7 +135,8 @@ let internal runReleaseWith
                   ExtractPreviousGrammar = extractPreviousGrammar
                   ExtractCurrentGrammar = extractCurrentGrammar
                   CiPollIntervalMs = 15000
-                  CiMaxAttempts = 60
+                  CiWait =
+                    fun () -> CiWait.size config.CiTimeout (fun () -> Vcs.successfulRunDurations run CiWait.historyRuns)
                   // Bounded, configurable, and ten minutes by default: see
                   // `Vcs.tagPushPolicyFromEnv`.
                   TagPush = Vcs.tagPushPolicyFromEnv envVar

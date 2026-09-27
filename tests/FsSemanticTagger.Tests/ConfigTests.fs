@@ -146,12 +146,48 @@ let ``parseJson refuses an empty publishWorkflows`` () =
     raises<System.ArgumentException> <@ parseJson json @>
 
 [<Fact>]
+let ``parseJson reads ciTimeoutMinutes as the CI wait override, absent by default`` () =
+    let withTimeout =
+        """{ "packages": [ { "name": "MyLib", "fsproj": "src/MyLib/MyLib.fsproj" } ], "ciTimeoutMinutes": 45 }"""
+
+    let without =
+        """{ "packages": [ { "name": "MyLib", "fsproj": "src/MyLib/MyLib.fsproj" } ] }"""
+
+    test <@ (parseJson withTimeout).CiTimeout = Some(System.TimeSpan.FromMinutes 45.0) @>
+    test <@ (parseJson without).CiTimeout = None @>
+
+[<Fact>]
+let ``parseJson refuses a ciTimeoutMinutes that is not a positive number`` () =
+    let json value =
+        sprintf
+            """{ "packages": [ { "name": "MyLib", "fsproj": "src/MyLib/MyLib.fsproj" } ], "ciTimeoutMinutes": %s }"""
+            value
+
+    raises<System.ArgumentException> <@ parseJson (json "0") @>
+    raises<System.ArgumentException> <@ parseJson (json "-5") @>
+    raises<System.ArgumentException> <@ parseJson (json "\"soon\"") @>
+
+[<Fact>]
+let ``toJson roundtrips a configured ciTimeoutMinutes and omits an unset one`` () =
+    let custom =
+        { Packages = []
+          ReservedVersions = Set.empty
+          PreBuildCmds = []
+          PublishWorkflows = defaultPublishWorkflows
+          CiTimeout = Some(System.TimeSpan.FromMinutes 45.0)
+          RootDir = "" }
+
+    test <@ (parseJson (toJson custom)).CiTimeout = custom.CiTimeout @>
+    test <@ not ((toJson { custom with CiTimeout = None }).Contains("ciTimeoutMinutes")) @>
+
+[<Fact>]
 let ``toJson roundtrips a non-default publishWorkflows and omits the default`` () =
     let custom =
         { Packages = []
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = [ PublishWorkflow ".github/workflows/ship.yml" ]
+          CiTimeout = None
           RootDir = "" }
 
     test <@ (parseJson (toJson custom)).PublishWorkflows = custom.PublishWorkflows @>
@@ -485,6 +521,7 @@ let ``toJson roundtrips through parseJson`` () =
           ReservedVersions = set [ "1.0.0" ]
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let json = toJson config
@@ -529,6 +566,7 @@ let ``toJson includes preBuildCmds when not empty`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = [ "dotnet tool restore" ]
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let json = toJson config
@@ -547,6 +585,7 @@ let ``toJson omits empty preBuildCmds`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let json = toJson config
@@ -564,6 +603,7 @@ let ``toJson omits empty fsProjsSharingSameTag`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let json = toJson config
@@ -581,6 +621,7 @@ let ``toJson includes reservedVersions when not empty`` () =
           ReservedVersions = set [ "1.0.0"; "2.0.0" ]
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let json = toJson config
@@ -681,6 +722,7 @@ let ``toJson omits empty reservedVersions`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let json = toJson config
@@ -819,6 +861,7 @@ let ``toJson roundtrips with preBuildCmds`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = [ "dotnet tool restore"; "dotnet build" ]
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let json = toJson config
@@ -837,6 +880,7 @@ let ``toJson roundtrips with empty collections`` () =
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+          CiTimeout = None
           RootDir = "" }
 
     let json = toJson config

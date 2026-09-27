@@ -71,6 +71,7 @@ let private withRepoOf (tools: string list) (packages: (string * string list) li
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = defaultPublishWorkflows
+              CiTimeout = None
               RootDir = root }
 
         action
@@ -161,7 +162,7 @@ let private releaseInputWith (repo: Repo) (rejectedTags: string list) checkFeed 
       ExtractPreviousGrammar = fun _ _ -> None
       ExtractCurrentGrammar = fun _ -> None
       CiPollIntervalMs = 0
-      CiMaxAttempts = 10
+      CiWait = CiWaitTests.fixedCiWait 0 10
       TagPush =
         { PushAttempts = 1
           PushRetryDelayMs = 0
