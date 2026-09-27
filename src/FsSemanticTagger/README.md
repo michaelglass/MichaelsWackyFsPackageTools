@@ -110,9 +110,11 @@ Releasing needs the release commit's **CI coverage artifact** (to reconcile the 
 | Release commit state | What happens |
 |---|---|
 | Not on the remote (not pushed) | **Fail fast in ~1 second** with: *"the release commit isn't on the remote … Push the branch and wait for CI, then re-run — or pass `--push`."* It is never mislabelled as a CI failure. |
-| Pushed, CI queued / running | **Waits** (polls) for the run to finish — you don't hand-roll a `gh run watch` loop. |
+| Pushed, CI queued / running | **Waits** (polls) for the run to finish — you don't hand-roll a `gh run watch` loop. The wait is sized from this repo's CI history (see below); a run still going when it runs out refuses the release. |
 | Pushed, CI passed | Proceeds. |
 | Pushed, CI failed | Errors *"CI failed for the release commit"* and names the failing run's URL — the real failure case, kept distinct from "not pushed". |
+
+How long it waits: twice the median duration of the last 10 successful runs of `.github/workflows/ci.yml` (from `gh run list --status success`), and never less than 5 minutes. The wait's first line prints the expected duration and the budget, e.g. *"(expected ~16m39s, the median of the last 8 successful CI runs; giving up after 33m18s)"*. With no successful run yet, it waits 5 minutes; when the history cannot be read, 15. `ciTimeoutMinutes` in `semantic-tagger.json` replaces the estimate with a fixed budget. Either way, CI that fails or is still running when the budget ends refuses the release.
 
 Pass `--push` to opt into auto-pushing the commit (then the tool waits for its CI). Auto-push is **off by default** because pushing to a branch-protected / PR-gated `main` is unsafe to do implicitly.
 
@@ -318,6 +320,7 @@ For monorepos or custom setups, create a `semantic-tagger.json`:
 | `packages[].fsProjsSharingSameTag` | string[]? | Other `.fsproj` files released under the same tag and version. They are the package's own source: a change in any of them, or in any project their `<ProjectReference>` closure bundles, releases the package (see below) |
 | `reservedVersions` | string[]? | Versions to skip |
 | `preBuildCmds` | string[]? | Commands to run before the build that produces each DLL |
+| `ciTimeoutMinutes` | number? | How long to wait for CI on the release commit before refusing. Omitted: sized from the repo's CI history (twice the median of the last 10 successful runs, at least 5 minutes). Must be positive. |
 | `publishWorkflows` | string[]? | Paths of the workflows whose tag-triggered run publishes a package (default: `[".github/workflows/release.yml"]`). After pushing a tag, only runs of these workflows are consulted; a run of any other workflow the tag triggered (a docs deploy, say) cannot refuse the release. Must not be empty. |
 
 ### Projects sharing a tag

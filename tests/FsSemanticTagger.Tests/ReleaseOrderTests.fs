@@ -202,6 +202,7 @@ let ``fromConfig orders the FsHotWatch shape from the fsprojs on disk`` () =
               ReservedVersions = Set.empty
               PreBuildCmds = []
               PublishWorkflows = defaultPublishWorkflows
+              CiTimeout = None
               RootDir = root }
 
         match ReleaseOrder.fromConfig config with

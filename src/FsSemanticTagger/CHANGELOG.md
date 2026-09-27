@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- fix: **the wait for CI on the release commit is sized from the repo's own CI history.** It was a fixed 15 minutes announced as "expected, ~1-2 min", and a repo whose CI takes 15.5-17.7 minutes timed out on every release started right after a push.
+  - The budget is twice the median duration of the last 10 successful runs of `.github/workflows/ci.yml` (`gh run list --status success`), never less than 5 minutes. With no successful run it is 5 minutes; when the history cannot be read, the old 15.
+  - The wait's first line now prints the expectation and the budget ("expected ~16m39s, the median of the last 8 successful CI runs; giving up after 33m18s") instead of "~1-2 min".
+  - New `ciTimeoutMinutes` in `semantic-tagger.json` sets a fixed budget and skips the history. Red CI and a timeout still refuse the release. New `CiWait` module, `Vcs.successfulRunDurations`, `ToolConfig.CiTimeout`; `ReleaseInput.CiMaxAttempts` is replaced by `ReleaseInput.CiWait`.
+
 ## 0.14.0-alpha.15 - 2026-09-26
 
 - fix: **a change to a `fsProjsSharingSameTag` project releases its package.** Change detection read only the primary `fsproj`'s directory and its `<ProjectReference>` closure, so a fix confined to a CLI shipped under a library's tag printed `Skipping <package>: no changes since <tag>` and never shipped.

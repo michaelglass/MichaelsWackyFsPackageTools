@@ -656,6 +656,7 @@ let private releaseWithVersion (fsprojVersion: string) (dir: string) (canary: Se
           ReservedVersions = Set.empty
           PreBuildCmds = []
           PublishWorkflows = defaultPublishWorkflows
+          CiTimeout = None
           RootDir = dir }
 
     let output, code =
@@ -671,7 +672,7 @@ let private releaseWithVersion (fsprojVersion: string) (dir: string) (canary: Se
                   ExtractPreviousGrammar = fun _ _ -> None
                   ExtractCurrentGrammar = fun _ -> None
                   CiPollIntervalMs = 0
-                  CiMaxAttempts = 10
+                  CiWait = CiWaitTests.fixedCiWait 0 10
                   TagPush =
                     { PushAttempts = 1
                       PushRetryDelayMs = 0
