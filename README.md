@@ -164,6 +164,17 @@ mise run check       # Format, lint, and docs checks
 mise run ci          # Full CI pipeline locally
 ```
 
+The local gate must run on **.NET SDK 10.0.4xx**. `global.json` pins 10.0.400 with
+`rollForward: latestPatch`, and CI's build job uses the same band. Branch coverage
+counts depend on the SDK feature band: the F# compiler in 10.0.3xx and in 10.0.4xx
+emits different branch points for identical code. A floor measured on one band
+therefore fails, or passes by accident, on the other. Run `mise run ci` from a plain
+shell, where mise supplies the SDK. A dev shell that exports `DOTNET_ROOT` for a
+different SDK (for example a nix shell with 10.0.302) takes precedence over mise,
+and the pin then refuses it with "A compatible .NET SDK was not found". That refusal
+is intended. When moving to a new band, bump `global.json` and CI's `dotnet-version`
+together and re-measure the branch floors.
+
 ## License
 
 MIT
