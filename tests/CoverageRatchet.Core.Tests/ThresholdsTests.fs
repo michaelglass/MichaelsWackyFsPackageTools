@@ -761,3 +761,46 @@ let ``saveRawConfig - a file that ended in a newline still does`` () =
         test <@ not (written.EndsWith("\n\n")) @>
     finally
         File.Delete(path)
+
+// --- resolving for a named platform ---
+
+[<Fact>]
+let ``resolveConfigFor - picks the named platform's entry, else the platform-less one`` () =
+    let entry line platform =
+        { percentageFloor line line with
+            Platform = platform }
+
+    let raw =
+        { DefaultLine = 100.0
+          DefaultBranch = 100.0
+          RawOverrides =
+            Map.ofList
+                [ "Split.fs", [ entry 70.0 (Some MacOS); entry 60.0 (Some Linux) ]
+                  "Shared.fs", [ entry 80.0 None; entry 50.0 (Some Windows) ]
+                  "MacOnly.fs", [ entry 40.0 (Some MacOS) ] ]
+          RawCountFloors = Map.empty }
+
+    let linux = resolveConfigFor Linux raw
+    let mac = resolveConfigFor MacOS raw
+
+    test <@ linux.Overrides.["Split.fs"].Line = 60.0 @>
+    test <@ mac.Overrides.["Split.fs"].Line = 70.0 @>
+    test <@ linux.Overrides.["Shared.fs"].Line = 80.0 @>
+    test <@ not (linux.Overrides.ContainsKey "MacOnly.fs") @>
+    test <@ resolveConfig raw = resolveConfigFor Platform.current raw @>
+
+[<Fact>]
+let ``overrideEntriesToJson - renders entries the way the config writer does`` () =
+    let single = [ percentageFloor 90.0 80.0 ]
+
+    let tagged =
+        [ { percentageFloor 90.0 80.0 with
+              Reason = Some "why — on linux"
+              Platform = Some Linux } ]
+
+    test <@ overrideEntriesToJson single = "{\n  \"line\": 90,\n  \"branch\": 80\n}" @>
+
+    test
+        <@
+            overrideEntriesToJson tagged = "[\n  {\n    \"line\": 90,\n    \"branch\": 80,\n    \"reason\": \"why — on linux\",\n    \"platform\": \"linux\"\n  }\n]"
+        @>

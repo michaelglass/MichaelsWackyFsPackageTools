@@ -394,12 +394,16 @@ let loadRawConfig (path: string) : RawConfig =
 /// therefore unenforced here — which is why a macOS-only floor is invisible to a
 /// Linux-only CI. Count floors share this rule on purpose:
 /// one selection semantic, not two.
-let private resolveForPlatform (platformOf: 'a -> Platform option) (entries: Map<string, 'a list>) : Map<string, 'a> =
+let private resolveForPlatform
+    (platform: Platform)
+    (platformOf: 'a -> Platform option)
+    (entries: Map<string, 'a list>)
+    : Map<string, 'a> =
     entries
     |> Map.toList
     |> List.choose (fun (name, candidates) ->
         let platformMatch =
-            candidates |> List.tryFind (fun o -> platformOf o = Some Platform.current)
+            candidates |> List.tryFind (fun o -> platformOf o = Some platform)
 
         let allMatch = candidates |> List.tryFind (fun o -> platformOf o = None)
 
@@ -409,11 +413,16 @@ let private resolveForPlatform (platformOf: 'a -> Platform option) (entries: Map
         | None, None -> None)
     |> Map.ofList
 
-let resolveConfig (raw: RawConfig) : Config =
+/// The floors `platform` would enforce — what a CI runner on that platform checks,
+/// whichever machine is reading the file.
+let resolveConfigFor (platform: Platform) (raw: RawConfig) : Config =
     { DefaultLine = raw.DefaultLine
       DefaultBranch = raw.DefaultBranch
-      Overrides = resolveForPlatform (fun (o: Override) -> o.Platform) raw.RawOverrides
-      CountFloors = resolveForPlatform (fun (f: CountFloor) -> f.Platform) raw.RawCountFloors }
+      Overrides = resolveForPlatform platform (fun (o: Override) -> o.Platform) raw.RawOverrides
+      CountFloors = resolveForPlatform platform (fun (f: CountFloor) -> f.Platform) raw.RawCountFloors }
+
+/// The floors the running platform enforces.
+let resolveConfig (raw: RawConfig) : Config = resolveConfigFor Platform.current raw
 
 let loadConfig (path: string) : Config = loadRawConfig path |> resolveConfig
 
@@ -460,6 +469,12 @@ let private entriesToNode (platformOf: 'a -> Platform option) (toDict: 'a -> _) 
     match entries with
     | [ single ] when platformOf single = None -> JsonSerializer.SerializeToNode(toDict single, jsonOptions)
     | many -> JsonSerializer.SerializeToNode(many |> List.map toDict |> List.toArray, jsonOptions)
+
+/// One file's percentage-floor entries as the config writer renders them: a single
+/// platform-less entry as an object, anything else as an array. Lets a caller show an
+/// entry exactly as `saveRawConfig` would write it without writing anything.
+let overrideEntriesToJson (entries: Override list) : string =
+    (entriesToNode (fun (o: Override) -> o.Platform) overrideToDict entries).ToJsonString(jsonOptions)
 
 /// Bring one section of the document up to `updated`, touching only the keys whose
 /// entries differ from what the file already says.

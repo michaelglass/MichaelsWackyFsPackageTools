@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: `propose-from-ci <run-id> [output]` reads a CI run's `coverage-thresholds` artifact and lists every file below the floor that run's platform enforces, across every project at once, with a drafted `overrides` entry for each: lowered only where it fell, to the measured value rounded down, tagged with the platform, and a reason citing the run, the commit and the numbers. It is read-only: it never edits a floor file, never commits and never pushes. A whole-number measurement against a fractional floor is reported as undetermined rather than drafted.
+
 ## 0.15.0-alpha.16 - 2026-09-24
 
 - fix: **the config file is edited in place, never re-rendered.** `baseline-lines`, `ratchet`, `loosen` and `loosen-from-ci` all wrote the whole document back from a sorted map, so a one-number change re-ordered every hand-appended entry and re-spelled every value — and the entries this machine cannot measure (Linux floors captured from Linux CI) were somewhere inside that diff. Entries the run did not change now keep their bytes, their order and any property the tool does not know about; a trailing newline is kept too.
