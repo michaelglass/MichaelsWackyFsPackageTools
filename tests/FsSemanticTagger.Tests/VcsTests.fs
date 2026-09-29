@@ -1854,8 +1854,59 @@ let ``pushTagsAndConfirmDetailed - a run that never appears within the budget is
           RunPollAttempts = 4 }
 
     match pushTagsAndConfirmDetailed run releaseOnly policy [ "v0.1.0-alpha.5" ] with
-    | [ WorkflowTriggerMissing("v0.1.0-alpha.5", _, true) ] -> ()
+    | [ WorkflowTriggerMissing("v0.1.0-alpha.5", _, true, _) ] -> ()
     | other -> failwithf "Expected one WorkflowTriggerMissing, got %A" other
+
+[<Fact>]
+let ``githubRepoSlug - reads owner and repo from every GitHub remote form`` () =
+    test <@ githubRepoSlug "git@github.com:owner/Repo.Name.git" = Some "owner/Repo.Name" @>
+    test <@ githubRepoSlug "ssh://git@github.com/owner/repo.git" = Some "owner/repo" @>
+    test <@ githubRepoSlug "https://github.com/owner/repo.git" = Some "owner/repo" @>
+    test <@ githubRepoSlug "https://github.com/owner/repo" = Some "owner/repo" @>
+    test <@ githubRepoSlug "https://token@github.com/owner/repo/" = Some "owner/repo" @>
+    test <@ githubRepoSlug "  git@github.com:owner/repo.git\n" = Some "owner/repo" @>
+
+[<Fact>]
+let ``githubRepoSlug - a remote that is not GitHub has no slug`` () =
+    test <@ githubRepoSlug "git@gitlab.com:owner/repo.git" = None @>
+    test <@ githubRepoSlug "https://github.com/owner" = None @>
+    test <@ githubRepoSlug "" = None @>
+
+/// The check commands reported for `tag` when no run ever appears and
+/// `git remote get-url origin` answers `remote`.
+let private checksForAbsentRun (remote: CommandResult) (tag: string) =
+    let gh = ghRunListAnswers [ "[]" ]
+
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", "git export" -> Success ""
+        | "jj", a when a.StartsWith("git push --tag") -> Success ""
+        | "git", "remote get-url origin" -> remote
+        | _ -> gh cmd args
+
+    let policy =
+        { PushAttempts = 1
+          PushRetryDelayMs = 0
+          RunPollIntervalMs = 0
+          RunPollAttempts = 1 }
+
+    match pushTagsAndConfirmDetailed run releaseOnly policy [ tag ] with
+    | [ WorkflowTriggerMissing(t, _, true, checks) ] when t = tag -> checks
+    | other -> failwithf "Expected one WorkflowTriggerMissing, got %A" other
+
+[<Fact>]
+let ``pushTagsAndConfirmDetailed - a missing run carries a check command that names the repo and the workflow`` () =
+    // `gh run list --branch <tag>` alone fails in a jj checkout with no colocated .git.
+    let checks =
+        checksForAbsentRun (Success "git@github.com:owner/Repo.git\n") "v0.1.0-alpha.8"
+
+    test
+        <@ checks = [ "gh run list --branch v0.1.0-alpha.8 --workflow .github/workflows/release.yml --repo owner/Repo" ] @>
+
+[<Fact>]
+let ``pushTagsAndConfirmDetailed - an unreadable remote still yields a check command, without --repo`` () =
+    let checks = checksForAbsentRun (Failure("not a git repository", 128)) "v1.0.0"
+    test <@ checks = [ "gh run list --branch v1.0.0 --workflow .github/workflows/release.yml" ] @>
 
 [<Fact>]
 let ``tagPushPolicyFromEnv - the default run-poll window is at least ten minutes and the env can change it`` () =
