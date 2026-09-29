@@ -23,7 +23,6 @@ jobs:
       test-windows: true
       fantomas-paths: "src/ tests/"
       syncdocs-cmd: "dotnet run --project $GITHUB_WORKSPACE/src/SyncDocs/SyncDocs.fsproj --"
-      coverageratchet-cmd: "dotnet run --project $GITHUB_WORKSPACE/src/CoverageRatchet/CoverageRatchet.fsproj --"
       # MSBuild-targets-only package: its tests instrument nothing.
       coverage-exclude: RefStamp
     permissions:

@@ -1,10 +1,11 @@
 # FSharpOssTooling
 
-Monorepo containing four dotnet tools for F# OSS project infrastructure:
-- CoverageRatchet — per-file coverage enforcement with automatic threshold ratcheting
+Monorepo containing three dotnet tools for F# OSS project infrastructure:
 - SyncDocs — README-to-docs section syncing
 - FsSemanticTagger — semantic versioning with API change detection
 - FsProjLint — validates repo/project structure for NuGet-publishable F# projects
+
+CoverageRatchet lives in its own repository (https://github.com/michaelglass/CoverageRatchet); this repo consumes it as a local dotnet tool pinned in `.config/dotnet-tools.json`.
 
 Plus one MSBuild package (not a CLI tool):
 - RefStamp — local `dotnet pack` versions derive from the jj/git source ref, so a dev machine cannot produce a release-shaped version (consumed via `<PackageReference Include="RefStamp" PrivateAssets="all" />` in a consumer repo's root `Directory.Build.props`; dogfooded here via `Directory.Build.targets` importing `src/RefStamp/build/RefStamp.targets`)
@@ -23,7 +24,7 @@ This repo exports reusable workflows consumed by other F# OSS repos:
 ## Repo Structure
 
 - `src/<Tool>/` — tool source code and per-tool README
-- `.config/dotnet-tools.json` — local tool manifest (fantomas, fsharplint, fsdocs, own tools)
+- `.config/dotnet-tools.json` — local tool manifest (fantomas, fsharplint, fsdocs, coverageratchet, own tools)
 - `.editorconfig` — shared editor config (4-space F#, 2-space XML/JSON/YAML, LF, UTF-8)
 - `fsharplint.json` — FSharpLint config (120 char lines, naming conventions)
 - `mise.toml` — all mise tasks including `lint-project` (FsProjLint) and `coverage-check`

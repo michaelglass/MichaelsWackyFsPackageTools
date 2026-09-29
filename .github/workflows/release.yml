@@ -2,11 +2,9 @@ name: Release
 on:
   push:
     tags:
-      - 'coverageratchet-v*'
       - 'syncdocs-v*'
       - 'fssemantictagger-v*'
       - 'fsprojlint-v*'
-      - 'coverageratchet-core-v*'
       - 'refstamp-v*'
 
 permissions:
@@ -14,38 +12,6 @@ permissions:
   id-token: write
 
 jobs:
-  release-coverageratchet:
-    if: startsWith(github.ref, 'refs/tags/coverageratchet-v')
-    uses: ./.github/workflows/michaels-wacky-release.yml
-    with:
-      package-name: CoverageRatchet
-      tag-prefix: coverageratchet-v
-      fsproj-path: src/CoverageRatchet/CoverageRatchet.fsproj
-    permissions:
-      contents: write
-
-  # NuGet Trusted Publishing requires nuget/login to run in the calling repo's
-  # workflow, not a reusable workflow from another repo. The OIDC token's
-  # job_workflow_ref must match the repo's own workflow file.
-  publish-coverageratchet:
-    if: startsWith(github.ref, 'refs/tags/coverageratchet-v')
-    needs: release-coverageratchet
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: nuget-packages
-          path: ./artifacts
-      - name: Login to NuGet (Trusted Publishing)
-        id: nuget-login
-        uses: nuget/login@v1
-        with:
-          user: ${{ vars.NUGET_USER }}
-      - name: Publish to NuGet
-        run: dotnet nuget push ./artifacts/*.nupkg --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
-
   release-syncdocs:
     if: startsWith(github.ref, 'refs/tags/syncdocs-v')
     uses: ./.github/workflows/michaels-wacky-release.yml
@@ -56,6 +22,9 @@ jobs:
     permissions:
       contents: write
 
+  # NuGet Trusted Publishing requires nuget/login to run in the calling repo's
+  # workflow, not a reusable workflow from another repo. The OIDC token's
+  # job_workflow_ref must match the repo's own workflow file.
   publish-syncdocs:
     if: startsWith(github.ref, 'refs/tags/syncdocs-v')
     needs: release-syncdocs
@@ -146,35 +115,6 @@ jobs:
   publish-refstamp:
     if: startsWith(github.ref, 'refs/tags/refstamp-v')
     needs: release-refstamp
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: nuget-packages
-          path: ./artifacts
-      - name: Login to NuGet (Trusted Publishing)
-        id: nuget-login
-        uses: nuget/login@v1
-        with:
-          user: ${{ vars.NUGET_USER }}
-      - name: Publish to NuGet
-        run: dotnet nuget push ./artifacts/*.nupkg --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
-
-  release-coverageratchet-core:
-    if: startsWith(github.ref, 'refs/tags/coverageratchet-core-v')
-    uses: ./.github/workflows/michaels-wacky-release.yml
-    with:
-      package-name: CoverageRatchet.Core
-      tag-prefix: coverageratchet-core-v
-      fsproj-path: src/CoverageRatchet.Core/CoverageRatchet.Core.fsproj
-    permissions:
-      contents: write
-
-  publish-coverageratchet-core:
-    if: startsWith(github.ref, 'refs/tags/coverageratchet-core-v')
-    needs: release-coverageratchet-core
     runs-on: ubuntu-latest
     permissions:
       id-token: write

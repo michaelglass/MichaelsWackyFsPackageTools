@@ -151,7 +151,8 @@ let getCurrentCommitSha (run: string -> string -> CommandResult) : string option
         | Some sha -> nonEmpty sha
         | None -> None
 
-// Shared with CoverageRatchet via the linked Shared/GitDir.fs compile item;
+// Shared with FsProjLint via the linked Shared/GitDir.fs compile item (CoverageRatchet
+// keeps its own copy in its repository);
 // walks up from any nested subdir to the repo root. The `run` handed to this
 // module's `git`/`gh` calls is built from it once (`Shell.runWithGitDir`), so a
 // jj checkout with no colocated `.git` reaches its store without GIT_DIR ever

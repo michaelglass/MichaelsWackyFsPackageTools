@@ -2,11 +2,9 @@ name: Deploy Docs
 on:
   push:
     tags:
-      - 'coverageratchet-v*'
       - 'syncdocs-v*'
       - 'fssemantictagger-v*'
       - 'fsprojlint-v*'
-      - 'coverageratchet-core-v*'
 
 concurrency:
   group: docs-${{ github.sha }}

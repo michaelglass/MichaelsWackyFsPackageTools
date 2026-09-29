@@ -4,7 +4,7 @@ Guidance for AI coding agents working in this repo. See `CLAUDE.md` for the same
 
 ## Project
 
-Monorepo of four F# dotnet tools — CoverageRatchet, SyncDocs, FsSemanticTagger, FsProjLint — plus the RefStamp MSBuild package (local packs are versioned off the jj/git ref) and reusable GitHub workflows consumed by 7 sibling F# OSS repos by the same author.
+Monorepo of three F# dotnet tools — SyncDocs, FsSemanticTagger, FsProjLint — plus the RefStamp MSBuild package (local packs are versioned off the jj/git ref) and reusable GitHub workflows consumed by 7 sibling F# OSS repos by the same author.
 
 ## Before you claim done
 
@@ -22,7 +22,7 @@ Don't skip format. Fantomas is strict; a missing blank line or wrong indent fail
 
 ## Coverage workflow (easy to get wrong)
 
-CoverageRatchet enforces per-file, per-platform coverage thresholds. Files with no entry default to **100% / 100%**, not a weaker fallback.
+CoverageRatchet (its own repository, https://github.com/michaelglass/CoverageRatchet; consumed here as the local tool pinned in `.config/dotnet-tools.json`) enforces per-file, per-platform coverage thresholds. Files with no entry default to **100% / 100%**, not a weaker fallback.
 
 The split of responsibilities:
 

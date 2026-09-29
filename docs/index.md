@@ -5,7 +5,7 @@ A collection of dotnet CLI tools (and one MSBuild package) that aim to make main
 
 | Tool | What it does |
 |------|-------------|
-| [CoverageRatchet](src/CoverageRatchet/) | Enforces per-file code coverage thresholds that automatically ratchet upward -- coverage can improve but shouldn't regress |
+| [CoverageRatchet](https://github.com/michaelglass/CoverageRatchet) | Enforces per-file code coverage thresholds that automatically ratchet upward -- coverage can improve but shouldn't regress. Now lives in its own repository |
 | [FsSemanticTagger](src/FsSemanticTagger/) | Detects API changes in your compiled DLL and determines the correct semantic version bump |
 | [SyncDocs](src/SyncDocs/) | Helps keep sections of your README in sync with your docs site |
 | [FsProjLint](src/FsProjLint/) | Validates repo and project structure for NuGet-publishable F# projects (fsproj metadata, SourceLink, LICENSE, and more) |
@@ -54,29 +54,7 @@ fsprojlint --help
 
 ### CoverageRatchet
 
-CoverageRatchet reads Cobertura XML coverage reports and enforces per-file thresholds. The idea: thresholds only go **up**. When your tests improve coverage on a file, the threshold ratchets to the new level so it shouldn't drift back down.
-
-```bash
-# Ratchet thresholds upward (default command)
-coverageratchet
-
-# Check current coverage against thresholds (use in CI)
-coverageratchet check
-
-# Set thresholds to current coverage (makes check pass immediately)
-coverageratchet loosen
-
-# Record each file's current covered-LINE COUNT as a floor
-coverageratchet baseline-lines
-
-# Find files with lowest coverage
-coverageratchet targets
-
-# Show uncovered branch points per file
-coverageratchet gaps
-```
-
-Configuration lives in a `coverage-ratchet.json` file with two independent kinds of floor: **percentages** in `overrides` (`"line": 93` is 93 percent) and **absolute covered-line counts** in `countFloors` (`"coveredLines": 93` is 93 lines). Counts exist for the case where the percentage denominator is not trustworthy — the .NET collector only emits a source line once its method JIT-compiles, so the denominator drifts between runs while the numerator does not. See the [CoverageRatchet README](src/CoverageRatchet/) for the full configuration format.
+CoverageRatchet reads Cobertura XML coverage reports and enforces per-file thresholds that only go **up**. It has moved to its own repository: see [michaelglass/CoverageRatchet](https://github.com/michaelglass/CoverageRatchet) for usage, configuration, and releases.
 
 ### FsSemanticTagger
 
