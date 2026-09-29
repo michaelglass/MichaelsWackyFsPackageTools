@@ -114,6 +114,11 @@
       "line": 99,
       "branch": 92,
       "reason": "loosened automatically"
+    },
+    "JobObject.fs": {
+      "line": 14,
+      "branch": 25,
+      "reason": "Windows-only Job Object P/Invoke (Native.enclose); coverage runs on macOS and Linux, where only the non-Windows no-op executes. The Windows path is exercised by the runLogged budget test on the test-windows CI job, which collects no coverage."
     }
   }
 }

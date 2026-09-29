@@ -125,6 +125,7 @@ let runLoggedWithin
                 :> Task)
 
         let p = Process.Start(psi)
+        let job = JobObject.enclose p
         let readers = [| pump p.StandardOutput; pump p.StandardError |]
 
         let outcome =
@@ -132,6 +133,7 @@ let runLoggedWithin
                 Exited p.ExitCode
             else
                 p.Kill(entireProcessTree = true)
+                job.Dispose()
                 p.WaitForExit()
                 TimedOut timeout
 
@@ -148,6 +150,7 @@ let runLoggedWithin
             log.WriteLine(sprintf "[fssemantictagger] killed after %dm%ds" (int timeout.TotalMinutes) timeout.Seconds)
         | Exited _ -> ()
 
+        job.Dispose()
         outcome
     finally
         stopReading.Cancel()
@@ -156,5 +159,6 @@ let runLoggedWithin
 /// Run `command` through `sh -c` in `cwd`, appending stdout and stderr to
 /// `logPath`; kill the whole process tree once `timeout` elapses. Output still
 /// unread `drainGrace` after the gate ends is dropped, with a note in the log.
+/// On Windows every process the gate started ends when this returns.
 let runLogged (cwd: string) (command: string) (timeout: System.TimeSpan) (logPath: string) : GateOutcome =
     runLoggedWithin drainGrace cwd command timeout logPath
