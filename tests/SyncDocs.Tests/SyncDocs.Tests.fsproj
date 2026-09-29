@@ -17,6 +17,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="AttributesTests.fs" />
+    <Compile Include="TestHelpersTests.fs" />
     <Compile Include="SyncTests.fs" />
     <Compile Include="CodeRegionTests.fs" />
     <Compile Include="ProgramTests.fs" />

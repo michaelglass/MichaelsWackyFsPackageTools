@@ -2,6 +2,7 @@ module Tests.Common.TestHelpers
 
 open System
 open System.IO
+open System.Threading
 
 let createTempDir () =
     let dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
@@ -28,16 +29,48 @@ let withTempDir (action: string -> 'a) =
     finally
         cleanupDir dir
 
+/// Forwards writes to the capture active in the current async flow, else to `fallback`.
+/// `AsyncLocal` flows into tasks, async continuations and started threads, so output from
+/// work the action spawns lands in its capture while concurrent tests keep their own.
+type private ConsoleRouter(fallback: TextWriter) =
+    inherit TextWriter()
+
+    static member val Capture = AsyncLocal<TextWriter>()
+
+    member private _.Target =
+        match ConsoleRouter.Capture.Value with
+        | null -> fallback
+        | capture -> capture
+
+    override _.Encoding = fallback.Encoding
+    override this.Write(value: char) = this.Target.Write(value)
+    override this.Write(value: string) = this.Target.Write(value)
+    override this.Write(buffer: char[], index: int, count: int) = this.Target.Write(buffer, index, count)
+    override this.WriteLine(value: string) = this.Target.WriteLine(value)
+    override this.Flush() = this.Target.Flush()
+
+let private routerLock = obj ()
+let mutable private installedRouter: TextWriter = null
+
+// Console.SetOut wraps the router in a synchronized writer, so every capture buffer is
+// written under one lock. Reinstalls if something else has replaced Console.Out since.
+let private ensureRouter () =
+    lock routerLock (fun () ->
+        if not (obj.ReferenceEquals(Console.Out, installedRouter)) then
+            Console.SetOut(new ConsoleRouter(Console.Out))
+            installedRouter <- Console.Out)
+
+/// Captures what `action` writes to Console.Out, isolated from concurrently running tests.
 /// Captured output uses `\n` line endings on every platform (`printfn` writes `\r\n` on Windows).
 let withCapturedConsole (action: unit -> 'a) : string * 'a =
+    ensureRouter ()
     let output = System.Text.StringBuilder()
-    let writer = new StringWriter(output)
-    let original = Console.Out
-    Console.SetOut(writer)
+    use writer = new StringWriter(output)
+    let outer = ConsoleRouter.Capture.Value
+    ConsoleRouter.Capture.Value <- writer
 
     try
         let result = action ()
-        writer.Flush()
         output.ToString().Replace("\r\n", "\n"), result
     finally
-        Console.SetOut(original)
+        ConsoleRouter.Capture.Value <- outer
