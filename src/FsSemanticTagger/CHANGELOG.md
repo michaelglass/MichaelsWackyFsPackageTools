@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- fix: **a new type inside an existing module is an addition, not a breaking change.** The API diff read any new nested type `Parent+Child` whose `Parent` already existed as a new union case. Modules compile to classes too, so CoverageRatchet.Core's new `Cobertura.ReaderOptions` and `Cobertura.Report` made a purely additive release read as breaking, and the report named the first added signature (`readReports`), not the type that triggered it.
+  - Union cases are now read from the `CompilationMapping(SourceConstructFlags.UnionCase)` attribute the F# compiler puts on each case's factory, the metadata `FSharpType.GetUnionCases` reads. Each public case is its own signature, `case <Union>::<Case>`, in `extract-api` and `check-api` output. A new case on a union that already had public cases is breaking and heads the report; a new union, or a new type in a module, is an addition.
+  - **This can raise bumps that did not happen before:** a new fieldless case (`| Windows`), a new case on a struct union, or a second case on a single-case union has no nested type, so the old check missed it and released it as an addition. A union with a private representation has no public cases, so a new case on it stays non-breaking.
+  - A breaking report lists only breaking signatures, cases first, then types, then members. `check-api` marks them `!` instead of `-`, since a new case is breaking without being removed.
+  - New `Api.extractFromTypes`, the signature extraction `extractFromAssembly` runs over a loaded assembly's exported types.
 - fix: reading a DLL's API or CLI grammar lists the .NET installation's reference assemblies (every SDK and shared-framework version under `DOTNET_ROOT`) once per process instead of once per DLL. A release reads several DLLs, and each listing took about 9s on a cold GitHub Windows runner.
 - fix: `release` no longer sets `GIT_DIR` on its own process while it asks git and `gh` about the remote. A git started elsewhere in the process meanwhile inherited it and failed with `this operation must be run in a work tree`. The git store now goes to each `git` and `gh` process the release starts, through the new `Shell.runWithGitDir`; in a jj checkout without a colocated `.git` that includes the local git fallbacks, which before could only answer `not a git repository`.
 

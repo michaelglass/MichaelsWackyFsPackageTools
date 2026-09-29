@@ -59,11 +59,16 @@ fssemantictagger extract-api path/to/MyLib.dll
 Outputs one signature per line:
 
 ```
-type MyNamespace.MyClass
+  MyClass::.ctor(int)
   MyClass::MyMethod(int, string): bool
   MyClass::MyProperty: string
-  MyClass::.ctor(int)
+case MyNamespace.Shape::Circle
+case MyNamespace.Shape::Square
+type MyNamespace.MyClass
+type MyNamespace.Shape
 ```
+
+Each public case of a union is a `case` line. Adding a case to a union that already had public cases is a breaking change (consumers' exhaustive matches stop compiling); a new union, or a new type inside an existing module, is an addition.
 
 ### Compare two versions of a DLL
 

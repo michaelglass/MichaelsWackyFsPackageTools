@@ -19,6 +19,7 @@
   <ItemGroup>
     <Compile Include="VersionTests.fs" />
     <Compile Include="ChangelogTests.fs" />
+    <Compile Include="ApiFixtures.fs" />
     <Compile Include="ApiTests.fs" />
     <Compile Include="ConfigTests.fs" />
     <Compile Include="ShellTests.fs" />
