@@ -12,11 +12,13 @@ let private linesOf (s: string) =
     s.Split('\n', StringSplitOptions.RemoveEmptyEntries) |> Array.toList
 
 let private expectedLines id =
-    [ for i in 1..5 do
-          $"worker {id} direct {i}"
-          $"worker {id} task {i}"
-          $"worker {id} async {i}"
-          $"worker {id} thread {i}" ]
+    [
+        for i in 1..5 do
+            $"worker {id} direct {i}"
+            $"worker {id} task {i}"
+            $"worker {id} async {i}"
+            $"worker {id} thread {i}"
+    ]
 
 [<Fact>]
 let ``withCapturedConsole - concurrent captures only see their own output`` () =
