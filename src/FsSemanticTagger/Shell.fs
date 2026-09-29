@@ -75,13 +75,13 @@ type GateOutcome =
     | Exited of exitCode: int
     | TimedOut of budget: System.TimeSpan
 
-/// Run `command` through `/bin/sh -c` in `cwd`, appending its interleaved
+/// Run `command` through `sh -c` in `cwd`, appending its interleaved
 /// stdout and stderr to the file at `logPath`, and kill the whole process tree
 /// once `timeout` elapses. A consumer's gate is a shell command line (`mise run
 /// ci`, `./build.fsx check`) and its output belongs in a file the refusal can
 /// name, not on this process's console.
 let runLogged (cwd: string) (command: string) (timeout: System.TimeSpan) (logPath: string) : GateOutcome =
-    let psi = ProcessStartInfo("/bin/sh")
+    let psi = ProcessStartInfo("sh")
     psi.ArgumentList.Add "-c"
     psi.ArgumentList.Add command
     psi.WorkingDirectory <- cwd
