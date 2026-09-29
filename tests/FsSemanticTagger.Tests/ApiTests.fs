@@ -5,6 +5,15 @@ open Tests.Common
 open Swensen.Unquote
 open FsSemanticTagger.Api
 
+/// The tool's own compiled DLL, a fixture for reading a real assembly.
+let private taggerDll = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
+
+let private isAddition =
+    function
+    | Addition _ -> true
+    | Breaking _
+    | NoChange -> false
+
 [<Fact>]
 let ``formatTypeName qualifies simple types by full name and assembly`` () =
     // The comparison key is assembly-qualified: <full name> [<assembly name>].
@@ -169,10 +178,7 @@ let ``compare with empty lists returns NoChange`` () = test <@ compare [] [] = N
 [<Fact>]
 let ``extractFromAssembly extracts signatures from own DLL`` () =
     // The tool's own compiled DLL is the fixture.
-    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-    let dllPath =
-        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+    let dllPath = taggerDll
 
     let signatures = extractFromAssembly dllPath
 
@@ -192,10 +198,7 @@ let ``extractFromAssembly extracts signatures from own DLL`` () =
 
 [<Fact>]
 let ``extractFromAssembly results are sorted`` () =
-    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-    let dllPath =
-        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+    let dllPath = taggerDll
 
     let signatures = extractFromAssembly dllPath
     let sorted = List.sort signatures
@@ -203,10 +206,7 @@ let ``extractFromAssembly results are sorted`` () =
 
 [<Fact>]
 let ``getAssemblySearchPaths includes DLL directory and runtime directory`` () =
-    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-    let dllPath =
-        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+    let dllPath = taggerDll
 
     let paths = getAssemblySearchPaths dllPath
     test <@ paths.Length >= 2 @>
@@ -293,13 +293,7 @@ let ``new types and functions inside an existing module are an addition`` () =
     // Modules compile to classes, so `Cobertura+ReaderOptions` looks like a nested
     // type of an existing type; it must not be read as a new union case.
     let change = diffScenario "TypeInModule"
-
-    test
-        <@
-            (match change with
-             | Addition _ -> true
-             | _ -> false)
-        @>
+    test <@ isAddition change @>
 
     let added = ApiChange.toList change |> List.map (fun (ApiSignature s) -> s)
     test <@ added |> List.contains "type Lib.Cobertura+ReaderOptions" @>
@@ -307,12 +301,7 @@ let ``new types and functions inside an existing module are an addition`` () =
 
 [<Fact>]
 let ``a new top-level union is an addition`` () =
-    test
-        <@
-            (match diffScenario "NewTopLevelUnion" with
-             | Addition _ -> true
-             | _ -> false)
-        @>
+    test <@ isAddition (diffScenario "NewTopLevelUnion") @>
 
 [<Fact>]
 let ``a new case on a union with a private representation is not breaking`` () =
@@ -417,29 +406,16 @@ let ``extractFromAssembly reads union cases through the metadata load context`` 
     let dll = typeof<ApiFixtures.NewCaseWithFields.Before.Shape>.Assembly.Location
     let signatures = extractFromAssembly dll |> List.map (fun (ApiSignature s) -> s)
 
-    test
-        <@
-            signatures
-            |> List.contains "case ApiFixtures.NewNullaryCase.After.Platform::Windows"
-        @>
+    let expected =
+        set
+            [
+                "case ApiFixtures.NewNullaryCase.After.Platform::Windows"
+                "case ApiFixtures.NewCaseWithFields.After.Shape::Triangle"
+                "case ApiFixtures.StructUnion.After.Outcome::Errored"
+                "case ApiFixtures.SingleCaseUnion.Before.Token::Token"
+            ]
 
-    test
-        <@
-            signatures
-            |> List.contains "case ApiFixtures.NewCaseWithFields.After.Shape::Triangle"
-        @>
-
-    test
-        <@
-            signatures
-            |> List.contains "case ApiFixtures.StructUnion.After.Outcome::Errored"
-        @>
-
-    test
-        <@
-            signatures
-            |> List.contains "case ApiFixtures.SingleCaseUnion.Before.Token::Token"
-        @>
+    test <@ Set.isSubset expected (set signatures) @>
 
     test
         <@
@@ -917,10 +893,7 @@ let ``extractFromCacheRoot returns signatures for cached tool package`` () =
     //   <root>/fakepkg/1.0.0/tools/net10.0/any/FakePkg.dll
     // Reuse the compiled test assembly as the DLL payload so the test has no
     // external-cache dependency.
-    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-    let srcDll =
-        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+    let srcDll = taggerDll
 
     let cacheRoot =
         System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fstagger-cache-" + System.Guid.NewGuid().ToString("N"))
@@ -952,10 +925,7 @@ let ``extractFromCacheRoot finds an analyzer-packaged assembly under analyzers-d
     // with NO lib/ folder. A resolver that searches only lib/ and tools/ never finds
     // the DLL, and the package's API is never read.
     //   <root>/fakeanalyzer/1.0.0/analyzers/dotnet/fs/FakeAnalyzer.dll   (and NO lib/)
-    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-    let srcDll =
-        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+    let srcDll = taggerDll
 
     let cacheRoot =
         System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fstagger-cache-" + System.Guid.NewGuid().ToString("N"))
@@ -984,10 +954,7 @@ let ``extractFromCacheRoot finds an analyzer-packaged assembly under analyzers-d
 let ``extractFromCacheRoot still finds a lib-packaged assembly (lib layout unchanged)`` () =
     // Regression guard: adding the analyzers/ search path must not disturb the
     // classic library layout <root>/<id>/<ver>/lib/<tfm>/<id>.dll.
-    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-    let srcDll =
-        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+    let srcDll = taggerDll
 
     let cacheRoot =
         System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fstagger-cache-" + System.Guid.NewGuid().ToString("N"))
@@ -1045,10 +1012,7 @@ let ``extractPreviousFromNuGetResult reports Found for an analyzer-packaged cach
     let home =
         System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
 
-    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-    let srcDll =
-        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+    let srcDll = taggerDll
 
     // Unique lower-cased id so we never collide with a real cached package.
     let pkgId = "fsst-analyzer-fixture-" + System.Guid.NewGuid().ToString("N")
@@ -1176,10 +1140,7 @@ let ``compare new nested type where parent is also new is Addition`` () =
 
 [<Fact>]
 let ``extractFromAssembly extracts constructors`` () =
-    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-    let dllPath =
-        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+    let dllPath = taggerDll
 
     let signatures = extractFromAssembly dllPath
 
@@ -1190,10 +1151,7 @@ let ``extractFromAssembly extracts constructors`` () =
 
 [<Fact>]
 let ``extractFromAssembly extracts properties`` () =
-    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-    let dllPath =
-        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+    let dllPath = taggerDll
 
     let signatures = extractFromAssembly dllPath
 
@@ -1215,10 +1173,7 @@ let ``compare with added non-type signatures is Addition`` () =
 
 [<Fact>]
 let ``getAssemblySearchPaths contains runtime directory`` () =
-    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-    let dllPath =
-        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+    let dllPath = taggerDll
 
     let paths = getAssemblySearchPaths dllPath
 
@@ -1273,10 +1228,7 @@ let ``extractFromNuGetCache returns NotCached for nonexistent version of real pa
 
 [<Fact>]
 let ``createResolver returns a PathAssemblyResolver`` () =
-    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-    let dllPath =
-        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+    let dllPath = taggerDll
 
     let resolver = createResolver dllPath
     // Should be able to create a MetadataLoadContext with it
@@ -1286,10 +1238,7 @@ let ``createResolver returns a PathAssemblyResolver`` () =
 
 [<Fact>]
 let ``extractFromAssembly extracts methods with parameters`` () =
-    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-    let dllPath =
-        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+    let dllPath = taggerDll
 
     let signatures = extractFromAssembly dllPath
 
@@ -1321,40 +1270,21 @@ let ``compare adding non-nested type with plus sign in module name is Addition``
 
 [<Fact>]
 let ``getAssemblySearchPaths falls back to runtimeDir path computation when DOTNET_ROOT is unset`` () =
-    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-    let dllPath =
-        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+    let dllPath = taggerDll
 
     let paths = assemblySearchPathsFor None dllPath
     let withEmptyRoot = assemblySearchPathsFor (Some "") dllPath
     // dllDir and runtimeDir should always be present regardless of DOTNET_ROOT
-    test <@ paths.Length >= 2 @>
+    test <@ paths.All.Length >= 2 @>
     // An empty DOTNET_ROOT is the same as none.
     test <@ withEmptyRoot = paths @>
 
 [<Fact>]
 let ``getAssemblySearchPaths returns no sdk or shared dirs when DOTNET_ROOT points to empty dir`` () =
-    let tmpDir =
-        System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName())
-
-    System.IO.Directory.CreateDirectory(tmpDir) |> ignore
-
-    try
-        let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-        let dllPath =
-            System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
-
-        let paths = assemblySearchPathsFor (Some tmpDir) dllPath
+    TestHelpers.withTempDir (fun tmpDir ->
+        let paths = assemblySearchPathsFor (Some tmpDir) taggerDll
         // No paths should come from the fake empty dotnet root
-        let fromFakeRoot = paths |> List.filter (fun p -> p.StartsWith(tmpDir))
-        test <@ List.isEmpty fromFakeRoot @>
-    finally
-        try
-            System.IO.Directory.Delete(tmpDir, true)
-        with _ ->
-            ()
+        test <@ paths.All |> List.forall (fun p -> not (p.StartsWith tmpDir)) @>)
 
 [<Fact>]
 let ``getAssemblySearchPaths searches the SDK FSharp dirs and shared frameworks under DOTNET_ROOT`` () =
@@ -1368,16 +1298,13 @@ let ``getAssemblySearchPaths searches the SDK FSharp dirs and shared frameworks 
         System.IO.Directory.CreateDirectory fsharpDir |> ignore
         System.IO.Directory.CreateDirectory noFsharpSdk |> ignore
         System.IO.Directory.CreateDirectory framework |> ignore
-        let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-        let dllPath =
-            System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+        let dllPath = taggerDll
 
         let paths = assemblySearchPathsFor (Some dotnetRoot) dllPath
 
-        test <@ paths |> List.contains fsharpDir @>
-        test <@ paths |> List.contains framework @>
-        test <@ not (paths |> List.exists (fun p -> p.StartsWith noFsharpSdk)) @>)
+        test <@ paths.Installation |> List.contains fsharpDir @>
+        test <@ paths.Installation |> List.contains framework @>
+        test <@ not (paths.All |> List.exists (fun p -> p.StartsWith noFsharpSdk)) @>)
 
 [<Fact>]
 let ``resolverDllsFor lists the .NET installation once per process and the package dir every time`` () =
@@ -1406,6 +1333,21 @@ let ``resolverDllsFor lists the .NET installation once per process and the packa
         test <@ not (second |> List.contains addedToFramework) @>
         test <@ not (first |> List.contains addedToPackage) @>
         test <@ second |> List.contains addedToPackage @>)
+
+[<Fact>]
+let ``oncePerProcess forgets a computation that threw, so the next call retries`` () =
+    let calls = ref 0
+
+    let listing =
+        oncePerProcess (fun (key: string) ->
+            calls.Value <- calls.Value + 1
+
+            if calls.Value = 1 then failwith "transient" else key.Length)
+
+    raises<exn> <@ listing "abc" @>
+    test <@ listing "abc" = 3 @>
+    test <@ listing "abc" = 3 @>
+    test <@ calls.Value = 2 @>
 
 [<Fact>]
 let ``resolverDllsFor keeps the first dll of each name, in search-path order`` () =
@@ -1794,10 +1736,22 @@ let ``extractFromCacheRoot reports a cached assembly that cannot be read as Cach
         with _ ->
             ()
 
+/// Writes to `path` a copy of the tagger's DLL whose reference to the
+/// `CommandTree` assembly names `CommandTreX` instead, an assembly no cache
+/// holds, so loading its API fails with "Could not find assembly".
+let private writeUnloadableCopy (path: string) =
+    let bytes = System.IO.File.ReadAllBytes taggerDll
+    let name = System.Text.Encoding.ASCII.GetBytes "\000CommandTree\000"
+
+    let at =
+        System.MemoryExtensions.IndexOf(System.ReadOnlySpan bytes, System.ReadOnlySpan name)
+    // The metadata string heap entry the assembly reference names.
+    bytes[at + name.Length - 2] <- byte 'X'
+    System.IO.File.WriteAllBytes(path, bytes)
+
 /// The unreadable-assembly misclassification, at its source. A published package
-/// whose assembly will not load
-/// — here our own DLL cached WITHOUT its System.Reflection.MetadataLoadContext
-/// dependency, the same "Could not find assembly" failure an analyzer hits when
+/// whose assembly will not load — here our own DLL referencing an assembly no
+/// cache holds, the same "Could not find assembly" failure an analyzer hits when
 /// FSharp.Analyzers.SDK does not resolve — used to come back as AbsentOnFeed ("not
 /// published") once a no-op restore succeeded. It is Unreadable, naming the
 /// assembly and the dependency, and no restore is attempted: the package is right
@@ -1807,17 +1761,12 @@ let ``extractPreviousFromNuGetResult - a cached assembly that fails to load is U
     let home =
         System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
 
-    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-    let srcDll =
-        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
-
     let pkgId = "fsst-unloadable-fixture-" + System.Guid.NewGuid().ToString("N")
     let pkgRoot = System.IO.Path.Combine(home, ".nuget", "packages", pkgId)
     let libDir = System.IO.Path.Combine(pkgRoot, "1.0.0", "lib", "net10.0")
     let dllPath = System.IO.Path.Combine(libDir, pkgId + ".dll")
     System.IO.Directory.CreateDirectory(libDir) |> ignore
-    System.IO.File.Copy(srcDll, dllPath)
+    writeUnloadableCopy dllPath
 
     let mutable restoreAttempted = false
 
@@ -1829,14 +1778,7 @@ let ``extractPreviousFromNuGetResult - a cached assembly that fails to load is U
         match extractPreviousFromNuGetResult restoreRun pkgId "1.0.0" with
         | Unreadable reason ->
             test <@ reason.StartsWith("could not load " + dllPath + ": ") @>
-            // Which of the dll's absent dependencies (CommandTree,
-            // System.Reflection.MetadataLoadContext) is hit first depends on the
-            // order the extractor reads metadata; the reason names whichever it is.
-            test
-                <@
-                    reason.Contains("Could not find assembly 'CommandTree")
-                    || reason.Contains("Could not find assembly 'System.Reflection.MetadataLoadContext")
-                @>
+            test <@ reason.Contains("Could not find assembly 'CommandTreX") @>
         | other -> failwithf "Expected Unreadable, got %A" other
 
         test <@ not restoreAttempted @>
@@ -1851,11 +1793,6 @@ let ``extractPreviousFromNuGetResult - a package restored but unloadable is Unre
     let home =
         System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
 
-    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
-
-    let srcDll =
-        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
-
     let pkgId = "fsst-unloadable-fixture-" + System.Guid.NewGuid().ToString("N")
     let pkgRoot = System.IO.Path.Combine(home, ".nuget", "packages", pkgId)
     let libDir = System.IO.Path.Combine(pkgRoot, "1.0.0", "lib", "net10.0")
@@ -1863,7 +1800,7 @@ let ``extractPreviousFromNuGetResult - a package restored but unloadable is Unre
     // Restore "downloads" the package into the cache.
     let restoreRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         System.IO.Directory.CreateDirectory(libDir) |> ignore
-        System.IO.File.Copy(srcDll, System.IO.Path.Combine(libDir, pkgId + ".dll"), true)
+        writeUnloadableCopy (System.IO.Path.Combine(libDir, pkgId + ".dll"))
         FsSemanticTagger.Shell.Success ""
 
     try
@@ -1873,3 +1810,90 @@ let ``extractPreviousFromNuGetResult - a package restored but unloadable is Unre
     finally
         if System.IO.Directory.Exists pkgRoot then
             System.IO.Directory.Delete(pkgRoot, true)
+
+[<Fact>]
+let ``referencedAssemblies reads a dll's assembly references without loading it`` () =
+    let references = referencedAssemblies taggerDll |> List.map fst
+    test <@ references |> List.contains "CommandTree" @>
+    test <@ List.isEmpty (referencedAssemblies "no-such.dll") @>
+
+[<Fact>]
+let ``cachedPackageDirForAssembly prefers the assembly's major.minor.build, else the highest version`` () =
+    TestHelpers.withTempDir (fun cacheRoot ->
+        let versionDir (version: string) =
+            let dir = System.IO.Path.Combine(cacheRoot, "some.sdk", version)
+            System.IO.Directory.CreateDirectory dir |> ignore
+            dir
+
+        let _ = versionDir "0.39.0"
+        let exact = versionDir "0.39.2"
+        let highest = versionDir "0.39.9-beta"
+
+        test <@ cachedPackageDirForAssembly cacheRoot "Some.Sdk" (System.Version(0, 39, 2, 0)) = Some exact @>
+        test <@ cachedPackageDirForAssembly cacheRoot "Some.Sdk" (System.Version(1, 0, 0, 0)) = Some highest @>
+        test <@ cachedPackageDirForAssembly cacheRoot "Absent" (System.Version(1, 0, 0, 0)) = None @>)
+
+[<Fact>]
+let ``referencedPackageDirsFor adds the cached package of an unprovided reference and its dependencies`` () =
+    TestHelpers.withTempDir (fun cacheRoot ->
+        // The tagger references CommandTree, as an analyzer references FSharp.Analyzers.SDK.
+        let commandTreeVersion =
+            referencedAssemblies taggerDll
+            |> List.find (fun (name, _) -> name = "CommandTree")
+            |> snd
+
+        let package (id: string) (version: string) (dependencies: (string * string) list) =
+            let dir = System.IO.Path.Combine(cacheRoot, id.ToLowerInvariant(), version)
+
+            System.IO.Directory.CreateDirectory(System.IO.Path.Combine(dir, "lib", "net10.0"))
+            |> ignore
+
+            let dependencyElements =
+                dependencies
+                |> List.map (fun (depId, depVersion) ->
+                    sprintf "<dependency id=\"%s\" version=\"%s\" />" depId depVersion)
+                |> String.concat ""
+
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(dir, id.ToLowerInvariant() + ".nuspec"),
+                sprintf
+                    "<package><metadata><id>%s</id><dependencies><group>%s</group></dependencies></metadata></package>"
+                    id
+                    dependencyElements
+            )
+
+            System.IO.Path.Combine(dir, "lib", "net10.0")
+
+        let commandTreeLib =
+            package
+                "CommandTree"
+                (sprintf "%d.%d.%d" commandTreeVersion.Major commandTreeVersion.Minor commandTreeVersion.Build)
+                [ "Its.Dependency", "2.0.0" ]
+
+        let dependencyLib = package "Its.Dependency" "2.0.0" []
+
+        let dirs =
+            referencedPackageDirsFor cacheRoot (fun name -> name <> "CommandTree") taggerDll
+
+        test <@ dirs = [ commandTreeLib; dependencyLib ] @>
+        test <@ List.isEmpty (referencedPackageDirsFor cacheRoot (fun _ -> true) taggerDll) @>)
+
+[<Fact>]
+let ``extractFromCacheRoot reads an analyzer-layout package whose nuspec declares no dependencies`` () =
+    // An FSharp.Analyzers.SDK analyzer ships alone under analyzers/dotnet/fs/ and
+    // lists no dependency; its references resolve from the NuGet cache by name.
+    TestHelpers.withTempDir (fun cacheRoot ->
+        let pkgDir = System.IO.Path.Combine(cacheRoot, "fake.analyzer", "1.0.0")
+        let analyzerDir = System.IO.Path.Combine(pkgDir, "analyzers", "dotnet", "fs")
+        System.IO.Directory.CreateDirectory analyzerDir |> ignore
+
+        System.IO.File.WriteAllText(
+            System.IO.Path.Combine(pkgDir, "fake.analyzer.nuspec"),
+            "<package><metadata><id>Fake.Analyzer</id><developmentDependency>true</developmentDependency></metadata></package>"
+        )
+
+        System.IO.File.Copy(taggerDll, System.IO.Path.Combine(analyzerDir, "Fake.Analyzer.dll"))
+
+        match extractFromCacheRoot cacheRoot "Fake.Analyzer" "1.0.0" with
+        | CachedRead api -> test <@ api |> List.contains (ApiSignature "type FsSemanticTagger.Program+Command") @>
+        | other -> failwithf "expected the analyzer's API, got %A" other)

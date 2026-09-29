@@ -172,7 +172,7 @@ let private releaseInputWith (repo: Repo) (rejectedTags: string list) checkFeed 
         TargetPackages = []
         ExtractPreviousApi = fun _ _ -> FetchError "not used"
         ExtractCurrentApi = fun _ -> []
-        ExtractPreviousGrammar = fun _ _ -> None
+        ExtractPreviousGrammar = fun _ _ -> GrammarUnreadable "not cached"
         ExtractCurrentGrammar = fun _ -> None
         CiPollIntervalMs = 0
         CiWait = CiWaitTests.fixedCiWait 0 10

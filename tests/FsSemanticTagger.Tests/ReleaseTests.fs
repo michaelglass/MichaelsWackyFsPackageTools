@@ -41,7 +41,8 @@ let private noPreviousApi (_pkg: string) (_version: string) : PreviousApiResult 
 let private noCurrentApi (_dll: string) : ApiSignature list = []
 
 /// No CommandTree grammar: the API diff alone decides the bump.
-let private noPreviousGrammar (_pkg: string) (_version: string) : Grammar option = None
+let private noPreviousGrammar (_pkg: string) (_version: string) : GrammarRead =
+    GrammarUnreadable "not in the NuGet cache"
 
 let private noCurrentGrammar (_dll: string) : Grammar option = None
 
@@ -1159,9 +1160,36 @@ let ``release - Auto detects breaking API change and bumps major`` () =
     finally
         File.Delete(tmpFile)
 
-[<Fact>]
-let ``release - Auto folds a breaking grammar change into the bump when the API is unchanged`` () =
-    // Identical API, but the CLI grammar renamed a command: must bump major.
+/// A CLI with the one command `check-api`.
+let private checkApiGrammar =
+    {
+        Roots = [ Leaf("check-api", [], []) ]
+        GlobalFlags = []
+    }
+
+/// `checkApiGrammar` with the command renamed `diff-api` (a breaking change) and
+/// given a `--wait` flag whose env prefix is unknown (a caveat).
+let private diffApiGrammar =
+    {
+        Roots =
+            [
+                Leaf(
+                    "diff-api",
+                    [],
+                    [
+                        GrammarBuilders.flag "wait" Nullary
+                        |> GrammarBuilders.withEnv (Some(EnvVarUnknownPrefix "WAIT"))
+                    ]
+                )
+            ]
+        GlobalFlags = []
+    }
+
+/// Auto-release a library `MyLib` at 1.0.0 whose API is unchanged and whose
+/// current build has the CLI grammar `diffApiGrammar`, reading the previous
+/// release's grammar as `previousGrammar`. Returns the output, the exit code and
+/// the fsproj afterwards.
+let private releaseLibraryAgainstGrammar (previousGrammar: GrammarRead) =
     let dir =
         Path.Combine(scratchDir, "fsst-grammar-fold-" + System.Guid.NewGuid().ToString("N"))
 
@@ -1180,34 +1208,6 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
                 ]
 
         let api = [ ApiSignature "type Foo" ]
-
-        let previousGrammar =
-            {
-                Roots = [ Leaf("check-api", [], []) ]
-                GlobalFlags = []
-            }
-
-        let currentGrammar =
-            {
-                Roots =
-                    [
-                        Leaf(
-                            "diff-api",
-                            [],
-                            [
-                                {
-                                    LongName = "wait"
-                                    ShortName = None
-                                    Arity = Nullary
-                                    TypeName = "bool"
-                                    IsRepeatable = false
-                                    Env = Some(EnvVarUnknownPrefix "WAIT")
-                                }
-                            ]
-                        )
-                    ]
-                GlobalFlags = []
-            }
 
         let config =
             {
@@ -1239,8 +1239,8 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
                         TargetPackages = []
                         ExtractPreviousApi = (fun _ _ -> Found api)
                         ExtractCurrentApi = (fun _ -> api)
-                        ExtractPreviousGrammar = (fun _ _ -> Some previousGrammar)
-                        ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
+                        ExtractPreviousGrammar = (fun _ _ -> previousGrammar)
+                        ExtractCurrentGrammar = (fun _ -> Some diffApiGrammar)
                         CiPollIntervalMs = 0
                         CiWait = CiWaitTests.fixedCiWait 0 10
                         TagPush = immediateTagPush
@@ -1254,14 +1254,37 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
                         Canary = noCanary
                     })
 
-        test <@ result = 0 @>
-        test <@ output.Contains "note: MyLib: the CLI's env-var prefix is not a string literal" @>
-        test <@ (File.ReadAllText fsproj).Contains("<Version>2.0.0</Version>") @>
+        output, result, File.ReadAllText fsproj
     finally
         try
             Directory.Delete(dir, true)
         with _ ->
             ()
+
+[<Fact>]
+let ``release - Auto folds a breaking grammar change into the bump when the API is unchanged`` () =
+    // Identical API, but the CLI grammar renamed a command: must bump major.
+    let output, result, fsproj =
+        releaseLibraryAgainstGrammar (GrammarModelled checkApiGrammar)
+
+    test <@ result = 0 @>
+    test <@ output.Contains "note: MyLib: the CLI's env-var prefix is not a string literal" @>
+    test <@ fsproj.Contains "<Version>2.0.0</Version>" @>
+
+[<Fact>]
+let ``release - Auto notes a previous CLI grammar it cannot model and lets the API decide`` () =
+    let output, result, fsproj =
+        releaseLibraryAgainstGrammar (GrammarNotModellable "it has no root command union")
+
+    test <@ result = 0 @>
+
+    test
+        <@
+            output.Contains
+                "note: MyLib: the CLI grammar of the previous release v1.0.0 could not be modelled (it has no root command union), so the API diff alone decides the bump"
+        @>
+
+    test <@ fsproj.Contains "<Version>1.0.1</Version>" @>
 
 /// Auto/PushTags with an identical API, so any bump above patch comes from the
 /// changelog. Returns the captured output and the exit code.
@@ -5611,34 +5634,6 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
                     ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed")
                 ]
 
-        let previousGrammar =
-            {
-                Roots = [ Leaf("check-api", [], []) ]
-                GlobalFlags = []
-            }
-
-        let currentGrammar =
-            {
-                Roots =
-                    [
-                        Leaf(
-                            "diff-api",
-                            [],
-                            [
-                                {
-                                    LongName = "wait"
-                                    ShortName = None
-                                    Arity = Nullary
-                                    TypeName = "bool"
-                                    IsRepeatable = false
-                                    Env = Some(EnvVarUnknownPrefix "WAIT")
-                                }
-                            ]
-                        )
-                    ]
-                GlobalFlags = []
-            }
-
         let config =
             {
                 Packages =
@@ -5672,8 +5667,8 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
                             (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package (NU1212)")
                         ExtractCurrentApi =
                             (fun _ -> failwith "API probe must not be constructed for a PackAsTool package (NU1212)")
-                        ExtractPreviousGrammar = (fun _ _ -> Some previousGrammar)
-                        ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
+                        ExtractPreviousGrammar = (fun _ _ -> GrammarModelled checkApiGrammar)
+                        ExtractCurrentGrammar = (fun _ -> Some diffApiGrammar)
                         CiPollIntervalMs = 0
                         CiWait = CiWaitTests.fixedCiWait 0 10
                         TagPush = immediateTagPush
@@ -5857,6 +5852,158 @@ let ``release - PackAsTool CLI aborts when the previous grammar cannot be read``
             Directory.Delete(dir, true)
         with _ ->
             ()
+
+/// Release a PackAsTool CLI `Cli` at 1.0.0 (tag `cli-v1.0.0`, one own change since)
+/// whose current build has a grammar, with the previous release read by
+/// `previousGrammar` and the APIs by `previousApi`/`currentApi`. Returns the
+/// output, the exit code and the fsproj's version afterwards.
+let private releaseToolAgainst
+    (previousGrammar: GrammarRead)
+    (previousApi: string -> string -> PreviousApiResult)
+    (currentApi: string -> ApiSignature list)
+    =
+    let dir =
+        Path.Combine(scratchDir, "fsst-packastool-previous-" + System.Guid.NewGuid().ToString("N"))
+
+    Directory.CreateDirectory(dir) |> ignore
+
+    try
+        let fsproj = Path.Combine(dir, "Cli.fsproj")
+
+        File.WriteAllText(
+            fsproj,
+            "<Project><PropertyGroup><Version>1.0.0</Version><PackAsTool>true</PackAsTool></PropertyGroup></Project>"
+        )
+
+        File.WriteAllText(Path.Combine(dir, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n- test entry\n")
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [
+                    ("git", "tag -l \"cli-v*\"", Success "cli-v1.0.0")
+                    ("jj", "diff --from cli-v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed")
+                ]
+
+        let config =
+            {
+                Packages =
+                    [
+                        {
+                            Name = "Cli"
+                            Fsproj = fsproj
+                            DllPath = "fake.dll"
+                            TagPrefix = "cli-v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = dir
+            }
+
+        let output, result =
+            withCapturedConsole (fun () ->
+                release
+                    {
+                        Run = fakeRun
+                        Config = config
+                        Command = Auto
+                        Mode = PushTags
+                        TargetPackages = []
+                        ExtractPreviousApi = previousApi
+                        ExtractCurrentApi = currentApi
+                        ExtractPreviousGrammar = (fun _ _ -> previousGrammar)
+                        ExtractCurrentGrammar = (fun _ -> Some checkApiGrammar)
+                        CiPollIntervalMs = 0
+                        CiWait = CiWaitTests.fixedCiWait 0 10
+                        TagPush = immediateTagPush
+                        CheckFeedPresence = (fun _ _ -> OnFeed)
+                        CheckRestorable = (fun _ _ _ -> OnFeed)
+                        WaitForNuGet = false
+                        NuGetPollIntervalMs = 0
+                        NuGetMaxAttempts = 1
+                        Push = false
+                        Check = false
+                        Canary = noCanary
+                    })
+
+        output, result, File.ReadAllText fsproj
+    finally
+        try
+            Directory.Delete(dir, true)
+        with _ ->
+            ()
+
+let private noToolApiProbe (_: string) (_: string) : PreviousApiResult =
+    failwith "API probe must not be constructed for a PackAsTool package"
+
+[<Fact>]
+let ``release - PackAsTool CLI whose previous package is missing fails closed with an installable fix`` () =
+    let missing =
+        GrammarUnreadable "Cli 1.0.0 is not in the NuGet cache at /home/me/.nuget/packages"
+
+    let output, result, fsproj =
+        releaseToolAgainst missing noToolApiProbe (fun _ -> failwith "no API diff for a missing package")
+
+    test <@ result = 1 @>
+    test <@ fsproj.Contains "<Version>1.0.0</Version>" @>
+
+    test
+        <@
+            output.Contains
+                "could not read the CLI grammar of the previous release cli-v1.0.0: Cli 1.0.0 is not in the NuGet cache"
+        @>
+
+    // The version, not the tag: `dotnet tool install` rejects `--version cli-v1.0.0`.
+    test <@ output.Contains "dotnet tool install --tool-path <tmp> Cli --version 1.0.0`" @>
+    test <@ not (output.Contains "--version cli-v") @>
+
+[<Fact>]
+let ``release - PackAsTool CLI whose previous grammar cannot be modelled is bumped by its API diff`` () =
+    let notModellable =
+        GrammarNotModellable
+            "it has 4 candidate root command unions (A, B, C, D), so which one is the CLI cannot be told"
+
+    let output, result, fsproj =
+        releaseToolAgainst
+            notModellable
+            (fun _ version ->
+                if version = "1.0.0" then
+                    Found [ ApiSignature "type Cli" ]
+                else
+                    failwith "wrong baseline")
+            (fun _ -> [ ApiSignature "type Cli"; ApiSignature "type Cli.Added" ])
+
+    test <@ result = 0 @>
+
+    test
+        <@
+            output.Contains
+                "note: Cli: the CLI grammar of the previous release cli-v1.0.0 could not be modelled (it has 4 candidate root command unions (A, B, C, D), so which one is the CLI cannot be told), so the API diff alone decides the bump"
+        @>
+
+    test <@ output.Contains "Bumping Cli: own change to a PackAsTool package — public API diffed since cli-v1.0.0" @>
+    test <@ not (output.Contains "is not in the NuGet cache") @>
+    test <@ fsproj.Contains "<Version>1.1.0</Version>" @>
+
+[<Fact>]
+let ``release - PackAsTool CLI with an unmodellable grammar and an unreadable API fails closed`` () =
+    let output, result, fsproj =
+        releaseToolAgainst
+            (GrammarNotModellable "it has no root command union")
+            (fun _ _ -> Unreadable "could not load Cli.dll")
+            (fun _ -> [])
+
+    test <@ result = 1 @>
+    test <@ fsproj.Contains "<Version>1.0.0</Version>" @>
+
+    test
+        <@
+            output.Contains
+                "the CLI grammar of the previous release cli-v1.0.0 could not be modelled, and its public API could not be read either (could not load Cli.dll)"
+        @>
 
 // A merge can push the `## Unreleased` callout below new entries; --check fails on
 // that, and derivable commits never suppress it.
@@ -6171,7 +6318,7 @@ let ``nuGetPollFromEnv - honours the same overrides as FsHotWatch's barrier`` ()
     test <@ garbageAttempts = defaultAttempts @>
 
 [<Fact>]
-let ``waitForNuGetTimed - the give-up names the measured wait, not the budget`` () =
+let ``waitForNuGetOn - the give-up names the measured wait, not the budget`` () =
     // 3 attempts 100ms apart sleep twice: 200ms, not the 300ms budget. The clock is the
     // test's, so the answer is exact however loaded the machine is.
     let mutable now = System.TimeSpan.Zero

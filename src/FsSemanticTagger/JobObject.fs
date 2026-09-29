@@ -87,14 +87,19 @@ module private Native =
             p.Kill(entireProcessTree = true)
             reraise ()
 
+/// A job holding no process: disposing it does nothing.
+let none: IDisposable =
+    { new IDisposable with
+        member _.Dispose() = ()
+    }
+
 /// On Windows, puts the just-started `p` in a job: disposing the result ends `p`
-/// and every process it started. A process `p` starts before the join escapes;
-/// MSYS2 `sh` spends milliseconds starting up, the join microseconds. Elsewhere
-/// a no-op: `Process.Kill(entireProcessTree = true)` reaches every child there.
+/// and every process it started, and disposing it again does nothing. A process
+/// `p` starts before the join escapes; MSYS2 `sh` spends milliseconds starting
+/// up, the join microseconds. Elsewhere `none`: `Process.Kill(entireProcessTree =
+/// true)` reaches every child there.
 let enclose (p: Process) : IDisposable =
     if OperatingSystem.IsWindows() then
         Native.enclose p
     else
-        { new IDisposable with
-            member _.Dispose() = ()
-        }
+        none

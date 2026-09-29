@@ -1,11 +1,9 @@
-// CoverageRatchet (github.com/michaelglass/CoverageRatchet) keeps its own copy of this file;
-// if the copies drift, consider sharing them via a Paket GitHub file dependency.
-
-/// Shared between the FsSemanticTagger and FsProjLint tools via linked
-/// <Compile Include="../Shared/GitDir.fs" Link="GitDir.fs" /> items, so the two
-/// tools cannot drift. It is intentionally NOT its own project: adding a project
-/// would alter each tool's ProjectReference closure and change what
-/// FsSemanticTagger bundles at release time.
+/// Compiled into FsSemanticTagger and FsProjLint through linked
+/// <Compile Include="../Shared/GitDir.fs" Link="GitDir.fs" /> items, so within
+/// this repository there is one copy. It is not its own project: a project would
+/// change each tool's ProjectReference closure and so what FsSemanticTagger
+/// bundles at release time. CoverageRatchet, in its own repository, keeps a
+/// separate copy.
 module Shared.GitDir
 
 open System.IO
