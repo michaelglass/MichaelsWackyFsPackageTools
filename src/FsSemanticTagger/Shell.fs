@@ -100,6 +100,7 @@ let runLoggedWithin
     // unreachable branches that the coverage floors would count.
     let file = new System.IO.StreamWriter(logPath, append = true, AutoFlush = true)
     let stopReading = new System.Threading.CancellationTokenSource()
+    let mutable job = JobObject.none
 
     try
         let log = System.IO.TextWriter.Synchronized file
@@ -125,7 +126,7 @@ let runLoggedWithin
                 :> Task)
 
         let p = Process.Start(psi)
-        let job = JobObject.enclose p
+        job <- JobObject.enclose p
         let readers = [| pump p.StandardOutput; pump p.StandardError |]
 
         let outcome =
@@ -133,6 +134,8 @@ let runLoggedWithin
                 Exited p.ExitCode
             else
                 p.Kill(entireProcessTree = true)
+                // Now, not in `finally`: an MSYS2 child outlives the kill and holds
+                // the pipes open until its job closes.
                 job.Dispose()
                 p.WaitForExit()
                 TimedOut timeout
@@ -150,9 +153,9 @@ let runLoggedWithin
             log.WriteLine(sprintf "[fssemantictagger] killed after %dm%ds" (int timeout.TotalMinutes) timeout.Seconds)
         | Exited _ -> ()
 
-        job.Dispose()
         outcome
     finally
+        job.Dispose()
         stopReading.Cancel()
         file.Dispose()
 
