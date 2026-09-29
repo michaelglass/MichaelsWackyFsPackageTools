@@ -308,8 +308,14 @@ jobs:
         shell: bash
         run: |
           # Windows runners default to pwsh; this loop needs bash.
+          # Runs every project, then fails, so one run shows all failures.
+          failed=()
           for proj in $(find tests -name '*.Tests.fsproj' | sort); do
             echo "::group::$proj"
-            dotnet test --project "$proj" --no-build --no-restore ${{ inputs.test-extra-args }}
+            dotnet test --project "$proj" --no-build --no-restore ${{ inputs.test-extra-args }} || failed+=("$proj")
             echo "::endgroup::"
           done
+          if [ ${#failed[@]} -gt 0 ]; then
+            printf '::error::tests failed in %s\n' "${failed[@]}"
+            exit 1
+          fi
