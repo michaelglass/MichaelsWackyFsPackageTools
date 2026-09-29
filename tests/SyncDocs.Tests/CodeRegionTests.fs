@@ -7,8 +7,6 @@ open Swensen.Unquote
 open SyncDocs.Sync
 open Tests.Common.TestHelpers
 
-// --- extractRegion tests ---
-
 [<Fact>]
 let ``extractRegion - extracts lines between comment markers`` () =
     let fileContent =
@@ -119,8 +117,6 @@ let ``extractRegion - duplicate end markers returns RegionDuplicated`` () =
 
     test <@ result = Error(RegionDuplicated "dupend") @>
 
-// --- renderCodeBlock tests ---
-
 [<Fact>]
 let ``renderCodeBlock - wraps lines in fsharp fence with surrounding newlines`` () =
     let body = renderCodeBlock [ "let x = 1"; "let y = 2" ]
@@ -132,8 +128,6 @@ let ``renderCodeBlock - empty lines still produce a valid fence`` () =
     let body = renderCodeBlock []
 
     test <@ body = "\n```fsharp\n\n```\n" @>
-
-// --- syncCodeRegions tests ---
 
 let private writeFile dir relPath (content: string) =
     let full = Path.Combine(dir, relPath)
@@ -191,7 +185,6 @@ let ``syncCodeRegions Apply - rewrites README block from region`` () =
         test <@ result = Ok Updated @>
         test <@ updated.Contains "let x = 99" @>
         test <@ not (updated.Contains "let x = 1") @>
-        // marker line preserved with its src attribute
         test <@ updated.Contains "<!-- sync:demo:start src=code/Snippets.fs -->" @>
         test <@ updated.Contains "```fsharp" @>)
 
@@ -327,7 +320,6 @@ let ``syncCodeRegions Apply - leaves ordinary text sections untouched`` () =
         syncCodeRegions Apply tmpDir readme |> ignore
         let updated = File.ReadAllText(readme)
 
-        // The text section's start marker (no src) is unchanged and its body preserved
         test <@ updated.Contains "<!-- sync:intro:start -->\nplain text\n<!-- sync:intro:end -->" @>
         test <@ updated.Contains "let x = 7" @>)
 
@@ -382,18 +374,14 @@ let ``syncCodeRegions Apply - block with start marker but no end is treated as e
         writeFile tmpDir "code/Snippets.fs" "// sync:lonely:start\nlet z = 5\n// sync:lonely:end\n"
         |> ignore
 
-        // The README's code block has a start marker (with src) but no end marker,
-        // so its current body cannot be located and is treated as empty.
+        // Start marker without an end marker: the current body counts as empty.
         let readme =
             writeFile tmpDir "README.md" "<!-- sync:lonely:start src=code/Snippets.fs -->\nstill here\n"
 
         let result = syncCodeRegions Apply tmpDir readme
 
-        // Region resolves fine, current body is empty (None), so the block counts
-        // as changed; nothing is rewritten because no end marker delimits it.
+        // So it counts as changed, but nothing is rewritten.
         test <@ result = Ok Updated @>)
-
-// --- discoverStandaloneCodeDocs tests ---
 
 [<Fact>]
 let ``discoverStandaloneCodeDocs - finds a markdown doc carrying a src= block`` () =

@@ -26,13 +26,9 @@ on:
         default: 'dotnet tool run coverageratchet'
       coverage-exclude:
         description: >-
-          Space/newline-separated project names (the coverage-dir name, i.e. the
-          test folder minus the ".Tests" suffix — e.g. "RefStamp") whose tests
-          RUN but are NOT coverage-collected. For packages that ship no
-          instrumentable product code (an MSBuild-targets-only package whose
-          tests drive a `dotnet pack` subprocess): they would otherwise emit an
-          empty cobertura, which the Coverage summary step rejects as a failure
-          by design. Leave empty to collect coverage for every test project.
+          Space/newline-separated project names (test folder minus ".Tests", e.g.
+          "RefStamp") whose tests run without coverage collection. For packages
+          with no instrumentable code, whose empty coverage would fail the summary.
         type: string
         default: ''
       paket-restore:
@@ -59,12 +55,9 @@ on:
         default: false
       failure-artifacts:
         description: >-
-          Newline-separated glob(s) uploaded as a CI artifact when the job FAILS,
-          for post-mortem. Defaults to the fshw daemon''s per-test verdict logs +
-          run logs — the console collapses a daemon test failure to `failed: N`
-          and discards the per-test detail, so without this a CI red names no
-          test. Missing paths are ignored (a repo that produces no `.fshw/` just
-          uploads nothing). Set to "none" to disable; override to add custom paths.
+          Newline-separated globs uploaded as an artifact when the job fails.
+          Defaults to the fshw per-test verdicts and logs, since the console only
+          prints `failed: N`. Missing paths are ignored; "none" disables it.
         type: string
         default: |
           .fshw/test-runs/**
@@ -112,21 +105,11 @@ jobs:
       - name: Test with coverage
         id: test-coverage
         run: |
-          # Space-separated set of project names to run WITHOUT coverage
-          # collection (see the coverage-exclude input). Word-splitting is
-          # intentional: names have no spaces.
+          # Word-splitting is intentional: names have no spaces.
           exclude="${{ inputs.coverage-exclude }}"
           for proj in $(find tests -name '*.Tests.fsproj' | sort); do
             project_name=$(basename "$(dirname "$proj")" | sed 's/\.Tests$//')
-            # --no-build/--no-restore: the Build step above already compiled the
-            # whole solution (test projects included). Without these flags each
-            # `dotnet test` re-runs restore + an MSBuild up-to-date evaluation
-            # over the test project's full ProjectReference graph (and an
-            # incremental recompile whenever that up-to-date check misses).
-            # Skipping that redundant pass saves ~1s+ per test project on a warm
-            # tree, scaling with graph size. Coverage is a runtime collector, so
-            # skipping the build does not affect it (verified: cobertura still
-            # emitted with --no-build).
+            # --no-build/--no-restore: the Build step already compiled the tests.
             skip=0
             for ex in $exclude; do
               [ "$ex" = "$project_name" ] && skip=1
@@ -157,18 +140,9 @@ jobs:
       - name: Coverage summary
         id: coverage-summary
         run: |
-          # Inlined replacement for irongut/CodeCoverageSummary@v1.3.0 — an
-          # unmaintained third-party Docker action that hard-threw ("Sequence
-          # contains no elements") on an empty coverage document. Aggregates the
-          # per-package cobertura files into a markdown summary + shields badge
-          # for the PR comment, and — by design — FAILS when a package emits an
-          # EMPTY coverage document (no <class> elements / lines-valid=0): for a
-          # code package that means the tests instrumented no product code, a
-          # real defect worth failing on. A package that legitimately ships no
-          # instrumentable code (e.g. an MSBuild-targets package whose tests
-          # drive a `dotnet pack` subprocess) is excluded from collection
-          # upstream via the coverage-exclude input, so it never produces a file
-          # that reaches here.
+          # Markdown summary + badge for the PR comment. Fails on an empty
+          # coverage document: the tests instrumented no product code (use
+          # coverage-exclude for packages that have none).
           shopt -s nullglob
           files=(coverage/*/coverage.cobertura.xml)
           if [ ${#files[@]} -eq 0 ]; then
@@ -184,9 +158,7 @@ jobs:
 
           for f in "${files[@]}"; do
             pkg=$(basename "$(dirname "$f")")
-            # Portable extraction (grep -oE works on both GNU and BSD grep; -P
-            # would be GNU-only). The cobertura root element carries the
-            # aggregate attributes.
+            # grep -oE, not -P: portable to BSD grep.
             classes=$(grep -c '<class ' "$f" || true)
             covered=$(grep -oE 'lines-covered="[0-9]+"' "$f" | head -1 | grep -oE '[0-9]+' || true)
             valid=$(grep -oE 'lines-valid="[0-9]+"' "$f" | head -1 | grep -oE '[0-9]+' || true)
@@ -251,9 +223,8 @@ jobs:
             [ -f "$config" ] || continue
             project=$(echo "$config" | sed 's/coverage-ratchet-\(.*\)\.json/\1/')
             echo "Generating thresholds for $project..."
-            # check-json writes JSON to the output path (2nd positional arg); exit code
-            # is non-zero when any file fails coverage, which is exactly when we need
-            # the artifact for loosen-from-ci — so ignore the exit code.
+            # Non-zero exactly when a file fails coverage, which is when
+            # loosen-from-ci needs this artifact, so ignore the exit code.
             (cd "coverage/$project" && ${{ inputs.coverageratchet-cmd }} check-json "${{ github.workspace }}/$config" "${{ github.workspace }}/coverage-thresholds-${project}.json") || true
             if [ ! -s "coverage-thresholds-${project}.json" ]; then
               echo "::warning::check-json produced no output for $project; skipping artifact entry"
@@ -274,11 +245,6 @@ jobs:
           name: coverage-report
           path: coverage/report
       - name: Upload failure diagnostics
-        # Runs whenever ANY prior step failed (job-level status), so a daemon
-        # `check`/test failure in the Lint step — which writes per-test verdicts
-        # to .fshw/test-runs and logs to .fshw — is captured for post-mortem even
-        # though the console only shows `failed: N`. if-no-files-found: ignore so
-        # a repo with no .fshw/ output (or failure-artifacts: none) is a no-op.
         if: failure() && inputs.failure-artifacts != 'none'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -305,14 +271,14 @@ jobs:
             exit 0
           fi
 
-          # Word-splitting is intentional: project paths are F# .fsproj/.csproj paths without spaces
+          # Word-splitting is intentional: project paths have no spaces.
           for proj in $projects; do
             echo "Building example: $proj"
             dotnet build "$proj" --warnaserror
           done
 
-  # A separate job rather than a matrix on `build`: the Linux-only steps need no OS
-  # guards and the `build` check keeps its name. No coverage: no windows floors.
+  # Not a matrix on `build`, so Linux-only steps need no OS guards and the
+  # `build` check keeps its name.
   test-windows:
     if: inputs.test-windows
     runs-on: windows-latest

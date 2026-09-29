@@ -13,24 +13,19 @@ open FsSemanticTagger.Release
 open FsSemanticTagger.Api
 open FsSemanticTagger.Vcs
 
-/// Zero waits everywhere, and ONE question about the workflow run — the behaviour
-/// the bounded run poll replaced in production. Tests that care about the poll pass their
-/// own policy; every other test just must not sleep for five minutes.
+/// No waits, and one tag-run poll: tests that care about the poll pass their own.
 let private immediateTagPush: TagPushPolicy =
     { PushAttempts = 1
       PushRetryDelayMs = 0
       RunPollIntervalMs = 0
       RunPollAttempts = 1 }
 
-/// Default prior-API stub for tests that never reach the fetch (no prior tag, or
-/// a non-Auto command). When a test *does* reach it in Auto mode, a FetchError
-/// makes it abort rather than silently bump — the conservative default.
+/// Prior-API stub: a FetchError, so an Auto run that reaches it aborts instead of bumping.
 let private noPreviousApi (_pkg: string) (_version: string) : PreviousApiResult = FetchError "previous API unavailable"
 
 let private noCurrentApi (_dll: string) : ApiSignature list = []
 
-/// Default grammar stubs: no CommandTree grammar to diff, so the API diff alone
-/// governs the bump. Tests exercising the grammar fold pass real grammars instead.
+/// No CommandTree grammar: the API diff alone decides the bump.
 let private noPreviousGrammar (_pkg: string) (_version: string) : Grammar option = None
 
 let private noCurrentGrammar (_dll: string) : Grammar option = None
@@ -45,8 +40,7 @@ let private noCanary: ConsumerCanary.Settings =
         { RunIn = fun _ cmd _ -> failwithf "unexpected canary process: %s" cmd
           RunGate = fun _ command _ _ -> failwithf "unexpected canary gate: %s" command } }
 
-/// Release tests put fsproj files in the system temp dir, so CHANGELOG.md
-/// also lives there. Re-seeds before every release call (promotion mutates it).
+/// Re-seeds the temp-dir CHANGELOG.md before each release call (promotion mutates it).
 let private seedTmpChangelog () =
     let p = Path.Combine(Path.GetTempPath(), "CHANGELOG.md")
     File.WriteAllText(p, "# Changelog\n\n## Unreleased\n\n- test entry\n")
@@ -85,8 +79,7 @@ let private runReleaseWithPush run config cmd mode prev cur poll max push =
 let private runRelease run config cmd mode prev cur poll max =
     runReleaseWithPush run config cmd mode prev cur poll max false
 
-/// Auto/PushTags with the FEED seam driven by the test: the feed alone decides
-/// whether a prior release is published, and so whether it may be skipped.
+/// Auto/PushTags where the test's feed decides whether a prior release is published.
 let private runAutoOnFeed run config prev cur checkFeedPresence =
     runReleaseOnFeed run config Auto PushTags prev cur 0 10 false checkFeedPresence
 
@@ -123,9 +116,7 @@ let ``tag confirmation output keeps a missing trigger distinct from a failed pus
         withCapturedConsole (fun () ->
             reportTagConfirmationFailures [ missingRun (System.TimeSpan.FromSeconds 300.0) true ])
 
-    // Exit 2, not 1. "No run has appeared yet" is not "the release failed",
-    // and this used to exit 1 — which is how three healthy FsHotWatch releases on
-    // 2026-09-04 each looked identical to a broken one from the exit code alone.
+    // 2, not 1: a run that has not appeared yet is not a failed release.
     test <@ result = 2 @>
     test <@ output.Contains("no workflow run YET") @>
     test <@ output.Contains("ARE on the remote") @>
@@ -133,10 +124,7 @@ let ``tag confirmation output keeps a missing trigger distinct from a failed pus
 
 [<Fact>]
 let ``a release whose tag has no run yet must never be told to delete and re-push it`` () =
-    // The dangerous half of the false negative. The old remedy was
-    // `git push origin :refs/tags/<tag> && git push origin <tag>`, and following it
-    // after a run HAD in fact registered publishes the same version twice. Nothing in
-    // this branch may suggest removing or re-pushing the tag.
+    // Re-pushing the tag after a run did register publishes the version twice.
     let output, _ =
         withCapturedConsole (fun () ->
             reportTagConfirmationFailures [ missingRun (System.TimeSpan.FromSeconds 300.0) true ])
@@ -144,8 +132,7 @@ let ``a release whose tag has no run yet must never be told to delete and re-pus
     test <@ not (output.Contains(":refs/tags/")) @>
     test <@ not (output.Contains("Re-push")) @>
     test <@ output.Contains("Do NOT delete and re-push") @>
-    // ... and it must still say what to look at instead: the exact question the poll
-    // asked, runnable as printed, rather than a template with a `<tag>` to fill in.
+    // The exact poll query, runnable as printed.
     test
         <@
             output.Contains(
@@ -157,9 +144,7 @@ let ``a release whose tag has no run yet must never be told to delete and re-pus
 
 [<Fact>]
 let ``the reported wait is the one actually performed, not the budget`` () =
-    // A sibling repo shipped exactly this bug: the give-up text was formatted from the
-    // budget, so a refusal that never slept claimed it had waited thirty minutes. The
-    // number in the message has to come from the clock.
+    // The waited time comes from the clock, not the budget.
     let output, _ =
         withCapturedConsole (fun () ->
             reportTagConfirmationFailures [ missingRun (System.TimeSpan.FromSeconds 7.0) true ])
@@ -177,9 +162,7 @@ let ``an unaskable gh is not reported as GitHub saying there is no run`` () =
 
 [<Fact>]
 let ``a workflow run that already failed stops the release, and says so as a failure`` () =
-    // The middle outcome, and the only one of the three that is a demonstrated failure:
-    // the run EXISTS and is FINISHED, so waiting longer cannot help. It must exit 1 so
-    // an ordered release chain stops here, and must not be dressed up as slowness.
+    // The run exists and finished: waiting cannot help, so exit 1.
     let output, result =
         withCapturedConsole (fun () ->
             reportTagConfirmationFailures
@@ -195,7 +178,6 @@ let ``a workflow run that already failed stops the release, and says so as a fai
 
     test <@ result = 1 @>
     test <@ output.Contains("workflow run that FAILED") @>
-    // The refusal names the workflow that refused, by path: that is what gets rerun.
     test <@ output.Contains("publish workflow .github/workflows/release.yml") @>
     test <@ output.Contains("https://github.com/example/repo/actions/runs/42") @>
     test <@ output.Contains("gh run rerun") @>
@@ -495,7 +477,7 @@ let ``release - Auto first-releases an untagged package at its declared fsproj v
     finally
         File.Delete(tmpFile)
 
-/// Helper: standard fakeRun responses for a passing CI + clean working copy
+/// fakeRun responses for a passing CI and a clean working copy.
 let private passingCiRun (extraResponses: (string * string * CommandResult) list) =
     let mutable calls = []
 
@@ -511,7 +493,6 @@ let private passingCiRun (extraResponses: (string * string * CommandResult) list
             | "jj", "diff --summary" -> Success ""
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
-            // isCommitPushed: the release commit IS on the remote (non-empty result).
             | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
@@ -529,10 +510,8 @@ let private passingCiRun (extraResponses: (string * string * CommandResult) list
 
     (fakeRun, (fun () -> calls))
 
-/// The version-bump commit's CI outlasting the old fixed budget (60 checks) but
-/// finishing inside the history-sized one. Both waits — on the release commit and
-/// on the bump commit — must take their budget from `CiWait`; a bump wait on a
-/// fixed budget times out here and refuses to push the tags.
+/// Bump-commit CI that outlasts 60 checks but finishes within the `CiWait` budget:
+/// both waits must use that budget.
 [<Fact>]
 let ``release - the version-bump commit's CI wait uses the history-sized budget, like the release commit's`` () =
     let tmpFile = Path.GetTempFileName()
@@ -570,8 +549,7 @@ let ``release - the version-bump commit's CI wait uses the history-sized budget,
                     Success(ciAnswer "completed" "\"success\"")
             | _ -> baseRun cmd args
 
-        // A history-sized budget: 120 checks at the test's zero interval, well past
-        // the bump commit's 70 but double the old fixed 60.
+        // 120 checks: past the bump commit's 70.
         let mutable budgetRequests = 0
 
         let historySized () : CiWait.Budget =
@@ -621,13 +599,12 @@ let ``release - the version-bump commit's CI wait uses the history-sized budget,
 
         test <@ result = 0 @>
         test <@ not (output.Contains("CI still running after timeout")) @>
-        // Both waits asked for the sized budget, and both announced it.
         test <@ budgetRequests = 2 @>
         test <@ output.Contains("Waiting for CI on the release commit to pass before releasing (expected ~") @>
 
         test
             <@ output.Contains("Waiting for CI on the version-bump commit to pass before pushing the tag (expected ~") @>
-        // The bump commit's CI really did outlast the old budget before passing.
+
         test <@ bumpCiChecks = bumpCiRunningChecks + 1 @>
 
         test
@@ -665,9 +642,7 @@ let ``release - StartAlpha with LocalPublish calls dotnet pack`` () =
         let calls = getCalls ()
         test <@ result = 0 @>
 
-        // LocalPublish IS the release pipeline packing on a dev machine: without the
-        // explicit release flag the RefStamp guard refuses the clean, release-shaped
-        // version it just computed.
+        // LocalPublish packs a release-shaped version, so it needs the release flag.
         test
             <@
                 calls
@@ -687,18 +662,16 @@ let ``release - Auto with reserved version bumps past it`` () =
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
 
-        // Auto with prior tag v1.0.0, unchanged API => patch bump => 1.0.1, but that's reserved => 1.0.2
+        // Unchanged API => patch 1.0.1, which is reserved => 1.0.2
         let (fakeRun, _getCalls) =
             passingCiRun
                 [ ("git", "tag -l \"v*\"", Success "v1.0.0")
-                  // hasChangesSinceTag: report changes
                   ("jj",
                    "diff --from v1.0.0 --to @ --summary \"glob:"
                    + Path.GetDirectoryName(tmpFile)
                    + "/**\"",
                    Success "1 file changed") ]
 
-        // Identical old/new API => NoChange => patch bump path (exercises reserved-version skip)
         let sameApi = [ ApiSignature "type Foo" ]
         let extractPreviousApi (_pkg: string) (_version: string) = Found sameApi
 
@@ -729,9 +702,7 @@ let ``release - Auto with own-changed PackAsTool package skips the API-diff (NU1
     let tmpFile = Path.GetTempFileName()
 
     try
-        // A PackAsTool package with a prior tag AND an own-source change (e.g. a CHANGELOG
-        // edit, which lives in the package dir) — the shape that put FsHotWatch.Cli on the
-        // API-diff branch at cli-v0.14.0-alpha.2.
+        // A PackAsTool package with a prior tag and a change in its own dir.
         File.WriteAllText(
             tmpFile,
             "<Project><PropertyGroup><PackAsTool>true</PackAsTool><Version>0.14.0-alpha.1</Version></PropertyGroup></Project>"
@@ -740,16 +711,13 @@ let ``release - Auto with own-changed PackAsTool package skips the API-diff (NU1
         let (fakeRun, _getCalls) =
             passingCiRun
                 [ ("git", "tag -l \"cli-v*\"", Success "cli-v0.14.0-alpha.1")
-                  // hasChangesSinceTag: the package's own source changed since its tag.
                   ("jj",
                    "diff --from cli-v0.14.0-alpha.1 --to @ --summary \"glob:"
                    + Path.GetDirectoryName(tmpFile)
                    + "/**\"",
                    Success "1 file changed") ]
 
-        // A tool has no library API surface — reading the previous release's API fails
-        // NU1212, which would abort as CannotDetermine. The PackAsTool path skips the
-        // API diff entirely, so this fetch must never be reached.
+        // A tool's API cannot be read (NU1212); the PackAsTool path must not ask.
         let extractPreviousApi (_pkg: string) (_version: string) : PreviousApiResult =
             FetchError "NU1212: DotnetToolReference project style can only contain references of the DotnetTool type"
 
@@ -769,7 +737,6 @@ let ``release - Auto with own-changed PackAsTool package skips the API-diff (NU1
         let result =
             runRelease fakeRun config Auto PushTags extractPreviousApi noCurrentApi 0 10
 
-        // Bump determined (NoChange-style alpha increment), NOT CannotDetermine.
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
         test <@ content.Contains("<Version>0.14.0-alpha.2</Version>") @>
@@ -851,7 +818,6 @@ let ``release - runs preBuildCmds before build`` () =
         let calls = getCalls ()
         test <@ result = 0 @>
 
-        // Verify pre-build commands ran before build
         let toolRestoreIdx =
             calls |> List.findIndex (fun (c, a) -> c = "dotnet" && a = "tool restore")
 
@@ -972,13 +938,11 @@ let ``release - skips packages with no changes since last tag`` () =
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
-            // LibA has a previous tag and changes
             | "jj", a when a.Contains("tag list") && a.Contains("liba-v") -> Success "liba-v0.1.0-alpha.1"
             | "jj", a when a.Contains("--from liba-v0.1.0-alpha.1") -> Success "1 file changed"
-            // LibB has a previous tag but NO changes
+            // LibB has a tag but no changes.
             | "jj", a when a.Contains("tag list") && a.Contains("libb-v") -> Success "libb-v0.1.0-alpha.1"
             | "jj", a when a.Contains("--from libb-v0.1.0-alpha.1") -> Success ""
-            // tagging and push responses
 
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", a when a.StartsWith("commit") -> Success ""
@@ -1011,14 +975,12 @@ let ``release - skips packages with no changes since last tag`` () =
 
         test <@ result = 0 @>
 
-        // LibA should be tagged
         test
             <@
                 calls
                 |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move liba-v"))
             @>
 
-        // LibB should NOT be tagged
         test
             <@
                 not (
@@ -1047,7 +1009,6 @@ let ``release - Auto detects breaking API change and bumps major`` () =
 
         let oldApi = [ ApiSignature "type Foo"; ApiSignature "  Foo::Bar(): String" ]
 
-        // Current API removed Bar (breaking)
         let currentApi = [ ApiSignature "type Foo" ]
 
         let extractPreviousApi (_pkg: string) (_version: string) = Found oldApi
@@ -1070,20 +1031,14 @@ let ``release - Auto detects breaking API change and bumps major`` () =
 
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
-        // Breaking change on v1+ => major bump => 2.0.0
+        // Breaking on v1+ => 2.0.0
         test <@ content.Contains("<Version>2.0.0</Version>") @>
     finally
         File.Delete(tmpFile)
 
 [<Fact>]
 let ``release - Auto folds a breaking grammar change into the bump when the API is unchanged`` () =
-    // The API surface is byte-identical, so the API diff alone would bump only a
-    // patch. The realized CLI grammar renamed a command (check-api -> diff-api),
-    // which is invisible to the signature diff but breaks every old invocation.
-    // The grammar diff must fold in (stronger wins) and force a MAJOR bump.
-    // Uses a fully isolated temp dir (its own fsproj + CHANGELOG) so it never
-    // contends on the shared Path.GetTempPath()/CHANGELOG.md the other release
-    // tests seed.
+    // Identical API, but the CLI grammar renamed a command: must bump major.
     let dir =
         Path.Combine(Path.GetTempPath(), "fsst-grammar-fold-" + System.Guid.NewGuid().ToString("N"))
 
@@ -1099,10 +1054,8 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
                 [ ("git", "tag -l \"v*\"", Success "v1.0.0")
                   ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed") ]
 
-        // Identical API surface on both sides => API diff = NoChange.
         let api = [ ApiSignature "type Foo" ]
 
-        // Grammar renamed a top-level command => GBreaking.
         let previousGrammar = { Roots = [ Leaf("check-api", [], []) ] }
         let currentGrammar = { Roots = [ Leaf("diff-api", [], []) ] }
 
@@ -1143,7 +1096,6 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
                   Canary = noCanary }
 
         test <@ result = 0 @>
-        // Grammar break drives a major bump => 2.0.0, despite the unchanged API.
         test <@ (File.ReadAllText fsproj).Contains("<Version>2.0.0</Version>") @>
     finally
         try
@@ -1151,9 +1103,8 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
         with _ ->
             ()
 
-/// Auto/PushTags where the public API is byte-identical on both sides, so the API
-/// diff alone would bump a patch: any stronger bump comes from the changelog.
-/// Returns the captured output and the exit code.
+/// Auto/PushTags with an identical API, so any bump above patch comes from the
+/// changelog. Returns the captured output and the exit code.
 let private releaseWithUnchangedApi (run: string -> string -> CommandResult) (config: ToolConfig) (only: string list) =
     let api = [ ApiSignature "type Foo" ]
 
@@ -1180,8 +1131,7 @@ let private releaseWithUnchangedApi (run: string -> string -> CommandResult) (co
               Check = false
               Canary = noCanary })
 
-/// A single-package repo in `dir` released at `version`, with `changelog` as its
-/// root CHANGELOG.md.
+/// A single-package repo in `dir` at `version`, with `changelog` as its root CHANGELOG.md.
 let private singlePackageRepo (dir: string) (version: string) (changelog: string) =
     let fsproj = Path.Combine(dir, "MyLib.fsproj")
 
@@ -1213,9 +1163,8 @@ let private singlePackageRepo (dir: string) (version: string) (changelog: string
 let ``release - Auto floors the bump at major when the changelog declares a breaking change the API diff cannot see``
     ()
     =
-    // The motivating release: TestPrune.Core 7.0.0 changed a `[<Literal>]`
-    // SchemaVersion, which is inlined into consumers and absent from the API dump.
-    // The diff says NoChange; the author wrote `feat!:`. It must ship as 8.0.0.
+    // A changed `[<Literal>]` is inlined into consumers and invisible to the API diff:
+    // the author's `feat!:` must make it 8.0.0.
     withTempDir (fun dir ->
         let fsproj, run, config =
             singlePackageRepo dir "7.0.0" "# Changelog\n\n## Unreleased\n\n- feat!: SchemaVersion 9 -> 10\n"
@@ -1242,9 +1191,7 @@ let ``release - Auto keeps a declared fix with an unchanged API at a patch, and 
 
 [<Fact>]
 let ``release - Auto honours a breaking marker in a section derived from commit summaries`` () =
-    // An empty `## Unreleased` is promoted from commit summaries, so a `feat!:`
-    // commit becomes a `feat!:` entry in the published changelog. The version it is
-    // published under must agree with it.
+    // A `feat!:` commit promoted into an empty Unreleased must bump major too.
     withTempDir (fun dir ->
         let fsproj, baseRun, config =
             singlePackageRepo dir "1.2.3" "# Changelog\n\n## Unreleased\n\n## 1.2.3 - 2026-01-01\n\n- old\n"
@@ -1263,8 +1210,7 @@ let ``release - Auto honours a breaking marker in a section derived from commit 
 
 [<Fact>]
 let ``release - Auto takes the strongest declaration across every changelog behind one tag`` () =
-    // One tag, two fsprojs, two changelogs: the declaration in the SHARED project's
-    // changelog counts as much as the main one's.
+    // A declaration in the shared project's changelog counts too.
     withTempDir (fun dir ->
         let coreDir = Path.Combine(dir, "core")
         let cliDir = Path.Combine(dir, "cli")
@@ -1327,7 +1273,6 @@ let ``release - Auto detects addition and bumps minor`` () =
 
         let oldApi = [ ApiSignature "type Foo" ]
 
-        // Current API added a method (addition)
         let currentApi =
             [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
 
@@ -1351,7 +1296,7 @@ let ``release - Auto detects addition and bumps minor`` () =
 
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
-        // Addition on v1+ => minor bump => 1.1.0
+        // Addition on v1+ => 1.1.0
         test <@ content.Contains("<Version>1.1.0</Version>") @>
     finally
         File.Delete(tmpFile)
@@ -1372,7 +1317,6 @@ let ``release - Auto aborts (no bump) when previous API cannot be read`` () =
                    + "/**\"",
                    Success "1 file changed") ]
 
-        // Previous API unreadable due to a transient/network fault (FetchError).
         let extractPreviousApi (_pkg: string) (_version: string) = FetchError "feed unreachable"
 
         let currentApi =
@@ -1394,8 +1338,7 @@ let ``release - Auto aborts (no bump) when previous API cannot be read`` () =
         let result =
             runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
 
-        // Must refuse to guess — exit non-zero and leave the fsproj version untouched.
-        // Silently bumping patch here is the bug that shipped a breaking change as 0.3.1.
+        // Refuse to guess: non-zero exit, fsproj untouched.
         test <@ result = 1 @>
         let content = File.ReadAllText(tmpFile)
         test <@ content.Contains("<Version>1.0.0</Version>") @>
@@ -1409,8 +1352,7 @@ let ``release - Auto skips an orphan tag and diffs against the last published pr
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.2.0</Version></PropertyGroup></Project>")
 
-        // Three release tags newest-first. The newest (v1.2.0) is an orphan: its
-        // package never landed on NuGet, so we must skip it and diff against v1.1.0.
+        // v1.2.0 never reached NuGet, so diff against v1.1.0.
         let (fakeRun, _getCalls) =
             passingCiRun
                 [ ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.1.0\nv1.2.0")
@@ -1422,7 +1364,6 @@ let ``release - Auto skips an orphan tag and diffs against the last published pr
 
         let oldApi = [ ApiSignature "type Foo" ]
 
-        // Current build adds a member relative to v1.1.0 => additive => minor bump.
         let currentApi =
             [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
 
@@ -1432,7 +1373,6 @@ let ``release - Auto skips an orphan tag and diffs against the last published pr
             | "1.1.0" -> Found oldApi // the last published prior
             | other -> failwithf "unexpected version fetch: %s" other
 
-        // The FEED is what establishes that v1.2.0 is an orphan.
         let checkFeedPresence (_pkg: string) (version: string) =
             match version with
             | "1.2.0" -> NotOnFeed
@@ -1456,20 +1396,15 @@ let ``release - Auto skips an orphan tag and diffs against the last published pr
                 runAutoOnFeed fakeRun config extractPreviousApi (fun _ -> currentApi) checkFeedPresence)
 
         test <@ result = 0 @>
-        // A warning naming the skipped orphan tag must be emitted.
         test <@ output.Contains("v1.2.0") && output.Contains("orphan") @>
-        // Bump computed off the latest tag's version (1.2.0) with the v1.1.0 API
-        // diff (addition) => minor bump => 1.3.0.
+        // Bump off 1.2.0 with the v1.1.0 diff (addition) => 1.3.0.
         let content = File.ReadAllText(tmpFile)
         test <@ content.Contains("<Version>1.3.0</Version>") @>
     finally
         File.Delete(tmpFile)
 
-/// The previous release's assembly will not load — the real
-/// failure from releasing MichaelGlass.FSharp.Analyzers 0.1.0-alpha.5 — but the
-/// release IS on the feed. It used to be reported as an orphan tag and skipped, so
-/// the build was diffed against an OLDER baseline. The fetch log, the tags and the
-/// feed below make each of those observable.
+/// The previous release is on the feed but its assembly will not load: it must
+/// not be treated as an orphan and diffed against an older baseline.
 let private unreadableBaselineRun (tmpFile: string) (latest: string) =
     passingCiRun
         [ ("git", "tag -l \"v*\"", Success("v1.0.0\nv1.1.0\nv" + latest))
@@ -1497,8 +1432,7 @@ let private unreadableBaselineConfig (tmpFile: string) =
 let private analyzerLoadFailure =
     "could not load /home/u/.nuget/packages/michaelglass.fsharp.analyzers/1.2.0/analyzers/dotnet/fs/MichaelGlass.FSharp.Analyzers.dll: Could not find assembly 'FSharp.Analyzers.SDK, Version=0.39.0.0, Culture=neutral, PublicKeyToken=null'."
 
-/// Runs Auto against a newest release `latest` whose API is unreadable and a
-/// readable v1.1.0 before it, recording which versions were fetched.
+/// Auto with an unreadable `latest` and a readable v1.1.0, recording which versions were fetched.
 let private releaseOverUnreadableBaseline (latest: string) (checkFeedPresence: string -> string -> FeedPresence) =
     let tmpFile = Path.GetTempFileName()
 
@@ -1541,24 +1475,20 @@ let ``release - Auto fails closed, never walking back, when the published previo
     let output, result, fetched, fsproj =
         releaseOverUnreadableBaseline "1.2.0" (fun _ _ -> OnFeed)
 
-    // No false orphan-tag warning for a version that is on the feed.
     test <@ not (output.Contains("orphan")) @>
     test <@ not (output.Contains("not on the feed")) @>
-    // The baseline it actually follows is the only one consulted: no walk back to v1.1.0.
+    // No walk back to v1.1.0.
     test <@ fetched = [ "1.2.0" ] @>
-    // Failed closed: the diff decides a stable bump, so refuse to guess.
     test <@ result = 1 @>
     test <@ fsproj.Contains("<Version>1.2.0</Version>") @>
     test <@ output.Contains("cannot determine the version bump") @>
-    // ...naming the release, the assembly, and the dependency that did not resolve.
     test <@ output.Contains("previous release v1.2.0, which is published") @>
     test <@ output.Contains("MichaelGlass.FSharp.Analyzers.dll") @>
     test <@ output.Contains("Could not find assembly 'FSharp.Analyzers.SDK") @>
 
 [<Fact>]
 let ``release - Auto treats an unreachable feed as published when the previous API cannot be read`` () =
-    // Absence must be POSITIVELY established. A feed that does not answer cannot
-    // license skipping the baseline, so this fails closed exactly like OnFeed.
+    // A feed that does not answer fails closed, like OnFeed.
     let output, result, fetched, _ =
         releaseOverUnreadableBaseline "1.2.0" (fun _ _ -> FeedUnknown "The operation has timed out.")
 
@@ -1568,9 +1498,8 @@ let ``release - Auto treats an unreachable feed as published when the previous A
 
 [<Fact>]
 let ``release - Auto proceeds without walking back when an unreadable baseline cannot change a pre-release bump`` () =
-    // The evidence case itself: an alpha. The next alpha is alpha.N+1 whatever the
-    // diff says, so refusing would block the release for nothing — but it still must
-    // not claim an orphan or diff against an older tag.
+    // An alpha bumps to alpha.N+1 whatever the diff says, so it proceeds, but still
+    // without an orphan warning or an older baseline.
     let output, result, fetched, fsproj =
         releaseOverUnreadableBaseline "1.2.0-alpha.4" (fun _ _ -> OnFeed)
 
@@ -1583,8 +1512,7 @@ let ``release - Auto proceeds without walking back when an unreadable baseline c
 
 [<Fact>]
 let ``release - Auto still skips a genuinely unpublished release whose API cannot be read (positive control)`` () =
-    // The feed definitively says v1.2.0 is absent: a real orphan. Handled exactly as
-    // before — warned about by tag and walked past to v1.1.0, whose API is diffed.
+    // A real orphan: warned about and walked past to v1.1.0.
     let checkFeedPresence (_pkg: string) (version: string) =
         match version with
         | "1.2.0" -> NotOnFeed
@@ -1596,7 +1524,7 @@ let ``release - Auto still skips a genuinely unpublished release whose API canno
     test <@ output.Contains("tag v1.2.0 is not on the feed (orphan tag") @>
     test <@ fetched = [ "1.2.0"; "1.1.0" ] @>
     test <@ result = 0 @>
-    // v1.1.0 had Foo::Removed, which is gone: Breaking on 1.x => major.
+    // v1.1.0 had Foo::Removed: breaking on 1.x => major.
     test <@ fsproj.Contains("<Version>2.0.0</Version>") @>
 
 [<Fact>]
@@ -1618,8 +1546,7 @@ let ``release - Auto still aborts on a transient fetch error (does not skip)`` (
         let currentApi =
             [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
 
-        // The newest tag's fetch is a transient error — we must abort, NOT walk back
-        // to an older tag (a genuine outage could otherwise under-bump a breaking change).
+        // A transient error on the newest tag aborts; walking back could under-bump.
         let extractPreviousApi (_pkg: string) (version: string) =
             match version with
             | "1.2.0" -> FetchError "connection timed out"
@@ -1642,7 +1569,6 @@ let ``release - Auto still aborts on a transient fetch error (does not skip)`` (
             runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
 
         test <@ result = 1 @>
-        // fsproj <Version> left untouched.
         let content = File.ReadAllText(tmpFile)
         test <@ content.Contains("<Version>1.2.0</Version>") @>
     finally
@@ -1664,7 +1590,6 @@ let ``release - Auto when every prior tag is absent on feed bumps conservatively
                    + "/**\"",
                    Success "1 file changed") ]
 
-        // Every prior tag is an orphan: nothing was ever published to diff against.
         let extractPreviousApi (_pkg: string) (_version: string) =
             NotRestorable "error NU1102: Unable to find package MyLib"
 
@@ -1687,8 +1612,7 @@ let ``release - Auto when every prior tag is absent on feed bumps conservatively
         let result =
             runAutoOnFeed fakeRun config extractPreviousApi (fun _ -> currentApi) (fun _ _ -> NotOnFeed)
 
-        // No published prior to diff against => conservative NoChange bump off 1.2.0
-        // => patch 1.2.1 (treated like a first release; does not abort).
+        // Nothing published to diff against => NoChange => 1.2.1.
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
         test <@ content.Contains("<Version>1.2.1</Version>") @>
@@ -1724,8 +1648,7 @@ let ``release - Auto every prior tag absent honours the reserved-version skip`` 
                     DllPath = "fake.dll"
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
-              // The conservative NoChange bump (1.2.1) is reserved, so the skip
-              // applies and it bumps past it to 1.2.2.
+              // 1.2.1 is reserved => 1.2.2.
               ReservedVersions = Set.ofList [ "1.2.1" ]
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
@@ -1757,7 +1680,6 @@ let ``release - Auto pre-1.0 breaking change bumps minor (UnionConfig 0.3.0 -> 0
                    + "/**\"",
                    Success "1 file changed") ]
 
-        // Mirrors the real change: a DU case lost its payload (breaking removal).
         let oldApi =
             [ ApiSignature "type ConfigVarKind"
               ApiSignature "  ConfigVarKind+AutoGenerated"
@@ -1787,7 +1709,7 @@ let ``release - Auto pre-1.0 breaking change bumps minor (UnionConfig 0.3.0 -> 0
 
         test <@ result = 0 @>
         let content = File.ReadAllText(tmpFile)
-        // Pre-1.0 breaking change => minor bump => 0.4.0 (not patch 0.3.1)
+        // Pre-1.0 breaking => 0.4.0, not 0.3.1
         test <@ content.Contains("<Version>0.4.0</Version>") @>
     finally
         File.Delete(tmpFile)
@@ -1813,11 +1735,9 @@ let ``release - does not push tags when post-push CI fails`` () =
                 ghCallCount <- ghCallCount + 1
 
                 if ghCallCount <= 1 then
-                    // First CI check (pre-release): passing
                     Success
                         """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
                 else
-                    // Second CI check (post-push): failed
                     Success
                         """[{"status":"completed","conclusion":"failure","name":"CI","url":"https://example.com/2"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -1846,7 +1766,6 @@ let ``release - does not push tags when post-push CI fails`` () =
 
         test <@ result = 1 @>
 
-        // Should NOT have pushed tags
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a = "git export")) @>
         test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
     finally
@@ -1930,7 +1849,6 @@ let ``release - does not push tags when post-push CI has no runs`` () =
                     Success
                         """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
                 else
-                    // Post-push: no runs found
                     Success "[]"
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "git", arg when arg.StartsWith("tag -l") -> Success ""
@@ -1958,19 +1876,15 @@ let ``release - does not push tags when post-push CI has no runs`` () =
 
         test <@ result = 1 @>
 
-        // Should NOT have pushed tags
         test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
     finally
         File.Delete(tmpFile)
 
-/// A `gh run list` JSON body with a single completed+successful run — the
-/// release commit's CI is green, so the precondition lets the release proceed.
+/// `gh run list` JSON with one successful run.
 let private greenCiJson =
     """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
 
-/// fakeRun cases that make the release commit appear PUSHED with a green CI run,
-/// so the fail-fast precondition passes and the release proceeds. Callers add
-/// their own specifics (e.g. the coverageratchet tool list / loosen result).
+/// fakeRun cases for a pushed release commit with green CI; callers add their own.
 let private pushedGreenCi (cmd: string) (args: string) : CommandResult option =
     match cmd, args with
     | "jj", "diff --summary" -> Some(Success "")
@@ -2009,7 +1923,7 @@ let ``release - reconciles coverage via loosen-from-ci after CI is green`` () =
 
     test <@ result = 0 @>
 
-    // The precondition confirms CI is green (gh run list) BEFORE loosen-from-ci.
+    // CI is confirmed green before loosen-from-ci.
     test <@ calls |> List.exists (fun (c, a) -> c = "gh" && a.Contains("run list")) @>
 
     test
@@ -2078,7 +1992,6 @@ let ``release - fails fast with actionable push-first message when commit isn't 
         | "jj", "diff --summary" -> Success ""
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
         | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
-        // NOT pushed: remote_bookmarks() ancestry query is empty.
         | "jj", a when a.Contains("remote_bookmarks()") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
@@ -2095,15 +2008,12 @@ let ``release - fails fast with actionable push-first message when commit isn't 
 
     test <@ result = 1 @>
 
-    // Actionable: tells the user to push, mentions --push, and explains why.
     test <@ output.Contains("hasn't been pushed") @>
     test <@ output.Contains("--push") @>
     test <@ output.Contains("loosen-from-ci") @>
 
-    // MUST NOT mislabel an unpushed commit as a CI failure.
     test <@ not (output.Contains("CI failed")) @>
 
-    // Fail-fast: never polled CI, never built, never reconciled coverage.
     test <@ not (calls |> List.exists (fun (c, a) -> c = "gh" && a.Contains("run list"))) @>
     test <@ not (calls |> List.exists (fun (c, a) -> c = "dotnet" && a = "build -c Release")) @>
 
@@ -2115,13 +2025,11 @@ let ``release - fails fast with actionable push-first message when commit isn't 
             )
         @>
 
-    // Fail-fast and did NOT push implicitly.
     test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push")) @>
 
 [<Fact>]
 let ``release - with --push pushes the commit then waits for CI when not pushed`` () =
-    // First the commit isn't pushed; --push pushes it; after the push the
-    // remote_bookmarks ancestry succeeds and CI is green.
+    // Not pushed until --push pushes it; then CI is green.
     let mutable pushed = false
     let mutable calls = []
 
@@ -2154,13 +2062,10 @@ let ``release - with --push pushes the commit then waits for CI when not pushed`
         runReleaseWithPush fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10 true
 
     test <@ result = 0 @>
-    // --push actually pushed main, then proceeded through the green CI.
     test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push") @>
 
 [<Fact>]
 let ``release - distinguishes a genuine CI failure from an unpushed commit`` () =
-    // Commit IS pushed and a run exists that FAILED -> "CI failed" (the real
-    // failure case), distinct from the unpushed precondition.
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
         | "jj", "diff --summary" -> Success ""
@@ -2189,7 +2094,6 @@ let ``release - distinguishes a genuine CI failure from an unpushed commit`` () 
 
 [<Fact>]
 let ``release - returns 1 when CI status is Unknown`` () =
-    // Commit is pushed but gh errors -> Unknown -> error (not the unpushed path).
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
         | "jj", "diff --summary" -> Success ""
@@ -2213,7 +2117,6 @@ let ``release - returns 1 when CI status is Unknown`` () =
 
 [<Fact>]
 let ``release - waits then returns 1 when pushed CI times out still in progress`` () =
-    // Commit is pushed but CI never completes -> wait, then timeout error.
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
         | "jj", "diff --summary" -> Success ""
@@ -2238,7 +2141,6 @@ let ``release - waits then returns 1 when pushed CI times out still in progress`
 
 [<Fact>]
 let ``release - returns 1 when the release commit sha can't be determined`` () =
-    // Clean working copy but neither jj (@ and @-) nor git can yield a sha.
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
         | "jj", "diff --summary" -> Success ""
@@ -2263,8 +2165,6 @@ let ``release - returns 1 when the release commit sha can't be determined`` () =
 
 [<Fact>]
 let ``release - pushed commit whose CI run never registers times out`` () =
-    // Commit is pushed but `gh run list` stays empty (no run ever registers);
-    // waitForCi polls to timeout and reports NoRuns honestly (not "CI failed").
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
         | "jj", "diff --summary" -> Success ""
@@ -2288,7 +2188,6 @@ let ``release - pushed commit whose CI run never registers times out`` () =
     test <@ result = 1 @>
     test <@ output.Contains("no CI run registered") @>
     test <@ not (output.Contains("CI failed")) @>
-    // The wait announces the budget it was given rather than a fixed guess.
     test <@ output.Contains("giving up after") @>
     test <@ not (output.Contains("~1-2 min")) @>
 
@@ -2494,8 +2393,7 @@ let ``release - resumes when fsproj already has target version (idempotent)`` ()
     let tmpFile = Path.GetTempFileName()
 
     try
-        // Simulate: previous run already bumped to 0.2.0-alpha.1
-        // (StartAlpha with prev tag v0.1.0-alpha.1 => nextAlphaCycle => 0.2.0-alpha.1)
+        // A previous run already bumped to 0.2.0-alpha.1.
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.2.0-alpha.1</Version></PropertyGroup></Project>")
 
         let mutable calls = []
@@ -2511,13 +2409,10 @@ let ``release - resumes when fsproj already has target version (idempotent)`` ()
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
-            // Latest tag is the previous version (alpha.1), and there are changes
             | "jj", a when a.Contains("tag list") && a.Contains("\"glob:v") -> Success "v0.1.0-alpha.1"
             | "jj", a when a.Contains("--from v0.1.0-alpha.1") -> Success "1 file changed"
-            // tagExists check for the target version tag — not yet pushed
             | "jj", "tag list v0.2.0-alpha.1" -> Success ""
             | "git", "tag -l v0.2.0-alpha.1" -> Success ""
-            // Tag operations for resumed path
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", "git push" -> Success ""
             | "jj", "git export" -> Success ""
@@ -2542,16 +2437,12 @@ let ``release - resumes when fsproj already has target version (idempotent)`` ()
 
         test <@ result = 0 @>
 
-        // Should NOT have committed (no version change needed)
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("commit"))) @>
 
-        // Should NOT have set bookmark
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("bookmark set"))) @>
 
-        // SHOULD have pushed tags
         test <@ calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin")) @>
 
-        // fsproj should still have the same version (not double-bumped)
         let content = File.ReadAllText(tmpFile)
         test <@ content.Contains("<Version>0.2.0-alpha.1</Version>") @>
     finally
@@ -2587,7 +2478,6 @@ let ``release - fails fast when resuming and CI has failed`` () =
             | "jj", "tag list v0.2.0-alpha.1" -> Success ""
             | "git", "tag -l v0.2.0-alpha.1" -> Success ""
             | "jj", a when a.StartsWith("tag set") -> Success ""
-            // Resume re-pushes main first (idempotent) before tagging.
             | "jj", "git push" -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
@@ -2613,11 +2503,7 @@ let ``release - fails fast when resuming and CI has failed`` () =
 
 [<Fact>]
 let ``release - a tag that triggered no workflow run fails the release`` () =
-    // The defect this guards: every push succeeds, the tags are on the remote, and
-    // GitHub creates no event — so nothing is ever built or published while the release
-    // reports success. The confirmation query (`run list --branch <tag>`) answers with
-    // an empty array here; the CI poll (`--commit <sha>`) still passes, so the ONLY
-    // thing wrong is the missing trigger.
+    // Every push succeeds but GitHub creates no run for the tag, so nothing publishes.
     let tmpFile = Path.GetTempFileName()
 
     try
@@ -2629,9 +2515,7 @@ let ``release - a tag that triggered no workflow run fails the release`` () =
             | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
             | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
             | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
-            // The post-push confirmation: no run exists for the tag.
             | "gh", a when a.Contains("run list") && a.Contains("--branch") -> Success "[]"
-            // The pre-release CI check on the commit: green.
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -2661,7 +2545,6 @@ let ``release - a tag that triggered no workflow run fails the release`` () =
         let result =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
-        // Non-zero: the tags exist on the remote but nothing will build them.
         test <@ result <> 0 @>
     finally
         File.Delete(tmpFile)
@@ -2688,14 +2571,11 @@ let ``release - resumes and polls when CI is in progress`` () =
                 ghCallCount <- ghCallCount + 1
 
                 if ghCallCount <= 1 then
-                    // Pre-release CI check: passing
                     Success
                         """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
                 elif ghCallCount <= 3 then
-                    // Resumed path polls: in progress
                     Success """[{"status":"in_progress","conclusion":null,"name":"CI","url":"https://example.com/1"}]"""
                 else
-                    // Eventually passes
                     Success
                         """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
@@ -2704,7 +2584,6 @@ let ``release - resumes and polls when CI is in progress`` () =
             | "jj", "tag list v0.2.0-alpha.1" -> Success ""
             | "git", "tag -l v0.2.0-alpha.1" -> Success ""
             | "jj", a when a.StartsWith("tag set") -> Success ""
-            // Resume re-pushes main first (idempotent) before tagging.
             | "jj", "git push" -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
@@ -2727,14 +2606,9 @@ let ``release - resumes and polls when CI is in progress`` () =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
-        // Polled multiple times (1 pre-release + 2 in-progress + 1 success = 4), then
-        // ONE more per pushed tag: after pushing, the release now confirms a workflow
-        // run actually exists for each tag instead of assuming the push triggered one.
-        // One package here, so one tag, so 5.
+        // 1 pre-release + 2 in-progress + 1 success, plus 1 tag-run check per tag.
         test <@ ghCallCount = 5 @>
-        // Resume re-pushed main (idempotent) before pushing tags.
         test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push") @>
-        // Tags were pushed
         test <@ calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin")) @>
     finally
         File.Delete(tmpFile)
@@ -2744,7 +2618,6 @@ let ``release - second run after successful first run produces no changes`` () =
     let tmpFile = Path.GetTempFileName()
 
     try
-        // After successful release: fsproj has new version AND tag exists at that version
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.2.0-alpha.1</Version></PropertyGroup></Project>")
 
         let fakeRun (cmd: string) (args: string) : CommandResult =
@@ -2756,9 +2629,7 @@ let ``release - second run after successful first run produces no changes`` () =
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
-            // Tag exists at the NEW version -- means first run fully succeeded
             | "jj", a when a.Contains("tag list") && a.Contains("\"glob:v") -> Success "v0.2.0-alpha.1"
-            // No changes since tag (first run already committed everything)
             | "jj", a when a.Contains("--from v0.2.0-alpha.1") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
@@ -2779,7 +2650,6 @@ let ``release - second run after successful first run produces no changes`` () =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
-        // Version not changed
         let content = File.ReadAllText(tmpFile)
         test <@ content.Contains("<Version>0.2.0-alpha.1</Version>") @>
     finally
@@ -2797,7 +2667,6 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
 </Project>"""
 
         File.WriteAllText(tmpFile, fsprojBefore)
-        // CHANGELOG with no Unreleased section -> validation must fail before any writes
         File.WriteAllText(changelogPath, "# Changelog\n\n## 0.1.0 - 2026-01-01\n\n- stuff\n")
 
         let fakeRun (cmd: string) (args: string) : CommandResult =
@@ -2849,7 +2718,6 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
                   Canary = noCanary }
 
         test <@ result = 1 @>
-        // fsproj untouched
         test <@ File.ReadAllText(tmpFile) = fsprojBefore @>
     finally
         File.Delete(tmpFile)
@@ -2869,8 +2737,7 @@ let ``release - dryRun skips uncommitted check and does not write fsproj`` () =
 
         let mutable calls = []
 
-        // jj status reports uncommitted changes; in a normal release this aborts.
-        // In dry-run the check should be skipped entirely. Also no CI calls, no commit/tag/push.
+        // Uncommitted changes would abort a real release; dry-run skips that check.
         let fakeRun (cmd: string) (args: string) : CommandResult =
             calls <- calls @ [ (cmd, args) ]
 
@@ -2895,15 +2762,11 @@ let ``release - dryRun skips uncommitted check and does not write fsproj`` () =
             runRelease fakeRun config StartAlpha DryRun noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
-        // fsproj untouched
         test <@ File.ReadAllText(tmpFile) = fsprojBefore @>
-        // no commit, tag, or push calls
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("commit"))) @>
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push")) @>
-        // no CI check
         test <@ not (calls |> List.exists (fun (_, a) -> a.Contains("run list"))) @>
-        // explicit-mode dry-run skips the Release build
         test <@ not (calls |> List.exists (fun (c, a) -> c = "dotnet" && a = "build -c Release")) @>
     finally
         File.Delete(tmpFile)
@@ -2916,7 +2779,6 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
     try
         let fsprojPath = Path.Combine(tmpDir, "MyLib.fsproj")
         File.WriteAllText(fsprojPath, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
-        // No CHANGELOG at repo root => validation would fail in real run
 
         let fakeRun (cmd: string) (args: string) : CommandResult =
             match cmd, args with
@@ -2936,7 +2798,7 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
               CiTimeout = None
               RootDir = tmpDir }
 
-        // Bypass the seedTmpChangelog helper; call release directly with rootDir = tmpDir (no CHANGELOG.md there)
+        // rootDir has no CHANGELOG.md.
         let output, result =
             withCapturedConsole (fun () ->
                 release
@@ -2968,7 +2830,7 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
                 output.ToLowerInvariant().Contains("warning")
                 || output.ToLowerInvariant().Contains("changelog")
             @>
-        // fsproj version not advanced
+
         test <@ File.ReadAllText(fsprojPath).Contains("<Version>0.0.0</Version>") @>
     finally
         File.Delete(tmpFile)
@@ -2979,7 +2841,6 @@ let ``release - resume in DryRun mode takes no actions and returns 0`` () =
     let tmpFile = Path.GetTempFileName()
 
     try
-        // fsproj already at the target version — AlreadyBumped path, DryRun short-circuit.
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.2.0-alpha.1</Version></PropertyGroup></Project>")
 
         let mutable calls = []
@@ -3015,12 +2876,9 @@ let ``release - resume in DryRun mode takes no actions and returns 0`` () =
             runRelease fakeRun config StartAlpha DryRun noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
-        // DryRun resume must NOT set tags.
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
-        // DryRun resume must NOT push.
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push")) @>
 
-        // fsproj version unchanged.
         test <@ File.ReadAllText(tmpFile).Contains("<Version>0.2.0-alpha.1</Version>") @>
     finally
         File.Delete(tmpFile)
@@ -3047,7 +2905,6 @@ let ``release - resume with LocalPublish packs without pushing`` () =
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "jj", a when a.Contains("tag list") && a.Contains("\"glob:v") -> Success "v0.1.0-alpha.1"
             | "jj", a when a.Contains("--from v0.1.0-alpha.1") -> Success "1 file changed"
-            // tagExists probes (tag not yet set)
             | "jj", "tag list v0.2.0-alpha.1" -> Success ""
             | "git", "tag -l v0.2.0-alpha.1" -> Success ""
             | "jj", a when a.StartsWith("tag set") -> Success ""
@@ -3071,13 +2928,13 @@ let ``release - resume with LocalPublish packs without pushing`` () =
             runRelease fakeRun config StartAlpha LocalPublish noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
-        // LocalPublish resume must pack.
+
         test
             <@
                 calls
                 |> List.exists (fun (c, a) -> c = "dotnet" && a.StartsWith("pack") && a.Contains(tmpFile))
             @>
-        // LocalPublish resume must NOT push tags.
+
         test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
     finally
         File.Delete(tmpFile)
@@ -3092,16 +2949,13 @@ let ``waitForNuGet - returns NO unconfirmed packages when all are already publis
 
     let result = waitForNuGet checkFeedPresence 0 5 [ "PkgA", "1.0.0"; "PkgB", "2.0.0" ]
 
-    // The unconfirmed LIST, empty when everything is on the feed.
     test <@ List.isEmpty result @>
-    // One check per package, no polling rounds beyond the first.
     test <@ checks = 2 @>
 
 [<Fact>]
 let ``waitForNuGet - polls until a package becomes available`` () =
     let mutable attempts = 0
 
-    // Not published for the first two checks, then available.
     let checkFeedPresence (_id: string) (_ver: string) =
         attempts <- attempts + 1
         if attempts >= 3 then OnFeed else NotOnFeed
@@ -3115,8 +2969,6 @@ let ``waitForNuGet - polls until a package becomes available`` () =
 let ``waitForNuGet - names the package it could not confirm (times out)`` () =
     let checkFeedPresence (_id: string) (_ver: string) = NotOnFeed
     let result = waitForNuGet checkFeedPresence 0 3 [ "PkgA", "1.0.0" ]
-    // Names WHICH package was never confirmed — a bare `false` could not, which
-    // is why the release had nothing to print.
     test <@ result = [ "PkgA", "1.0.0" ] @>
 
 [<Fact>]
@@ -3131,7 +2983,7 @@ let ``waitForNuGet - maxAttempts 1 does exactly one check then times out`` () =
     test <@ result = [ "PkgA", "1.0.0" ] @>
     test <@ checks = 1 @>
 
-/// Like runRelease but lets the caller drive the NuGet-availability wait.
+/// Like runRelease, but the caller drives the NuGet-availability wait.
 let private runReleaseWithNuGetWait run config cmd checkFeedPresence maxAttempts =
     seedTmpChangelog ()
 
@@ -3189,7 +3041,6 @@ let ``release - waits for NuGet after pushing tags and checks the published pack
         let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkFeedPresence 5
 
         test <@ result = 0 @>
-        // The just-released package id + version were polled on NuGet.
         test <@ checked' |> List.contains ("MyLib", "0.1.0-alpha.1") @>
     finally
         File.Delete(tmpFile)
@@ -3202,7 +3053,6 @@ let ``release - an unconfirmed NuGet wait exits 2, not 0`` () =
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
         let (fakeRun, _getCalls) = passingCiRun []
 
-        // Never published -> waitForNuGet times out, but release already pushed tags.
         let checkFeedPresence (_id: string) (_ver: string) = NotOnFeed
 
         let config =
@@ -3220,27 +3070,12 @@ let ``release - an unconfirmed NuGet wait exits 2, not 0`` () =
 
         let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkFeedPresence 2
 
-        // This previously asserted `result = 0` under the name
-        // "NuGet wait timeout does not change the exit code", commented "Timeout
-        // is a convenience-wait failure; the release succeeded."
-        //
-        // THE DEFECT WAS PINNED BY A TEST ASSERTING IT. Half of that reasoning is
-        // sound — the tags are pushed, so it is not a failed publish — but the
-        // conclusion was not: a release whose packages nobody has seen must not
-        // report success.
-        //
-        // 2, not 1: "I stopped waiting" is not "it failed". A 1 would train
-        // people to re-run a release that already succeeded.
+        // 2, not 0: nobody has seen the packages. Not 1 either: the tags are pushed.
         test <@ result = 2 @>
     finally
         File.Delete(tmpFile)
 
-/// THE POSITIVE CONTROL the ticket demands: the fix must not be "always fail".
-///
-/// Without it, `waitForNuGet` could return every package as unconfirmed — or the
-/// caller could return 2 unconditionally — and the timeout test above would still
-/// pass while every green release started crying wolf. That is the same shape as
-/// the bug, pointed the other way.
+/// Positive control: a release whose packages appear exits 0.
 [<Fact>]
 let ``release - a fully confirmed NuGet wait still exits 0`` () =
     let tmpFile = Path.GetTempFileName()
@@ -3249,7 +3084,6 @@ let ``release - a fully confirmed NuGet wait still exits 0`` () =
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
         let (fakeRun, _getCalls) = passingCiRun []
 
-        // Every package present on the first check.
         let checkFeedPresence (_id: string) (_ver: string) = OnFeed
 
         let config =
@@ -3271,9 +3105,6 @@ let ``release - a fully confirmed NuGet wait still exits 0`` () =
     finally
         File.Delete(tmpFile)
 
-// ---------------------------------------------------------------------------
-// --only / selectPackages: scope a run to specific packages by name
-// ---------------------------------------------------------------------------
 
 let private pkg name fsproj prefix : PackageConfig =
     { Name = name
@@ -3320,7 +3151,7 @@ let ``selectPackages - one unknown among known names still errors`` () =
     | Error msg -> test <@ msg.Contains("Nope") @>
     | Ok _ -> failwith "expected an error when any name is unknown"
 
-/// Like runRelease, but threads a `--only`-style target-package list.
+/// Like runRelease, with an `--only` package list.
 let private runReleaseTargeting run config cmd mode targets =
     seedTmpChangelog ()
 
@@ -3363,9 +3194,7 @@ let ``release - scoped to one package only tags that package`` () =
                     DllPath = "src/LibA/bin/Release/net10.0/LibA.dll"
                     TagPrefix = "liba-v"
                     FsProjsSharingSameTag = [] }
-                  // LibB's fsproj does not exist on disk; if it were processed the
-                  // run would crash reading its version, so this also proves LibB
-                  // is fully out of scope.
+                  // LibB's fsproj does not exist: processing it would crash.
                   { Name = "LibB"
                     Fsproj = "/no/such/LibB.fsproj"
                     DllPath = "src/LibB/bin/Release/net10.0/LibB.dll"
@@ -3381,32 +3210,28 @@ let ``release - scoped to one package only tags that package`` () =
 
         let calls = getCalls ()
         test <@ result = 0 @>
-        // LibA tagged
+
         test
             <@
                 calls
                 |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move liba-v"))
             @>
-        // LibB never tagged or touched
+
         test <@ not (calls |> List.exists (fun (_, a) -> a.Contains("libb-v"))) @>
     finally
         File.Delete(tmpFileA)
 
 [<Fact>]
 let ``release - --only on a multi-package repo uses the per-package CHANGELOG, not repo root`` () =
-    // Regression: `--only` selects which packages are *released*; it must not rewrite
-    // repo *structure*. A multi-package repo keeps per-fsproj-dir CHANGELOGs. If the
-    // single-vs-multi-package decision were taken from the post-`--only` (length-1)
-    // package list, the selected package's changelog would be looked up at the repo
-    // ROOT and the run would abort "CHANGELOG.md not found". Here the root has NO
-    // CHANGELOG.md, so the run can only succeed via the per-package lookup.
+    // `--only` must not turn a multi-package repo into a single-package one: the root
+    // has no CHANGELOG.md, so only the per-package lookup can succeed.
     let pkgDir = createTempDir ()
     let rootDir = createTempDir ()
 
     try
         let fsprojA = Path.Combine(pkgDir, "LibA.fsproj")
         File.WriteAllText(fsprojA, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
-        // Valid per-package changelog right next to LibA's fsproj.
+
         File.WriteAllText(
             Path.Combine(pkgDir, "CHANGELOG.md"),
             "# Changelog\n\n## Unreleased\n\n- feat: a real change\n"
@@ -3421,8 +3246,6 @@ let ``release - --only on a multi-package repo uses the per-package CHANGELOG, n
                     DllPath = "a.dll"
                     TagPrefix = "liba-v"
                     FsProjsSharingSameTag = [] }
-                  // A second package makes this a multi-package repo; `--only LibA`
-                  // keeps it out of scope (its fsproj doesn't even exist on disk).
                   { Name = "LibB"
                     Fsproj = "/no/such/LibB.fsproj"
                     DllPath = "b.dll"
@@ -3458,7 +3281,6 @@ let ``release - --only on a multi-package repo uses the per-package CHANGELOG, n
                   Canary = noCanary }
 
         let calls = getCalls ()
-        // Per-package changelog found + validated → release proceeded and tagged LibA.
         test <@ result = 0 @>
 
         test
@@ -3466,7 +3288,7 @@ let ``release - --only on a multi-package repo uses the per-package CHANGELOG, n
                 calls
                 |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move liba-v"))
             @>
-        // LibB stayed fully out of scope.
+
         test <@ not (calls |> List.exists (fun (_, a) -> a.Contains("libb-v"))) @>
     finally
         cleanupDir pkgDir
@@ -3553,7 +3375,6 @@ let ``release - unknown target package aborts with exit 1 before any work`` () =
         withCapturedConsole (fun () -> runReleaseTargeting fakeRun config StartAlpha PushTags [ "Nope" ])
 
     test <@ result = 1 @>
-    // Lists the valid name and the bad one; never ran the working-copy/CI checks.
     test <@ output.Contains("Nope") && output.Contains("LibA") @>
     test <@ List.isEmpty calls @>
 
@@ -3564,7 +3385,6 @@ let ``release - scoping composes with dry-run (only target previewed)`` () =
     try
         File.WriteAllText(tmpA, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
 
-        // Dry-run StartAlpha skips build/CI; only a tag-list lookup happens.
         let fakeRun (cmd: string) (args: string) : CommandResult =
             match cmd, args with
             | "git", arg when arg.StartsWith("tag -l") -> Success ""
@@ -3593,20 +3413,14 @@ let ``release - scoping composes with dry-run (only target previewed)`` () =
             withCapturedConsole (fun () -> runReleaseTargeting fakeRun config StartAlpha DryRun [ "LibA" ])
 
         test <@ result = 0 @>
-        // Targeting line names only LibA; LibB is out of scope (not even mentioned).
         test <@ output.Contains("Targeting: LibA") @>
         test <@ not (output.Contains("LibB")) @>
-        // fsproj untouched in dry-run
         test <@ File.ReadAllText(tmpA).Contains("<Version>1.0.0</Version>") @>
     finally
         File.Delete(tmpA)
 
-// ---------------------------------------------------------------------------
-// Resume of a bumped-but-untagged release, detected from the end state
-// (fsproj version ahead of the latest tag, no tag at that version) rather than
-// from work-remaining. These mirror the real "release wedged after a CI flake
-// on the bump commit" reproduction.
-// ---------------------------------------------------------------------------
+// Resume of a bumped-but-untagged release: fsproj version ahead of the latest
+// tag, and no tag at that version.
 
 [<Fact>]
 let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that version (even if previous API unreadable)``
@@ -3615,8 +3429,7 @@ let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that
     let tmpFile = Path.GetTempFileName()
 
     try
-        // Mid-release: last tag is alpha.16, fsproj already bumped to alpha.17,
-        // no core-v0.8.0-alpha.17 tag yet. This is the wedged dogfood state.
+        // Last tag alpha.16, fsproj alpha.17, no alpha.17 tag.
         File.WriteAllText(
             tmpFile,
             "<Project><PropertyGroup><Version>0.8.0-alpha.17</Version></PropertyGroup></Project>"
@@ -3635,12 +3448,9 @@ let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
-            // Latest tag is alpha.16
             | "jj", a when a.Contains("tag list") && a.Contains("\"glob:core-v") -> Success "core-v0.8.0-alpha.16"
-            // No tag yet at the fsproj's alpha.17 version
             | "jj", "tag list core-v0.8.0-alpha.17" -> Success ""
             | "git", "tag -l core-v0.8.0-alpha.17" -> Success ""
-            // Resume re-pushes main (idempotent), then tags + pushes
             | "jj", "git push" -> Success ""
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", "git export" -> Success ""
@@ -3660,12 +3470,11 @@ let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that
               CiTimeout = None
               RootDir = "" }
 
-        // Auto mode with previous API unreadable: the normal path would abort
-        // (CannotDetermine) — but resume must short-circuit before that.
+        // The previous API is unreadable: resume must short-circuit before the diff.
         let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
-        // Resumed: tagged at the fsproj version and pushed.
+
         test
             <@
                 calls
@@ -3673,10 +3482,8 @@ let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that
             @>
 
         test <@ calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin")) @>
-        // Did NOT re-bump: no commit, no bookmark advance.
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("commit"))) @>
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("bookmark set"))) @>
-        // fsproj version untouched.
         test <@ File.ReadAllText(tmpFile).Contains("<Version>0.8.0-alpha.17</Version>") @>
     finally
         File.Delete(tmpFile)
@@ -3696,7 +3503,6 @@ let ``release - Auto dry-run reports the resume plan instead of 'No packages to 
             | "jj", a when a.Contains("tag list") && a.Contains("\"glob:core-v") -> Success "core-v0.8.0-alpha.16"
             | "jj", "tag list core-v0.8.0-alpha.17" -> Success ""
             | "git", "tag -l core-v0.8.0-alpha.17" -> Success ""
-            // Auto dry-run still builds (needsBuild) before deciding.
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
@@ -3719,7 +3525,6 @@ let ``release - Auto dry-run reports the resume plan instead of 'No packages to 
         test <@ result = 0 @>
         test <@ not (output.Contains("No packages to release")) @>
         test <@ output.Contains("FsHotWatch: resuming in-progress release -> tag core-v0.8.0-alpha.17") @>
-        // Dry-run does nothing destructive.
         test <@ File.ReadAllText(tmpFile).Contains("<Version>0.8.0-alpha.17</Version>") @>
     finally
         File.Delete(tmpFile)
@@ -3729,7 +3534,6 @@ let ``release - Auto with fsproj equal to last tag has nothing to do (not a resu
     let tmpFile = Path.GetTempFileName()
 
     try
-        // Fully released: fsproj == latest tag. Not ahead => not in-progress.
         File.WriteAllText(
             tmpFile,
             "<Project><PropertyGroup><Version>0.8.0-alpha.16</Version></PropertyGroup></Project>"
@@ -3749,7 +3553,6 @@ let ``release - Auto with fsproj equal to last tag has nothing to do (not a resu
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "jj", a when a.Contains("tag list") && a.Contains("\"glob:core-v") -> Success "core-v0.8.0-alpha.16"
-            // No changes since the latest tag => normal "no changes" skip.
             | "jj", a when a.Contains("--from core-v0.8.0-alpha.16") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
@@ -3771,35 +3574,25 @@ let ``release - Auto with fsproj equal to last tag has nothing to do (not a resu
 
         test <@ result = 0 @>
         test <@ output.Contains("No packages to release") @>
-        // Nothing tagged or pushed.
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
         test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
     finally
         File.Delete(tmpFile)
 
-/// The exact wedged shape observed in Falco.UnionRoutes: tag `v0.3.4` created
-/// LOCALLY, never pushed, package 0.3.4 never published, fsproj still says 0.3.4,
-/// and — because the tag already sits at HEAD — no source changes can ever appear
-/// "since" it. A plain "no changes since v0.3.4" skip wedges that forever.
-///
-/// A tag is a promise to publish, not the publication. With the newest tag's
-/// package definitely `NotOnFeed` the release is UNFINISHED, so it must resume and
-/// finish THAT SAME version, in place: the existing tag is left exactly where it
-/// is (not deleted, not re-created), the version is not re-bumped to 0.3.5, and
-/// the changelog is not re-rolled.
+/// A local tag at HEAD that was never pushed or published: no changes can appear
+/// "since" it. With the package `NotOnFeed` the release resumes that same version,
+/// leaving the tag in place and the version and changelog as they are.
 let private orphanTagFakeRun (tmpFile: string) =
     passingCiRun
         [ ("git", "tag -l \"v*\"", Success "v0.3.2\nv0.3.3\nv0.3.4")
-          // No source changes since the newest tag — it already points at HEAD.
           ("jj",
            "diff --from v0.3.4 --to @ --summary \"glob:"
            + Path.GetDirectoryName(tmpFile)
            + "/**\"",
            Success "")
-          // The local tag EXISTS. Recovery must cope with that, not require its deletion.
           ("jj", "tag list v0.3.4", Success "v0.3.4") ]
 
-/// The single-package config for the wedged-shape tests above.
+/// The single-package config for the tests above.
 let private orphanTagConfig (tmpFile: string) =
     { Packages =
         [ { Name = "Falco.UnionRoutes"
@@ -3813,14 +3606,8 @@ let private orphanTagConfig (tmpFile: string) =
       CiTimeout = None
       RootDir = "" }
 
-/// Like `runRelease`, but drives the FEED seam — the authority for "is this
-/// version actually published", and so for whether a tag is an orphan.
-///
-/// The API-extraction seam is deliberately left at its hostile default
-/// (`noPreviousApi`, a `FetchError`): the orphan decision must come from the feed
-/// alone. A test that passes with an unreadable previous API proves the decision
-/// never routes through the API extractor — which is exactly what a `PackAsTool`
-/// package gets in production (NU1212 -> FetchError).
+/// Like `runRelease`, but drives the feed seam. The previous API stays unreadable,
+/// so the orphan decision can only come from the feed.
 let private runReleaseWithFeed run config checkFeedPresence =
     seedTmpChangelog ()
 
@@ -3848,10 +3635,8 @@ let private runReleaseWithFeed run config checkFeedPresence =
           Check = false
           Canary = noCanary }
 
-/// A plain library, and a `PackAsTool` CLI. Every orphan-recovery test below runs
-/// against BOTH: a dotnet tool cannot be API-probed at all (a PackageReference to
-/// one fails NU1212), so before the feed check existed, tools could never be
-/// detected as orphans and stayed wedged forever — the gap this pairing pins.
+/// A library and a `PackAsTool` CLI (whose API cannot be probed): the orphan
+/// tests run against both.
 let private libraryFsproj =
     "<Project><PropertyGroup><Version>0.3.4</Version></PropertyGroup></Project>"
 
@@ -3867,7 +3652,6 @@ let ``release - orphan newest tag with no changes resumes that same version in p
     try
         File.WriteAllText(tmpFile, (if packAsTool then toolFsproj else libraryFsproj))
 
-        // The feed answered definitively: 0.3.4 is NOT there (orphan tag).
         let checkFeedPresence (_pkg: string) (version: string) =
             match version with
             | "0.3.4" -> NotOnFeed
@@ -3881,16 +3665,11 @@ let ``release - orphan newest tag with no changes resumes that same version in p
         let calls = getCalls ()
 
         test <@ result = 0 @>
-        // NOT wedged any more: neither the skip nor the no-op terminal.
         test <@ not (output.Contains("No packages to release")) @>
         test <@ not (output.Contains("no changes since v0.3.4")) @>
-        // Resumed at the SAME version — 0.3.4, not a re-bump to 0.3.5.
         test <@ output.Contains("Falco.UnionRoutes: resuming in-progress release -> tag v0.3.4") @>
-        // The existing local tag is left exactly where it is: never re-created.
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
-        // ...and it IS pushed, which is what triggers the publish that never landed.
         test <@ calls |> List.exists (fun (c, a) -> c = "git" && a = "push origin v0.3.4") @>
-        // No re-bump: no version-bump commit, no changelog re-roll, fsproj untouched.
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("commit"))) @>
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("bookmark set"))) @>
         test <@ File.ReadAllText(tmpFile).Contains("<Version>0.3.4</Version>") @>
@@ -3906,8 +3685,7 @@ let ``release - published newest tag with no changes still skips (no spurious re
     try
         File.WriteAllText(tmpFile, (if packAsTool then toolFsproj else libraryFsproj))
 
-        // The feed HAS 0.3.4: the release really is finished. Must stay a no-op —
-        // releasing on every invocation would be a severe regression.
+        // The feed has 0.3.4: the release is finished, so this stays a no-op.
         let checkFeedPresence (_pkg: string) (_version: string) = OnFeed
 
         let (fakeRun, getCalls) = orphanTagFakeRun tmpFile
@@ -3925,11 +3703,7 @@ let ``release - published newest tag with no changes still skips (no spurious re
     finally
         File.Delete(tmpFile)
 
-/// FAIL-SAFE. Every way the feed can fail to answer arrives here as `FeedUnknown`
-/// (the flavours themselves — timeout, 5xx, auth failure, unreadable body — are
-/// discriminated in `Api.flatContainerPresence` and pinned in ApiTests). None of
-/// them may trigger a republish: guessing "absent" during an outage would
-/// re-publish an already-published version on every single run.
+/// Any feed failure is `FeedUnknown`, and must never trigger a republish.
 [<Theory>]
 [<InlineData(false, "The operation has timed out.")>]
 [<InlineData(true, "The operation has timed out.")>]
@@ -3961,16 +3735,8 @@ let ``release - unreachable feed on the newest tag never triggers a republish`` 
     finally
         File.Delete(tmpFile)
 
-/// REGRESSION, and the reason the orphan decision asks the FEED rather than the
-/// API extractor. The extractor cannot read the API of a package that IS published
-/// but ships no DLL. That is not hypothetical: `RefStamp`, released from this very
-/// repo, is an MSBuild-only package shipping just `build/`, and the extractor
-/// answers `Unreadable` for its published newest version (it used to answer
-/// `AbsentOnFeed`). Driving a REPUBLISH off that signal re-releases a perfectly
-/// published package on every run.
-///
-/// So: API unreadable, feed says "published" -> the feed wins and we skip.
-/// The API extractor must not even be consulted for this decision.
+/// A published package can ship no DLL (e.g. RefStamp), so its API reads as
+/// `Unreadable`. The feed decides, and says published: skip, without asking the extractor.
 [<Fact>]
 let ``release - a published package whose DLL is unreadable is never republished`` () =
     let tmpFile = Path.GetTempFileName()
@@ -3980,7 +3746,6 @@ let ``release - a published package whose DLL is unreadable is never republished
 
         let mutable apiConsulted = false
 
-        // Exactly what the real extractor returns for a published, DLL-less package.
         let extractPreviousApi (_pkg: string) (_version: string) =
             apiConsulted <- true
             Unreadable "Falco.UnionRoutes 0.3.4 is in the NuGet cache but ships no Falco.UnionRoutes.dll"
@@ -4006,7 +3771,6 @@ let ``release - a published package whose DLL is unreadable is never republished
                       CiPollIntervalMs = 0
                       CiWait = CiWaitTests.fixedCiWait 0 10
                       TagPush = immediateTagPush
-                      // The feed is the authority, and it says the version IS there.
                       CheckFeedPresence = (fun _ _ -> OnFeed)
                       CheckRestorable = (fun _ _ _ -> OnFeed)
                       WaitForNuGet = false
@@ -4021,10 +3785,8 @@ let ``release - a published package whose DLL is unreadable is never republished
         test <@ result = 0 @>
         test <@ output.Contains("Skipping Falco.UnionRoutes: no changes since v0.3.4") @>
         test <@ output.Contains("No packages to release") @>
-        // Nothing re-released.
         test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
-        // And the misleading signal was never even asked for.
         test <@ not apiConsulted @>
     finally
         File.Delete(tmpFile)
@@ -4034,9 +3796,7 @@ let ``release - orphan newest tag is not resumed when the tree declares a differ
     let tmpFile = Path.GetTempFileName()
 
     try
-        // The tree is NOT what v0.3.4 was cut from — it still says 0.3.3. Resuming
-        // would push the tag and have CI publish a package stamped 0.3.3 under the
-        // 0.3.4 tag, so this must fall through to the skip rather than guess.
+        // The tree still says 0.3.3: resuming would publish 0.3.3 under the 0.3.4 tag.
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.3.3</Version></PropertyGroup></Project>")
 
         let checkFeedPresence (_pkg: string) (_version: string) = NotOnFeed
@@ -4060,7 +3820,6 @@ let ``release - fresh changes still bump normally (not treated as resume)`` () =
     let tmpFile = Path.GetTempFileName()
 
     try
-        // fsproj == latest tag; real source changes since the tag => fresh bump.
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
 
         let (fakeRun, _getCalls) =
@@ -4096,7 +3855,7 @@ let ``release - fresh changes still bump normally (not treated as resume)`` () =
             runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
 
         test <@ result = 0 @>
-        // Addition on v1+ => minor bump => 1.1.0 (fresh bump, not a resume-as-is).
+        // Addition on v1+ => 1.1.0
         test <@ File.ReadAllText(tmpFile).Contains("<Version>1.1.0</Version>") @>
     finally
         File.Delete(tmpFile)
@@ -4107,12 +3866,12 @@ let ``release - multi-package mixed: one mid-release resumes, one fresh bumps`` 
     let tmpFresh = Path.GetTempFileName()
 
     try
-        // LibA: mid-release (ahead of its tag, no tag at fsproj version).
+        // LibA: ahead of its tag, no tag at its version => resume.
         File.WriteAllText(
             tmpResume,
             "<Project><PropertyGroup><Version>0.2.0-alpha.2</Version></PropertyGroup></Project>"
         )
-        // LibB: up-to-date with its tag, but has fresh source changes => fresh bump.
+        // LibB: at its tag, with changes => fresh bump.
         File.WriteAllText(
             tmpFresh,
             "<Project><PropertyGroup><Version>0.5.0-alpha.1</Version></PropertyGroup></Project>"
@@ -4131,14 +3890,11 @@ let ``release - multi-package mixed: one mid-release resumes, one fresh bumps`` 
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
-            // LibA: latest tag alpha.1, fsproj alpha.2, no tag at alpha.2 => resume.
             | "jj", a when a.Contains("tag list") && a.Contains("\"glob:liba-v") -> Success "liba-v0.2.0-alpha.1"
             | "jj", "tag list liba-v0.2.0-alpha.2" -> Success ""
             | "git", "tag -l liba-v0.2.0-alpha.2" -> Success ""
-            // LibB: latest tag == fsproj alpha.1 (not ahead), with changes => fresh bump.
             | "jj", a when a.Contains("tag list") && a.Contains("\"glob:libb-v") -> Success "libb-v0.5.0-alpha.1"
             | "jj", a when a.Contains("--from libb-v0.5.0-alpha.1") -> Success "1 file changed"
-            // tag/commit/push plumbing
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", a when a.StartsWith("commit") -> Success ""
             | "jj", a when a.StartsWith("bookmark set") -> Success ""
@@ -4165,19 +3921,17 @@ let ``release - multi-package mixed: one mid-release resumes, one fresh bumps`` 
               CiTimeout = None
               RootDir = "" }
 
-        // LibB is a pre-release alpha: StartAlpha-style auto bump = bumpPreRelease.
         let result =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
         test <@ result = 0 @>
-        // LibA resumed at alpha.2 (not re-bumped).
+
         test
             <@
                 calls
                 |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move liba-v0.2.0-alpha.2"))
             @>
-        // LibB freshly bumped: StartAlpha on a prior release starts a new alpha
-        // cycle => nextAlphaCycle(0.5.0-alpha.1) = 0.6.0-alpha.1.
+        // nextAlphaCycle(0.5.0-alpha.1) = 0.6.0-alpha.1
         test <@ File.ReadAllText(tmpFresh).Contains("<Version>0.6.0-alpha.1</Version>") @>
 
         test
@@ -4185,18 +3939,15 @@ let ``release - multi-package mixed: one mid-release resumes, one fresh bumps`` 
                 calls
                 |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move libb-v0.6.0-alpha.1"))
             @>
-        // LibA's fsproj was NOT re-bumped (still alpha.2).
+
         test <@ File.ReadAllText(tmpResume).Contains("<Version>0.2.0-alpha.2</Version>") @>
     finally
         File.Delete(tmpResume)
         File.Delete(tmpFresh)
 
-// --- dependency-aware (rebundle) bumps ---
 
-/// Build a temp repo tree: a bundling tool `src/Tool/Tool.fsproj` that
-/// ProjectReferences a library `src/Dep/Dep.fsproj`. The tool's fsproj is the
-/// only package, so `changelogPathsFor` uses the repo-root CHANGELOG. Returns
-/// the absolute path of the tool fsproj.
+/// A temp repo where the tool `src/Tool/Tool.fsproj` references `src/Dep/Dep.fsproj`.
+/// Returns the tool fsproj's absolute path.
 let private writeBundlingRepo (root: string) (toolVersion: string) =
     let toolDir = Path.Combine(root, "src", "Tool")
     let depDir = Path.Combine(root, "src", "Dep")
@@ -4265,9 +4016,7 @@ let ``release - Auto rebundles when only a bundled dependency changed`` () =
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "git", arg when arg.StartsWith("tag -l") -> Success "v1.0.0"
-            // own dir (absolute) — no change
             | "jj", a when a.Contains("--from v1.0.0") && a.Contains(ownSrcDir) -> Success ""
-            // dep dir (repo-relative src/Dep) — changed
             | "jj", a when a.Contains("--from v1.0.0") && a.Contains("src/Dep") -> Success "1 file changed"
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", a when a.StartsWith("commit") -> Success ""
@@ -4293,8 +4042,7 @@ let ``release - Auto rebundles when only a bundled dependency changed`` () =
         let result = runReleaseInRoot fakeRun config Auto
 
         test <@ result = 0 @>
-        // NoChange-style patch bump 1.0.0 -> 1.0.1, despite ExtractPreviousApi failing
-        // (no API diff is performed for a rebundle, so the prior API is never fetched).
+        // Rebundle: patch bump, and the prior API is never fetched.
         let content = File.ReadAllText toolFsproj
         test <@ content.Contains("<Version>1.0.1</Version>") @>
 
@@ -4303,7 +4051,7 @@ let ``release - Auto rebundles when only a bundled dependency changed`` () =
                 calls
                 |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move v1.0.1"))
             @>
-        // CHANGELOG had an empty Unreleased; rebundle auto-inserts the default bullet.
+        // An empty Unreleased gets the default rebundle bullet.
         let changelog = File.ReadAllText(Path.Combine(root, "CHANGELOG.md"))
         test <@ changelog.Contains "- chore: rebuild to bundle updated dependencies" @>
         test <@ changelog.Contains "## 1.0.1 -" @>)
@@ -4326,7 +4074,6 @@ let ``release - Auto skips when neither own nor dependency changed`` () =
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "git", arg when arg.StartsWith("tag -l") -> Success "v1.0.0"
-            // neither own nor dep dir changed
             | "jj", a when a.Contains("--from v1.0.0") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
@@ -4346,7 +4093,6 @@ let ``release - Auto skips when neither own nor dependency changed`` () =
         let result = runReleaseInRoot fakeRun config Auto
 
         test <@ result = 0 @>
-        // No tag, no version bump.
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
         test <@ File.ReadAllText(toolFsproj).Contains("<Version>1.0.0</Version>") @>)
 
@@ -4354,7 +4100,7 @@ let ``release - Auto skips when neither own nor dependency changed`` () =
 let ``release - own change still uses API diff, ignoring dependency`` () =
     withTempDir (fun root ->
         let toolFsproj = writeBundlingRepo root "1.0.0"
-        // Give it real Unreleased content so strict validation passes.
+
         File.WriteAllText(
             Path.Combine(root, "CHANGELOG.md"),
             "# Changelog\n\n## Unreleased\n\n- feat: own work\n\n## 1.0.0 - 2026-01-01\n"
@@ -4382,8 +4128,7 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
             | "git", arg when arg.StartsWith("push origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
-        // Addition in the API => minor bump (proves the API-diff path ran, not a
-        // NoChange-style rebundle which would only bump patch).
+        // Minor, not a rebundle's patch: the API diff ran.
         let oldApi = [ ApiSignature "type Foo" ]
         let currentApi = [ ApiSignature "type Foo"; ApiSignature "  Foo::New(): String" ]
 
@@ -4445,9 +4190,7 @@ let ``release - explicit command rebundles on dependency-only change`` () =
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "git", arg when arg.StartsWith("tag -l") -> Success "v0.1.0-alpha.3"
-            // own dir — no change
             | "jj", a when a.Contains("--from v0.1.0-alpha.3") && a.Contains(ownSrcDir) -> Success ""
-            // dep dir — changed
             | "jj", a when a.Contains("--from v0.1.0-alpha.3") && a.Contains("src/Dep") -> Success "1 file changed"
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", a when a.StartsWith("commit") -> Success ""
@@ -4470,10 +4213,7 @@ let ``release - explicit command rebundles on dependency-only change`` () =
               CiTimeout = None
               RootDir = root }
 
-        // PromoteToBeta requested, but only the bundled dependency changed: the
-        // explicit stage transition still applies (alpha.3 -> beta.1), with no API
-        // diff. The own CHANGELOG has an empty Unreleased; the rebundle bullet is
-        // auto-inserted.
+        // Only the bundled dependency changed, but the explicit alpha -> beta still applies.
         let result = runReleaseInRoot fakeRun config PromoteToBeta
 
         test <@ result = 0 @>
@@ -4518,7 +4258,6 @@ let ``release - dependency-only rebundle skips a reserved explicit version`` () 
                     DllPath = "fake.dll"
                     TagPrefix = "v"
                     FsProjsSharingSameTag = [] } ]
-              // The would-be explicit beta target is reserved => the package is skipped.
               ReservedVersions = Set.ofList [ "0.1.0-beta.1" ]
               PreBuildCmds = []
               PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
@@ -4528,17 +4267,12 @@ let ``release - dependency-only rebundle skips a reserved explicit version`` () 
         let result = runReleaseInRoot fakeRun config PromoteToBeta
 
         test <@ result = 0 @>
-        // No tag, version untouched.
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
         test <@ File.ReadAllText(toolFsproj).Contains("<Version>0.1.0-alpha.3</Version>") @>)
 
-// --- bundled-vs-separately-published dependency boundary ---
 
-/// Build a temp repo where a LIBRARY package `src/Lib/Lib.fsproj` (NOT
-/// PackAsTool) ProjectReferences `src/Core/Core.fsproj`. Core is configured as a
-/// separately-released package (a NuGet-dependency boundary), so Lib does NOT
-/// bundle it. Returns the absolute path of the Lib fsproj. Lib uses a per-dir
-/// CHANGELOG (multi-package repo).
+/// A temp repo where the library `src/Lib/Lib.fsproj` references `src/Core/Core.fsproj`,
+/// which is released separately, so Lib does not bundle it. Returns Lib's fsproj path.
 let private writeLibraryRepo (root: string) (libVersion: string) =
     let libDir = Path.Combine(root, "src", "Lib")
     let coreDir = Path.Combine(root, "src", "Core")
@@ -4546,7 +4280,6 @@ let private writeLibraryRepo (root: string) (libVersion: string) =
     Directory.CreateDirectory(coreDir) |> ignore
     let libFsproj = Path.Combine(libDir, "Lib.fsproj")
 
-    // A plain library (no PackAsTool) that ProjectReferences Core.
     File.WriteAllText(
         libFsproj,
         sprintf
@@ -4581,22 +4314,14 @@ let ``release - library does NOT rebundle when only a separately-published depen
             | "gh", a when a.Contains("run list") ->
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
-            // Both packages have tags. Core itself is unchanged (its own
-            // release is a no-op), so the run only concerns Lib.
             | "git", arg when arg.StartsWith("tag -l") && arg.Contains("lib-v") -> Success "lib-v1.0.0"
             | "git", arg when arg.StartsWith("tag -l") && arg.Contains("core-v") -> Success "core-v2.0.0"
-            // Lib's own dir — no change.
             | "jj", a when a.Contains("--from lib-v1.0.0") && a.Contains(libDir) -> Success ""
-            // Core's own dir vs Core's own tag — no change (Core release no-op).
             | "jj", a when a.Contains("--from core-v2.0.0") -> Success ""
-            // Lib's closure must NOT include Core (separately published). Any
-            // remaining --from lib-v query (i.e. against Core's dir) returning
-            // "changed" would surface a regression as a visible rebundle below.
+            // Lib excludes Core; a Core-dir query answered here would show up as a rebundle.
             | "jj", a when a.Contains("--from lib-v1.0.0") -> Success "1 file changed"
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
-        // Both Lib and Core are configured packages (Core repo-relative so it
-        // matches the predicate). Full run; Core is unchanged so only Lib matters.
         let config =
             { Packages =
                 [ { Name = "Lib"
@@ -4639,16 +4364,13 @@ let ``release - library does NOT rebundle when only a separately-published depen
                   Canary = noCanary }
 
         test <@ result = 0 @>
-        // Lib's closure excludes Core (separately published) => no dep change =>
-        // no rebundle, no tag, version untouched.
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
         test <@ File.ReadAllText(libFsproj).Contains("<Version>1.0.0</Version>") @>)
 
 [<Fact>]
 let ``release - PackAsTool rebundles when a separately-published bundled dependency changed`` () =
     withTempDir (fun root ->
-        // Same shape as the library case, but the package IS PackAsTool, so it
-        // bundles Core even though Core is separately published => rebundle.
+        // A PackAsTool bundles Core even though Core is released separately.
         let cliDir = Path.Combine(root, "src", "Cli")
         let coreDir = Path.Combine(root, "src", "Core")
         Directory.CreateDirectory(cliDir) |> ignore
@@ -4690,9 +4412,7 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "git", arg when arg.StartsWith("tag -l") && arg.Contains("cli-v") -> Success "cli-v1.0.0"
             | "git", arg when arg.StartsWith("tag -l") -> Success ""
-            // Cli's own dir — no change.
             | "jj", a when a.Contains("--from cli-v1.0.0") && a.Contains(cliDir) -> Success ""
-            // Core dir — changed (and IS in Cli's bundled closure).
             | "jj", a when a.Contains("--from cli-v1.0.0") && a.Contains("src/Core") -> Success "1 file changed"
             | "jj", a when a.Contains("--from cli-v1.0.0") -> Success ""
             | "jj", a when a.StartsWith("tag set") -> Success ""
@@ -4745,7 +4465,6 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
                   Canary = noCanary }
 
         test <@ result = 0 @>
-        // PackAsTool bundles Core => Core's change triggers a rebundle patch bump.
         test <@ File.ReadAllText(cliFsproj).Contains("<Version>1.0.1</Version>") @>
 
         test
@@ -4757,8 +4476,7 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
 [<Fact>]
 let ``release - library rebundles when a non-configured helper dependency changed`` () =
     withTempDir (fun root ->
-        // Lib (library) -> Helper (NOT configured => bundled). Helper's change
-        // triggers a rebundle even though Lib is not PackAsTool.
+        // Helper is not a configured package, so Lib bundles it.
         let libDir = Path.Combine(root, "src", "Lib")
         let helperDir = Path.Combine(root, "src", "Helper")
         Directory.CreateDirectory(libDir) |> ignore
@@ -4794,9 +4512,7 @@ let ``release - library rebundles when a non-configured helper dependency change
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "git", arg when arg.StartsWith("tag -l") -> Success "lib-v1.0.0"
-            // Lib's own dir — no change.
             | "jj", a when a.Contains("--from lib-v1.0.0") && a.Contains(libDir) -> Success ""
-            // Helper dir — changed (bundled, non-configured helper).
             | "jj", a when a.Contains("--from lib-v1.0.0") && a.Contains("src/Helper") -> Success "1 file changed"
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", a when a.StartsWith("commit") -> Success ""
@@ -4843,7 +4559,6 @@ let ``release - library rebundles when a non-configured helper dependency change
                   Canary = noCanary }
 
         test <@ result = 0 @>
-        // Helper is bundled (not separately published) => rebundle patch bump.
         test <@ File.ReadAllText(libFsproj).Contains("<Version>1.0.1</Version>") @>
 
         test
@@ -4852,14 +4567,8 @@ let ``release - library rebundles when a non-configured helper dependency change
                 |> List.exists (fun (c, a) -> c = "jj" && a.Contains("tag set --allow-move lib-v1.0.1"))
             @>)
 
-// ---------------------------------------------------------------------------
-// pushMain-before-tagging: if pushing the bump commit fails, no local tag may
-// have been created. A local tag at the bumped version with the commit NOT on
-// the remote is an unrecoverable wedge: resume keys off "no tag at the fsproj
-// version" (`inProgressResumeVersion`), so an orphan local tag makes the resume
-// path believe the release is done while neither the commit nor the tag ever
-// reached the remote.
-// ---------------------------------------------------------------------------
+// If pushing the bump commit fails, no local tag may exist: resume keys off
+// "no tag at the fsproj version".
 
 [<Fact>]
 let ``release - pushes main before creating tags so a push failure leaves no orphan local tag`` () =
@@ -4884,7 +4593,6 @@ let ``release - pushes main before creating tags so a push failure leaves no orp
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", a when a.StartsWith("commit") -> Success ""
             | "jj", a when a.StartsWith("bookmark set") -> Success ""
-            // Pushing the bump commit fails (e.g. remote rejected / network).
             | "jj", "git push" -> Failure("push failed: remote rejected", 1)
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
@@ -4903,7 +4611,6 @@ let ``release - pushes main before creating tags so a push failure leaves no orp
               CiTimeout = None
               RootDir = "" }
 
-        // pushMain uses runOrFail, which throws on failure; the release aborts.
         let threw =
             try
                 runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
@@ -4915,21 +4622,17 @@ let ``release - pushes main before creating tags so a push failure leaves no orp
 
         test <@ threw @>
 
-        // The push of the bump commit was attempted.
         test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push") @>
-        // But because the push failed, NO local tag was created — resume can fire.
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
-        // And tags were certainly not exported/pushed to the remote.
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a = "git export")) @>
         test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
     finally
         File.Delete(tmpFile)
 
-// --- derive the Unreleased changelog from commits + --check ---
 
 let private rs = string (char 0x1e)
 
-/// The exact jj args descriptionsSinceTag issues for tag v1.0.0 over a single dir.
+/// The jj args descriptionsSinceTag issues for v1.0.0 over one dir.
 let private descArgsFor (ownDir: string) =
     sprintf "log -r \"v1.0.0..@\" --no-graph -T \"description ++ \\\"\\x1e\\\"\" \"%s\"" ownDir
 
@@ -4955,8 +4658,8 @@ let private releaseInput run config cmd mode check : ReleaseInput =
       Check = check
       Canary = noCanary }
 
-/// A single-package repo rooted at `rootDir` with `<Version>1.0.0</Version>` and
-/// the given CHANGELOG body. Returns (fsproj, ownDir, changelogPath, config).
+/// A single-package repo at 1.0.0 with the given CHANGELOG body.
+/// Returns (fsproj, ownDir, changelogPath, config).
 let private seedSinglePackageRepo (rootDir: string) (changelogBody: string) =
     let srcDir = Path.Combine(rootDir, "src", "MyLib")
     Directory.CreateDirectory(srcDir) |> ignore
@@ -4986,7 +4689,6 @@ let ``release - derives the Unreleased section from commits when it is empty`` (
         let fsproj, ownDir, changelog, config =
             seedSinglePackageRepo rootDir "# Changelog\n\n## Unreleased\n\n## 1.0.0 - 2026-01-01\n\n- initial\n"
 
-        // feat + fix + a bump-versions noise commit; the noise must be dropped.
         let descOut =
             "feat: shiny new capability"
             + rs
@@ -5005,14 +4707,12 @@ let ``release - derives the Unreleased section from commits when it is empty`` (
 
         test <@ result = 0 @>
         let updated = File.ReadAllText changelog
-        // Derived bullets, feat before fix, noise dropped.
         test <@ updated.Contains "- feat: shiny new capability" @>
         test <@ updated.Contains "- fix: a subtle bug" @>
         test <@ not (updated.Contains "Bump versions") @>
         let featIdx = updated.IndexOf("- feat: shiny new capability")
         let fixIdx = updated.IndexOf("- fix: a subtle bug")
         test <@ featIdx < fixIdx @>
-        // fsproj bumped off 1.0.0.
         test <@ not ((File.ReadAllText fsproj).Contains "<Version>1.0.0</Version>") @>)
 
 [<Fact>]
@@ -5045,7 +4745,6 @@ let ``release - aborts before writes when Unreleased is empty and nothing is der
         let fsproj, ownDir, changelog, config =
             seedSinglePackageRepo rootDir originalChangelog
 
-        // Only bump-versions noise since the tag -> nothing to derive.
         let (fakeRun, _) =
             passingCiRun
                 [ ("git", "tag -l \"v*\"", Success "v1.0.0")
@@ -5055,12 +4754,10 @@ let ``release - aborts before writes when Unreleased is empty and nothing is der
         let result = release (releaseInput fakeRun config StartAlpha PushTags false)
 
         test <@ result = 1 @>
-        // No writes: fsproj and changelog untouched.
         test <@ (File.ReadAllText fsproj).Contains "<Version>1.0.0</Version>" @>
         test <@ File.ReadAllText changelog = originalChangelog @>)
 
-/// fakeRun for `--check`: only the tag lookup, own-change diff, and description
-/// log are exercised (no CI/build — check skips the preconditions entirely).
+/// fakeRun for `--check`: tag lookup, own-change diff and description log only.
 let private checkRun (diffOut: string) (logOut: string) =
     fun (cmd: string) (args: string) ->
         match cmd, args with
@@ -5097,7 +4794,6 @@ let ``release --check passes when the Unreleased entry is hand-authored`` () =
                 rootDir
                 "# Changelog\n\n## Unreleased\n\n- feat: authored\n\n## 1.0.0 - 2026-01-01\n\n- initial\n"
 
-        // Even with no derivable commits, an authored entry passes.
         let run = checkRun "1 file changed" ("Bump versions: MyLib 1.0.0" + rs)
         let result = release (releaseInput run config Auto PushTags true)
         test <@ result = 0 @>)
@@ -5108,7 +4804,6 @@ let ``release --check passes when the changed package has no prior tag`` () =
         let _fsproj, _ownDir, _changelog, config =
             seedSinglePackageRepo rootDir "# Changelog\n\n## Unreleased\n\n## 1.0.0 - 2026-01-01\n\n- initial\n"
 
-        // No tags at all -> nothing to enforce "since".
         let run =
             fun (cmd: string) (args: string) ->
                 match cmd, args with
@@ -5125,16 +4820,11 @@ let ``release --check passes when the package has no own-source changes since it
         let _fsproj, _ownDir, _changelog, config =
             seedSinglePackageRepo rootDir "# Changelog\n\n## Unreleased\n\n## 1.0.0 - 2026-01-01\n\n- initial\n"
 
-        // Own dir unchanged since the tag -> not subject to the changelog gate.
         let run = checkRun "" ""
         let result = release (releaseInput run config Auto PushTags true)
         test <@ result = 0 @>)
 
-// --- --check and promotion agree ------------------------------
-// `--check` used to pass on "authored OR derivable" while promotion copied only
-// the authored block, so releasing SqlHydra.Query.Pgvector 0.1.0-alpha.5 published
-// a changelog without its one consumer-visible change (a PackageReference bump).
-// Both now read one plan, and the check prints what that plan will write.
+// --check and promotion read one plan, so the check prints what promotion writes.
 
 let private fsprojWithRefs (refs: string) =
     sprintf "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup><ItemGroup>%s</ItemGroup></Project>" refs
@@ -5148,7 +4838,7 @@ let private pgvectorRefsNow =
 let private pgvectorBumpBullet =
     "- build(deps): bump SqlHydra.Query from 4.1.0-beta.2 to 4.1.0-beta.3"
 
-/// The dev-tooling / docs commits of that release: all derivable, none authored.
+/// Dev-tooling and docs commits: all derivable, none authored.
 let private pgvectorCommits =
     "chore(deps): bump our dev tools"
     + rs
@@ -5157,9 +4847,8 @@ let private pgvectorCommits =
     + "style: restore the compact dotnet-tools.json layout"
     + rs
 
-/// A single-package repo whose fsproj now carries `refsNow` and carried
-/// `refsAtTag` at v1.0.0, with `commits` since the tag. Returns the run stub
-/// (serves both `--check` and a full release), the changelog path and config.
+/// A single-package repo whose fsproj has `refsNow` (`refsAtTag` at v1.0.0) and
+/// `commits` since the tag. Returns the run stub, the changelog path and config.
 let private seedReleaseWithRefs (rootDir: string) (changelogBody: string) refsAtTag refsNow commits =
     let fsproj, ownDir, changelog, config = seedSinglePackageRepo rootDir changelogBody
     File.WriteAllText(fsproj, fsprojWithRefs refsNow)
@@ -5173,7 +4862,6 @@ let private seedReleaseWithRefs (rootDir: string) (changelogBody: string) refsAt
 
     run, changelog, config
 
-/// Non-blank lines of the first version section below `## Unreleased`.
 let private promotedSection (changelog: string) =
     File.ReadAllLines changelog
     |> Array.skipWhile (fun l -> not (l.StartsWith "## Unreleased"))
@@ -5184,7 +4872,7 @@ let private promotedSection (changelog: string) =
     |> Array.filter (fun l -> l.Trim() <> "")
     |> Array.toList
 
-/// The entries `--check` announced it would ADD to the changelog: its bullet lines.
+/// The bullets `--check` said it would add.
 let private announcedEntries (checkOutput: string) =
     checkOutput.Split('\n')
     |> Array.map (fun l -> l.Trim())
@@ -5208,8 +4896,6 @@ let ``--check and release agree: an authored section plus an unauthored dependen
             withCapturedConsole (fun () -> release (releaseInput run config Auto PushTags true))
 
         test <@ checkExit = 0 @>
-        // The check says what it does NOT certify, rather than implying coverage
-        // of every commit.
         test <@ checkOut.Contains "promoted as written" @>
         test <@ checkOut.Contains "commit summaries are not merged into an authored section" @>
         test <@ announcedEntries checkOut = [ pgvectorBumpBullet ] @>
@@ -5218,14 +4904,12 @@ let ``--check and release agree: an authored section plus an unauthored dependen
         test <@ releaseExit = 0 @>
 
         let section = promotedSection changelog
-        // Promotion delivers exactly the authored entries plus what the check announced.
         test <@ section = authored :: announcedEntries checkOut @>
-        // The build-only SourceLink bump is not a consumer-visible change.
+        // A build-only SourceLink bump is not consumer-visible.
         test <@ not (File.ReadAllText(changelog).Contains "SourceLink") @>
         test <@ not (File.ReadAllText(changelog).Contains "trim thinking-out-loud") @>)
 
-// POSITIVE CONTROL: all authored, no consumer-visible dependency change — the
-// check still passes and the section is promoted exactly as written.
+// Positive control: all authored, promoted exactly as written.
 [<Fact>]
 let ``--check and release agree: an all-authored release promotes unchanged`` () =
     withTempDir (fun rootDir ->
@@ -5265,8 +4949,7 @@ let ``--check and release agree: an empty section is derived from commits and de
         let checkOut, checkExit =
             withCapturedConsole (fun () -> release (releaseInput run config Auto PushTags true))
 
-        // Only version-bump noise in the commits, but the dependency bump is a
-        // derivable, consumer-visible entry, so there is something to promote.
+        // Only version-bump commits, but the dependency bump is still promotable.
         test <@ checkExit = 0 @>
         test <@ announcedEntries checkOut = [ pgvectorBumpBullet ] @>
 
@@ -5297,7 +4980,6 @@ let ``fsprojsForChangelog - a multi-package changelog gets only the fsprojs besi
 
     test <@ fsprojsForChangelog config pkg "src/Alpha.Cli/CHANGELOG.md" = [ "src/Alpha.Cli/Alpha.Cli.fsproj" ] @>
 
-    // A single-package repo's root changelog covers every fsproj of the package.
     let single = { config with Packages = [ pkg ] }
 
     let expected = [ "src/Alpha/Alpha.fsproj"; "src/Alpha.Cli/Alpha.Cli.fsproj" ]
@@ -5318,26 +5000,15 @@ let ``dependencyChangesSinceTag - an fsproj unreadable at the tag or on disk der
               RootDir = rootDir }
 
         let noHistory (_: string) (_: string) = Failure("no such path at tag", 1)
-        // New at this release: no baseline to diff, so nothing is claimed.
         test <@ List.isEmpty (dependencyChangesSinceTag noHistory config "v1.0.0" [ fsproj ]) @>
 
         let atTag (_: string) (_: string) =
             Success(fsprojWithRefs pgvectorRefsAtTag)
-        // Deleted from disk since the tag: likewise nothing.
+
         test
             <@ List.isEmpty (dependencyChangesSinceTag atTag config "v1.0.0" [ Path.Combine(rootDir, "Gone.fsproj") ]) @>)
 
-// =============================================================================
-// A PackAsTool package must still get its CLI grammar diffed. Skipping the API
-// probe (a PackageReference to a tool package fails NU1212) must not also skip
-// the grammar diff, or every CommandTree-consuming CLI we ship — exactly the set
-// with a CLI grammar to break — releases a breaking CLI change as a PATCH.
-//
-// The two concerns are independent: the grammar extractor reads the prior release
-// from the NuGet cache and constructs no probe. This test pins both halves — the
-// grammar drives the bump, AND the API probe is never constructed (the API
-// extractors below throw if touched).
-// =============================================================================
+// A PackAsTool package skips the API probe (NU1212) but still gets its CLI grammar diffed.
 [<Fact>]
 let ``release - PackAsTool grammar break bumps major without constructing an API probe`` () =
     let dir =
@@ -5360,7 +5031,6 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
                 [ ("git", "tag -l \"v*\"", Success "v1.0.0")
                   ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed") ]
 
-        // A renamed top-level verb is a breaking CLI change.
         let previousGrammar = { Roots = [ Leaf("check-api", [], []) ] }
         let currentGrammar = { Roots = [ Leaf("diff-api", [], []) ] }
 
@@ -5384,8 +5054,7 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
                   Command = Auto
                   Mode = PushTags
                   TargetPackages = []
-                  // Constructing an API probe for a PackAsTool package is what raises
-                  // NU1212. Fail loudly if this path is ever revived.
+                  // Constructing an API probe for a PackAsTool package raises NU1212.
                   ExtractPreviousApi =
                     (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package (NU1212)")
                   ExtractCurrentApi =
@@ -5405,8 +5074,6 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
                   Canary = noCanary }
 
         test <@ result = 0 @>
-        // The grammar break must drive a MAJOR bump, not the patch the API diff
-        // alone would give.
         test <@ (File.ReadAllText fsproj).Contains("<Version>2.0.0</Version>") @>
     finally
         try
@@ -5416,11 +5083,7 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
 
 [<Fact>]
 let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative NoChange bump`` () =
-    // No CURRENT grammar => the package is not a CommandTree consumer, so it has no
-    // CLI contract to protect and there is nothing to diff. This must stay non-fatal:
-    // failing closed here would block every non-CLI PackAsTool release on a guard
-    // that does not apply to it. Contrast the test below, where a current grammar
-    // EXISTS but the baseline cannot be read — that one must abort.
+    // No current grammar: not a CommandTree CLI, nothing to diff, so not fatal.
     let dir =
         Path.Combine(Path.GetTempPath(), "fsst-packastool-nogrammar-" + System.Guid.NewGuid().ToString("N"))
 
@@ -5488,12 +5151,7 @@ let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative 
 
 [<Fact>]
 let ``release - PackAsTool CLI aborts when the previous grammar cannot be read`` () =
-    // FAIL CLOSED. The package HAS a CLI grammar — the current build yields one — but
-    // the previous release's is unreadable, which is what a cold NuGet cache looks
-    // like on this path (a PackAsTool package is deliberately not API-probed, so
-    // nothing populates the cache for it). Bumping NoChange would release a
-    // possibly-breaking CLI change as a patch, so this mirrors the non-tool arm's
-    // `BaselineFetchError -> CannotDetermine`: exit 1, fsproj untouched.
+    // A current grammar but no readable baseline (cold cache): refuse to guess, exit 1.
     let dir =
         Path.Combine(Path.GetTempPath(), "fsst-packastool-coldcache-" + System.Guid.NewGuid().ToString("N"))
 
@@ -5539,7 +5197,6 @@ let ``release - PackAsTool CLI aborts when the previous grammar cannot be read``
                   ExtractPreviousApi =
                     (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package")
                   ExtractCurrentApi = (fun _ -> failwith "API probe must not be constructed for a PackAsTool package")
-                  // Cold cache: no previous grammar, but the current build HAS one.
                   ExtractPreviousGrammar = noPreviousGrammar
                   ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
                   CiPollIntervalMs = 0
@@ -5555,7 +5212,6 @@ let ``release - PackAsTool CLI aborts when the previous grammar cannot be read``
                   Canary = noCanary }
 
         test <@ result = 1 @>
-        // Version untouched — refusing to guess must not half-apply a bump.
         test <@ (File.ReadAllText fsproj).Contains("<Version>1.0.0</Version>") @>
     finally
         try
@@ -5563,14 +5219,9 @@ let ``release - PackAsTool CLI aborts when the previous grammar cannot be read``
         with _ ->
             ()
 
-// --- callout order: the structural half of the changelog gate ----------------
-// A merge that keeps both sides of a `## Unreleased` conflict prepends the
-// incoming entries ABOVE the section's callout, which then sinks below them.
-// Nothing about that is a conflict, a duplicate or an empty section, so the
-// emptiness rule cannot see it. These pin the wiring: `--check` fails on it, and
-// it is never suppressed by "derivable from commits".
+// A merge can push the `## Unreleased` callout below new entries; --check fails on
+// that, and derivable commits never suppress it.
 
-/// A package whose changelog lives next to its fsproj (multi-package layout).
 let private calloutPkg (dir: string) (name: string) : PackageConfig =
     { Name = name
       Fsproj = Path.Combine(dir, name, name + ".fsproj")
@@ -5632,8 +5283,6 @@ let ``calloutCheckPaths - multi-package repo also covers the repo-root changelog
 
         test <@ paths |> List.contains (Path.Combine(dir, "Alpha", "CHANGELOG.md")) @>
         test <@ paths |> List.contains (Path.Combine(dir, "Beta", "CHANGELOG.md")) @>
-        // The reader-facing aggregate the tool never promotes, but where the
-        // callout actually lives.
         test <@ paths |> List.contains (Path.Combine(dir, "CHANGELOG.md")) @>)
 
 [<Fact>]
@@ -5665,7 +5314,7 @@ let ``release --check - fails when a package changelog buries its callout`` () =
 
         test <@ runCheck config = 1 @>)
 
-// POSITIVE CONTROL for the wiring: the same document, callout first, passes.
+// Positive control: callout first passes.
 [<Fact>]
 let ``release --check - passes when the callout leads the section`` () =
     withTempDir (fun dir ->
@@ -5684,8 +5333,7 @@ let ``release --check - passes when the callout leads the section`` () =
 [<Fact>]
 let ``release --check - fails when the repo-root aggregate buries its callout`` () =
     withTempDir (fun dir ->
-        // The FsHotWatch shape: per-package changelogs are fine, the root
-        // aggregate — the one a human reads — is the one that got merged.
+        // Per-package changelogs are fine; the root aggregate is the one that got merged.
         writeChangelog dir "Alpha" calloutFirstText
         File.WriteAllText(Path.Combine(dir, "CHANGELOG.md"), calloutBuriedText)
 
@@ -5724,11 +5372,8 @@ let ``calloutOrderProblems - names the package and the buried callout`` () =
                              ) ]
             @>)
 
-// a late-registering run is a green release, end to end
 
-/// `passingCiRun`, except that the tag-run question (`gh run list --branch <tag> ...`)
-/// answers `[]` for the first `emptyRounds` rounds and a queued Release run after.
-/// The commit-CI question (no `--branch`) is untouched.
+/// `passingCiRun`, but the tag-run query answers `[]` for `emptyRounds` rounds, then a queued run.
 let private ciRunWithLateTagRun (emptyRounds: int) =
     let (base', getCalls) = passingCiRun []
     let mutable tagAsks = 0
@@ -5839,13 +5484,10 @@ let ``release - a Release run that never appears within the budget is reported, 
     finally
         File.Delete(tmpFile)
 
-// the NuGet confirmation poll outlasts the index lag
 
 [<Fact>]
 let ``nuGetPollFromEnv - the default budget covers twenty minutes of index lag`` () =
-    // Measured three times on FsHotWatch (2026-09-15/16): the package indexes 6-15
-    // minutes after the Release run finishes. The old 40 x 15s = 10 min gave up inside
-    // that window and printed "Release NOT CONFIRMED" for a release that was fine.
+    // Packages can index 6-15 minutes after the Release run finishes.
     let intervalMs, attempts = nuGetPollFromEnv (fun _ -> None)
     test <@ int64 (attempts - 1) * int64 intervalMs >= 20L * 60L * 1000L @>
 
@@ -5866,8 +5508,7 @@ let ``nuGetPollFromEnv - honours the same overrides as FsHotWatch's barrier`` ()
 
 [<Fact>]
 let ``waitForNuGetTimed - the give-up names the measured wait, not the budget`` () =
-    // 3 attempts 100ms apart spend TWO sleeps: ~200ms. Formatting from the budget
-    // would print 300ms (or, in production, "20 minutes" for a poll that stopped early).
+    // 3 attempts 100ms apart sleep twice: ~200ms, not the 300ms budget.
     let output, (unconfirmed, waited) =
         withCapturedConsole (fun () -> waitForNuGetTimed (fun _ _ -> NotOnFeed) 100 3 [ "PkgA", "1.0.0" ])
 
@@ -5889,9 +5530,7 @@ let ``release - the NuGet give-up says the tags and Release runs are the evidenc
             withCapturedConsole (fun () ->
                 runReleaseWithNuGetWait fakeRun (singlePackage tmpFile) StartAlpha (fun _ _ -> NotOnFeed) 2)
 
-        // Fail-closed: still 2, never 0 ...
         test <@ result = 2 @>
-        // ... but it must not read as a failed publish.
         test <@ output.Contains("Release NOT CONFIRMED") @>
         test <@ output.Contains("stopped waiting after ") @>
         test <@ output.Contains("The tags ARE pushed and each has a Release run") @>
@@ -5910,17 +5549,14 @@ let ``formatElapsed - minutes and seconds under a minute read as an operator exp
 
 [<Fact>]
 let ``pollBudget - N checks spend N-1 sleeps, and a zero-check poll is a zero budget`` () =
-    // The number printed as "up to <budget>" before the NuGet wait. 81 checks 15s apart
-    // is twenty minutes, not 20m15s; a degenerate 0-attempt poll must not go negative.
+    // 81 checks 15s apart is 20m, not 20m15s; 0 attempts must not go negative.
     test <@ pollBudget 15000 81 = System.TimeSpan.FromMinutes 20.0 @>
     test <@ pollBudget 15000 1 = System.TimeSpan.Zero @>
     test <@ pollBudget 15000 0 = System.TimeSpan.Zero @>
 
 [<Fact>]
 let ``a failed publish run still reads as a sentence when GitHub reports no name and no url`` () =
-    // `gh` answers an empty name for a run whose workflow has no `name:`, and an empty
-    // url for a run it could only see in a summary listing. Neither is a reason to print
-    // a dangling " ()" or an unclickable empty parenthesis at the operator.
+    // gh can return an empty run name or url; print neither as " ()".
     let output, result =
         withCapturedConsole (fun () ->
             reportTagConfirmationFailures
@@ -5941,9 +5577,7 @@ let ``a failed publish run still reads as a sentence when GitHub reports no name
 
 [<Fact>]
 let ``release - a preBuildCmd with no arguments runs with an empty argument string`` () =
-    // `cmd.Split(' ', 2)` yields ONE part for a bare command name, so the argument
-    // string has to come from the length check rather than `parts[1]` — indexing it
-    // would throw and take the whole release down before the build.
+    // A bare command name splits into one part.
     let tmpFile = Path.GetTempFileName()
 
     try
@@ -5981,13 +5615,9 @@ let ``release - a preBuildCmd with no arguments runs with an empty argument stri
     finally
         File.Delete(tmpFile)
 
-// --- fsProjsSharingSameTag projects are part of the package ---
 
-/// A repo with one tag (`core-v`) shipping two fsprojs: the library `src/Core`
-/// (primary) and the PackAsTool CLI `src/Cli` (in `fsProjsSharingSameTag`), which
-/// references a helper `src/CliHelper` that only the CLI uses. `src/Unrelated`
-/// belongs to no package's closure. A second package makes the repo multi-package,
-/// so each fsproj has its own changelog. Returns the primary fsproj and the config.
+/// One tag (`core-v`) shipping `src/Core` and the PackAsTool `src/Cli`, which alone
+/// uses `src/CliHelper`; `src/Unrelated` is in no closure. Returns the primary fsproj and config.
 let private writeSharedTagRepo (root: string) =
     let dirOf name = Path.Combine(root, "src", name)
 
@@ -6044,10 +5674,8 @@ let private writeSharedTagRepo (root: string) =
 
     fsproj "Core", config
 
-/// A run for `writeSharedTagRepo` where the only change since `core-v2.0.0` is
-/// under the directory whose path ends with `changedDir`. Every other
-/// `jj diff --from` is answered "no change" explicitly: an unanswered one fails,
-/// and `hasChangesSinceTag` reads a failure as "changed".
+/// A run where the only change since `core-v2.0.0` is under `changedDir`. Every
+/// other `jj diff --from` is answered explicitly: a failure reads as "changed".
 let private sharedTagRun (changedDir: string) =
     let fakeRun, _calls = passingCiRun []
 
@@ -6080,8 +5708,7 @@ let ``packageChangeDirs includes every fsProjsSharingSameTag project and its Pro
 
 [<Fact>]
 let ``release - Auto releases a patch when only a fsProjsSharingSameTag project changed`` () =
-    // The primary library is untouched and its API is unchanged; the fix lives only
-    // in the CLI that ships under the same tag. It must release, as a patch.
+    // Only the CLI sharing the tag changed: it must release, as a patch.
     withTempDir (fun root ->
         let coreFsproj, config = writeSharedTagRepo root
 

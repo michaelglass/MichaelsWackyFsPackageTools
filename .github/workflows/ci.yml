@@ -15,20 +15,14 @@ jobs:
     uses: ./.github/workflows/michaels-wacky-build.yml
     with:
       solution: FSharpOssTooling.slnx
-      # Same SDK feature band as global.json. Branch coverage counts depend on
-      # the F# compiler, which changes per band (10.0.3xx and 10.0.4xx instrument
-      # different branch totals for identical code). Keeping Linux CI and local
-      # macOS on one band keeps both platforms' floors measuring the same thing.
-      # Move both together, and re-measure the floors when you do.
+      # Keep in step with global.json: branch counts differ per SDK band, so
+      # re-measure the coverage floors when you move it.
       dotnet-version: '10.0.4xx'
       test-windows: true
       fantomas-paths: "src/ tests/"
       syncdocs-cmd: "dotnet run --project $GITHUB_WORKSPACE/src/SyncDocs/SyncDocs.fsproj --"
       coverageratchet-cmd: "dotnet run --project $GITHUB_WORKSPACE/src/CoverageRatchet/CoverageRatchet.fsproj --"
-      # RefStamp ships no runtime code (MSBuild-targets-only package); its tests
-      # drive a `dotnet pack` subprocess and instrument nothing in-process, so it
-      # legitimately emits empty coverage. Run its tests, but don't collect
-      # coverage for it — otherwise the empty cobertura fails the summary.
+      # MSBuild-targets-only package: its tests instrument nothing.
       coverage-exclude: RefStamp
     permissions:
       contents: read
