@@ -38,7 +38,17 @@ let ``parseJson with single package`` () =
     test <@ config.Packages[0].Fsproj = "src/MyLib/MyLib.fsproj" @>
     test <@ config.Packages[0].TagPrefix = "v" @>
 
-    test <@ config.Packages[0].DllPath = Path.Combine("src/MyLib", "bin", "Release", "net10.0", "MyLib.dll") @>
+    // Path.Combine keeps the first segment's `/`; the library's directory is normalised.
+    test
+        <@
+            config.Packages[0].DllPath = Path.Combine(
+                Path.GetDirectoryName("src/MyLib/MyLib.fsproj"),
+                "bin",
+                "Release",
+                "net10.0",
+                "MyLib.dll"
+            )
+        @>
 
     test <@ config.Packages[0].FsProjsSharingSameTag |> List.isEmpty @>
     test <@ config.ReservedVersions = Set.empty @>
@@ -920,7 +930,7 @@ let ``deriveDllPathFromContent uses correct output path structure`` () =
 </Project>"""
 
     let result = deriveDllPathFromContent fsprojPath content
-    test <@ result = Path.Combine("/repo/src/MyLib", "bin", "Release", "net10.0", "MyLib.dll") @>
+    test <@ result = Path.Combine(Path.GetDirectoryName(fsprojPath), "bin", "Release", "net10.0", "MyLib.dll") @>
 
 // --- parseProjectReferenceIncludes (pure) ---
 

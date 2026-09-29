@@ -51,6 +51,12 @@ on:
         description: 'Command to run for the Lint step. Empty string uses the default `dotnet fsharplint lint <solution>`. Override to e.g. `dotnet run --project src/MyCli -- analyze --run-once` when hosting analyzers in-process.'
         type: string
         default: ''
+      test-windows:
+        description: >-
+          Also build and test on windows-latest in a separate `test-windows` job
+          (build + tests only; format, lint, docs and coverage stay on Linux).
+        type: boolean
+        default: false
       failure-artifacts:
         description: >-
           Newline-separated glob(s) uploaded as a CI artifact when the job FAILS,
@@ -303,4 +309,41 @@ jobs:
           for proj in $projects; do
             echo "Building example: $proj"
             dotnet build "$proj" --warnaserror
+          done
+
+  # A separate job rather than a matrix on `build`: the Linux-only steps need no OS
+  # guards and the `build` check keeps its name. No coverage: no windows floors.
+  test-windows:
+    if: inputs.test-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.fsproj', '**/*.csproj', '.config/dotnet-tools.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - run: dotnet tool restore
+      - name: Paket restore
+        if: inputs.paket-restore
+        run: dotnet tool run paket restore
+      - run: dotnet restore
+      - name: Pre-build
+        if: inputs.pre-build-cmd != ''
+        shell: bash
+        run: ${{ inputs.pre-build-cmd }}
+      - name: Build
+        run: dotnet build --warnaserror --no-restore
+      - name: Test
+        shell: bash
+        run: |
+          # Windows runners default to pwsh; this loop needs bash.
+          for proj in $(find tests -name '*.Tests.fsproj' | sort); do
+            echo "::group::$proj"
+            dotnet test --project "$proj" --no-build --no-restore ${{ inputs.test-extra-args }}
+            echo "::endgroup::"
           done

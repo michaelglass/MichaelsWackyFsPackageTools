@@ -1,0 +1,3 @@
+# LF everywhere, matching .editorconfig. F# triple-quoted test fixtures take their
+# line endings from the source file, so a CRLF checkout breaks them.
+* text=auto eol=lf

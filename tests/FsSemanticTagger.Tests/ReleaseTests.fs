@@ -1151,21 +1151,6 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
         with _ ->
             ()
 
-/// A throwaway repo dir, removed afterwards.
-let private withReleaseDir (prefix: string) (action: string -> unit) =
-    let dir =
-        Path.Combine(Path.GetTempPath(), prefix + System.Guid.NewGuid().ToString("N"))
-
-    Directory.CreateDirectory(dir) |> ignore
-
-    try
-        action dir
-    finally
-        try
-            Directory.Delete(dir, true)
-        with _ ->
-            ()
-
 /// Auto/PushTags where the public API is byte-identical on both sides, so the API
 /// diff alone would bump a patch: any stronger bump comes from the changelog.
 /// Returns the captured output and the exit code.
@@ -1231,7 +1216,7 @@ let ``release - Auto floors the bump at major when the changelog declares a brea
     // The motivating release: TestPrune.Core 7.0.0 changed a `[<Literal>]`
     // SchemaVersion, which is inlined into consumers and absent from the API dump.
     // The diff says NoChange; the author wrote `feat!:`. It must ship as 8.0.0.
-    withReleaseDir "fsst-declared-breaking-" (fun dir ->
+    withTempDir (fun dir ->
         let fsproj, run, config =
             singlePackageRepo dir "7.0.0" "# Changelog\n\n## Unreleased\n\n- feat!: SchemaVersion 9 -> 10\n"
 
@@ -1245,7 +1230,7 @@ let ``release - Auto floors the bump at major when the changelog declares a brea
 
 [<Fact>]
 let ``release - Auto keeps a declared fix with an unchanged API at a patch, and reports no disagreement`` () =
-    withReleaseDir "fsst-declared-fix-" (fun dir ->
+    withTempDir (fun dir ->
         let fsproj, run, config =
             singlePackageRepo dir "7.0.0" "# Changelog\n\n## Unreleased\n\n- fix: handle a null\n"
 
@@ -1260,7 +1245,7 @@ let ``release - Auto honours a breaking marker in a section derived from commit 
     // An empty `## Unreleased` is promoted from commit summaries, so a `feat!:`
     // commit becomes a `feat!:` entry in the published changelog. The version it is
     // published under must agree with it.
-    withReleaseDir "fsst-declared-derived-" (fun dir ->
+    withTempDir (fun dir ->
         let fsproj, baseRun, config =
             singlePackageRepo dir "1.2.3" "# Changelog\n\n## Unreleased\n\n## 1.2.3 - 2026-01-01\n\n- old\n"
 
@@ -1280,7 +1265,7 @@ let ``release - Auto honours a breaking marker in a section derived from commit 
 let ``release - Auto takes the strongest declaration across every changelog behind one tag`` () =
     // One tag, two fsprojs, two changelogs: the declaration in the SHARED project's
     // changelog counts as much as the main one's.
-    withReleaseDir "fsst-declared-shared-" (fun dir ->
+    withTempDir (fun dir ->
         let coreDir = Path.Combine(dir, "core")
         let cliDir = Path.Combine(dir, "cli")
         Directory.CreateDirectory coreDir |> ignore
@@ -6079,7 +6064,7 @@ let private sharedTagRun (changedDir: string) =
 
 [<Fact>]
 let ``packageChangeDirs includes every fsProjsSharingSameTag project and its ProjectReference closure`` () =
-    withReleaseDir "fsst-shared-dirs-" (fun root ->
+    withTempDir (fun root ->
         let _, config = writeSharedTagRepo root
         let core = config.Packages.Head
         let dirs = packageChangeDirs config core |> List.map (fun d -> d.Replace('\\', '/'))
@@ -6097,7 +6082,7 @@ let ``packageChangeDirs includes every fsProjsSharingSameTag project and its Pro
 let ``release - Auto releases a patch when only a fsProjsSharingSameTag project changed`` () =
     // The primary library is untouched and its API is unchanged; the fix lives only
     // in the CLI that ships under the same tag. It must release, as a patch.
-    withReleaseDir "fsst-shared-only-" (fun root ->
+    withTempDir (fun root ->
         let coreFsproj, config = writeSharedTagRepo root
 
         let output, result =
@@ -6109,7 +6094,7 @@ let ``release - Auto releases a patch when only a fsProjsSharingSameTag project 
 
 [<Fact>]
 let ``release - Auto releases a patch when only a sharing project's bundled reference changed`` () =
-    withReleaseDir "fsst-shared-closure-" (fun root ->
+    withTempDir (fun root ->
         let coreFsproj, config = writeSharedTagRepo root
 
         let output, result =
@@ -6121,7 +6106,7 @@ let ``release - Auto releases a patch when only a sharing project's bundled refe
 
 [<Fact>]
 let ``release - Auto still skips a package when the change is outside every closure behind its tag`` () =
-    withReleaseDir "fsst-shared-unrelated-" (fun root ->
+    withTempDir (fun root ->
         let coreFsproj, config = writeSharedTagRepo root
 
         let output, result =
