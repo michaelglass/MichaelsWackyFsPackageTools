@@ -34,11 +34,13 @@ let configPathForProject (defaultConfigPath: string) (project: string) : string 
 
 /// What the run says about itself; every drafted reason cites it.
 type RunEvidence =
-    { RunId: string
-      HeadSha: string
-      Conclusion: string
-      WorkflowName: string
-      Url: string }
+    {
+        RunId: string
+        HeadSha: string
+        Conclusion: string
+        WorkflowName: string
+        Url: string
+    }
 
 /// Where the floor a file fell below came from.
 type FloorSource =
@@ -69,12 +71,14 @@ type Shortfall =
 
 /// One `coverage-thresholds-<project>.json` from the artifact, judged against its floor file.
 type ProjectProposal =
-    { Project: string
-      ConfigPath: string
-      ConfigFound: bool
-      Platform: Platform
-      FilesMeasured: int
-      Shortfalls: Shortfall list }
+    {
+        Project: string
+        ConfigPath: string
+        ConfigFound: bool
+        Platform: Platform
+        FilesMeasured: int
+        Shortfalls: Shortfall list
+    }
 
 let private pct (value: float) = sprintf "%g%%" value
 
@@ -109,10 +113,12 @@ let private proposeEntries
     let branch = min s.FloorBranch (floor s.Measured.Branch)
 
     let entry =
-        { Line = line
-          Branch = branch
-          Reason = Some(draftReason evidence platform s line branch)
-          Platform = Some platform }
+        {
+            Line = line
+            Branch = branch
+            Reason = Some(draftReason evidence platform s line branch)
+            Platform = Some platform
+        }
 
     if existing |> List.exists (fun e -> e.Platform = Some platform) then
         existing |> List.map (fun e -> if e.Platform = Some platform then entry else e)
@@ -157,21 +163,24 @@ let findShortfalls
                 || certainlyBelow measured.Branch floorBranch
 
             let shortfall =
-                { File = file
-                  Measured = measured
-                  FloorLine = floorLine
-                  FloorBranch = floorBranch
-                  Source = source
-                  PreviousReason = previousReason
-                  Determined = determined
-                  Proposed = [] }
+                {
+                    File = file
+                    Measured = measured
+                    FloorLine = floorLine
+                    FloorBranch = floorBranch
+                    Source = source
+                    PreviousReason = previousReason
+                    Determined = determined
+                    Proposed = []
+                }
 
             if determined then
                 let existing = Map.tryFind file raw.RawOverrides |> Option.defaultValue []
 
                 Some
                     { shortfall with
-                        Proposed = proposeEntries evidence platform existing shortfall }
+                        Proposed = proposeEntries evidence platform existing shortfall
+                    }
             else
                 Some shortfall)
 
@@ -189,12 +198,14 @@ let judgeThresholdFile
     let configPath =
         Path.Combine(configDir, configPathForProject defaultConfigPath project)
 
-    { Project = project
-      ConfigPath = configPath
-      ConfigFound = File.Exists configPath
-      Platform = platform
-      FilesMeasured = results.Count
-      Shortfalls = findShortfalls evidence platform (loadRawConfig configPath) results }
+    {
+        Project = project
+        ConfigPath = configPath
+        ConfigFound = File.Exists configPath
+        Platform = platform
+        FilesMeasured = results.Count
+        Shortfalls = findShortfalls evidence platform (loadRawConfig configPath) results
+    }
 
 let private describeSource (source: FloorSource) (platform: Platform) =
     match source with
@@ -204,30 +215,36 @@ let private describeSource (source: FloorSource) (platform: Platform) =
 
 let private renderEntry (p: ProjectProposal) (s: Shortfall) =
     if s.Determined then
-        [ sprintf "Proposed `overrides` entry in %s:" (Path.GetFileName p.ConfigPath)
-          ""
-          "```json"
-          sprintf "\"%s\": %s" s.File (overrideEntriesToJson s.Proposed)
-          "```" ]
+        [
+            sprintf "Proposed `overrides` entry in %s:" (Path.GetFileName p.ConfigPath)
+            ""
+            "```json"
+            sprintf "\"%s\": %s" s.File (overrideEntriesToJson s.Proposed)
+            "```"
+        ]
     else
-        [ "UNDETERMINED: the artifact rounds down to whole percentages, so it cannot tell"
-          "whether this file cleared its fractional floor. No entry drafted; measure it"
-          "on that platform or re-run CI before changing this floor." ]
+        [
+            "UNDETERMINED: the artifact rounds down to whole percentages, so it cannot tell"
+            "whether this file cleared its fractional floor. No entry drafted; measure it"
+            "on that platform or re-run CI before changing this floor."
+        ]
 
 let private renderShortfall (p: ProjectProposal) (s: Shortfall) =
-    [ sprintf "### %s" s.File
-      ""
-      sprintf "- measured: line %s, branch %s" (pct s.Measured.Line) (pct s.Measured.Branch)
-      sprintf
-          "- %s floor: line %s, branch %s (%s)"
-          (Platform.toString p.Platform)
-          (pct s.FloorLine)
-          (pct s.FloorBranch)
-          (describeSource s.Source p.Platform)
-      match s.PreviousReason with
-      | Some r -> sprintf "- reason it replaces: %s" r
-      | None -> ()
-      "" ]
+    [
+        sprintf "### %s" s.File
+        ""
+        sprintf "- measured: line %s, branch %s" (pct s.Measured.Line) (pct s.Measured.Branch)
+        sprintf
+            "- %s floor: line %s, branch %s (%s)"
+            (Platform.toString p.Platform)
+            (pct s.FloorLine)
+            (pct s.FloorBranch)
+            (describeSource s.Source p.Platform)
+        match s.PreviousReason with
+        | Some r -> sprintf "- reason it replaces: %s" r
+        | None -> ()
+        ""
+    ]
     @ renderEntry p s
     @ [ "" ]
 
@@ -238,8 +255,10 @@ let private renderProject (p: ProjectProposal) =
         if p.ConfigFound then
             []
         else
-            [ sprintf "%s was not found, so every file is judged against the 100%%/100%% default." configName
-              "" ]
+            [
+                sprintf "%s was not found, so every file is judged against the 100%%/100%% default." configName
+                ""
+            ]
 
     let header =
         sprintf
@@ -283,25 +302,29 @@ let renderProposal (evidence: RunEvidence) (projects: ProjectProposal list) : st
                 undetermined
 
     let preamble =
-        [ sprintf "# Coverage floor proposal from CI run %s" evidence.RunId
-          ""
-          sprintf "- run: %s" evidence.Url
-          sprintf "- workflow: %s (%s)" evidence.WorkflowName evidence.Conclusion
-          sprintf "- commit: %s" evidence.HeadSha
-          ""
-          summary
-          "" ]
+        [
+            sprintf "# Coverage floor proposal from CI run %s" evidence.RunId
+            ""
+            sprintf "- run: %s" evidence.Url
+            sprintf "- workflow: %s (%s)" evidence.WorkflowName evidence.Conclusion
+            sprintf "- commit: %s" evidence.HeadSha
+            ""
+            summary
+            ""
+        ]
 
     let policy =
         if total = 0 then
             []
         else
-            [ "PROPOSAL ONLY: no floor file was changed and nothing was pushed."
-              ""
-              "Before applying an entry, prefer a test that closes the gap. A floor lowered for a"
-              "gap only one platform sees stays an explained exception: extend its reason with why"
-              "the gap exists before committing it."
-              "" ]
+            [
+                "PROPOSAL ONLY: no floor file was changed and nothing was pushed."
+                ""
+                "Before applying an entry, prefer a test that closes the gap. A floor lowered for a"
+                "gap only one platform sees stays an explained exception: extend its reason with why"
+                "the gap exists before committing it."
+                ""
+            ]
 
     preamble @ (projects |> List.collect renderProject) @ policy
     |> String.concat "\n"
@@ -315,11 +338,13 @@ let parseRunEvidence (runId: string) (json: string) : RunEvidence =
         | :? JsonValue as v when v.GetValueKind() = JsonValueKind.String -> v.GetValue<string>()
         | _ -> ""
 
-    { RunId = runId
-      HeadSha = str "headSha"
-      Conclusion = str "conclusion"
-      WorkflowName = str "workflowName"
-      Url = str "url" }
+    {
+        RunId = runId
+        HeadSha = str "headSha"
+        Conclusion = str "conclusion"
+        WorkflowName = str "workflowName"
+        Url = str "url"
+    }
 
 let private isFloorFile (configPaths: string list) (outputPath: string) =
     let full = Path.GetFullPath outputPath

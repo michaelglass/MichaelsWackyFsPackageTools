@@ -13,12 +13,14 @@ open CoverageRatchet.Merge
 let defaultConfigPath = "coverage-ratchet.json"
 
 type MergeArgs =
-    { [<CmdArg("Cobertura XML from the prior full run")>]
-      Baseline: string
-      [<CmdArg("Cobertura XML from the current (possibly partial) run")>]
-      Partial: string
-      [<CmdArg("Where to write the merged Cobertura XML")>]
-      Output: string }
+    {
+        [<CmdArg("Cobertura XML from the prior full run")>]
+        Baseline: string
+        [<CmdArg("Cobertura XML from the current (possibly partial) run")>]
+        Partial: string
+        [<CmdArg("Where to write the merged Cobertura XML")>]
+        Output: string
+    }
 
 type Command =
     | [<Cmd("Tighten thresholds to match current coverage (default)");
@@ -86,10 +88,12 @@ let private reportCountFailures (configPath: string) (failed: CountResult list) 
 
     for r in failed do
         let parts =
-            [ if not (CountResult.linesPassed r) then
-                  formatCountShortfall "covered lines" r.File.LinesCovered r.Floor.CoveredLines
-              if not (CountResult.branchesPassed r) then
-                  formatCountShortfall "covered branches" r.File.BranchesCovered r.Floor.CoveredBranches ]
+            [
+                if not (CountResult.linesPassed r) then
+                    formatCountShortfall "covered lines" r.File.LinesCovered r.Floor.CoveredLines
+                if not (CountResult.branchesPassed r) then
+                    formatCountShortfall "covered branches" r.File.BranchesCovered r.Floor.CoveredBranches
+            ]
 
         printfn "  FAIL %s: %s" r.File.FileName (String.concat ", " parts)
 
@@ -123,10 +127,12 @@ let private reportUnmeasuredFloors (configPath: string) (unmeasured: UnmeasuredF
 
         for u in unmeasured do
             let kinds =
-                [ if u.HasPercentageFloor then
-                      "percentage"
-                  if u.HasCountFloor then
-                      "count" ]
+                [
+                    if u.HasPercentageFloor then
+                        "percentage"
+                    if u.HasCountFloor then
+                        "count"
+                ]
                 |> String.concat " + "
 
             printfn "  MISSING %s (%s floor)" u.File kinds
@@ -693,9 +699,11 @@ let runScoped
     | Gaps _
     | LoosenFromCi _
     | ProposeFromCi _ when not (List.isEmpty fileScope) -> Error "--file applies to baseline-lines only"
-    | Merge { Baseline = baseline
-              Partial = partialFile
-              Output = output } ->
+    | Merge {
+                Baseline = baseline
+                Partial = partialFile
+                Output = output
+            } ->
         Merge.mergeFiles baseline partialFile output
         printfn "merged %s + %s -> %s" baseline partialFile output
         Ok 0

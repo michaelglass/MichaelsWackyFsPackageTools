@@ -12,9 +12,11 @@ type PairOutcome =
     | SourceMissing of package: string * path: string
 
 type PairSummary =
-    { Compared: int
-      Total: int
-      Failed: bool }
+    {
+        Compared: int
+        Total: int
+        Failed: bool
+    }
 
 let summarizePairs (outcomes: PairOutcome list) : PairSummary =
     outcomes
@@ -25,20 +27,25 @@ let summarizePairs (outcomes: PairOutcome list) : PairSummary =
             | Compared Updated ->
                 { acc with
                     Compared = acc.Compared + 1
-                    Total = acc.Total + 1 }
+                    Total = acc.Total + 1
+                }
             | Compared OutOfSync ->
                 { acc with
                     Compared = acc.Compared + 1
                     Total = acc.Total + 1
-                    Failed = true }
+                    Failed = true
+                }
             | TargetMissing _
             | SourceMissing _ ->
                 { acc with
                     Total = acc.Total + 1
-                    Failed = true })
-        { Compared = 0
-          Total = 0
-          Failed = false }
+                    Failed = true
+                })
+        {
+            Compared = 0
+            Total = 0
+            Failed = false
+        }
 
 /// The line printed for an outcome that could not be compared; compared pairs
 /// are reported inline as they are processed.

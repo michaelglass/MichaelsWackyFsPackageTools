@@ -16,18 +16,24 @@ open Tests.Common.TestHelpers
 
 /// No machine-local canary config, and a host that must never be reached.
 let private noCanary: ConsumerCanary.Settings =
-    { ConfigPath = Path.Combine(Path.GetTempPath(), "no-such-fssemantictagger.json")
-      Skip = false
-      LogDir = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-logs")
-      PackagesCache = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-cache")
-      Ops =
-        { RunIn = fun _ cmd _ -> failwithf "unexpected canary process: %s" cmd
-          RunGate = fun _ command _ _ -> failwithf "unexpected canary gate: %s" command } }
+    {
+        ConfigPath = Path.Combine(Path.GetTempPath(), "no-such-fssemantictagger.json")
+        Skip = false
+        LogDir = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-logs")
+        PackagesCache = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-cache")
+        Ops =
+            {
+                RunIn = fun _ cmd _ -> failwithf "unexpected canary process: %s" cmd
+                RunGate = fun _ command _ _ -> failwithf "unexpected canary gate: %s" command
+            }
+    }
 
 type private Repo =
-    { Root: string
-      Config: ToolConfig
-      Timeline: ResizeArray<string> }
+    {
+        Root: string
+        Config: ToolConfig
+        Timeline: ResizeArray<string>
+    }
 
 /// Write one package (fsproj at 0.0.0 referencing `refs`, plus a changelog with an
 /// Unreleased entry) under `root/src/<name>`.
@@ -51,12 +57,14 @@ let private writePackageWith (packAsTool: bool) (root: string) (name: string) (r
 
     File.WriteAllText(Path.Combine(dir, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n- feat: a change\n")
 
-    { Name = name
-      // Absolute: the release reads and rewrites `Fsproj` as given, not against RootDir.
-      Fsproj = Path.Combine(dir, name + ".fsproj")
-      DllPath = Path.Combine(dir, "bin", name + ".dll")
-      TagPrefix = name.ToLowerInvariant() + "-v"
-      FsProjsSharingSameTag = [] }
+    {
+        Name = name
+        // Absolute: the release reads and rewrites `Fsproj` as given, not against RootDir.
+        Fsproj = Path.Combine(dir, name + ".fsproj")
+        DllPath = Path.Combine(dir, "bin", name + ".dll")
+        TagPrefix = name.ToLowerInvariant() + "-v"
+        FsProjsSharingSameTag = []
+    }
 
 let private writePackage = writePackageWith false
 
@@ -65,19 +73,23 @@ let private writePackage = writePackageWith false
 let private withRepoOf (tools: string list) (packages: (string * string list) list) (action: Repo -> unit) =
     withTempDir (fun root ->
         let config =
-            { Packages =
-                packages
-                |> List.map (fun (name, refs) -> writePackageWith (List.contains name tools) root name refs)
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = root }
+            {
+                Packages =
+                    packages
+                    |> List.map (fun (name, refs) -> writePackageWith (List.contains name tools) root name refs)
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = root
+            }
 
         action
-            { Root = root
-              Config = config
-              Timeline = ResizeArray() })
+            {
+                Root = root
+                Config = config
+                Timeline = ResizeArray()
+            })
 
 let private withRepo packages action = withRepoOf [] packages action
 
@@ -152,30 +164,34 @@ let private restorable (timeline: ResizeArray<string>) (checksUntilPublished: Ma
         inner id version
 
 let private releaseInputWith (repo: Repo) (rejectedTags: string list) checkFeed checkRestorable waitForNuGet mode =
-    { Run = remote repo.Timeline rejectedTags
-      Config = repo.Config
-      Command = StartAlpha
-      Mode = mode
-      TargetPackages = []
-      ExtractPreviousApi = fun _ _ -> FetchError "not used"
-      ExtractCurrentApi = fun _ -> []
-      ExtractPreviousGrammar = fun _ _ -> None
-      ExtractCurrentGrammar = fun _ -> None
-      CiPollIntervalMs = 0
-      CiWait = CiWaitTests.fixedCiWait 0 10
-      TagPush =
-        { PushAttempts = 1
-          PushRetryDelayMs = 0
-          RunPollIntervalMs = 0
-          RunPollAttempts = 1 }
-      CheckFeedPresence = checkFeed
-      CheckRestorable = checkRestorable
-      WaitForNuGet = waitForNuGet
-      NuGetPollIntervalMs = 0
-      NuGetMaxAttempts = 5
-      Push = false
-      Check = false
-      Canary = noCanary }
+    {
+        Run = remote repo.Timeline rejectedTags
+        Config = repo.Config
+        Command = StartAlpha
+        Mode = mode
+        TargetPackages = []
+        ExtractPreviousApi = fun _ _ -> FetchError "not used"
+        ExtractCurrentApi = fun _ -> []
+        ExtractPreviousGrammar = fun _ _ -> None
+        ExtractCurrentGrammar = fun _ -> None
+        CiPollIntervalMs = 0
+        CiWait = CiWaitTests.fixedCiWait 0 10
+        TagPush =
+            {
+                PushAttempts = 1
+                PushRetryDelayMs = 0
+                RunPollIntervalMs = 0
+                RunPollAttempts = 1
+            }
+        CheckFeedPresence = checkFeed
+        CheckRestorable = checkRestorable
+        WaitForNuGet = waitForNuGet
+        NuGetPollIntervalMs = 0
+        NuGetMaxAttempts = 5
+        Push = false
+        Check = false
+        Canary = noCanary
+    }
 
 /// The common shape: one probe answers both questions, so a test about ordering
 /// alone does not have to script the index and restorability separately.

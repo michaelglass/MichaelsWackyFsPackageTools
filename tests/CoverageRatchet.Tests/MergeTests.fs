@@ -14,22 +14,28 @@ let private xn (s: string) = XName.Get s
 /// Build a minimal Cobertura document. `lines` is a list per class:
 /// (packageName, filename, className, lines=[(num, hits, branchCC option)])
 type LineSpec =
-    { Num: int
-      Hits: int
-      Branch: (int * int) option } // condition-coverage covered/total
+    {
+        Num: int
+        Hits: int
+        Branch: (int * int) option
+    } // condition-coverage covered/total
 
 type ClassSpec =
-    { Package: string
-      Filename: string
-      ClassName: string
-      Lines: LineSpec list }
+    {
+        Package: string
+        Filename: string
+        ClassName: string
+        Lines: LineSpec list
+    }
 
 let line n h = { Num = n; Hits = h; Branch = None }
 
 let branchLine n h c t =
-    { Num = n
-      Hits = h
-      Branch = Some(c, t) }
+    {
+        Num = n
+        Hits = h
+        Branch = Some(c, t)
+    }
 
 let buildCobertura (classes: ClassSpec list) : string =
     let groupedByPkg = classes |> List.groupBy (fun c -> c.Package)
@@ -136,10 +142,14 @@ let ``cold start: mergeIntoBaselines bootstraps baseline from coverage`` () =
 
         let xml =
             buildCobertura
-                [ { Package = "pkg"
-                    Filename = "Foo.fs"
-                    ClassName = "Foo"
-                    Lines = [ line 1 5; line 2 0 ] } ]
+                [
+                    {
+                        Package = "pkg"
+                        Filename = "Foo.fs"
+                        ClassName = "Foo"
+                        Lines = [ line 1 5; line 2 0 ]
+                    }
+                ]
 
         File.WriteAllText(coverage, xml)
         test <@ not (File.Exists baseline) @>
@@ -163,19 +173,27 @@ let ``warm merge preserves baseline hits when partial drops to zero`` () =
         File.WriteAllText(
             baselinePath,
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 10 10; line 20 3 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 10 10; line 20 3 ]
+                    }
+                ]
         )
 
         File.WriteAllText(
             partialPath,
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 10 0; line 20 0 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 10 0; line 20 0 ]
+                    }
+                ]
         )
 
         mergeFiles baselinePath partialPath outPath
@@ -194,19 +212,27 @@ let ``warm merge raises to partial hits when partial has new coverage`` () =
         File.WriteAllText(
             baselinePath,
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 1 0; line 2 0 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 1 0; line 2 0 ]
+                    }
+                ]
         )
 
         File.WriteAllText(
             partialPath,
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 1 5; line 2 7 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 1 5; line 2 7 ]
+                    }
+                ]
         )
 
         mergeFiles baselinePath partialPath outPath
@@ -229,19 +255,27 @@ let ``merge is commutative on line hits`` (aHits: int) (bHits: int) =
         File.WriteAllText(
             aPath,
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 1 aHits; line 2 aHits ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 1 aHits; line 2 aHits ]
+                    }
+                ]
         )
 
         File.WriteAllText(
             bPath,
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 1 bHits; line 2 bHits ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 1 bHits; line 2 bHits ]
+                    }
+                ]
         )
 
         mergeFiles aPath bPath abOut
@@ -260,18 +294,26 @@ let ``monotonic: merged hits >= baseline hits for every baseline line`` () =
 
         // Moderately sized synthetic fixture: 20 files x 25 lines each.
         let baselineClasses =
-            [ for i in 1..20 ->
-                  { Package = sprintf "pkg%d" (i % 3)
-                    Filename = sprintf "File%d.fs" i
-                    ClassName = sprintf "File%d" i
-                    Lines = [ for ln in 1..25 -> line ln ((ln * i) % 9) ] } ]
+            [
+                for i in 1..20 ->
+                    {
+                        Package = sprintf "pkg%d" (i % 3)
+                        Filename = sprintf "File%d.fs" i
+                        ClassName = sprintf "File%d" i
+                        Lines = [ for ln in 1..25 -> line ln ((ln * i) % 9) ]
+                    }
+            ]
 
         let partialClasses =
-            [ for i in 1..20 ->
-                  { Package = sprintf "pkg%d" (i % 3)
-                    Filename = sprintf "File%d.fs" i
-                    ClassName = sprintf "File%d" i
-                    Lines = [ for ln in 1..25 -> line ln ((ln + i) % 7) ] } ]
+            [
+                for i in 1..20 ->
+                    {
+                        Package = sprintf "pkg%d" (i % 3)
+                        Filename = sprintf "File%d.fs" i
+                        ClassName = sprintf "File%d" i
+                        Lines = [ for ln in 1..25 -> line ln ((ln + i) % 7) ]
+                    }
+            ]
 
         File.WriteAllText(baselinePath, buildCobertura baselineClasses)
         File.WriteAllText(partialPath, buildCobertura partialClasses)
@@ -298,23 +340,33 @@ let ``new file in partial appears in merged output`` () =
         File.WriteAllText(
             baselinePath,
             buildCobertura
-                [ { Package = "p"
-                    Filename = "Old.fs"
-                    ClassName = "Old"
-                    Lines = [ line 1 1 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "Old.fs"
+                        ClassName = "Old"
+                        Lines = [ line 1 1 ]
+                    }
+                ]
         )
 
         File.WriteAllText(
             partialPath,
             buildCobertura
-                [ { Package = "p"
-                    Filename = "Old.fs"
-                    ClassName = "Old"
-                    Lines = [ line 1 1 ] }
-                  { Package = "p"
-                    Filename = "Brand/New.fs"
-                    ClassName = "New"
-                    Lines = [ line 1 4; line 2 2 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "Old.fs"
+                        ClassName = "Old"
+                        Lines = [ line 1 1 ]
+                    }
+                    {
+                        Package = "p"
+                        Filename = "Brand/New.fs"
+                        ClassName = "New"
+                        Lines = [ line 1 4; line 2 2 ]
+                    }
+                ]
         )
 
         mergeFiles baselinePath partialPath outPath
@@ -339,23 +391,33 @@ let ``file in baseline but absent from partial persists in merged output`` () =
         File.WriteAllText(
             baselinePath,
             buildCobertura
-                [ { Package = "p"
-                    Filename = "Keep.fs"
-                    ClassName = "Keep"
-                    Lines = [ line 1 3; line 2 4 ] }
-                  { Package = "p"
-                    Filename = "Also.fs"
-                    ClassName = "Also"
-                    Lines = [ line 1 7 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "Keep.fs"
+                        ClassName = "Keep"
+                        Lines = [ line 1 3; line 2 4 ]
+                    }
+                    {
+                        Package = "p"
+                        Filename = "Also.fs"
+                        ClassName = "Also"
+                        Lines = [ line 1 7 ]
+                    }
+                ]
         )
 
         File.WriteAllText(
             partialPath,
             buildCobertura
-                [ { Package = "p"
-                    Filename = "Also.fs"
-                    ClassName = "Also"
-                    Lines = [ line 1 0 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "Also.fs"
+                        ClassName = "Also"
+                        Lines = [ line 1 0 ]
+                    }
+                ]
         )
 
         mergeFiles baselinePath partialPath outPath
@@ -374,23 +436,33 @@ let ``rate recomputation is consistent with merged line counts`` () =
         File.WriteAllText(
             baselinePath,
             buildCobertura
-                [ { Package = "p"
-                    Filename = "A.fs"
-                    ClassName = "A"
-                    Lines = [ line 1 1; line 2 0; line 3 0 ] }
-                  { Package = "p"
-                    Filename = "B.fs"
-                    ClassName = "B"
-                    Lines = [ line 1 1; line 2 1 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "A.fs"
+                        ClassName = "A"
+                        Lines = [ line 1 1; line 2 0; line 3 0 ]
+                    }
+                    {
+                        Package = "p"
+                        Filename = "B.fs"
+                        ClassName = "B"
+                        Lines = [ line 1 1; line 2 1 ]
+                    }
+                ]
         )
 
         File.WriteAllText(
             partialPath,
             buildCobertura
-                [ { Package = "p"
-                    Filename = "A.fs"
-                    ClassName = "A"
-                    Lines = [ line 2 1 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "A.fs"
+                        ClassName = "A"
+                        Lines = [ line 2 1 ]
+                    }
+                ]
         )
 
         mergeFiles baselinePath partialPath outPath
@@ -420,17 +492,25 @@ let ``refreshBaselines overwrites baselines with current coverage`` () =
 
         let old =
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 1 0 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 1 0 ]
+                    }
+                ]
 
         let fresh =
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 1 99 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 1 99 ]
+                    }
+                ]
 
         File.WriteAllText(baseline, old)
         File.WriteAllText(coverage, fresh)
@@ -449,10 +529,14 @@ let ``malformed input raises without corrupting baseline`` () =
 
         let originalBaseline =
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 1 5 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 1 5 ]
+                    }
+                ]
 
         File.WriteAllText(baselinePath, originalBaseline)
         File.WriteAllText(partialPath, "this is not <valid xml")
@@ -471,14 +555,20 @@ let ``idempotency: merge(baseline, baseline) is semantically equal to baseline``
         File.WriteAllText(
             baselinePath,
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 1 1; line 2 0; line 3 4 ] }
-                  { Package = "q"
-                    Filename = "G.fs"
-                    ClassName = "G"
-                    Lines = [ line 10 2 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 1 1; line 2 0; line 3 4 ]
+                    }
+                    {
+                        Package = "q"
+                        Filename = "G.fs"
+                        ClassName = "G"
+                        Lines = [ line 10 2 ]
+                    }
+                ]
         )
 
         mergeFiles baselinePath baselinePath outPath
@@ -500,10 +590,14 @@ let ``mergeIntoBaselines raises on a corrupt baseline`` () =
 
         let healthy =
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 1 1 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 1 1 ]
+                    }
+                ]
 
         File.WriteAllText(Path.Combine(p1, "coverage.cobertura.xml"), healthy)
         File.WriteAllText(Path.Combine(p1, "coverage.baseline.xml"), "not xml at all")
@@ -528,10 +622,14 @@ let ``mergeFiles handles baseline with UTF-8 BOM`` () =
 
         let baselineXml =
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 1 2; line 2 0 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 1 2; line 2 0 ]
+                    }
+                ]
 
         // Write baseline with a UTF-8 BOM (0xEF 0xBB 0xBF) prefix.
         let bom = [| 0xEFuy; 0xBBuy; 0xBFuy |]
@@ -541,10 +639,14 @@ let ``mergeFiles handles baseline with UTF-8 BOM`` () =
         // Partial (no BOM) raises hits on line 1 and introduces line 2 miss.
         let partialXml =
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 1 9; line 2 0 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 1 9; line 2 0 ]
+                    }
+                ]
 
         File.WriteAllText(partialPath, partialXml)
 
@@ -572,20 +674,28 @@ let ``baseline-only class in same package persists after merge`` () =
         File.WriteAllText(
             baselinePath,
             buildCobertura
-                [ { Package = "P"
-                    Filename = "Foo.fs"
-                    ClassName = "Foo"
-                    Lines = [ line 1 3 ] } ]
+                [
+                    {
+                        Package = "P"
+                        Filename = "Foo.fs"
+                        ClassName = "Foo"
+                        Lines = [ line 1 3 ]
+                    }
+                ]
         )
 
         // Partial has a DIFFERENT class Bar.fs in the SAME package P.
         File.WriteAllText(
             partialPath,
             buildCobertura
-                [ { Package = "P"
-                    Filename = "Bar.fs"
-                    ClassName = "Bar"
-                    Lines = [ line 1 7 ] } ]
+                [
+                    {
+                        Package = "P"
+                        Filename = "Bar.fs"
+                        ClassName = "Bar"
+                        Lines = [ line 1 7 ]
+                    }
+                ]
         )
 
         mergeFiles baselinePath partialPath outPath
@@ -640,10 +750,14 @@ let ``empty partial (no packages) leaves baseline data intact`` () =
 
         let baselineXml =
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 1 4; line 2 1 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 1 4; line 2 1 ]
+                    }
+                ]
 
         File.WriteAllText(baselinePath, baselineXml)
 
@@ -671,10 +785,14 @@ let ``mergeIntoBaselines skips baseline-only project (no cobertura.xml)`` () =
 
         let baselineXml =
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 1 42 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 1 42 ]
+                    }
+                ]
 
         let baselinePath = Path.Combine(orphan, "coverage.baseline.xml")
         File.WriteAllText(baselinePath, baselineXml)
@@ -988,19 +1106,27 @@ let ``package in partial but not baseline is copied wholesale`` () =
         File.WriteAllText(
             baselinePath,
             buildCobertura
-                [ { Package = "existing"
-                    Filename = "A.fs"
-                    ClassName = "A"
-                    Lines = [ line 1 1 ] } ]
+                [
+                    {
+                        Package = "existing"
+                        Filename = "A.fs"
+                        ClassName = "A"
+                        Lines = [ line 1 1 ]
+                    }
+                ]
         )
 
         File.WriteAllText(
             partialPath,
             buildCobertura
-                [ { Package = "brandNew"
-                    Filename = "B.fs"
-                    ClassName = "B"
-                    Lines = [ line 1 4 ] } ]
+                [
+                    {
+                        Package = "brandNew"
+                        Filename = "B.fs"
+                        ClassName = "B"
+                        Lines = [ line 1 4 ]
+                    }
+                ]
         )
 
         mergeFiles baselinePath partialPath outPath
@@ -1051,10 +1177,14 @@ let ``baseline missing packages element gains one from partial`` () =
 
         let partialXml =
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 1 3 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 1 3 ]
+                    }
+                ]
 
         File.WriteAllText(baselinePath, baselineXml)
         File.WriteAllText(partialPath, partialXml)
@@ -1097,10 +1227,14 @@ let ``recomputeRates with zero branches reports branch-rate of 1.0`` () =
 
         let xml =
             buildCobertura
-                [ { Package = "p"
-                    Filename = "F.fs"
-                    ClassName = "F"
-                    Lines = [ line 1 1 ] } ]
+                [
+                    {
+                        Package = "p"
+                        Filename = "F.fs"
+                        ClassName = "F"
+                        Lines = [ line 1 1 ]
+                    }
+                ]
 
         File.WriteAllText(baselinePath, xml)
         File.WriteAllText(partialPath, xml)

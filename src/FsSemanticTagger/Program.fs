@@ -12,7 +12,8 @@ type ReleaseFlag =
     | [<CmdFlag(Short = "s", Description = "Skip polling NuGet for the published package(s) after pushing tags")>] SkipNugetWait
     | [<CmdFlag(Description = "Restrict the run to specific package(s) by name (comma-separated)")>] Only of string
     | [<CmdFlag(Description = "If the release commit isn't pushed yet, push it and wait for CI instead of failing fast")>] Push
-    | [<CmdFlag(Description = "Only check, and print, what release would promote into each changed package's changelog, then exit (for CI)")>] Check
+    | [<CmdFlag(Description =
+            "Only check, and print, what release would promote into each changed package's changelog, then exit (for CI)")>] Check
     // An explicit short: the derived `-s` would collide with `--skip-nuget-wait`.
     | [<CmdFlag(Short = "b",
                 Description = "Break-glass: push tags without running the configured consumers' gates on the candidate")>] SkipConsumerCanary
@@ -67,20 +68,24 @@ let initCommand (rootDir: string) : Result<int, string> =
 
                     let tagPrefix = if isMulti then name.ToLowerInvariant() + "-v" else "v"
 
-                    ({ Name = name
-                       Fsproj = relativePath
-                       DllPath = dllPath
-                       TagPrefix = tagPrefix
-                       FsProjsSharingSameTag = [] }
+                    ({
+                        Name = name
+                        Fsproj = relativePath
+                        DllPath = dllPath
+                        TagPrefix = tagPrefix
+                        FsProjsSharingSameTag = []
+                    }
                     : Config.PackageConfig))
 
             let config: Config.ToolConfig =
-                { Packages = packages
-                  ReservedVersions = Set.empty
-                  PreBuildCmds = []
-                  PublishWorkflows = Config.defaultPublishWorkflows
-                  CiTimeout = None
-                  RootDir = rootDir }
+                {
+                    Packages = packages
+                    ReservedVersions = Set.empty
+                    PreBuildCmds = []
+                    PublishWorkflows = Config.defaultPublishWorkflows
+                    CiTimeout = None
+                    RootDir = rootDir
+                }
 
             File.WriteAllText(jsonPath, Config.toJson config)
             printfn "Created semantic-tagger.json with %d package(s):" projects.Length
@@ -125,31 +130,34 @@ let internal runReleaseWith
     | Ok config ->
         Ok(
             Release.release
-                { Run = run
-                  Config = config
-                  Command = releaseCmd
-                  Mode = releaseMode flags
-                  TargetPackages = targetPackages flags
-                  ExtractPreviousApi = extractPreviousApi
-                  ExtractCurrentApi = extractCurrentApi
-                  ExtractPreviousGrammar = extractPreviousGrammar
-                  ExtractCurrentGrammar = extractCurrentGrammar
-                  CiPollIntervalMs = 15000
-                  CiWait =
-                    fun () -> CiWait.size config.CiTimeout (fun () -> Vcs.successfulRunDurations run CiWait.historyRuns)
-                  // Bounded, configurable, and ten minutes by default: see
-                  // `Vcs.tagPushPolicyFromEnv`.
-                  TagPush = Vcs.tagPushPolicyFromEnv envVar
-                  CheckFeedPresence = Api.checkFeedPresence Api.httpGet run
-                  CheckRestorable = Api.checkRestorable Api.httpGet run
-                  WaitForNuGet = not (flags |> List.contains SkipNugetWait)
-                  // Twenty minutes by default, the measured NuGet index lag, and the
-                  // same env overrides as FsHotWatch's barrier.
-                  NuGetPollIntervalMs = fst nuGetPoll
-                  NuGetMaxAttempts = snd nuGetPoll
-                  Push = flags |> List.contains Push
-                  Check = flags |> List.contains Check
-                  Canary = ConsumerCanary.defaultSettings (flags |> List.contains SkipConsumerCanary) cwd }
+                {
+                    Run = run
+                    Config = config
+                    Command = releaseCmd
+                    Mode = releaseMode flags
+                    TargetPackages = targetPackages flags
+                    ExtractPreviousApi = extractPreviousApi
+                    ExtractCurrentApi = extractCurrentApi
+                    ExtractPreviousGrammar = extractPreviousGrammar
+                    ExtractCurrentGrammar = extractCurrentGrammar
+                    CiPollIntervalMs = 15000
+                    CiWait =
+                        fun () ->
+                            CiWait.size config.CiTimeout (fun () -> Vcs.successfulRunDurations run CiWait.historyRuns)
+                    // Bounded, configurable, and ten minutes by default: see
+                    // `Vcs.tagPushPolicyFromEnv`.
+                    TagPush = Vcs.tagPushPolicyFromEnv envVar
+                    CheckFeedPresence = Api.checkFeedPresence Api.httpGet run
+                    CheckRestorable = Api.checkRestorable Api.httpGet run
+                    WaitForNuGet = not (flags |> List.contains SkipNugetWait)
+                    // Twenty minutes by default, the measured NuGet index lag, and the
+                    // same env overrides as FsHotWatch's barrier.
+                    NuGetPollIntervalMs = fst nuGetPoll
+                    NuGetMaxAttempts = snd nuGetPoll
+                    Push = flags |> List.contains Push
+                    Check = flags |> List.contains Check
+                    Canary = ConsumerCanary.defaultSettings (flags |> List.contains SkipConsumerCanary) cwd
+                }
         )
 
 let private runRelease (releaseCmd: Release.ReleaseCommand) (flags: ReleaseFlag list) : Result<int, string> =

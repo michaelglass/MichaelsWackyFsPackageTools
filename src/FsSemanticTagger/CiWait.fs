@@ -50,21 +50,29 @@ let median (durations: TimeSpan list) : TimeSpan option =
 let size (configured: TimeSpan option) (history: unit -> Result<TimeSpan list, string>) : Budget =
     match configured with
     | Some timeout ->
-        { Timeout = timeout
-          Basis = Configured }
+        {
+            Timeout = timeout
+            Basis = Configured
+        }
     | None ->
         match history () with
         | Error reason ->
-            { Timeout = unavailableHistoryTimeout
-              Basis = HistoryUnavailable reason }
+            {
+                Timeout = unavailableHistoryTimeout
+                Basis = HistoryUnavailable reason
+            }
         | Ok durations ->
             match median durations with
             | None ->
-                { Timeout = floorTimeout
-                  Basis = NoHistory }
+                {
+                    Timeout = floorTimeout
+                    Basis = NoHistory
+                }
             | Some middle ->
-                { Timeout = max floorTimeout (TimeSpan.FromTicks(middle.Ticks * 2L))
-                  Basis = FromHistory(middle, durations.Length) }
+                {
+                    Timeout = max floorTimeout (TimeSpan.FromTicks(middle.Ticks * 2L))
+                    Basis = FromHistory(middle, durations.Length)
+                }
 
 /// How many CI checks `intervalMs` apart cover the budget. The poll sleeps
 /// between checks, not after the last one, so it is one more than the sleeps.

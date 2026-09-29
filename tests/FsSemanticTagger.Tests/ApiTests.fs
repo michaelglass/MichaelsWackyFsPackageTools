@@ -21,7 +21,8 @@ let ``formatTypeName handles generic types`` () =
     // Arity stripped; the type and every argument carry assembly-qualified full names.
     test
         <@
-            formatted = "Microsoft.FSharp.Core.FSharpResult<System.Int32 [System.Private.CoreLib], System.String [System.Private.CoreLib]> [FSharp.Core]"
+            formatted =
+                "Microsoft.FSharp.Core.FSharpResult<System.Int32 [System.Private.CoreLib], System.String [System.Private.CoreLib]> [FSharp.Core]"
         @>
 
 [<Fact>]
@@ -31,7 +32,8 @@ let ``formatTypeName handles FSharpFunc`` () =
 
     test
         <@
-            formatted = "Microsoft.FSharp.Core.FSharpFunc<System.Int32 [System.Private.CoreLib], System.String [System.Private.CoreLib]> [FSharp.Core]"
+            formatted =
+                "Microsoft.FSharp.Core.FSharpFunc<System.Int32 [System.Private.CoreLib], System.String [System.Private.CoreLib]> [FSharp.Core]"
         @>
 
 [<Fact>]
@@ -43,7 +45,8 @@ let ``formatTypeName handles arrays`` () =
 let ``formatTypeName handles nested generic arrays`` () =
     test
         <@
-            formatTypeName typeof<Result<int, string>[]> = "Microsoft.FSharp.Core.FSharpResult<System.Int32 [System.Private.CoreLib], System.String [System.Private.CoreLib]> [FSharp.Core][]"
+            formatTypeName typeof<Result<int, string>[]> =
+                "Microsoft.FSharp.Core.FSharpResult<System.Int32 [System.Private.CoreLib], System.String [System.Private.CoreLib]> [FSharp.Core][]"
         @>
 
 [<Fact>]
@@ -215,9 +218,11 @@ let ``compare with only additions and no removals returns Addition`` () =
     let baseline = [ ApiSignature "type Foo" ]
 
     let current =
-        [ ApiSignature "type Foo"
-          ApiSignature "  Foo::Bar(): String"
-          ApiSignature "  Foo::Baz(): Int32" ]
+        [
+            ApiSignature "type Foo"
+            ApiSignature "  Foo::Bar(): String"
+            ApiSignature "  Foo::Baz(): Int32"
+        ]
 
     match compare baseline current with
     | Addition _ -> test <@ (ApiChange.toList (compare baseline current)).Length = 2 @>
@@ -226,9 +231,11 @@ let ``compare with only additions and no removals returns Addition`` () =
 [<Fact>]
 let ``compare with only removals returns Breaking`` () =
     let baseline =
-        [ ApiSignature "type Foo"
-          ApiSignature "  Foo::Bar(): String"
-          ApiSignature "  Foo::Baz(): Int32" ]
+        [
+            ApiSignature "type Foo"
+            ApiSignature "  Foo::Bar(): String"
+            ApiSignature "  Foo::Baz(): Int32"
+        ]
 
     let current = [ ApiSignature "type Foo" ]
 
@@ -241,22 +248,26 @@ let ``compare detects new DU case as breaking change`` () =
     // Adding a case to a discriminated union breaks exhaustive pattern matches.
     // F# compiles DU cases as nested types: ParentType+CaseName
     let baseline =
-        [ ApiSignature "type MyModule.MyUnion"
-          ApiSignature "type MyModule.MyUnion+CaseA"
-          ApiSignature "type MyModule.MyUnion+CaseB"
-          ApiSignature "  MyUnion::get_Tag(): Int32"
-          ApiSignature "  MyUnion+CaseA::.ctor(): Void"
-          ApiSignature "  MyUnion+CaseB::.ctor(String): Void" ]
+        [
+            ApiSignature "type MyModule.MyUnion"
+            ApiSignature "type MyModule.MyUnion+CaseA"
+            ApiSignature "type MyModule.MyUnion+CaseB"
+            ApiSignature "  MyUnion::get_Tag(): Int32"
+            ApiSignature "  MyUnion+CaseA::.ctor(): Void"
+            ApiSignature "  MyUnion+CaseB::.ctor(String): Void"
+        ]
 
     let current =
-        [ ApiSignature "type MyModule.MyUnion"
-          ApiSignature "type MyModule.MyUnion+CaseA"
-          ApiSignature "type MyModule.MyUnion+CaseB"
-          ApiSignature "type MyModule.MyUnion+CaseC"
-          ApiSignature "  MyUnion::get_Tag(): Int32"
-          ApiSignature "  MyUnion+CaseA::.ctor(): Void"
-          ApiSignature "  MyUnion+CaseB::.ctor(String): Void"
-          ApiSignature "  MyUnion+CaseC::.ctor(Int32): Void" ]
+        [
+            ApiSignature "type MyModule.MyUnion"
+            ApiSignature "type MyModule.MyUnion+CaseA"
+            ApiSignature "type MyModule.MyUnion+CaseB"
+            ApiSignature "type MyModule.MyUnion+CaseC"
+            ApiSignature "  MyUnion::get_Tag(): Int32"
+            ApiSignature "  MyUnion+CaseA::.ctor(): Void"
+            ApiSignature "  MyUnion+CaseB::.ctor(String): Void"
+            ApiSignature "  MyUnion+CaseC::.ctor(Int32): Void"
+        ]
 
     match compare baseline current with
     | Breaking _ -> ()
@@ -268,10 +279,12 @@ let ``compare does not flag new nested type as breaking when parent is new`` () 
     let baseline = [ ApiSignature "type MyModule.OtherType" ]
 
     let current =
-        [ ApiSignature "type MyModule.OtherType"
-          ApiSignature "type MyModule.NewUnion"
-          ApiSignature "type MyModule.NewUnion+CaseA"
-          ApiSignature "type MyModule.NewUnion+CaseB" ]
+        [
+            ApiSignature "type MyModule.OtherType"
+            ApiSignature "type MyModule.NewUnion"
+            ApiSignature "type MyModule.NewUnion+CaseA"
+            ApiSignature "type MyModule.NewUnion+CaseB"
+        ]
 
     match compare baseline current with
     | Addition _ -> ()
@@ -318,7 +331,8 @@ let ``downloadToCache returns false when restore fails`` () =
 let ``flatContainerIndexUrl lower-cases the id and targets nuget.org`` () =
     test
         <@
-            flatContainerIndexUrl "FsSemanticTagger" = "https://api.nuget.org/v3-flatcontainer/fssemantictagger/index.json"
+            flatContainerIndexUrl "FsSemanticTagger" =
+                "https://api.nuget.org/v3-flatcontainer/fssemantictagger/index.json"
         @>
 
 [<Fact>]
@@ -455,10 +469,12 @@ let ``flatContainerPresence - transport failures are Unknown, never absence`` ()
     // Timeout, DNS failure, 5xx, auth failure: all arrive as HttpFailed and must
     // NOT be mistaken for "the version isn't published".
     for reason in
-        [ "The operation has timed out."
-          "HTTP 503 for ..."
-          "HTTP 401 for ..."
-          "No such host is known." ] do
+        [
+            "The operation has timed out."
+            "HTTP 503 for ..."
+            "HTTP 401 for ..."
+            "No such host is known."
+        ] do
         let fakeFetch (_url: string) : HttpResult = HttpFailed reason
 
         test
@@ -853,8 +869,9 @@ let ``extractFromCacheRoot reports a cached package with no assembly as unreadab
     try
         test
             <@
-                extractFromCacheRoot cacheRoot "EmptyPkg" "1.0.0" = CachedUnreadable
-                    "EmptyPkg 1.0.0 is in the NuGet cache but ships no EmptyPkg.dll under lib/, tools/ or analyzers/"
+                extractFromCacheRoot cacheRoot "EmptyPkg" "1.0.0" =
+                    CachedUnreadable
+                        "EmptyPkg 1.0.0 is in the NuGet cache but ships no EmptyPkg.dll under lib/, tools/ or analyzers/"
             @>
     finally
         System.IO.Directory.Delete(cacheRoot, true)
@@ -918,20 +935,25 @@ let ``formatTypeName handles multi-dimensional arrays`` () =
 let ``formatTypeName handles generic array combinations`` () =
     test
         <@
-            formatTypeName typeof<System.Collections.Generic.List<string>[]> = "System.Collections.Generic.List<System.String [System.Private.CoreLib]> [System.Private.CoreLib][]"
+            formatTypeName typeof<System.Collections.Generic.List<string>[]> =
+                "System.Collections.Generic.List<System.String [System.Private.CoreLib]> [System.Private.CoreLib][]"
         @>
 
 [<Fact>]
 let ``compare new DU case with no removals is Breaking`` () =
     // Specifically test the hasNewDuCase path with no removals but added nested type
     let baseline =
-        [ ApiSignature "type MyModule.MyUnion"
-          ApiSignature "type MyModule.MyUnion+CaseA" ]
+        [
+            ApiSignature "type MyModule.MyUnion"
+            ApiSignature "type MyModule.MyUnion+CaseA"
+        ]
 
     let current =
-        [ ApiSignature "type MyModule.MyUnion"
-          ApiSignature "type MyModule.MyUnion+CaseA"
-          ApiSignature "type MyModule.MyUnion+CaseB" ]
+        [
+            ApiSignature "type MyModule.MyUnion"
+            ApiSignature "type MyModule.MyUnion+CaseA"
+            ApiSignature "type MyModule.MyUnion+CaseB"
+        ]
 
     match compare baseline current with
     | Breaking _ -> ()
@@ -954,9 +976,11 @@ let ``compare new nested type where parent is also new is Addition`` () =
     let baseline = [ ApiSignature "type MyModule.Other" ]
 
     let current =
-        [ ApiSignature "type MyModule.Other"
-          ApiSignature "type MyModule.NewUnion"
-          ApiSignature "type MyModule.NewUnion+CaseA" ]
+        [
+            ApiSignature "type MyModule.Other"
+            ApiSignature "type MyModule.NewUnion"
+            ApiSignature "type MyModule.NewUnion+CaseA"
+        ]
 
     match compare baseline current with
     | Addition _ -> ()
@@ -1019,13 +1043,17 @@ let ``getAssemblySearchPaths contains runtime directory`` () =
 let ``compare hasNewDuCase with only non-type additions is Addition`` () =
     // When all additions are non-type (methods, properties), hasNewDuCase is false
     let baseline =
-        [ ApiSignature "type MyModule.MyUnion"
-          ApiSignature "type MyModule.MyUnion+CaseA" ]
+        [
+            ApiSignature "type MyModule.MyUnion"
+            ApiSignature "type MyModule.MyUnion+CaseA"
+        ]
 
     let current =
-        [ ApiSignature "type MyModule.MyUnion"
-          ApiSignature "type MyModule.MyUnion+CaseA"
-          ApiSignature "  MyUnion::NewMethod(): Void" ]
+        [
+            ApiSignature "type MyModule.MyUnion"
+            ApiSignature "type MyModule.MyUnion+CaseA"
+            ApiSignature "  MyUnion::NewMethod(): Void"
+        ]
 
     match compare baseline current with
     | Addition _ -> ()
@@ -1035,9 +1063,11 @@ let ``compare hasNewDuCase with only non-type additions is Addition`` () =
 let ``compare with removed and added returns Breaking prioritizing removals`` () =
     // When there are both removals and additions, Breaking uses removals
     let baseline =
-        [ ApiSignature "type Foo"
-          ApiSignature "  Foo::OldMethod(): String"
-          ApiSignature "  Foo::AnotherOld(): Int32" ]
+        [
+            ApiSignature "type Foo"
+            ApiSignature "  Foo::OldMethod(): String"
+            ApiSignature "  Foo::AnotherOld(): Int32"
+        ]
 
     let current = [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
 
@@ -1092,8 +1122,10 @@ let ``compare adding non-nested type with plus sign in module name is Addition``
     let baseline = [ ApiSignature "type OtherModule.Foo" ]
 
     let current =
-        [ ApiSignature "type OtherModule.Foo"
-          ApiSignature "type BrandNew.Namespace+SubType" ]
+        [
+            ApiSignature "type OtherModule.Foo"
+            ApiSignature "type BrandNew.Namespace+SubType"
+        ]
 
     match compare baseline current with
     | Addition _ -> ()

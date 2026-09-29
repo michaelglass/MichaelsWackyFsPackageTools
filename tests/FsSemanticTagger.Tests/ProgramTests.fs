@@ -396,8 +396,8 @@ let ``parse - --skip-consumer-canary and -s keep their own meanings`` () =
 
     test
         <@
-            flagsOf [| "release"; "--skip-nuget-wait"; "--skip-consumer-canary" |] = [ SkipNugetWait
-                                                                                       SkipConsumerCanary ]
+            flagsOf [| "release"; "--skip-nuget-wait"; "--skip-consumer-canary" |] =
+                [ SkipNugetWait; SkipConsumerCanary ]
         @>
 
 [<Fact>]
@@ -604,7 +604,9 @@ let ``envVarFrom - unset and empty are None, anything else is Some`` () =
         <@
             envVarFrom
                 (fun name -> if name = "FSHW_NUGET_PROBE_ATTEMPTS" then "81" else null)
-                "FSHW_NUGET_PROBE_ATTEMPTS" = Some "81"
+                "FSHW_NUGET_PROBE_ATTEMPTS"
+                =
+                Some "81"
         @>
 
 [<Fact>]

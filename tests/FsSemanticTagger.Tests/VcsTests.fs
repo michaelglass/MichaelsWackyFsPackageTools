@@ -148,8 +148,10 @@ let ``tagExists - jj finds tag returns true`` () =
 let ``tagExists - jj fails but git finds tag returns true`` () =
     let run =
         fakeRun
-            [ ("jj", "tag list v1.0.0", Failure("no jj", 1))
-              ("git", "tag -l v1.0.0", Success "v1.0.0") ]
+            [
+                ("jj", "tag list v1.0.0", Failure("no jj", 1))
+                ("git", "tag -l v1.0.0", Success "v1.0.0")
+            ]
 
     test <@ tagExists run "v1.0.0" = true @>
 
@@ -157,8 +159,10 @@ let ``tagExists - jj fails but git finds tag returns true`` () =
 let ``tagExists - neither jj nor git finds tag returns false`` () =
     let run =
         fakeRun
-            [ ("jj", "tag list v1.0.0", Failure("no jj", 1))
-              ("git", "tag -l v1.0.0", Success "") ]
+            [
+                ("jj", "tag list v1.0.0", Failure("no jj", 1))
+                ("git", "tag -l v1.0.0", Success "")
+            ]
 
     test <@ tagExists run "v1.0.0" = false @>
 
@@ -177,8 +181,10 @@ let ``getLatestTag - jj finds latest by version sort`` () =
 let ``getLatestTag - jj whitespace-only falls back to git`` () =
     let run =
         fakeRun
-            [ ("jj", jjTagListArgs "v", Success "  \n  ")
-              ("git", "tag -l \"v*\"", Success "v1.0.0") ]
+            [
+                ("jj", jjTagListArgs "v", Success "  \n  ")
+                ("git", "tag -l \"v*\"", Success "v1.0.0")
+            ]
 
     test <@ getLatestTag run "v" = Some "v1.0.0" @>
 
@@ -186,8 +192,10 @@ let ``getLatestTag - jj whitespace-only falls back to git`` () =
 let ``getLatestTag - jj failure falls back to git`` () =
     let run =
         fakeRun
-            [ ("jj", jjTagListArgs "v", Failure("no jj", 1))
-              ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.2.0\nv1.1.0") ]
+            [
+                ("jj", jjTagListArgs "v", Failure("no jj", 1))
+                ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.2.0\nv1.1.0")
+            ]
 
     test <@ getLatestTag run "v" = Some "v1.2.0" @>
 
@@ -202,8 +210,10 @@ let ``getLatestTag - no tags returns None`` () =
 let ``getLatestTag - both fail returns None`` () =
     let run =
         fakeRun
-            [ ("jj", jjTagListArgs "v", Failure("no jj", 1))
-              ("git", "tag -l \"v*\"", Failure("not a git repo", 1)) ]
+            [
+                ("jj", jjTagListArgs "v", Failure("no jj", 1))
+                ("git", "tag -l \"v*\"", Failure("not a git repo", 1))
+            ]
 
     test <@ getLatestTag run "v" = None @>
 
@@ -349,21 +359,30 @@ let ``commitAndAdvanceMain - commits and moves main bookmark`` () =
 [<Fact>]
 let ``hasChangesSinceTag - returns true when files changed in path`` () =
     let run =
-        fakeRun [ ("jj", "diff --from v1.0.0 --to @ --summary \"glob:src/MyLib/**\"", Success "M src/MyLib/Lib.fs") ]
+        fakeRun
+            [
+                ("jj", "diff --from v1.0.0 --to @ --summary \"glob:src/MyLib/**\"", Success "M src/MyLib/Lib.fs")
+            ]
 
     test <@ hasChangesSinceTag run "v1.0.0" "src/MyLib" = true @>
 
 [<Fact>]
 let ``hasChangesSinceTag - returns false when no files changed in path`` () =
     let run =
-        fakeRun [ ("jj", "diff --from v1.0.0 --to @ --summary \"glob:src/MyLib/**\"", Success "") ]
+        fakeRun
+            [
+                ("jj", "diff --from v1.0.0 --to @ --summary \"glob:src/MyLib/**\"", Success "")
+            ]
 
     test <@ hasChangesSinceTag run "v1.0.0" "src/MyLib" = false @>
 
 [<Fact>]
 let ``hasChangesSinceTag - returns true when jj command fails`` () =
     let run =
-        fakeRun [ ("jj", "diff --from v1.0.0 --to @ --summary \"glob:src/MyLib/**\"", Failure("unknown tag", 1)) ]
+        fakeRun
+            [
+                ("jj", "diff --from v1.0.0 --to @ --summary \"glob:src/MyLib/**\"", Failure("unknown tag", 1))
+            ]
 
     test <@ hasChangesSinceTag run "v1.0.0" "src/MyLib" = true @>
 
@@ -415,8 +434,10 @@ let ``descriptionsSinceTag - falls back to git log when jj fails`` () =
 
     let run =
         fakeRun
-            [ ("jj", jjDescArgs "v1.0.0" [ "src/MyLib" ], Failure("no jj", 1))
-              ("git", "log v1.0.0..HEAD --format=%B%x1e -- \"src/MyLib\"", Success out) ]
+            [
+                ("jj", jjDescArgs "v1.0.0" [ "src/MyLib" ], Failure("no jj", 1))
+                ("git", "log v1.0.0..HEAD --format=%B%x1e -- \"src/MyLib\"", Success out)
+            ]
 
     test <@ descriptionsSinceTag run "v1.0.0" [ "src/MyLib" ] = [ "fix: from git" ] @>
 
@@ -424,8 +445,10 @@ let ``descriptionsSinceTag - falls back to git log when jj fails`` () =
 let ``descriptionsSinceTag - returns empty when neither jj nor git can answer`` () =
     let run =
         fakeRun
-            [ ("jj", jjDescArgs "v1.0.0" [ "src/MyLib" ], Failure("no jj", 1))
-              ("git", "log v1.0.0..HEAD --format=%B%x1e -- \"src/MyLib\"", Failure("no git", 1)) ]
+            [
+                ("jj", jjDescArgs "v1.0.0" [ "src/MyLib" ], Failure("no jj", 1))
+                ("git", "log v1.0.0..HEAD --format=%B%x1e -- \"src/MyLib\"", Failure("no git", 1))
+            ]
 
     test <@ List.isEmpty (descriptionsSinceTag run "v1.0.0" [ "src/MyLib" ]) @>
 
@@ -434,7 +457,10 @@ let ``descriptionsSinceTag - returns empty when neither jj nor git can answer`` 
 [<Fact>]
 let ``fileAtRevision - reads the file as it was at the tag via jj`` () =
     let run =
-        fakeRun [ ("jj", "file show -r \"v1.0.0\" \"src/MyLib/MyLib.fsproj\"", Success "<Project />") ]
+        fakeRun
+            [
+                ("jj", "file show -r \"v1.0.0\" \"src/MyLib/MyLib.fsproj\"", Success "<Project />")
+            ]
 
     test <@ fileAtRevision run "v1.0.0" "src/MyLib/MyLib.fsproj" = Some "<Project />" @>
 
@@ -442,8 +468,10 @@ let ``fileAtRevision - reads the file as it was at the tag via jj`` () =
 let ``fileAtRevision - falls back to git show when jj fails`` () =
     let run =
         fakeRun
-            [ ("jj", "file show -r \"v1.0.0\" \"src/MyLib/MyLib.fsproj\"", Failure("no jj", 1))
-              ("git", "show \"v1.0.0:src/MyLib/MyLib.fsproj\"", Success "<Project />") ]
+            [
+                ("jj", "file show -r \"v1.0.0\" \"src/MyLib/MyLib.fsproj\"", Failure("no jj", 1))
+                ("git", "show \"v1.0.0:src/MyLib/MyLib.fsproj\"", Success "<Project />")
+            ]
 
     test <@ fileAtRevision run "v1.0.0" "src/MyLib/MyLib.fsproj" = Some "<Project />" @>
 
@@ -451,8 +479,10 @@ let ``fileAtRevision - falls back to git show when jj fails`` () =
 let ``fileAtRevision - is None when the file did not exist at the tag or no VCS can answer`` () =
     let run =
         fakeRun
-            [ ("jj", "file show -r \"v1.0.0\" \"src/New/New.fsproj\"", Failure("no such path", 1))
-              ("git", "show \"v1.0.0:src/New/New.fsproj\"", Failure("no such path", 128)) ]
+            [
+                ("jj", "file show -r \"v1.0.0\" \"src/New/New.fsproj\"", Failure("no such path", 1))
+                ("git", "show \"v1.0.0:src/New/New.fsproj\"", Failure("no such path", 128))
+            ]
 
     test <@ fileAtRevision run "v1.0.0" "src/New/New.fsproj" = None @>
 
@@ -469,8 +499,10 @@ let ``getCurrentCommitSha - gets sha from jj`` () =
 let ``getCurrentCommitSha - falls back to git when jj fails`` () =
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Failure("not a jj repo", 1))
-              ("git", "rev-parse HEAD", Success "def456abc") ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Failure("not a jj repo", 1))
+                ("git", "rev-parse HEAD", Success "def456abc")
+            ]
 
     test <@ getCurrentCommitSha run = Some "def456abc" @>
 
@@ -478,8 +510,10 @@ let ``getCurrentCommitSha - falls back to git when jj fails`` () =
 let ``getCurrentCommitSha - returns None when both fail`` () =
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Failure("no jj", 1))
-              ("git", "rev-parse HEAD", Failure("no git", 1)) ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Failure("no jj", 1))
+                ("git", "rev-parse HEAD", Failure("no git", 1))
+            ]
 
     test <@ getCurrentCommitSha run = None @>
 
@@ -494,10 +528,12 @@ let ghCiArgs sha =
 let ``isCiPassing - returns true when all runs succeed`` () =
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh",
-               ghCiArgs "abc123",
-               Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]""") ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+                ("gh",
+                 ghCiArgs "abc123",
+                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]""")
+            ]
 
     test <@ isCiPassing run = true @>
 
@@ -505,10 +541,12 @@ let ``isCiPassing - returns true when all runs succeed`` () =
 let ``isCiPassing - ignores failure in an unrelated workflow`` () =
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh",
-               ghCiArgs "abc123",
-               Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]""") ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+                ("gh",
+                 ghCiArgs "abc123",
+                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]""")
+            ]
 
     test <@ isCiPassing run = true @>
 
@@ -516,8 +554,10 @@ let ``isCiPassing - ignores failure in an unrelated workflow`` () =
 let ``isCiPassing - returns false when no runs exist`` () =
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh", ghCiArgs "abc123", Success "[]") ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+                ("gh", ghCiArgs "abc123", Success "[]")
+            ]
 
     test <@ isCiPassing run = false @>
 
@@ -525,8 +565,10 @@ let ``isCiPassing - returns false when no runs exist`` () =
 let ``isCiPassing - returns false when gh fails`` () =
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh", ghCiArgs "abc123", Failure("gh not installed", 1)) ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+                ("gh", ghCiArgs "abc123", Failure("gh not installed", 1))
+            ]
 
     test <@ isCiPassing run = false @>
 
@@ -534,8 +576,10 @@ let ``isCiPassing - returns false when gh fails`` () =
 let ``isCiPassing - returns false when commit sha unavailable`` () =
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Failure("no jj", 1))
-              ("git", "rev-parse HEAD", Failure("no git", 1)) ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Failure("no jj", 1))
+                ("git", "rev-parse HEAD", Failure("no git", 1))
+            ]
 
     test <@ isCiPassing run = false @>
 
@@ -708,15 +752,17 @@ let ``checkCiStatusForSha - conflicting workflow database identities fail closed
 [<Fact>]
 let ``checkCiStatusForSha - every completed non-success conclusion fails immediately`` () =
     for conclusion in
-        [ "failure"
-          "cancelled"
-          "timed_out"
-          "action_required"
-          "startup_failure"
-          "stale"
-          "skipped"
-          "neutral"
-          "unexpected_future_value" ] do
+        [
+            "failure"
+            "cancelled"
+            "timed_out"
+            "action_required"
+            "startup_failure"
+            "stale"
+            "skipped"
+            "neutral"
+            "unexpected_future_value"
+        ] do
         let json =
             $"[{{\"databaseId\":11,\"attempt\":1,\"createdAt\":\"2026-08-31T12:00:00Z\",\"workflowDatabaseId\":77,\"status\":\"completed\",\"conclusion\":\"%s{conclusion}\",\"name\":\"CI\",\"url\":\"run\"}}]"
 
@@ -763,8 +809,10 @@ let ``getCiStatus - returns status for current commit`` () =
 
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh", ghCiArgs "abc123", Success json) ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+                ("gh", ghCiArgs "abc123", Success json)
+            ]
 
     test <@ getCiStatus run = Passed @>
 
@@ -775,11 +823,13 @@ let ``getCiStatus - falls back to parent when working copy clean and current has
 
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh", ghCiArgs "abc123", Success "[]")
-              ("jj", "diff --summary", Success "")
-              ("jj", "log -r @- --no-graph -T commit_id", Success "def456")
-              ("gh", ghCiArgs "def456", Success json) ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+                ("gh", ghCiArgs "abc123", Success "[]")
+                ("jj", "diff --summary", Success "")
+                ("jj", "log -r @- --no-graph -T commit_id", Success "def456")
+                ("gh", ghCiArgs "def456", Success json)
+            ]
 
     test <@ getCiStatus run = Passed @>
 
@@ -787,8 +837,10 @@ let ``getCiStatus - falls back to parent when working copy clean and current has
 let ``getCiStatus - returns Unknown when no commit sha`` () =
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Failure("no jj", 1))
-              ("git", "rev-parse HEAD", Failure("no git", 1)) ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Failure("no jj", 1))
+                ("git", "rev-parse HEAD", Failure("no git", 1))
+            ]
 
     test <@ getCiStatus run = Unknown @>
 
@@ -799,8 +851,10 @@ let ``getCiStatus - returns InProgress without parent fallback`` () =
 
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh", ghCiArgs "abc123", Success json) ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+                ("gh", ghCiArgs "abc123", Success json)
+            ]
 
     test
         <@
@@ -879,7 +933,10 @@ let ``RunConclusion.ofString skipped and neutral are terminal non-required concl
 [<Fact>]
 let ``hasCoverageRatchet - returns true when tool is listed`` () =
     let run =
-        fakeRun [ ("dotnet", "tool list", Success "coverageratchet    0.8.0-alpha.4    coverageratchet") ]
+        fakeRun
+            [
+                ("dotnet", "tool list", Success "coverageratchet    0.8.0-alpha.4    coverageratchet")
+            ]
 
     test <@ hasCoverageRatchet run = true @>
 
@@ -901,9 +958,11 @@ let ``hasCoverageRatchet - returns false when command fails`` () =
 let ``getCiStatus - NoRuns with dirty working copy does not fall back to parent`` () =
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh", ghCiArgs "abc123", Success "[]")
-              ("jj", "diff --summary", Success "M src/Foo.fs") ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+                ("gh", ghCiArgs "abc123", Success "[]")
+                ("jj", "diff --summary", Success "M src/Foo.fs")
+            ]
 
     test <@ getCiStatus run = NoRuns @>
 
@@ -913,8 +972,10 @@ let ``getCiStatus - NoRuns with dirty working copy does not fall back to parent`
 let ``getCurrentCommitSha - jj returns empty string falls back to git`` () =
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Success "")
-              ("git", "rev-parse HEAD", Success "def456abc") ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Success "")
+                ("git", "rev-parse HEAD", Success "def456abc")
+            ]
 
     test <@ getCurrentCommitSha run = Some "def456abc" @>
 
@@ -922,8 +983,10 @@ let ``getCurrentCommitSha - jj returns empty string falls back to git`` () =
 let ``getCurrentCommitSha - git returns empty string returns None`` () =
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Failure("no jj", 1))
-              ("git", "rev-parse HEAD", Success "") ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Failure("no jj", 1))
+                ("git", "rev-parse HEAD", Success "")
+            ]
 
     test <@ getCurrentCommitSha run = None @>
 
@@ -952,10 +1015,12 @@ let ``checkCiStatusForSha - queued run returns InProgress`` () =
 /// retry count each test already cared about; the run poll is deliberately ONE ask so
 /// these tests keep pinning the push behaviour rather than the poll.
 let private noWaitPolicy (attempts: int) : TagPushPolicy =
-    { PushAttempts = attempts
-      PushRetryDelayMs = 0
-      RunPollIntervalMs = 0
-      RunPollAttempts = 1 }
+    {
+        PushAttempts = attempts
+        PushRetryDelayMs = 0
+        RunPollIntervalMs = 0
+        RunPollAttempts = 1
+    }
 
 /// The publish set every repo this tool releases actually has: one release workflow.
 let private releaseOnly = FsSemanticTagger.Config.defaultPublishWorkflows
@@ -1115,8 +1180,8 @@ let ``the default publish set is the release workflow, by path`` () =
     // A rename there must fail here, not on the next release.
     test
         <@
-            FsSemanticTagger.Config.defaultPublishWorkflows = [ FsSemanticTagger.Config.PublishWorkflow
-                                                                    ".github/workflows/release.yml" ]
+            FsSemanticTagger.Config.defaultPublishWorkflows =
+                [ FsSemanticTagger.Config.PublishWorkflow ".github/workflows/release.yml" ]
         @>
 
 [<Fact>]
@@ -1127,8 +1192,10 @@ let ``waitForRunForRef - a cancelled run of a NON-publishing workflow does not r
     // stub under its own workflow path and is never asked for.
     let run =
         ghRunListByWorkflow
-            [ ".github/workflows/docs.yml", cancelledDocsRun
-              ".github/workflows/release.yml", liveReleaseRun ]
+            [
+                ".github/workflows/docs.yml", cancelledDocsRun
+                ".github/workflows/release.yml", liveReleaseRun
+            ]
 
     test <@ waitForRunForRef run releaseOnly 0 1 "fssemantictagger-v0.14.0-alpha.8" = TagRunPresent @>
 
@@ -1138,13 +1205,17 @@ let ``waitForRunForRef - a cancelled run of a PUBLISHING workflow still refuses,
     // cancelled run, now coming from a workflow in the publish set, is a failure — and
     // the failure says which workflow it was, because that is what the operator reruns.
     let publishes =
-        [ FsSemanticTagger.Config.PublishWorkflow ".github/workflows/release.yml"
-          FsSemanticTagger.Config.PublishWorkflow ".github/workflows/docs.yml" ]
+        [
+            FsSemanticTagger.Config.PublishWorkflow ".github/workflows/release.yml"
+            FsSemanticTagger.Config.PublishWorkflow ".github/workflows/docs.yml"
+        ]
 
     let run =
         ghRunListByWorkflow
-            [ ".github/workflows/docs.yml", cancelledDocsRun
-              ".github/workflows/release.yml", liveReleaseRun ]
+            [
+                ".github/workflows/docs.yml", cancelledDocsRun
+                ".github/workflows/release.yml", liveReleaseRun
+            ]
 
     match waitForRunForRef run publishes 0 1 "fssemantictagger-v0.14.0-alpha.8" with
     | TagRunFailed [ failed ] ->
@@ -1160,8 +1231,10 @@ let ``waitForRunForRef - a tag with runs only from non-publishing workflows is A
     // that triggered nothing in the publish set is a tag with no run at all.
     let run =
         ghRunListByWorkflow
-            [ ".github/workflows/docs.yml", liveReleaseRun
-              ".github/workflows/release.yml", "[]" ]
+            [
+                ".github/workflows/docs.yml", liveReleaseRun
+                ".github/workflows/release.yml", "[]"
+            ]
 
     match waitForRunForRef run releaseOnly 0 2 "v1.0.0" with
     | TagRunAbsent(_, everAnswered) -> test <@ everAnswered @>
@@ -1179,8 +1252,10 @@ let ``runStatesForRef - asks gh about each publish workflow by path and nothing 
         | _ -> Failure("unexpected", 1)
 
     let publishes =
-        [ FsSemanticTagger.Config.PublishWorkflow ".github/workflows/release.yml"
-          FsSemanticTagger.Config.PublishWorkflow ".github/workflows/publish-extra.yml" ]
+        [
+            FsSemanticTagger.Config.PublishWorkflow ".github/workflows/release.yml"
+            FsSemanticTagger.Config.PublishWorkflow ".github/workflows/publish-extra.yml"
+        ]
 
     test <@ runStatesForRef run publishes "v1.0.0" = Some [] @>
     test <@ asked.Count = 2 @>
@@ -1204,8 +1279,10 @@ let ``runStatesForRef - one unanswerable publish workflow makes the whole questi
     // workflow is a partial answer, and a partial answer reported as "GitHub says none"
     // sends the operator to the Actions tab instead of to `gh auth login`.
     let publishes =
-        [ FsSemanticTagger.Config.PublishWorkflow ".github/workflows/release.yml"
-          FsSemanticTagger.Config.PublishWorkflow ".github/workflows/publish-extra.yml" ]
+        [
+            FsSemanticTagger.Config.PublishWorkflow ".github/workflows/release.yml"
+            FsSemanticTagger.Config.PublishWorkflow ".github/workflows/publish-extra.yml"
+        ]
 
     let run = ghRunListByWorkflow [ ".github/workflows/release.yml", "[]" ]
     test <@ runStatesForRef run publishes "v1.0.0" = None @>
@@ -1256,10 +1333,12 @@ let ``pushTagsAndConfirmDetailed - a tag whose run appears on a later question i
         | _ -> Failure("unexpected", 1)
 
     let policy =
-        { PushAttempts = 1
-          PushRetryDelayMs = 0
-          RunPollIntervalMs = 0
-          RunPollAttempts = 5 }
+        {
+            PushAttempts = 1
+            PushRetryDelayMs = 0
+            RunPollIntervalMs = 0
+            RunPollAttempts = 5
+        }
 
     test <@ List.isEmpty (pushTagsAndConfirmDetailed run releaseOnly policy [ "v1.0.0" ]) @>
 
@@ -1534,8 +1613,10 @@ let ``tagExists - jj success but tag not in output returns false`` () =
 let ``tagExists - both jj and git fail returns false`` () =
     let run =
         fakeRun
-            [ ("jj", "tag list v1.0.0", Failure("no jj", 1))
-              ("git", "tag -l v1.0.0", Failure("no git", 1)) ]
+            [
+                ("jj", "tag list v1.0.0", Failure("no jj", 1))
+                ("git", "tag -l v1.0.0", Failure("no git", 1))
+            ]
 
     test <@ tagExists run "v1.0.0" = false @>
 
@@ -1545,10 +1626,12 @@ let ``tagExists - both jj and git fail returns false`` () =
 let ``getCiStatus - NoRuns clean copy but parent sha empty returns NoRuns`` () =
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh", ghCiArgs "abc123", Success "[]")
-              ("jj", "diff --summary", Success "")
-              ("jj", "log -r @- --no-graph -T commit_id", Success "") ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+                ("gh", ghCiArgs "abc123", Success "[]")
+                ("jj", "diff --summary", Success "")
+                ("jj", "log -r @- --no-graph -T commit_id", Success "")
+            ]
 
     test <@ getCiStatus run = NoRuns @>
 
@@ -1558,10 +1641,12 @@ let ``getCiStatus - NoRuns clean copy but parent sha empty returns NoRuns`` () =
 let ``getCiStatus - NoRuns clean copy but parent log fails returns NoRuns`` () =
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh", ghCiArgs "abc123", Success "[]")
-              ("jj", "diff --summary", Success "")
-              ("jj", "log -r @- --no-graph -T commit_id", Failure("no parent", 1)) ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+                ("gh", ghCiArgs "abc123", Success "[]")
+                ("jj", "diff --summary", Success "")
+                ("jj", "log -r @- --no-graph -T commit_id", Failure("no parent", 1))
+            ]
 
     test <@ getCiStatus run = NoRuns @>
 
@@ -1574,8 +1659,10 @@ let ``getCiStatus - Failed status returned directly`` () =
 
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh", ghCiArgs "abc123", Success json) ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+                ("gh", ghCiArgs "abc123", Success json)
+            ]
 
     test
         <@
@@ -1590,8 +1677,10 @@ let ``getCiStatus - Failed status returned directly`` () =
 let ``getCiStatus - Unknown from gh failure returned directly`` () =
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh", ghCiArgs "abc123", Failure("gh error", 1)) ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+                ("gh", ghCiArgs "abc123", Failure("gh error", 1))
+            ]
 
     test <@ getCiStatus run = Unknown @>
 
@@ -1653,7 +1742,10 @@ let ``getLatestTag - with custom prefix filters correctly`` () =
 [<Fact>]
 let ``getLatestTag - prerelease tags sorted correctly`` () =
     let run =
-        fakeRun [ ("jj", jjTagListArgs "v", Success "v1.0.0-alpha.1\nv1.0.0-alpha.2\nv1.0.0-beta.1\nv1.0.0\nv0.9.0") ]
+        fakeRun
+            [
+                ("jj", jjTagListArgs "v", Success "v1.0.0-alpha.1\nv1.0.0-alpha.2\nv1.0.0-beta.1\nv1.0.0\nv0.9.0")
+            ]
 
     test <@ getLatestTag run "v" = Some "v1.0.0" @>
 
@@ -1663,8 +1755,10 @@ let ``getLatestTag - prerelease tags sorted correctly`` () =
 let ``getCurrentCommitSha - jj returns whitespace only falls back to git`` () =
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Success "   ")
-              ("git", "rev-parse HEAD", Success "abc123") ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Success "   ")
+                ("git", "rev-parse HEAD", Success "abc123")
+            ]
 
     test <@ getCurrentCommitSha run = Some "abc123" @>
 
@@ -1677,11 +1771,13 @@ let ``getCiStatus - NoRuns with no changes message falls back to parent`` () =
 
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh", ghCiArgs "abc123", Success "[]")
-              ("jj", "diff --summary", Success "")
-              ("jj", "log -r @- --no-graph -T commit_id", Success "def456")
-              ("gh", ghCiArgs "def456", Success json) ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+                ("gh", ghCiArgs "abc123", Success "[]")
+                ("jj", "diff --summary", Success "")
+                ("jj", "log -r @- --no-graph -T commit_id", Success "def456")
+                ("gh", ghCiArgs "def456", Success json)
+            ]
 
     test <@ getCiStatus run = Passed @>
 
@@ -1694,8 +1790,10 @@ let ``isCiPassing - returns false for InProgress`` () =
 
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
-              ("gh", ghCiArgs "abc123", Success json) ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Success "abc123")
+                ("gh", ghCiArgs "abc123", Success json)
+            ]
 
     test <@ isCiPassing run = false @>
 
@@ -1703,8 +1801,10 @@ let ``isCiPassing - returns false for InProgress`` () =
 let ``isCiPassing - returns false for Unknown`` () =
     let run =
         fakeRun
-            [ ("jj", "log -r @ --no-graph -T commit_id", Failure("no jj", 1))
-              ("git", "rev-parse HEAD", Failure("no git", 1)) ]
+            [
+                ("jj", "log -r @ --no-graph -T commit_id", Failure("no jj", 1))
+                ("git", "rev-parse HEAD", Failure("no git", 1))
+            ]
 
     test <@ isCiPassing run = false @>
 
@@ -1714,8 +1814,10 @@ let ``isCiPassing - returns false for Unknown`` () =
 let ``tagExists - jj fails git returns different tag returns false`` () =
     let run =
         fakeRun
-            [ ("jj", "tag list v1.0.0", Failure("no jj", 1))
-              ("git", "tag -l v1.0.0", Success "v1.0.0-beta") ]
+            [
+                ("jj", "tag list v1.0.0", Failure("no jj", 1))
+                ("git", "tag -l v1.0.0", Success "v1.0.0-beta")
+            ]
 
     test <@ tagExists run "v1.0.0" = false @>
 
@@ -1742,8 +1844,10 @@ let ``isCommitPushed - jj reports empty ancestry so the commit is not pushed`` (
 let ``isCommitPushed - falls back to git branch -r --contains when jj fails`` () =
     let run =
         fakeRun
-            [ ("jj", pushedQuery "abc123", Failure("not a jj repo", 1))
-              ("git", "branch -r --contains abc123", Success "  origin/main\n") ]
+            [
+                ("jj", pushedQuery "abc123", Failure("not a jj repo", 1))
+                ("git", "branch -r --contains abc123", Success "  origin/main\n")
+            ]
 
     test <@ isCommitPushed run "abc123" = true @>
 
@@ -1751,8 +1855,10 @@ let ``isCommitPushed - falls back to git branch -r --contains when jj fails`` ()
 let ``isCommitPushed - returns false when neither jj nor git can answer`` () =
     let run =
         fakeRun
-            [ ("jj", pushedQuery "abc123", Failure("no jj", 1))
-              ("git", "branch -r --contains abc123", Failure("no git", 1)) ]
+            [
+                ("jj", pushedQuery "abc123", Failure("no jj", 1))
+                ("git", "branch -r --contains abc123", Failure("no git", 1))
+            ]
 
     test <@ isCommitPushed run "abc123" = false @>
 
@@ -1762,8 +1868,10 @@ let ``isCommitPushed - returns false when neither jj nor git can answer`` () =
 let ``releaseCommitSha - clean working copy reports the parent commit`` () =
     let run =
         fakeRun
-            [ ("jj", "diff --summary", Success "")
-              ("jj", "log -r @- --no-graph -T commit_id", Success "parentsha\n") ]
+            [
+                ("jj", "diff --summary", Success "")
+                ("jj", "log -r @- --no-graph -T commit_id", Success "parentsha\n")
+            ]
 
     test <@ releaseCommitSha run = Some "parentsha" @>
 
@@ -1773,8 +1881,10 @@ let ``releaseCommitSha - dirty working copy reports the current commit`` () =
     // to getCurrentCommitSha (jj log -r @).
     let run =
         fakeRun
-            [ ("jj", "diff --summary", Success "M src/Foo.fs")
-              ("jj", "log -r @ --no-graph -T commit_id", Success "worksha\n") ]
+            [
+                ("jj", "diff --summary", Success "M src/Foo.fs")
+                ("jj", "log -r @ --no-graph -T commit_id", Success "worksha\n")
+            ]
 
     test <@ releaseCommitSha run = Some "worksha" @>
 
@@ -1787,7 +1897,9 @@ let ``releaseCommitSha - dirty working copy reports the current commit`` () =
 let private runAppearsAfter (emptyRounds: int) =
     ghRunListAnswers (
         List.replicate emptyRounds "[]"
-        @ [ """[{"name":"Release","status":"queued","conclusion":null,"databaseId":1,"url":"https://example/1"}]""" ]
+        @ [
+            """[{"name":"Release","status":"queued","conclusion":null,"databaseId":1,"url":"https://example/1"}]"""
+        ]
     )
 
 [<Fact>]
@@ -1828,10 +1940,12 @@ let ``pushTagsAndConfirmDetailed - a run that registers a few polls late is conf
         | _ -> gh cmd args
 
     let policy =
-        { PushAttempts = 1
-          PushRetryDelayMs = 0
-          RunPollIntervalMs = 0
-          RunPollAttempts = 10 }
+        {
+            PushAttempts = 1
+            PushRetryDelayMs = 0
+            RunPollIntervalMs = 0
+            RunPollAttempts = 10
+        }
 
     test <@ List.isEmpty (pushTagsAndConfirmDetailed run releaseOnly policy [ "v0.1.0-alpha.5" ]) @>
 
@@ -1848,10 +1962,12 @@ let ``pushTagsAndConfirmDetailed - a run that never appears within the budget is
         | _ -> gh cmd args
 
     let policy =
-        { PushAttempts = 1
-          PushRetryDelayMs = 0
-          RunPollIntervalMs = 0
-          RunPollAttempts = 4 }
+        {
+            PushAttempts = 1
+            PushRetryDelayMs = 0
+            RunPollIntervalMs = 0
+            RunPollAttempts = 4
+        }
 
     match pushTagsAndConfirmDetailed run releaseOnly policy [ "v0.1.0-alpha.5" ] with
     | [ WorkflowTriggerMissing("v0.1.0-alpha.5", _, true, _) ] -> ()
@@ -1885,10 +2001,12 @@ let private checksForAbsentRun (remote: CommandResult) (tag: string) =
         | _ -> gh cmd args
 
     let policy =
-        { PushAttempts = 1
-          PushRetryDelayMs = 0
-          RunPollIntervalMs = 0
-          RunPollAttempts = 1 }
+        {
+            PushAttempts = 1
+            PushRetryDelayMs = 0
+            RunPollIntervalMs = 0
+            RunPollAttempts = 1
+        }
 
     match pushTagsAndConfirmDetailed run releaseOnly policy [ tag ] with
     | [ WorkflowTriggerMissing(t, _, true, checks) ] when t = tag -> checks
@@ -1901,7 +2019,12 @@ let ``pushTagsAndConfirmDetailed - a missing run carries a check command that na
         checksForAbsentRun (Success "git@github.com:owner/Repo.git\n") "v0.1.0-alpha.8"
 
     test
-        <@ checks = [ "gh run list --branch v0.1.0-alpha.8 --workflow .github/workflows/release.yml --repo owner/Repo" ] @>
+        <@
+            checks =
+                [
+                    "gh run list --branch v0.1.0-alpha.8 --workflow .github/workflows/release.yml --repo owner/Repo"
+                ]
+        @>
 
 [<Fact>]
 let ``pushTagsAndConfirmDetailed - an unreadable remote still yields a check command, without --repo`` () =

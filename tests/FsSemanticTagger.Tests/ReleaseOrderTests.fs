@@ -31,8 +31,10 @@ let ``a dependency released with its dependent is published first, even when lis
     // The FsHotWatch shape: the CLI is listed first and references TestPrune.
     let graph =
         graphOf
-            [ "Cli", [ "src/Cli/Cli.fsproj" ]
-              "TestPrune", [ "src/TestPrune/TestPrune.fsproj" ] ]
+            [
+                "Cli", [ "src/Cli/Cli.fsproj" ]
+                "TestPrune", [ "src/TestPrune/TestPrune.fsproj" ]
+            ]
             [ "src/Cli/Cli.fsproj", [ "src/TestPrune/TestPrune.fsproj" ] ]
 
     test <@ wavesOf graph [ "Cli"; "TestPrune" ] = [ [ "TestPrune" ]; [ "Cli" ] ] @>
@@ -41,9 +43,11 @@ let ``a dependency released with its dependent is published first, even when lis
 let ``unrelated packages share one wave in their existing order (positive control)`` () =
     let graph =
         graphOf
-            [ "Zeta", [ "src/Zeta/Zeta.fsproj" ]
-              "Alpha", [ "src/Alpha/Alpha.fsproj" ]
-              "Mid", [ "src/Mid/Mid.fsproj" ] ]
+            [
+                "Zeta", [ "src/Zeta/Zeta.fsproj" ]
+                "Alpha", [ "src/Alpha/Alpha.fsproj" ]
+                "Mid", [ "src/Mid/Mid.fsproj" ]
+            ]
             []
 
     test <@ wavesOf graph [ "Zeta"; "Alpha"; "Mid" ] = [ [ "Zeta"; "Alpha"; "Mid" ] ] @>
@@ -52,10 +56,12 @@ let ``unrelated packages share one wave in their existing order (positive contro
 let ``independent branches share a wave while each dependent waits for its own dependency`` () =
     let graph =
         graphOf
-            [ "AppA", [ "a/AppA.fsproj" ]
-              "LibA", [ "a/LibA.fsproj" ]
-              "AppB", [ "b/AppB.fsproj" ]
-              "LibB", [ "b/LibB.fsproj" ] ]
+            [
+                "AppA", [ "a/AppA.fsproj" ]
+                "LibA", [ "a/LibA.fsproj" ]
+                "AppB", [ "b/AppB.fsproj" ]
+                "LibB", [ "b/LibB.fsproj" ]
+            ]
             [ "a/AppA.fsproj", [ "a/LibA.fsproj" ]; "b/AppB.fsproj", [ "b/LibB.fsproj" ] ]
 
     test <@ wavesOf graph [ "AppA"; "LibA"; "AppB"; "LibB" ] = [ [ "LibA"; "LibB" ]; [ "AppA"; "AppB" ] ] @>
@@ -71,13 +77,17 @@ let ``a chain publishes one link per wave, and a diamond's apex waits for both s
 
     let diamond =
         graphOf
-            [ "Top", [ "Top.fsproj" ]
-              "Left", [ "L.fsproj" ]
-              "Right", [ "R.fsproj" ]
-              "Base", [ "Base.fsproj" ] ]
-            [ "Top.fsproj", [ "L.fsproj"; "R.fsproj"; "Base.fsproj" ]
-              "L.fsproj", [ "Base.fsproj" ]
-              "R.fsproj", [ "Base.fsproj" ] ]
+            [
+                "Top", [ "Top.fsproj" ]
+                "Left", [ "L.fsproj" ]
+                "Right", [ "R.fsproj" ]
+                "Base", [ "Base.fsproj" ]
+            ]
+            [
+                "Top.fsproj", [ "L.fsproj"; "R.fsproj"; "Base.fsproj" ]
+                "L.fsproj", [ "Base.fsproj" ]
+                "R.fsproj", [ "Base.fsproj" ]
+            ]
 
     test <@ wavesOf diamond [ "Top"; "Left"; "Right"; "Base" ] = [ [ "Base" ]; [ "Left"; "Right" ]; [ "Top" ] ] @>
 
@@ -115,8 +125,10 @@ let ``an fsproj that is neither a package nor reaches one adds no edge, and a pa
     let graph =
         graphOf
             [ "Tool", [ "Tool.fsproj"; "Tool.Plugin.fsproj" ]; "Lib", [ "Lib.fsproj" ] ]
-            [ "Tool.fsproj", [ "Helper.fsproj"; "Tool.Plugin.fsproj" ]
-              "Tool.Plugin.fsproj", [ "Tool.Plugin.fsproj" ] ]
+            [
+                "Tool.fsproj", [ "Helper.fsproj"; "Tool.Plugin.fsproj" ]
+                "Tool.Plugin.fsproj", [ "Tool.Plugin.fsproj" ]
+            ]
 
     test <@ ReleaseOrder.dependenciesOf graph "Tool" = Set.empty @>
     test <@ wavesOf graph [ "Tool"; "Lib" ] = [ [ "Tool"; "Lib" ] ] @>
@@ -143,14 +155,18 @@ let ``a cycle made only by packages that release several fsprojs under one tag i
 let ``a longer cycle names only the packages on the loop`` () =
     let reason =
         errorOf
-            [ "Entry", [ "e.fsproj" ]
-              "X", [ "x.fsproj" ]
-              "Y", [ "y.fsproj" ]
-              "Z", [ "z.fsproj" ] ]
-            [ "e.fsproj", [ "x.fsproj" ]
-              "x.fsproj", [ "y.fsproj" ]
-              "y.fsproj", [ "z.fsproj" ]
-              "z.fsproj", [ "x.fsproj" ] ]
+            [
+                "Entry", [ "e.fsproj" ]
+                "X", [ "x.fsproj" ]
+                "Y", [ "y.fsproj" ]
+                "Z", [ "z.fsproj" ]
+            ]
+            [
+                "e.fsproj", [ "x.fsproj" ]
+                "x.fsproj", [ "y.fsproj" ]
+                "y.fsproj", [ "z.fsproj" ]
+                "z.fsproj", [ "x.fsproj" ]
+            ]
 
     test <@ reason.Contains "cycle (X -> Y -> Z -> X)" @>
 
@@ -187,23 +203,29 @@ let ``fromConfig orders the FsHotWatch shape from the fsprojs on disk`` () =
         write "src/Core/Core.fsproj" ""
 
         let package name fsproj =
-            { Name = name
-              Fsproj = fsproj
-              DllPath = ""
-              TagPrefix = name + "-v"
-              FsProjsSharingSameTag = [] }
+            {
+                Name = name
+                Fsproj = fsproj
+                DllPath = ""
+                TagPrefix = name + "-v"
+                FsProjsSharingSameTag = []
+            }
 
         let config =
-            { Packages =
-                [ package "Cli" "src/Cli/Cli.fsproj"
-                  // Absolute, as a test config or a hand-written one may spell it.
-                  package "TestPrune" (Path.Combine(root, "src", "TestPrune", "TestPrune.fsproj"))
-                  package "Core" "src/Core/Core.fsproj" ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = root }
+            {
+                Packages =
+                    [
+                        package "Cli" "src/Cli/Cli.fsproj"
+                        // Absolute, as a test config or a hand-written one may spell it.
+                        package "TestPrune" (Path.Combine(root, "src", "TestPrune", "TestPrune.fsproj"))
+                        package "Core" "src/Core/Core.fsproj"
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = root
+            }
 
         match ReleaseOrder.fromConfig config with
         | Error reason -> failwithf "expected a graph, got: %s" reason

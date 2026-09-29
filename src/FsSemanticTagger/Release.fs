@@ -119,7 +119,8 @@ let determineBump (current: Version) (change: ApiChange) : Version =
         | _ -> toBeta current
     | PreRelease pre ->
         { current with
-            Stage = PreRelease(bumpPreRelease pre) }
+            Stage = PreRelease(bumpPreRelease pre)
+        }
     | Stable ->
         match change with
         | Breaking _ ->
@@ -1638,11 +1639,13 @@ let private runChangelogCheck (input: ReleaseInput) (selectedPackages: PackageCo
 /// A version the tree declares that an earlier release bumped but never published: an
 /// ORPHANED BUMP. Carries what is missing and how to supply it.
 type private OrphanedBump =
-    { Package: PackageConfig
-      Version: Version
-      Tag: string
-      Missing: string
-      Repair: string }
+    {
+        Package: PackageConfig
+        Version: Version
+        Tag: string
+        Missing: string
+        Repair: string
+    }
 
 /// Is `pkg`'s declared `<Version>` an orphaned bump? Only a version at or ahead of the
 /// newest tag is examined (an older one is not what the next release builds on), and a
@@ -1665,11 +1668,13 @@ let private orphanedBump
 
         let orphan missing repair =
             Some
-                { Package = pkg
-                  Version = version
-                  Tag = tag
-                  Missing = missing
-                  Repair = repair }
+                {
+                    Package = pkg
+                    Version = version
+                    Tag = tag
+                    Missing = missing
+                    Repair = repair
+                }
 
         if not tagged then
             orphan

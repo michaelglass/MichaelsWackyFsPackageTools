@@ -23,8 +23,10 @@ module CheckOutcome =
 type CheckResult = { Name: string; Outcome: CheckOutcome }
 
 type LintResult =
-    { RepoChecks: CheckResult list
-      ProjectChecks: (string * CheckResult list) list }
+    {
+        RepoChecks: CheckResult list
+        ProjectChecks: (string * CheckResult list) list
+    }
 
 let private fileExists (dir: string) (relativePath: string) : bool =
     File.Exists(Path.Combine(dir, relativePath))
@@ -37,31 +39,43 @@ let checkRepo (dir: string) (hasPackableProjects: bool) : CheckResult list =
     let editorconfigExists = fileExists dir ".editorconfig"
 
     let baseChecks =
-        [ { Name = "LICENSE exists"
-            Outcome =
-              if licenseExists then
-                  Passed
-              else
-                  Failed "Missing LICENSE or LICENSE.md" }
-          { Name = "README.md exists"
-            Outcome = if readmeExists then Passed else Failed "Missing README.md" }
-          { Name = ".editorconfig exists"
-            Outcome =
-              if editorconfigExists then
-                  Passed
-              else
-                  Failed "Missing .editorconfig" } ]
+        [
+            {
+                Name = "LICENSE exists"
+                Outcome =
+                    if licenseExists then
+                        Passed
+                    else
+                        Failed "Missing LICENSE or LICENSE.md"
+            }
+            {
+                Name = "README.md exists"
+                Outcome = if readmeExists then Passed else Failed "Missing README.md"
+            }
+            {
+                Name = ".editorconfig exists"
+                Outcome =
+                    if editorconfigExists then
+                        Passed
+                    else
+                        Failed "Missing .editorconfig"
+            }
+        ]
 
     if hasPackableProjects then
         let docsIndexExists = fileExists dir "docs/index.md"
 
         baseChecks
-        @ [ { Name = "docs/index.md exists"
-              Outcome =
-                if docsIndexExists then
-                    Passed
-                else
-                    Failed "Missing docs/index.md" } ]
+        @ [
+            {
+                Name = "docs/index.md exists"
+                Outcome =
+                    if docsIndexExists then
+                        Passed
+                    else
+                        Failed "Missing docs/index.md"
+            }
+        ]
     else
         baseChecks
 
@@ -180,17 +194,21 @@ let private gitContextFor (dir: string) : GitContext option =
     match Shared.GitDir.resolveGitDir dir with
     | Some store ->
         Some
-            { PrefixArgs = [ "--git-dir"; store; "--work-tree"; dir ]
-              WorkingDir = dir
-              IsJj = true }
+            {
+                PrefixArgs = [ "--git-dir"; store; "--work-tree"; dir ]
+                WorkingDir = dir
+                IsJj = true
+            }
     | None ->
         // resolveGitDir returns None for a native git checkout (it defers to
         // git's discovery) AND for a non-repo. Probe with rev-parse from `dir`
         // itself: a real checkout answers, a bare directory does not.
         let probe =
-            { PrefixArgs = []
-              WorkingDir = dir
-              IsJj = false }
+            {
+                PrefixArgs = []
+                WorkingDir = dir
+                IsJj = false
+            }
 
         match runGit probe [ "rev-parse"; "--is-inside-work-tree" ] None with
         | Some(0, out) when out.Trim() = "true" -> Some probe
@@ -362,65 +380,81 @@ let checkRefStampGuard (dir: string) (packableProjects: XDocument list) : CheckR
         not (List.isEmpty packableProjects)
         && packableProjects |> List.forall hasRefStampGuard
 
-    { Name = "Local packs are ref-stamped (RefStamp)"
-      Outcome =
-        if rootGuard || perProjectGuard then
-            Passed
-        else
-            Failed(
-                "Missing the RefStamp local-pack guard: add "
-                + "<PackageReference Include=\"RefStamp\" Version=\"<latest>\" PrivateAssets=\"all\" /> "
-                + "to a root Directory.Build.props (one line, applies repo-wide), so a local "
-                + "`dotnet pack` derives its version from the jj/git source ref instead of "
-                + "producing a release-shaped version"
-            ) }
+    {
+        Name = "Local packs are ref-stamped (RefStamp)"
+        Outcome =
+            if rootGuard || perProjectGuard then
+                Passed
+            else
+                Failed(
+                    "Missing the RefStamp local-pack guard: add "
+                    + "<PackageReference Include=\"RefStamp\" Version=\"<latest>\" PrivateAssets=\"all\" /> "
+                    + "to a root Directory.Build.props (one line, applies repo-wide), so a local "
+                    + "`dotnet pack` derives its version from the jj/git source ref instead of "
+                    + "producing a release-shaped version"
+                )
+    }
 
 let private checkPropertyEquals (doc: XDocument) (propName: string) (expected: string) (checkName: string) =
     match getProperty doc propName with
     | Some v when v = expected -> { Name = checkName; Outcome = Passed }
     | Some v ->
-        { Name = checkName
-          Outcome = Failed(sprintf "%s is '%s', expected '%s'" propName v expected) }
+        {
+            Name = checkName
+            Outcome = Failed(sprintf "%s is '%s', expected '%s'" propName v expected)
+        }
     | None ->
-        { Name = checkName
-          Outcome = Failed(sprintf "%s not found" propName) }
+        {
+            Name = checkName
+            Outcome = Failed(sprintf "%s not found" propName)
+        }
 
 let private checkPropertyPresent (doc: XDocument) (propName: string) (checkName: string) =
     match getProperty doc propName with
     | Some v when v.Trim().Length > 0 -> { Name = checkName; Outcome = Passed }
     | _ ->
-        { Name = checkName
-          Outcome = Failed(sprintf "%s missing or empty" propName) }
+        {
+            Name = checkName
+            Outcome = Failed(sprintf "%s missing or empty" propName)
+        }
 
 /// Check a single fsproj file.
 let checkProject (doc: XDocument) : CheckResult list =
     let allProjectChecks =
-        [ checkPropertyEquals doc "TreatWarningsAsErrors" "true" "TreatWarningsAsErrors is true" ]
+        [
+            checkPropertyEquals doc "TreatWarningsAsErrors" "true" "TreatWarningsAsErrors is true"
+        ]
 
     if isPackable doc then
         let includesBuildOutput = getProperty doc "IncludeBuildOutput" <> Some "false"
 
         let packageChecks =
-            [ checkPropertyPresent doc "Version" "Version present"
-              checkPropertyPresent doc "Description" "Description present"
-              checkPropertyPresent doc "Authors" "Authors present"
-              checkPropertyPresent doc "PackageLicenseExpression" "PackageLicenseExpression present"
-              checkPropertyPresent doc "RepositoryUrl" "RepositoryUrl present"
-              checkPropertyPresent doc "RepositoryType" "RepositoryType present"
-              checkPropertyEquals doc "GenerateDocumentationFile" "true" "GenerateDocumentationFile is true"
-              (let has = hasPackageRef doc "Microsoft.SourceLink.GitHub"
+            [
+                checkPropertyPresent doc "Version" "Version present"
+                checkPropertyPresent doc "Description" "Description present"
+                checkPropertyPresent doc "Authors" "Authors present"
+                checkPropertyPresent doc "PackageLicenseExpression" "PackageLicenseExpression present"
+                checkPropertyPresent doc "RepositoryUrl" "RepositoryUrl present"
+                checkPropertyPresent doc "RepositoryType" "RepositoryType present"
+                checkPropertyEquals doc "GenerateDocumentationFile" "true" "GenerateDocumentationFile is true"
+                (let has = hasPackageRef doc "Microsoft.SourceLink.GitHub"
 
-               { Name = "Has Microsoft.SourceLink.GitHub"
-                 Outcome =
-                   if has then
-                       Passed
-                   else
-                       Failed "Missing Microsoft.SourceLink.GitHub PackageReference" }) ]
+                 {
+                     Name = "Has Microsoft.SourceLink.GitHub"
+                     Outcome =
+                         if has then
+                             Passed
+                         else
+                             Failed "Missing Microsoft.SourceLink.GitHub PackageReference"
+                 })
+            ]
 
         let symbolChecks =
             if includesBuildOutput then
-                [ checkPropertyEquals doc "IncludeSymbols" "true" "IncludeSymbols is true"
-                  checkPropertyEquals doc "SymbolPackageFormat" "snupkg" "SymbolPackageFormat is snupkg" ]
+                [
+                    checkPropertyEquals doc "IncludeSymbols" "true" "IncludeSymbols is true"
+                    checkPropertyEquals doc "SymbolPackageFormat" "snupkg" "SymbolPackageFormat is snupkg"
+                ]
             else
                 []
 
@@ -459,8 +493,12 @@ let runLint (dir: string) : LintResult =
             | Ok doc -> (p, checkProject doc)
             | Error msg ->
                 (p,
-                 [ { Name = "XML parse"
-                     Outcome = Failed(sprintf "Failed to parse %s: %s" (Path.GetFileName(p)) msg) } ]))
+                 [
+                     {
+                         Name = "XML parse"
+                         Outcome = Failed(sprintf "Failed to parse %s: %s" (Path.GetFileName(p)) msg)
+                     }
+                 ]))
 
     let packableDocs =
         loadResults
@@ -479,5 +517,7 @@ let runLint (dir: string) : LintResult =
            else
                [])
 
-    { RepoChecks = repoChecks
-      ProjectChecks = projectChecks }
+    {
+        RepoChecks = repoChecks
+        ProjectChecks = projectChecks
+    }

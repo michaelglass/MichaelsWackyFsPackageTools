@@ -50,9 +50,11 @@ module Fixtures =
 
     /// Record-typed argument: expands to positional args (a bool field reads as optional).
     type BuildArgs =
-        { Source: string
-          Output: string option
-          Force: bool }
+        {
+            Source: string
+            Output: string option
+            Force: bool
+        }
 
     /// Round-trip fixture: shapes whose production extraction must equal the runtime
     /// fromUnion — nullary, required arg, optional arg, list arg, record-arg leaf,
@@ -120,21 +122,25 @@ module Fixtures =
                 leaf.Name,
                 leaf.Args
                 |> List.map (fun a ->
-                    { FsSemanticTagger.ArgSpec.Name = a.Name
-                      IsOptional = a.IsOptional
-                      IsList = a.IsList
-                      TypeName = a.TypeName }),
+                    {
+                        FsSemanticTagger.ArgSpec.Name = a.Name
+                        IsOptional = a.IsOptional
+                        IsList = a.IsList
+                        TypeName = a.TypeName
+                    }),
                 leaf.Flags
                 |> List.map (fun f ->
-                    { FsSemanticTagger.FlagSpec.LongName = f.LongName
-                      ShortName = f.ShortName
-                      Arity =
-                        match f.Arity with
-                        | Nullary -> FsSemanticTagger.FlagArity.Nullary
-                        | Required -> FsSemanticTagger.FlagArity.RequiredValue
-                        | Optional -> FsSemanticTagger.FlagArity.OptionalValue
-                      TypeName = f.TypeName
-                      IsRepeatable = f.IsRepeatable })
+                    {
+                        FsSemanticTagger.FlagSpec.LongName = f.LongName
+                        ShortName = f.ShortName
+                        Arity =
+                            match f.Arity with
+                            | Nullary -> FsSemanticTagger.FlagArity.Nullary
+                            | Required -> FsSemanticTagger.FlagArity.RequiredValue
+                            | Optional -> FsSemanticTagger.FlagArity.OptionalValue
+                        TypeName = f.TypeName
+                        IsRepeatable = f.IsRepeatable
+                    })
             )
         | Group g -> FsSemanticTagger.CommandNode.Group(g.Name, g.Children |> List.map toNode)
 
@@ -142,31 +148,43 @@ module Fixtures =
     /// children become the grammar's roots).
     let expectedGrammar<'Cmd> () : FsSemanticTagger.Grammar =
         match CommandReflection.fromUnion<'Cmd> "fixture" with
-        | Group g -> { FsSemanticTagger.Grammar.Roots = g.Children |> List.map toNode }
-        | leaf -> { FsSemanticTagger.Grammar.Roots = [ toNode leaf ] }
+        | Group g ->
+            {
+                FsSemanticTagger.Grammar.Roots = g.Children |> List.map toNode
+            }
+        | leaf ->
+            {
+                FsSemanticTagger.Grammar.Roots = [ toNode leaf ]
+            }
 
 open FsSemanticTagger
 
 // ---- tiny builders (now over the production model) --------------------------
 
 let private arg name =
-    { Name = name
-      IsOptional = false
-      IsList = false
-      TypeName = "string" }
+    {
+        Name = name
+        IsOptional = false
+        IsList = false
+        TypeName = "string"
+    }
 
 let private optArg name =
-    { Name = name
-      IsOptional = true
-      IsList = false
-      TypeName = "string" }
+    {
+        Name = name
+        IsOptional = true
+        IsList = false
+        TypeName = "string"
+    }
 
 let private flag long arity =
-    { LongName = long
-      ShortName = None
-      Arity = arity
-      TypeName = "bool"
-      IsRepeatable = false }
+    {
+        LongName = long
+        ShortName = None
+        Arity = arity
+        TypeName = "bool"
+        IsRepeatable = false
+    }
 
 let private leaf name args flags = Leaf(name, args, flags)
 let private grammar roots = { Roots = roots }
@@ -301,11 +319,16 @@ let ``adding a short alias to a flag is Addition; removing one is Breaking`` () 
 
     let withShort =
         grammar
-            [ leaf
-                  "release"
-                  []
-                  [ { flag "conf" RequiredValue with
-                        ShortName = Some "k" } ] ]
+            [
+                leaf
+                    "release"
+                    []
+                    [
+                        { flag "conf" RequiredValue with
+                            ShortName = Some "k"
+                        }
+                    ]
+            ]
 
     test <@ Grammar.compare noShort withShort = GAddition @>
     test <@ Grammar.compare withShort noShort = GBreaking @>
@@ -325,11 +348,16 @@ let ``flag made repeatable is Addition; made single-occurrence is Breaking`` () 
 
     let repeatable =
         grammar
-            [ leaf
-                  "collect"
-                  []
-                  [ { flag "include" RequiredValue with
-                        IsRepeatable = true } ] ]
+            [
+                leaf
+                    "collect"
+                    []
+                    [
+                        { flag "include" RequiredValue with
+                            IsRepeatable = true
+                        }
+                    ]
+            ]
 
     // `--include a --include b` was refused and now parses; every old call is unchanged.
     test <@ Grammar.compare single repeatable = GAddition @>
@@ -346,19 +374,29 @@ let ``removing a trailing positional arg is Breaking (old value now errors)`` ()
 let ``flag value TYPE change (int->string) is Breaking`` () =
     let before =
         grammar
-            [ leaf
-                  "release"
-                  []
-                  [ { flag "only" RequiredValue with
-                        TypeName = "int" } ] ]
+            [
+                leaf
+                    "release"
+                    []
+                    [
+                        { flag "only" RequiredValue with
+                            TypeName = "int"
+                        }
+                    ]
+            ]
 
     let after =
         grammar
-            [ leaf
-                  "release"
-                  []
-                  [ { flag "only" RequiredValue with
-                        TypeName = "string" } ] ]
+            [
+                leaf
+                    "release"
+                    []
+                    [
+                        { flag "only" RequiredValue with
+                            TypeName = "string"
+                        }
+                    ]
+            ]
 
     test <@ Grammar.compare before after = GBreaking @>
 
@@ -408,7 +446,7 @@ let ``extractGrammarFromAssembly recovers FsSemanticTagger's own realized gramma
     // fromUnion builds at runtime for the same Command DU.
     let dll = typeof<FsSemanticTagger.Program.Command>.Assembly.Location
     let extracted = Grammar.extractGrammarFromAssembly dll
-    let expected = Some(Fixtures.expectedGrammar<FsSemanticTagger.Program.Command> ())
+    let expected = Some(Fixtures.expectedGrammar<FsSemanticTagger.Program.Command>())
     test <@ extracted = expected @>
 
 [<Fact>]
@@ -419,7 +457,7 @@ let ``extractGrammarForType recovers every round-trip command shape faithfully``
     // metadata-only walk must equal CommandTree's runtime fromUnion tree for ALL.
     let dll = typeof<Fixtures.Fixture>.Assembly.Location
     let extracted = Grammar.extractGrammarForType dll typeof<Fixtures.Fixture>.FullName
-    let expected = Some(Fixtures.expectedGrammar<Fixtures.Fixture> ())
+    let expected = Some(Fixtures.expectedGrammar<Fixtures.Fixture>())
     test <@ extracted = expected @>
 
 [<Fact>]
@@ -436,10 +474,15 @@ let ``extraction recovers a positional-prefix flag leaf with an optional-value f
 
         test
             <@
-                args = [ { Name = "env"
-                           IsOptional = false
-                           IsList = false
-                           TypeName = "string" } ]
+                args =
+                    [
+                        {
+                            Name = "env"
+                            IsOptional = false
+                            IsList = false
+                            TypeName = "string"
+                        }
+                    ]
             @>
 
         test <@ List.length flags = 2 @>
@@ -580,7 +623,7 @@ let ``extractGrammarFromCacheRoot reads a consumer from a cache layout`` () =
         let extracted =
             Grammar.extractGrammarFromCacheRoot cacheRoot "FsSemanticTagger" "1.0.0"
 
-        test <@ extracted = Some(Fixtures.expectedGrammar<FsSemanticTagger.Program.Command> ()) @>
+        test <@ extracted = Some(Fixtures.expectedGrammar<FsSemanticTagger.Program.Command>()) @>
     finally
         try
             System.IO.Directory.Delete(cacheRoot, true)

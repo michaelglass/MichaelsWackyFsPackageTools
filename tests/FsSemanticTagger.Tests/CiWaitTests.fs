@@ -10,8 +10,10 @@ open FsSemanticTagger.CiWait
 /// release tests that script a sequence of CI answers and must not consult history.
 let fixedCiWait (intervalMs: int) (attempts: int) : unit -> Budget =
     fun () ->
-        { Timeout = TimeSpan.FromMilliseconds(float ((attempts - 1) * max 1 intervalMs))
-          Basis = Configured }
+        {
+            Timeout = TimeSpan.FromMilliseconds(float ((attempts - 1) * max 1 intervalMs))
+            Basis = Configured
+        }
 
 let private minutes (m: float) = TimeSpan.FromMinutes m
 let private seconds (s: int) = TimeSpan.FromSeconds(float s)
@@ -53,8 +55,11 @@ let ``size - no successful run to learn from waits the floorTimeout`` () =
 
     test
         <@
-            budget = { Timeout = floorTimeout
-                       Basis = NoHistory }
+            budget =
+                {
+                    Timeout = floorTimeout
+                    Basis = NoHistory
+                }
         @>
 
 [<Fact>]
@@ -71,8 +76,11 @@ let ``size - a configured timeout is honoured as given and history is never read
 
     test
         <@
-            budget = { Timeout = minutes 45.0
-                       Basis = Configured }
+            budget =
+                {
+                    Timeout = minutes 45.0
+                    Basis = Configured
+                }
         @>
 
 [<Fact>]
@@ -86,8 +94,10 @@ let ``size - a configured timeout below the floorTimeout is still honoured`` () 
 [<Fact>]
 let ``attempts - enough checks that the sleeps between them cover the timeout`` () =
     let budget =
-        { Timeout = seconds 1998
-          Basis = Configured }
+        {
+            Timeout = seconds 1998
+            Basis = Configured
+        }
 
     // 15s apart: ceil(1998 / 15) = 134 sleeps, so 135 checks.
     test <@ attempts 15000 budget = 135 @>
@@ -106,8 +116,10 @@ let ``fixedCiWait - a test budget polls exactly the attempts it names`` () =
 let ``describe - history names the expectation and where it came from`` () =
     let text =
         describe
-            { Timeout = seconds 1998
-              Basis = FromHistory(seconds 999, 8) }
+            {
+                Timeout = seconds 1998
+                Basis = FromHistory(seconds 999, 8)
+            }
 
     test <@ text = "expected ~16m39s, the median of the last 8 successful CI runs; giving up after 33m18s" @>
 
@@ -116,22 +128,34 @@ let ``describe - each fallback says why there is no expectation`` () =
     test
         <@
             describe
-                { Timeout = floorTimeout
-                  Basis = NoHistory } = "no successful CI run to estimate from; giving up after 5m00s"
+                {
+                    Timeout = floorTimeout
+                    Basis = NoHistory
+                }
+                =
+                "no successful CI run to estimate from; giving up after 5m00s"
         @>
 
     test
         <@
             describe
-                { Timeout = unavailableHistoryTimeout
-                  Basis = HistoryUnavailable "boom" } = "CI history unavailable (boom); giving up after 15m00s"
+                {
+                    Timeout = unavailableHistoryTimeout
+                    Basis = HistoryUnavailable "boom"
+                }
+                =
+                "CI history unavailable (boom); giving up after 15m00s"
         @>
 
     test
         <@
             describe
-                { Timeout = minutes 45.0
-                  Basis = Configured } = "giving up after 45m00s, the configured ciTimeoutMinutes"
+                {
+                    Timeout = minutes 45.0
+                    Basis = Configured
+                }
+                =
+                "giving up after 45m00s, the configured ciTimeoutMinutes"
         @>
 
 // the history query

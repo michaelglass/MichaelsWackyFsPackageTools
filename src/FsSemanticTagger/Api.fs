@@ -281,40 +281,42 @@ let extractFromAssembly (dllPath: string) : ApiSignature list =
 
     let assembly = context.LoadFromAssemblyPath(Path.GetFullPath(dllPath))
 
-    [ for t in assembly.GetExportedTypes() do
-          yield ApiSignature(sprintf "type %s" t.FullName)
+    [
+        for t in assembly.GetExportedTypes() do
+            yield ApiSignature(sprintf "type %s" t.FullName)
 
-          for m in
-              t.GetMethods(
-                  BindingFlags.Public
-                  ||| BindingFlags.Instance
-                  ||| BindingFlags.Static
-                  ||| BindingFlags.DeclaredOnly
-              ) do
-              if not m.IsSpecialName then
-                  let ps =
-                      m.GetParameters()
-                      |> Array.map (fun p -> formatTypeName p.ParameterType)
-                      |> String.concat ", "
+            for m in
+                t.GetMethods(
+                    BindingFlags.Public
+                    ||| BindingFlags.Instance
+                    ||| BindingFlags.Static
+                    ||| BindingFlags.DeclaredOnly
+                ) do
+                if not m.IsSpecialName then
+                    let ps =
+                        m.GetParameters()
+                        |> Array.map (fun p -> formatTypeName p.ParameterType)
+                        |> String.concat ", "
 
-                  yield ApiSignature(sprintf "  %s::%s(%s): %s" t.Name m.Name ps (formatTypeName m.ReturnType))
+                    yield ApiSignature(sprintf "  %s::%s(%s): %s" t.Name m.Name ps (formatTypeName m.ReturnType))
 
-          for p in
-              t.GetProperties(
-                  BindingFlags.Public
-                  ||| BindingFlags.Instance
-                  ||| BindingFlags.Static
-                  ||| BindingFlags.DeclaredOnly
-              ) do
-              yield ApiSignature(sprintf "  %s::%s: %s" t.Name p.Name (formatTypeName p.PropertyType))
+            for p in
+                t.GetProperties(
+                    BindingFlags.Public
+                    ||| BindingFlags.Instance
+                    ||| BindingFlags.Static
+                    ||| BindingFlags.DeclaredOnly
+                ) do
+                yield ApiSignature(sprintf "  %s::%s: %s" t.Name p.Name (formatTypeName p.PropertyType))
 
-          for c in t.GetConstructors(BindingFlags.Public ||| BindingFlags.Instance ||| BindingFlags.DeclaredOnly) do
-              let ps =
-                  c.GetParameters()
-                  |> Array.map (fun p -> formatTypeName p.ParameterType)
-                  |> String.concat ", "
+            for c in t.GetConstructors(BindingFlags.Public ||| BindingFlags.Instance ||| BindingFlags.DeclaredOnly) do
+                let ps =
+                    c.GetParameters()
+                    |> Array.map (fun p -> formatTypeName p.ParameterType)
+                    |> String.concat ", "
 
-              yield ApiSignature(sprintf "  %s::.ctor(%s)" t.Name ps) ]
+                yield ApiSignature(sprintf "  %s::.ctor(%s)" t.Name ps)
+    ]
     |> List.sort
 
 /// Locate the candidate directories (newest-tfm-first) and expected DLL file name

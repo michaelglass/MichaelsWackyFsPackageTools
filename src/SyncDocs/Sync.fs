@@ -36,8 +36,10 @@ type DiscoveryWarning =
     | MissingSource of name: string * suggestedPath: string
 
 type DiscoveryResult =
-    { Pairs: SyncPair list
-      Warnings: DiscoveryWarning list }
+    {
+        Pairs: SyncPair list
+        Warnings: DiscoveryWarning list
+    }
 
 /// Extract tagged sections from source (README) content.
 /// Source uses: <!-- sync:name:start -->...<!-- sync:name:end -->
@@ -131,9 +133,11 @@ let renderCodeBlock (lines: string list) : string =
 
 /// A README block that sources its body from a region of a real .fs/.fsx file.
 type private CodeBlock =
-    { Name: string
-      RelativePath: string
-      Region: string }
+    {
+        Name: string
+        RelativePath: string
+        Region: string
+    }
 
 /// Parse `src=path` / `src=path#region` attributes from README start markers.
 /// Region defaults to the block name when no `#region` override is given.
@@ -151,9 +155,11 @@ let private extractCodeBlocks (readme: string) : CodeBlock list =
             | -1 -> src, name
             | hashIdx -> src.Substring(0, hashIdx), src.Substring(hashIdx + 1)
 
-        { Name = name
-          RelativePath = path
-          Region = region })
+        {
+            Name = name
+            RelativePath = path
+            Region = region
+        })
     |> Seq.toList
 
 /// Replace the body of a single code-sourced block, preserving its start marker
@@ -247,9 +253,13 @@ let syncPair (mode: SyncMode) (sourcePath: string) (targetPath: string) : Result
 /// Enumerate all conventional candidate pairs.
 let private candidatePairs (rootDir: string) : (string * SyncPair) list =
     let root =
-        [ "your project",
-          { Source = Path.Combine(rootDir, "README.md")
-            Target = Path.Combine(rootDir, "docs", "index.md") } ]
+        [
+            "your project",
+            {
+                Source = Path.Combine(rootDir, "README.md")
+                Target = Path.Combine(rootDir, "docs", "index.md")
+            }
+        ]
 
     let srcDir = Path.Combine(rootDir, "src")
 
@@ -261,8 +271,10 @@ let private candidatePairs (rootDir: string) : (string * SyncPair) list =
                 let dirName = Path.GetFileName dir
 
                 dirName,
-                { Source = Path.Combine(dir, "README.md")
-                  Target = Path.Combine(rootDir, "docs", dirName, "index.md") })
+                {
+                    Source = Path.Combine(dir, "README.md")
+                    Target = Path.Combine(rootDir, "docs", dirName, "index.md")
+                })
         else
             []
 
@@ -290,8 +302,10 @@ let discoverPairsAndWarnings (rootDir: string) : DiscoveryResult =
             pairs, warnings)
         ([], [])
     |> fun (pairs, warnings) ->
-        { Pairs = List.rev pairs
-          Warnings = List.rev warnings }
+        {
+            Pairs = List.rev pairs
+            Warnings = List.rev warnings
+        }
 
 let discoverPairs (rootDir: string) : SyncPair list =
     (discoverPairsAndWarnings rootDir).Pairs
@@ -303,15 +317,17 @@ let discoverWarnings (rootDir: string) : DiscoveryWarning list =
 /// docs: build output, VCS metadata, vendored deps, and parallel jj workspaces.
 let private ignoredScanDirs =
     set
-        [ "bin"
-          "obj"
-          ".git"
-          ".jj"
-          "node_modules"
-          ".workspaces"
-          "output"
-          "artifacts"
-          ".fsdocs" ]
+        [
+            "bin"
+            "obj"
+            ".git"
+            ".jj"
+            "node_modules"
+            ".workspaces"
+            "output"
+            "artifacts"
+            ".fsdocs"
+        ]
 
 /// True when a markdown file carries at least one code-sourced start marker
 /// (`<!-- sync:NAME:start src=... -->`).

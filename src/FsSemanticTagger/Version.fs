@@ -12,10 +12,12 @@ type VersionStage =
     | Stable
 
 type Version =
-    { Major: int
-      Minor: int
-      Patch: int
-      Stage: VersionStage }
+    {
+        Major: int
+        Minor: int
+        Patch: int
+        Stage: VersionStage
+    }
 
 let private versionRegex =
     Regex(@"^(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta|rc)\.(\d+))?$", RegexOptions.Compiled)
@@ -44,10 +46,12 @@ let tryParse (s: string) : Result<Version, string> =
 
         stage
         |> Result.map (fun s ->
-            { Major = major
-              Minor = minor
-              Patch = patch
-              Stage = s })
+            {
+                Major = major
+                Minor = minor
+                Patch = patch
+                Stage = s
+            })
 
 let parse (s: string) : Version =
     match tryParse s with
@@ -66,10 +70,12 @@ let format (v: Version) : string =
 let toTag (prefix: string) (v: Version) : string = prefix + format v
 
 let firstAlpha =
-    { Major = 0
-      Minor = 1
-      Patch = 0
-      Stage = PreRelease(Alpha 1) }
+    {
+        Major = 0
+        Minor = 1
+        Patch = 0
+        Stage = PreRelease(Alpha 1)
+    }
 
 let bumpPreRelease (pre: PreRelease) : PreRelease =
     match pre with
@@ -81,7 +87,8 @@ let nextAlphaCycle (v: Version) : Version =
     { v with
         Minor = v.Minor + 1
         Patch = 0
-        Stage = PreRelease(Alpha 1) }
+        Stage = PreRelease(Alpha 1)
+    }
 
 let toBeta (v: Version) : Version = { v with Stage = PreRelease(Beta 1) }
 
@@ -94,13 +101,15 @@ let bumpPatch (v: Version) : Version = { v with Patch = v.Patch + 1 }
 let bumpMinor (v: Version) : Version =
     { v with
         Minor = v.Minor + 1
-        Patch = 0 }
+        Patch = 0
+    }
 
 let bumpMajor (v: Version) : Version =
     { v with
         Major = v.Major + 1
         Minor = 0
-        Patch = 0 }
+        Patch = 0
+    }
 
 let sortKey (v: Version) =
     let stageKey =

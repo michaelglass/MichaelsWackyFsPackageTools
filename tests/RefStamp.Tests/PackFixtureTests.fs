@@ -95,12 +95,14 @@ let private run
 /// (deterministically, even on a CI runner), MSBuild worker nodes disabled so
 /// no build daemons outlive the test.
 let private localPackEnv =
-    [ "GITHUB_ACTIONS", None
-      "CI", None
-      "ReleaseBuild", None
-      "MSBUILDDISABLENODEREUSE", Some "1"
-      "DOTNET_NOLOGO", Some "1"
-      "DOTNET_CLI_TELEMETRY_OPTOUT", Some "1" ]
+    [
+        "GITHUB_ACTIONS", None
+        "CI", None
+        "ReleaseBuild", None
+        "MSBUILDDISABLENODEREUSE", Some "1"
+        "DOTNET_NOLOGO", Some "1"
+        "DOTNET_CLI_TELEMETRY_OPTOUT", Some "1"
+    ]
 
 let private writeFixtureProject (dir: string) =
     // Without this, the pack's own bin/obj output would dirty the fixture repo
@@ -148,12 +150,14 @@ let private pack (dir: string) (extraArgs: string list) (env: (string * string o
 let private git (dir: string) (args: string list) =
     run
         "git"
-        ([ "-c"
-           "user.name=test"
-           "-c"
-           "user.email=test@example.com"
-           "-c"
-           "commit.gpgsign=false" ]
+        ([
+            "-c"
+            "user.name=test"
+            "-c"
+            "user.email=test@example.com"
+            "-c"
+            "commit.gpgsign=false"
+         ]
          @ args)
         dir
         []
@@ -262,12 +266,14 @@ let ``local pack with an empty merge includes every parent ref`` () =
                 let code, output =
                     run
                         "jj"
-                        [ "log"
-                          "--no-graph"
-                          "-r"
-                          revision
-                          "-T"
-                          "change_id.short(8) ++ '.g' ++ commit_id.short(12)" ]
+                        [
+                            "log"
+                            "--no-graph"
+                            "-r"
+                            revision
+                            "-T"
+                            "change_id.short(8) ++ '.g' ++ commit_id.short(12)"
+                        ]
                         dir
                         []
 

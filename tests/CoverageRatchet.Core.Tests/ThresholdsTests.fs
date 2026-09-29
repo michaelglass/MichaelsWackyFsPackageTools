@@ -7,10 +7,12 @@ open CoverageRatchet.Thresholds
 open CoverageRatchet.Core.Tests.TestHelpers
 
 let private percentageFloor line branch =
-    { Line = line
-      Branch = branch
-      Reason = None
-      Platform = None }
+    {
+        Line = line
+        Branch = branch
+        Reason = None
+        Platform = None
+    }
 
 // --- complete-report verdict ---
 
@@ -18,7 +20,8 @@ let private percentageFloor line branch =
 let ``judge - missing percentage floor makes the run incomplete`` () =
     let config =
         { defaultsConfig with
-            Overrides = Map.ofList [ "Missing.fs", percentageFloor 80.0 70.0 ] }
+            Overrides = Map.ofList [ "Missing.fs", percentageFloor 80.0 70.0 ]
+        }
 
     match judge config [ makeFile "Measured.fs" 100.0 100.0 0 0 ] with
     | Incomplete(1, [ hole ]) ->
@@ -31,7 +34,8 @@ let ``judge - missing percentage floor makes the run incomplete`` () =
 let ``judge - missing count-only floor makes the run incomplete`` () =
     let config =
         { defaultsConfig with
-            CountFloors = Map.ofList [ "Missing.fs", countFloor 10 2 ] }
+            CountFloors = Map.ofList [ "Missing.fs", countFloor 10 2 ]
+        }
 
     match judge config [ makeFile "Measured.fs" 100.0 100.0 0 0 ] with
     | Incomplete(_, [ hole ]) ->
@@ -44,7 +48,8 @@ let ``judge - missing file with both floors is one obligation naming both kinds`
     let config =
         { defaultsConfig with
             Overrides = Map.ofList [ "Missing.fs", percentageFloor 80.0 70.0 ]
-            CountFloors = Map.ofList [ "Missing.fs", countFloor 10 2 ] }
+            CountFloors = Map.ofList [ "Missing.fs", countFloor 10 2 ]
+        }
 
     match judge config [ makeFile "Measured.fs" 100.0 100.0 0 0 ] with
     | Incomplete(_, [ hole ]) ->
@@ -58,8 +63,11 @@ let ``judge - measured regression remains below-floor and carries missing floors
         { defaultsConfig with
             Overrides =
                 Map.ofList
-                    [ "Measured.fs", percentageFloor 90.0 90.0
-                      "Missing.fs", percentageFloor 80.0 70.0 ] }
+                    [
+                        "Measured.fs", percentageFloor 90.0 90.0
+                        "Missing.fs", percentageFloor 80.0 70.0
+                    ]
+        }
 
     let verdict = judge config [ makeFile "Measured.fs" 50.0 100.0 0 0 ]
 
@@ -75,7 +83,8 @@ let ``judge - measured count regression is below-floor`` () =
     let config =
         { defaultsConfig with
             Overrides = Map.ofList [ "Foo.fs", percentageFloor 0.0 0.0 ]
-            CountFloors = Map.ofList [ "Foo.fs", countFloor 8 0 ] }
+            CountFloors = Map.ofList [ "Foo.fs", countFloor 8 0 ]
+        }
 
     match judge config [ makeFileWithCounts "Foo.fs" 3 10 0 0 ] with
     | BelowFloor([], [ failure ], []) -> test <@ failure.File.FileName = "Foo.fs" @>
@@ -105,11 +114,16 @@ let ``check - file with override uses override thresholds`` () =
         { defaultsConfig with
             Overrides =
                 Map.ofList
-                    [ "Foo.fs",
-                      { Line = 70.0
-                        Branch = 65.0
-                        Reason = Some "legacy code"
-                        Platform = None } ] }
+                    [
+                        "Foo.fs",
+                        {
+                            Line = 70.0
+                            Branch = 65.0
+                            Reason = Some "legacy code"
+                            Platform = None
+                        }
+                    ]
+        }
 
     let files = [ makeFile "Foo.fs" 75.0 70.0 3 4 ]
     let result = check config files
@@ -151,16 +165,22 @@ let ``saveConfig roundtrips with loadConfig`` () =
 
     try
         let config =
-            { DefaultLine = 100.0
-              DefaultBranch = 100.0
-              CountFloors = Map.empty
-              Overrides =
-                Map.ofList
-                    [ "Foo.fs",
-                      { Line = 70.0
-                        Branch = 65.0
-                        Reason = Some "legacy code"
-                        Platform = None } ] }
+            {
+                DefaultLine = 100.0
+                DefaultBranch = 100.0
+                CountFloors = Map.empty
+                Overrides =
+                    Map.ofList
+                        [
+                            "Foo.fs",
+                            {
+                                Line = 70.0
+                                Branch = 65.0
+                                Reason = Some "legacy code"
+                                Platform = None
+                            }
+                        ]
+            }
 
         saveConfig tmpFile config
         let loaded = loadConfig tmpFile
@@ -190,20 +210,30 @@ let ``Platform.ofString - invalid input returns None`` () =
 [<Fact>]
 let ``resolveConfig - platform-specific wins over all-platform`` () =
     let raw: RawConfig =
-        { DefaultLine = 100.0
-          DefaultBranch = 100.0
-          RawCountFloors = Map.empty
-          RawOverrides =
-            Map.ofList
-                [ "Foo.fs",
-                  [ { Line = 50.0
-                      Branch = 50.0
-                      Reason = Some "fallback"
-                      Platform = None }
-                    { Line = 84.0
-                      Branch = 55.0
-                      Reason = Some "specific"
-                      Platform = Some Platform.current } ] ] }
+        {
+            DefaultLine = 100.0
+            DefaultBranch = 100.0
+            RawCountFloors = Map.empty
+            RawOverrides =
+                Map.ofList
+                    [
+                        "Foo.fs",
+                        [
+                            {
+                                Line = 50.0
+                                Branch = 50.0
+                                Reason = Some "fallback"
+                                Platform = None
+                            }
+                            {
+                                Line = 84.0
+                                Branch = 55.0
+                                Reason = Some "specific"
+                                Platform = Some Platform.current
+                            }
+                        ]
+                    ]
+        }
 
     let config = resolveConfig raw
     test <@ config.Overrides.["Foo.fs"].Line = 84.0 @>
@@ -212,18 +242,22 @@ let ``resolveConfig - platform-specific wins over all-platform`` () =
 [<Fact>]
 let ``FileResult.passed - both pass`` () =
     let r =
-        { File = makeFile "Foo.fs" 80.0 70.0 3 4
-          LineThreshold = 80.0
-          BranchThreshold = 70.0 }
+        {
+            File = makeFile "Foo.fs" 80.0 70.0 3 4
+            LineThreshold = 80.0
+            BranchThreshold = 70.0
+        }
 
     test <@ FileResult.passed r @>
 
 [<Fact>]
 let ``FileResult.passed - line fails`` () =
     let r =
-        { File = makeFile "Foo.fs" 79.0 70.0 3 4
-          LineThreshold = 80.0
-          BranchThreshold = 70.0 }
+        {
+            File = makeFile "Foo.fs" 79.0 70.0 3 4
+            LineThreshold = 80.0
+            BranchThreshold = 70.0
+        }
 
     test <@ not (FileResult.passed r) @>
 
@@ -233,7 +267,8 @@ let ``FileResult.passed - line fails`` () =
 let ``checkCounts - file below its covered-line floor FAILS`` () =
     let config =
         { defaultsConfig with
-            CountFloors = Map.ofList [ "Foo.fs", countFloor 383 0 ] }
+            CountFloors = Map.ofList [ "Foo.fs", countFloor 383 0 ]
+        }
 
     let files = [ makeFileWithCounts "Foo.fs" 300 400 0 0 ]
 
@@ -243,7 +278,8 @@ let ``checkCounts - file below its covered-line floor FAILS`` () =
 let ``checkCounts - file at its covered-line floor passes`` () =
     let config =
         { defaultsConfig with
-            CountFloors = Map.ofList [ "Foo.fs", countFloor 383 0 ] }
+            CountFloors = Map.ofList [ "Foo.fs", countFloor 383 0 ]
+        }
 
     let files = [ makeFileWithCounts "Foo.fs" 383 400 0 0 ]
 
@@ -253,7 +289,8 @@ let ``checkCounts - file at its covered-line floor passes`` () =
 let ``checkCounts - file below its covered-BRANCH floor FAILS`` () =
     let config =
         { defaultsConfig with
-            CountFloors = Map.ofList [ "Foo.fs", countFloor 0 55 ] }
+            CountFloors = Map.ofList [ "Foo.fs", countFloor 0 55 ]
+        }
 
     let files = [ makeFileWithCounts "Foo.fs" 100 100 44 62 ]
 
@@ -263,7 +300,8 @@ let ``checkCounts - file below its covered-BRANCH floor FAILS`` () =
 let ``checkCounts - a file with no floor recorded is not count-checked`` () =
     let config =
         { defaultsConfig with
-            CountFloors = Map.ofList [ "Other.fs", countFloor 999 0 ] }
+            CountFloors = Map.ofList [ "Other.fs", countFloor 999 0 ]
+        }
 
     let files = [ makeFileWithCounts "Foo.fs" 1 400 0 0 ]
 
@@ -276,7 +314,8 @@ let ``checkCounts - a shrinking denominator cannot fail a count floor`` () =
     // count is unchanged, so the count floor holds steady.
     let config =
         { defaultsConfig with
-            CountFloors = Map.ofList [ "Foo.fs", countFloor 90 0 ] }
+            CountFloors = Map.ofList [ "Foo.fs", countFloor 90 0 ]
+        }
 
     let wideDenominator = [ makeFileWithCounts "Foo.fs" 90 400 0 0 ]
     let narrowDenominator = [ makeFileWithCounts "Foo.fs" 90 90 0 0 ]
@@ -345,16 +384,24 @@ let ``saveRawConfig - omits countFloors entirely when none are set`` () =
 
     try
         let raw =
-            { DefaultLine = 100.0
-              DefaultBranch = 100.0
-              RawOverrides =
-                Map.ofList
-                    [ "Foo.fs",
-                      [ { Line = 93.0
-                          Branch = 80.0
-                          Reason = None
-                          Platform = None } ] ]
-              RawCountFloors = Map.empty }
+            {
+                DefaultLine = 100.0
+                DefaultBranch = 100.0
+                RawOverrides =
+                    Map.ofList
+                        [
+                            "Foo.fs",
+                            [
+                                {
+                                    Line = 93.0
+                                    Branch = 80.0
+                                    Reason = None
+                                    Platform = None
+                                }
+                            ]
+                        ]
+                RawCountFloors = Map.empty
+            }
 
         saveRawConfig path raw
         let written = File.ReadAllText(path)
@@ -369,16 +416,24 @@ let ``saveRawConfig - round-trips count floors`` () =
 
     try
         let raw =
-            { DefaultLine = 100.0
-              DefaultBranch = 100.0
-              RawOverrides = Map.empty
-              RawCountFloors =
-                Map.ofList
-                    [ "Foo.fs",
-                      [ { CoveredLines = 383
-                          CoveredBranches = 41
-                          Reason = Some "extracted to Shared.fs"
-                          Platform = None } ] ] }
+            {
+                DefaultLine = 100.0
+                DefaultBranch = 100.0
+                RawOverrides = Map.empty
+                RawCountFloors =
+                    Map.ofList
+                        [
+                            "Foo.fs",
+                            [
+                                {
+                                    CoveredLines = 383
+                                    CoveredBranches = 41
+                                    Reason = Some "extracted to Shared.fs"
+                                    Platform = None
+                                }
+                            ]
+                        ]
+            }
 
         saveRawConfig path raw
         let reloaded = loadRawConfig path
@@ -420,16 +475,24 @@ let ``loadRawConfig - a countFloors entry may be a per-platform array`` () =
 [<Fact>]
 let ``resolveConfig - a count floor tagged only for another platform is not enforced`` () =
     let raw =
-        { DefaultLine = 100.0
-          DefaultBranch = 100.0
-          RawOverrides = Map.empty
-          RawCountFloors =
-            Map.ofList
-                [ "Os.fs",
-                  [ { CoveredLines = 999
-                      CoveredBranches = 99
-                      Reason = None
-                      Platform = Some otherPlatform } ] ] }
+        {
+            DefaultLine = 100.0
+            DefaultBranch = 100.0
+            RawOverrides = Map.empty
+            RawCountFloors =
+                Map.ofList
+                    [
+                        "Os.fs",
+                        [
+                            {
+                                CoveredLines = 999
+                                CoveredBranches = 99
+                                Reason = None
+                                Platform = Some otherPlatform
+                            }
+                        ]
+                    ]
+        }
 
     let config = resolveConfig raw
 
@@ -442,16 +505,24 @@ let ``saveRawConfig - a single platform-tagged count floor is written as an arra
 
     try
         let raw =
-            { DefaultLine = 100.0
-              DefaultBranch = 100.0
-              RawOverrides = Map.empty
-              RawCountFloors =
-                Map.ofList
-                    [ "Os.fs",
-                      [ { CoveredLines = 100
-                          CoveredBranches = 10
-                          Reason = None
-                          Platform = Some Platform.current } ] ] }
+            {
+                DefaultLine = 100.0
+                DefaultBranch = 100.0
+                RawOverrides = Map.empty
+                RawCountFloors =
+                    Map.ofList
+                        [
+                            "Os.fs",
+                            [
+                                {
+                                    CoveredLines = 100
+                                    CoveredBranches = 10
+                                    Reason = None
+                                    Platform = Some Platform.current
+                                }
+                            ]
+                        ]
+            }
 
         saveRawConfig path raw
         let written = File.ReadAllText(path)
@@ -472,10 +543,12 @@ let ``saveRawConfig - a file key with no entries serialises without crashing`` (
         // Degenerate but reachable shape: a filename mapped to an empty entry list.
         // Serialisation must not assume at least one entry exists.
         let raw =
-            { DefaultLine = 100.0
-              DefaultBranch = 100.0
-              RawOverrides = Map.ofList [ "Empty.fs", [] ]
-              RawCountFloors = Map.ofList [ "AlsoEmpty.fs", [] ] }
+            {
+                DefaultLine = 100.0
+                DefaultBranch = 100.0
+                RawOverrides = Map.ofList [ "Empty.fs", [] ]
+                RawCountFloors = Map.ofList [ "AlsoEmpty.fs", [] ]
+            }
 
         saveRawConfig path raw
 
@@ -509,16 +582,24 @@ let ``saveRawConfig - a reason's non-ASCII text survives the write as literal UT
 
     try
         let raw =
-            { DefaultLine = 100.0
-              DefaultBranch = 100.0
-              RawOverrides =
-                Map.ofList
-                    [ "Api.fs",
-                      [ { Line = 93.0
-                          Branch = 84.0
-                          Reason = Some proseReason
-                          Platform = None } ] ]
-              RawCountFloors = Map.empty }
+            {
+                DefaultLine = 100.0
+                DefaultBranch = 100.0
+                RawOverrides =
+                    Map.ofList
+                        [
+                            "Api.fs",
+                            [
+                                {
+                                    Line = 93.0
+                                    Branch = 84.0
+                                    Reason = Some proseReason
+                                    Platform = None
+                                }
+                            ]
+                        ]
+                RawCountFloors = Map.empty
+            }
 
         saveRawConfig path raw
         let written = File.ReadAllText(path)
@@ -546,22 +627,36 @@ let ``saveRawConfig - rewriting a config that changed no floor produces the same
 
     try
         let raw =
-            { DefaultLine = 100.0
-              DefaultBranch = 100.0
-              RawOverrides =
-                Map.ofList
-                    [ "Api.fs",
-                      [ { Line = 93.0
-                          Branch = 84.0
-                          Reason = Some proseReason
-                          Platform = None } ] ]
-              RawCountFloors =
-                Map.ofList
-                    [ "Api.fs",
-                      [ { CoveredLines = 383
-                          CoveredBranches = 41
-                          Reason = Some proseReason
-                          Platform = None } ] ] }
+            {
+                DefaultLine = 100.0
+                DefaultBranch = 100.0
+                RawOverrides =
+                    Map.ofList
+                        [
+                            "Api.fs",
+                            [
+                                {
+                                    Line = 93.0
+                                    Branch = 84.0
+                                    Reason = Some proseReason
+                                    Platform = None
+                                }
+                            ]
+                        ]
+                RawCountFloors =
+                    Map.ofList
+                        [
+                            "Api.fs",
+                            [
+                                {
+                                    CoveredLines = 383
+                                    CoveredBranches = 41
+                                    Reason = Some proseReason
+                                    Platform = None
+                                }
+                            ]
+                        ]
+            }
 
         saveRawConfig path raw
         let firstWrite = File.ReadAllBytes(path)
@@ -670,7 +765,8 @@ let ``saveRawConfig - changing one platform's floor for one file leaves every ot
                              if f.Platform = Some MacOS then
                                  { f with CoveredLines = 38 }
                              else
-                                 f)) }
+                                 f))
+            }
 
         saveRawConfig path lowered
         let written = File.ReadAllText(path)
@@ -697,10 +793,15 @@ let ``saveRawConfig - a new file's floor is appended without disturbing existing
                     raw.RawCountFloors
                     |> Map.add
                         "New.fs"
-                        [ { CoveredLines = 5
-                            CoveredBranches = 1
-                            Reason = None
-                            Platform = None } ] }
+                        [
+                            {
+                                CoveredLines = 5
+                                CoveredBranches = 1
+                                Reason = None
+                                Platform = None
+                            }
+                        ]
+            }
 
         saveRawConfig path enrolled
         let written = File.ReadAllText(path)
@@ -726,7 +827,8 @@ let ``saveRawConfig - dropping a file's last floor removes only that key`` () =
 
         let dropped =
             { raw with
-                RawCountFloors = raw.RawCountFloors |> Map.remove "Mid.fs" }
+                RawCountFloors = raw.RawCountFloors |> Map.remove "Mid.fs"
+            }
 
         saveRawConfig path dropped
         let written = File.ReadAllText(path)
@@ -752,7 +854,8 @@ let ``saveRawConfig - a file that ended in a newline still does`` () =
 
         let dropped =
             { raw with
-                RawCountFloors = raw.RawCountFloors |> Map.remove "Mid.fs" }
+                RawCountFloors = raw.RawCountFloors |> Map.remove "Mid.fs"
+            }
 
         saveRawConfig path dropped
         let written = File.ReadAllText(path)
@@ -768,17 +871,22 @@ let ``saveRawConfig - a file that ended in a newline still does`` () =
 let ``resolveConfigFor - picks the named platform's entry, else the platform-less one`` () =
     let entry line platform =
         { percentageFloor line line with
-            Platform = platform }
+            Platform = platform
+        }
 
     let raw =
-        { DefaultLine = 100.0
-          DefaultBranch = 100.0
-          RawOverrides =
-            Map.ofList
-                [ "Split.fs", [ entry 70.0 (Some MacOS); entry 60.0 (Some Linux) ]
-                  "Shared.fs", [ entry 80.0 None; entry 50.0 (Some Windows) ]
-                  "MacOnly.fs", [ entry 40.0 (Some MacOS) ] ]
-          RawCountFloors = Map.empty }
+        {
+            DefaultLine = 100.0
+            DefaultBranch = 100.0
+            RawOverrides =
+                Map.ofList
+                    [
+                        "Split.fs", [ entry 70.0 (Some MacOS); entry 60.0 (Some Linux) ]
+                        "Shared.fs", [ entry 80.0 None; entry 50.0 (Some Windows) ]
+                        "MacOnly.fs", [ entry 40.0 (Some MacOS) ]
+                    ]
+            RawCountFloors = Map.empty
+        }
 
     let linux = resolveConfigFor Linux raw
     let mac = resolveConfigFor MacOS raw
@@ -794,13 +902,17 @@ let ``overrideEntriesToJson - renders entries the way the config writer does`` (
     let single = [ percentageFloor 90.0 80.0 ]
 
     let tagged =
-        [ { percentageFloor 90.0 80.0 with
-              Reason = Some "why — on linux"
-              Platform = Some Linux } ]
+        [
+            { percentageFloor 90.0 80.0 with
+                Reason = Some "why — on linux"
+                Platform = Some Linux
+            }
+        ]
 
     test <@ overrideEntriesToJson single = "{\n  \"line\": 90,\n  \"branch\": 80\n}" @>
 
     test
         <@
-            overrideEntriesToJson tagged = "[\n  {\n    \"line\": 90,\n    \"branch\": 80,\n    \"reason\": \"why — on linux\",\n    \"platform\": \"linux\"\n  }\n]"
+            overrideEntriesToJson tagged =
+                "[\n  {\n    \"line\": 90,\n    \"branch\": 80,\n    \"reason\": \"why — on linux\",\n    \"platform\": \"linux\"\n  }\n]"
         @>

@@ -15,10 +15,12 @@ open FsSemanticTagger.Vcs
 
 /// No waits, and one tag-run poll: tests that care about the poll pass their own.
 let private immediateTagPush: TagPushPolicy =
-    { PushAttempts = 1
-      PushRetryDelayMs = 0
-      RunPollIntervalMs = 0
-      RunPollAttempts = 1 }
+    {
+        PushAttempts = 1
+        PushRetryDelayMs = 0
+        RunPollIntervalMs = 0
+        RunPollAttempts = 1
+    }
 
 /// Prior-API stub: a FetchError, so an Auto run that reaches it aborts instead of bumping.
 let private noPreviousApi (_pkg: string) (_version: string) : PreviousApiResult = FetchError "previous API unavailable"
@@ -32,13 +34,17 @@ let private noCurrentGrammar (_dll: string) : Grammar option = None
 
 /// No machine-local canary config, and a host that must never be reached.
 let private noCanary: ConsumerCanary.Settings =
-    { ConfigPath = Path.Combine(Path.GetTempPath(), "no-such-fssemantictagger.json")
-      Skip = false
-      LogDir = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-logs")
-      PackagesCache = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-cache")
-      Ops =
-        { RunIn = fun _ cmd _ -> failwithf "unexpected canary process: %s" cmd
-          RunGate = fun _ command _ _ -> failwithf "unexpected canary gate: %s" command } }
+    {
+        ConfigPath = Path.Combine(Path.GetTempPath(), "no-such-fssemantictagger.json")
+        Skip = false
+        LogDir = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-logs")
+        PackagesCache = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-cache")
+        Ops =
+            {
+                RunIn = fun _ cmd _ -> failwithf "unexpected canary process: %s" cmd
+                RunGate = fun _ command _ _ -> failwithf "unexpected canary gate: %s" command
+            }
+    }
 
 /// Re-seeds the temp-dir CHANGELOG.md before each release call (promotion mutates it).
 let private seedTmpChangelog () =
@@ -49,28 +55,31 @@ let private runReleaseOnFeed run config cmd mode prev cur poll max push checkFee
     seedTmpChangelog ()
 
     release
-        { Run = run
-          Config =
-            { config with
-                RootDir = Path.GetTempPath() }
-          Command = cmd
-          Mode = mode
-          TargetPackages = []
-          ExtractPreviousApi = prev
-          ExtractCurrentApi = cur
-          ExtractPreviousGrammar = noPreviousGrammar
-          ExtractCurrentGrammar = noCurrentGrammar
-          CiPollIntervalMs = poll
-          CiWait = CiWaitTests.fixedCiWait poll max
-          TagPush = immediateTagPush
-          CheckFeedPresence = checkFeedPresence
-          CheckRestorable = (fun _ _ _ -> OnFeed)
-          WaitForNuGet = false
-          NuGetPollIntervalMs = 0
-          NuGetMaxAttempts = 1
-          Push = push
-          Check = false
-          Canary = noCanary }
+        {
+            Run = run
+            Config =
+                { config with
+                    RootDir = Path.GetTempPath()
+                }
+            Command = cmd
+            Mode = mode
+            TargetPackages = []
+            ExtractPreviousApi = prev
+            ExtractCurrentApi = cur
+            ExtractPreviousGrammar = noPreviousGrammar
+            ExtractCurrentGrammar = noCurrentGrammar
+            CiPollIntervalMs = poll
+            CiWait = CiWaitTests.fixedCiWait poll max
+            TagPush = immediateTagPush
+            CheckFeedPresence = checkFeedPresence
+            CheckRestorable = (fun _ _ _ -> OnFeed)
+            WaitForNuGet = false
+            NuGetPollIntervalMs = 0
+            NuGetMaxAttempts = 1
+            Push = push
+            Check = false
+            Canary = noCanary
+        }
 
 /// Every prior version is on the feed — the default for tests not about publication.
 let private runReleaseWithPush run config cmd mode prev cur poll max push =
@@ -89,7 +98,9 @@ let private missingRun (waited: System.TimeSpan) (everAnswered: bool) =
         "fssemantictagger-v0.14.0-alpha.8",
         waited,
         everAnswered,
-        [ "gh run list --branch fssemantictagger-v0.14.0-alpha.8 --workflow .github/workflows/release.yml --repo example/repo" ]
+        [
+            "gh run list --branch fssemantictagger-v0.14.0-alpha.8 --workflow .github/workflows/release.yml --repo example/repo"
+        ]
     )
 
 [<Fact>]
@@ -97,10 +108,12 @@ let ``tag confirmation output does not claim a failed push reached the remote`` 
     let output, result =
         withCapturedConsole (fun () ->
             reportTagConfirmationFailures
-                [ TagConfirmationFailure.PushFailed(
-                      "fssemantictagger-v0.14.0-alpha.8",
-                      "the HTTPS remote has no credential helper"
-                  ) ])
+                [
+                    TagConfirmationFailure.PushFailed(
+                        "fssemantictagger-v0.14.0-alpha.8",
+                        "the HTTPS remote has no credential helper"
+                    )
+                ])
 
     test <@ result = 1 @>
     test <@ output.Contains("tag push(es) failed") @>
@@ -166,15 +179,21 @@ let ``a workflow run that already failed stops the release, and says so as a fai
     let output, result =
         withCapturedConsole (fun () ->
             reportTagConfirmationFailures
-                [ TagConfirmationFailure.WorkflowRunFailed(
-                      "fssemantictagger-v0.14.0-alpha.8",
-                      [ { Workflow = PublishWorkflow ".github/workflows/release.yml"
-                          Name = "Release"
-                          Url = "https://github.com/example/repo/actions/runs/42"
-                          RunId = "42"
-                          Status = Completed
-                          Conclusion = FailureConclusion } ]
-                  ) ])
+                [
+                    TagConfirmationFailure.WorkflowRunFailed(
+                        "fssemantictagger-v0.14.0-alpha.8",
+                        [
+                            {
+                                Workflow = PublishWorkflow ".github/workflows/release.yml"
+                                Name = "Release"
+                                Url = "https://github.com/example/repo/actions/runs/42"
+                                RunId = "42"
+                                Status = Completed
+                                Conclusion = FailureConclusion
+                            }
+                        ]
+                    )
+                ])
 
     test <@ result = 1 @>
     test <@ output.Contains("workflow run that FAILED") @>
@@ -200,10 +219,12 @@ let ``updateFsprojVersion - updates Version element in fsproj`` () =
         File.WriteAllText(tmpFile, content)
 
         let newVersion =
-            { Major = 2
-              Minor = 3
-              Patch = 4
-              Stage = Stable }
+            {
+                Major = 2
+                Minor = 3
+                Patch = 4
+                Stage = Stable
+            }
 
         updateFsprojVersion tmpFile newVersion
         let result = File.ReadAllText(tmpFile)
@@ -227,10 +248,12 @@ let ``updateFsprojVersion - handles pre-release versions`` () =
         File.WriteAllText(tmpFile, content)
 
         let newVersion =
-            { Major = 0
-              Minor = 2
-              Patch = 0
-              Stage = PreRelease(Alpha 1) }
+            {
+                Major = 0
+                Minor = 2
+                Patch = 0
+                Stage = PreRelease(Alpha 1)
+            }
 
         updateFsprojVersion tmpFile newVersion
         let result = File.ReadAllText(tmpFile)
@@ -284,12 +307,14 @@ let ``release - returns 1 when uncommitted changes`` () =
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
-        { Packages = []
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages = []
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
@@ -308,12 +333,14 @@ let ``release - returns 1 when CI not passing`` () =
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
-        { Packages = []
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages = []
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
@@ -334,17 +361,23 @@ let ``release - Auto with no previous tags returns 0 with no packages`` () =
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = "src/MyLib/MyLib.fsproj"
-                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages =
+                [
+                    {
+                        Name = "MyLib"
+                        Fsproj = "src/MyLib/MyLib.fsproj"
+                        DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                        TagPrefix = "v"
+                        FsProjsSharingSameTag = []
+                    }
+                ]
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
@@ -386,17 +419,23 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
@@ -453,17 +492,23 @@ let ``release - Auto first-releases an untagged package at its declared fsproj v
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
@@ -555,47 +600,57 @@ let ``release - the version-bump commit's CI wait uses the history-sized budget,
         let historySized () : CiWait.Budget =
             budgetRequests <- budgetRequests + 1
 
-            { Timeout = System.TimeSpan.FromMilliseconds 119.0
-              Basis = CiWait.FromHistory(System.TimeSpan.FromMilliseconds 60.0, 10) }
+            {
+                Timeout = System.TimeSpan.FromMilliseconds 119.0
+                Basis = CiWait.FromHistory(System.TimeSpan.FromMilliseconds 60.0, 10)
+            }
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = Path.GetTempPath() }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = Path.GetTempPath()
+            }
 
         seedTmpChangelog ()
 
         let output, result =
             withCapturedConsole (fun () ->
                 release
-                    { Run = fakeRun
-                      Config = config
-                      Command = StartAlpha
-                      Mode = PushTags
-                      TargetPackages = []
-                      ExtractPreviousApi = noPreviousApi
-                      ExtractCurrentApi = noCurrentApi
-                      ExtractPreviousGrammar = noPreviousGrammar
-                      ExtractCurrentGrammar = noCurrentGrammar
-                      CiPollIntervalMs = 0
-                      CiWait = historySized
-                      TagPush = immediateTagPush
-                      CheckFeedPresence = (fun _ _ -> OnFeed)
-                      CheckRestorable = (fun _ _ _ -> OnFeed)
-                      WaitForNuGet = false
-                      NuGetPollIntervalMs = 0
-                      NuGetMaxAttempts = 1
-                      Push = false
-                      Check = false
-                      Canary = noCanary })
+                    {
+                        Run = fakeRun
+                        Config = config
+                        Command = StartAlpha
+                        Mode = PushTags
+                        TargetPackages = []
+                        ExtractPreviousApi = noPreviousApi
+                        ExtractCurrentApi = noCurrentApi
+                        ExtractPreviousGrammar = noPreviousGrammar
+                        ExtractCurrentGrammar = noCurrentGrammar
+                        CiPollIntervalMs = 0
+                        CiWait = historySized
+                        TagPush = immediateTagPush
+                        CheckFeedPresence = (fun _ _ -> OnFeed)
+                        CheckRestorable = (fun _ _ _ -> OnFeed)
+                        WaitForNuGet = false
+                        NuGetPollIntervalMs = 0
+                        NuGetMaxAttempts = 1
+                        Push = false
+                        Check = false
+                        Canary = noCanary
+                    })
 
         test <@ result = 0 @>
         test <@ not (output.Contains("CI still running after timeout")) @>
@@ -624,17 +679,23 @@ let ``release - StartAlpha with LocalPublish calls dotnet pack`` () =
         let (fakeRun, getCalls) = passingCiRun []
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha LocalPublish noPreviousApi noCurrentApi 0 10
@@ -665,28 +726,36 @@ let ``release - Auto with reserved version bumps past it`` () =
         // Unchanged API => patch 1.0.1, which is reserved => 1.0.2
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
-                  ("jj",
-                   "diff --from v1.0.0 --to @ --summary \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
-                   Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0")
+                    ("jj",
+                     "diff --from v1.0.0 --to @ --summary \"glob:"
+                     + Path.GetDirectoryName(tmpFile)
+                     + "/**\"",
+                     Success "1 file changed")
+                ]
 
         let sameApi = [ ApiSignature "type Foo" ]
         let extractPreviousApi (_pkg: string) (_version: string) = Found sameApi
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.ofList [ "1.0.1" ]
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.ofList [ "1.0.1" ]
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> sameApi) 0 10
@@ -710,29 +779,37 @@ let ``release - Auto with own-changed PackAsTool package skips the API-diff (NU1
 
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"cli-v*\"", Success "cli-v0.14.0-alpha.1")
-                  ("jj",
-                   "diff --from cli-v0.14.0-alpha.1 --to @ --summary \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
-                   Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"cli-v*\"", Success "cli-v0.14.0-alpha.1")
+                    ("jj",
+                     "diff --from cli-v0.14.0-alpha.1 --to @ --summary \"glob:"
+                     + Path.GetDirectoryName(tmpFile)
+                     + "/**\"",
+                     Success "1 file changed")
+                ]
 
         // A tool's API cannot be read (NU1212); the PackAsTool path must not ask.
         let extractPreviousApi (_pkg: string) (_version: string) : PreviousApiResult =
             FetchError "NU1212: DotnetToolReference project style can only contain references of the DotnetTool type"
 
         let config =
-            { Packages =
-                [ { Name = "MyTool"
-                    Fsproj = tmpFile
-                    DllPath = "fake.dll"
-                    TagPrefix = "cli-v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyTool"
+                            Fsproj = tmpFile
+                            DllPath = "fake.dll"
+                            TagPrefix = "cli-v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config Auto PushTags extractPreviousApi noCurrentApi 0 10
@@ -748,17 +825,23 @@ let ``release - non-Auto with reserved version skips package`` () =
     let (fakeRun, _getCalls) = passingCiRun []
 
     let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = "src/MyLib/MyLib.fsproj"
-                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.ofList [ "0.1.0-alpha.1" ]
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages =
+                [
+                    {
+                        Name = "MyLib"
+                        Fsproj = "src/MyLib/MyLib.fsproj"
+                        DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                        TagPrefix = "v"
+                        FsProjsSharingSameTag = []
+                    }
+                ]
+            ReservedVersions = Set.ofList [ "0.1.0-alpha.1" ]
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let result =
         runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
@@ -770,17 +853,23 @@ let ``release - PromoteToBeta with FirstRelease returns 0 no packages`` () =
     let (fakeRun, _getCalls) = passingCiRun []
 
     let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = "src/MyLib/MyLib.fsproj"
-                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages =
+                [
+                    {
+                        Name = "MyLib"
+                        Fsproj = "src/MyLib/MyLib.fsproj"
+                        DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                        TagPrefix = "v"
+                        FsProjsSharingSameTag = []
+                    }
+                ]
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let result =
         runRelease fakeRun config PromoteToBeta PushTags noPreviousApi noCurrentApi 0 10
@@ -796,21 +885,29 @@ let ``release - runs preBuildCmds before build`` () =
 
         let (fakeRun, getCalls) =
             passingCiRun
-                [ ("dotnet", "tool restore", Success "Restored.")
-                  ("dotnet", "tool run paket restore", Success "Paket restored.") ]
+                [
+                    ("dotnet", "tool restore", Success "Restored.")
+                    ("dotnet", "tool run paket restore", Success "Paket restored.")
+                ]
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = [ "dotnet tool restore"; "dotnet tool run paket restore" ]
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = [ "dotnet tool restore"; "dotnet tool run paket restore" ]
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
@@ -953,22 +1050,30 @@ let ``release - skips packages with no changes since last tag`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "LibA"
-                    Fsproj = tmpFileA
-                    DllPath = "src/LibA/bin/Release/net10.0/LibA.dll"
-                    TagPrefix = "liba-v"
-                    FsProjsSharingSameTag = [] }
-                  { Name = "LibB"
-                    Fsproj = "src/LibB/LibB.fsproj"
-                    DllPath = "src/LibB/bin/Release/net10.0/LibB.dll"
-                    TagPrefix = "libb-v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "LibA"
+                            Fsproj = tmpFileA
+                            DllPath = "src/LibA/bin/Release/net10.0/LibA.dll"
+                            TagPrefix = "liba-v"
+                            FsProjsSharingSameTag = []
+                        }
+                        {
+                            Name = "LibB"
+                            Fsproj = "src/LibB/LibB.fsproj"
+                            DllPath = "src/LibB/bin/Release/net10.0/LibB.dll"
+                            TagPrefix = "libb-v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
@@ -1000,12 +1105,14 @@ let ``release - Auto detects breaking API change and bumps major`` () =
 
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
-                  ("jj",
-                   "diff --from v1.0.0 --to @ --summary \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
-                   Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0")
+                    ("jj",
+                     "diff --from v1.0.0 --to @ --summary \"glob:"
+                     + Path.GetDirectoryName(tmpFile)
+                     + "/**\"",
+                     Success "1 file changed")
+                ]
 
         let oldApi = [ ApiSignature "type Foo"; ApiSignature "  Foo::Bar(): String" ]
 
@@ -1014,17 +1121,23 @@ let ``release - Auto detects breaking API change and bumps major`` () =
         let extractPreviousApi (_pkg: string) (_version: string) = Found oldApi
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
@@ -1051,49 +1164,63 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
 
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
-                  ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0")
+                    ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed")
+                ]
 
         let api = [ ApiSignature "type Foo" ]
 
-        let previousGrammar = { Roots = [ Leaf("check-api", [], []) ] }
+        let previousGrammar =
+            {
+                Roots = [ Leaf("check-api", [], []) ]
+            }
+
         let currentGrammar = { Roots = [ Leaf("diff-api", [], []) ] }
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = fsproj
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = dir }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = fsproj
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = dir
+            }
 
         let result =
             release
-                { Run = fakeRun
-                  Config = config
-                  Command = Auto
-                  Mode = PushTags
-                  TargetPackages = []
-                  ExtractPreviousApi = (fun _ _ -> Found api)
-                  ExtractCurrentApi = (fun _ -> api)
-                  ExtractPreviousGrammar = (fun _ _ -> Some previousGrammar)
-                  ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
-                  CiPollIntervalMs = 0
-                  CiWait = CiWaitTests.fixedCiWait 0 10
-                  TagPush = immediateTagPush
-                  CheckFeedPresence = (fun _ _ -> OnFeed)
-                  CheckRestorable = (fun _ _ _ -> OnFeed)
-                  WaitForNuGet = false
-                  NuGetPollIntervalMs = 0
-                  NuGetMaxAttempts = 1
-                  Push = false
-                  Check = false
-                  Canary = noCanary }
+                {
+                    Run = fakeRun
+                    Config = config
+                    Command = Auto
+                    Mode = PushTags
+                    TargetPackages = []
+                    ExtractPreviousApi = (fun _ _ -> Found api)
+                    ExtractCurrentApi = (fun _ -> api)
+                    ExtractPreviousGrammar = (fun _ _ -> Some previousGrammar)
+                    ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
+                    CiPollIntervalMs = 0
+                    CiWait = CiWaitTests.fixedCiWait 0 10
+                    TagPush = immediateTagPush
+                    CheckFeedPresence = (fun _ _ -> OnFeed)
+                    CheckRestorable = (fun _ _ _ -> OnFeed)
+                    WaitForNuGet = false
+                    NuGetPollIntervalMs = 0
+                    NuGetMaxAttempts = 1
+                    Push = false
+                    Check = false
+                    Canary = noCanary
+                }
 
         test <@ result = 0 @>
         test <@ (File.ReadAllText fsproj).Contains("<Version>2.0.0</Version>") @>
@@ -1110,26 +1237,28 @@ let private releaseWithUnchangedApi (run: string -> string -> CommandResult) (co
 
     withCapturedConsole (fun () ->
         release
-            { Run = run
-              Config = config
-              Command = Auto
-              Mode = PushTags
-              TargetPackages = only
-              ExtractPreviousApi = (fun _ _ -> Found api)
-              ExtractCurrentApi = (fun _ -> api)
-              ExtractPreviousGrammar = noPreviousGrammar
-              ExtractCurrentGrammar = noCurrentGrammar
-              CiPollIntervalMs = 0
-              CiWait = CiWaitTests.fixedCiWait 0 10
-              TagPush = immediateTagPush
-              CheckFeedPresence = (fun _ _ -> OnFeed)
-              CheckRestorable = (fun _ _ _ -> OnFeed)
-              WaitForNuGet = false
-              NuGetPollIntervalMs = 0
-              NuGetMaxAttempts = 1
-              Push = false
-              Check = false
-              Canary = noCanary })
+            {
+                Run = run
+                Config = config
+                Command = Auto
+                Mode = PushTags
+                TargetPackages = only
+                ExtractPreviousApi = (fun _ _ -> Found api)
+                ExtractCurrentApi = (fun _ -> api)
+                ExtractPreviousGrammar = noPreviousGrammar
+                ExtractCurrentGrammar = noCurrentGrammar
+                CiPollIntervalMs = 0
+                CiWait = CiWaitTests.fixedCiWait 0 10
+                TagPush = immediateTagPush
+                CheckFeedPresence = (fun _ _ -> OnFeed)
+                CheckRestorable = (fun _ _ _ -> OnFeed)
+                WaitForNuGet = false
+                NuGetPollIntervalMs = 0
+                NuGetMaxAttempts = 1
+                Push = false
+                Check = false
+                Canary = noCanary
+            })
 
 /// A single-package repo in `dir` at `version`, with `changelog` as its root CHANGELOG.md.
 let private singlePackageRepo (dir: string) (version: string) (changelog: string) =
@@ -1141,21 +1270,29 @@ let private singlePackageRepo (dir: string) (version: string) (changelog: string
 
     let (fakeRun, _getCalls) =
         passingCiRun
-            [ ("git", "tag -l \"v*\"", Success("v" + version))
-              ("jj", sprintf "diff --from v%s --to @ --summary \"glob:%s/**\"" version dir, Success "1 file changed") ]
+            [
+                ("git", "tag -l \"v*\"", Success("v" + version))
+                ("jj", sprintf "diff --from v%s --to @ --summary \"glob:%s/**\"" version dir, Success "1 file changed")
+            ]
 
     let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = fsproj
-                DllPath = "fake.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = dir }
+        {
+            Packages =
+                [
+                    {
+                        Name = "MyLib"
+                        Fsproj = fsproj
+                        DllPath = "fake.dll"
+                        TagPrefix = "v"
+                        FsProjsSharingSameTag = []
+                    }
+                ]
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = dir
+        }
 
     fsproj, fakeRun, config
 
@@ -1227,27 +1364,35 @@ let ``release - Auto takes the strongest declaration across every changelog behi
 
         let (run, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"core-v*\"", Success "core-v2.0.0")
-                  ("jj",
-                   sprintf "diff --from core-v2.0.0 --to @ --summary \"glob:%s/**\"" coreDir,
-                   Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"core-v*\"", Success "core-v2.0.0")
+                    ("jj",
+                     sprintf "diff --from core-v2.0.0 --to @ --summary \"glob:%s/**\"" coreDir,
+                     Success "1 file changed")
+                ]
 
         let package name fsproj prefix shared =
-            { Name = name
-              Fsproj = fsproj
-              DllPath = "fake.dll"
-              TagPrefix = prefix
-              FsProjsSharingSameTag = shared }
+            {
+                Name = name
+                Fsproj = fsproj
+                DllPath = "fake.dll"
+                TagPrefix = prefix
+                FsProjsSharingSameTag = shared
+            }
 
         let config =
-            { Packages =
-                [ package "Core" coreFsproj "core-v" [ cliFsproj ]
-                  package "Other" (Path.Combine(dir, "other", "Other.fsproj")) "other-v" [] ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = dir }
+            {
+                Packages =
+                    [
+                        package "Core" coreFsproj "core-v" [ cliFsproj ]
+                        package "Other" (Path.Combine(dir, "other", "Other.fsproj")) "other-v" []
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = dir
+            }
 
         let output, result = releaseWithUnchangedApi run config [ "Core" ]
 
@@ -1264,12 +1409,14 @@ let ``release - Auto detects addition and bumps minor`` () =
 
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
-                  ("jj",
-                   "diff --from v1.0.0 --to @ --summary \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
-                   Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0")
+                    ("jj",
+                     "diff --from v1.0.0 --to @ --summary \"glob:"
+                     + Path.GetDirectoryName(tmpFile)
+                     + "/**\"",
+                     Success "1 file changed")
+                ]
 
         let oldApi = [ ApiSignature "type Foo" ]
 
@@ -1279,17 +1426,23 @@ let ``release - Auto detects addition and bumps minor`` () =
         let extractPreviousApi (_pkg: string) (_version: string) = Found oldApi
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
@@ -1310,12 +1463,14 @@ let ``release - Auto aborts (no bump) when previous API cannot be read`` () =
 
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
-                  ("jj",
-                   "diff --from v1.0.0 --to @ --summary \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
-                   Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0")
+                    ("jj",
+                     "diff --from v1.0.0 --to @ --summary \"glob:"
+                     + Path.GetDirectoryName(tmpFile)
+                     + "/**\"",
+                     Success "1 file changed")
+                ]
 
         let extractPreviousApi (_pkg: string) (_version: string) = FetchError "feed unreachable"
 
@@ -1323,17 +1478,23 @@ let ``release - Auto aborts (no bump) when previous API cannot be read`` () =
             [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
@@ -1355,12 +1516,14 @@ let ``release - Auto skips an orphan tag and diffs against the last published pr
         // v1.2.0 never reached NuGet, so diff against v1.1.0.
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.1.0\nv1.2.0")
-                  ("jj",
-                   "diff --from v1.2.0 --to @ --summary \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
-                   Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.1.0\nv1.2.0")
+                    ("jj",
+                     "diff --from v1.2.0 --to @ --summary \"glob:"
+                     + Path.GetDirectoryName(tmpFile)
+                     + "/**\"",
+                     Success "1 file changed")
+                ]
 
         let oldApi = [ ApiSignature "type Foo" ]
 
@@ -1379,17 +1542,23 @@ let ``release - Auto skips an orphan tag and diffs against the last published pr
             | _ -> OnFeed
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let output, result =
             withCapturedConsole (fun () ->
@@ -1407,27 +1576,35 @@ let ``release - Auto skips an orphan tag and diffs against the last published pr
 /// not be treated as an orphan and diffed against an older baseline.
 let private unreadableBaselineRun (tmpFile: string) (latest: string) =
     passingCiRun
-        [ ("git", "tag -l \"v*\"", Success("v1.0.0\nv1.1.0\nv" + latest))
-          ("jj",
-           "diff --from v"
-           + latest
-           + " --to @ --summary \"glob:"
-           + Path.GetDirectoryName(tmpFile)
-           + "/**\"",
-           Success "1 file changed") ]
+        [
+            ("git", "tag -l \"v*\"", Success("v1.0.0\nv1.1.0\nv" + latest))
+            ("jj",
+             "diff --from v"
+             + latest
+             + " --to @ --summary \"glob:"
+             + Path.GetDirectoryName(tmpFile)
+             + "/**\"",
+             Success "1 file changed")
+        ]
 
 let private unreadableBaselineConfig (tmpFile: string) =
-    { Packages =
-        [ { Name = "MichaelGlass.FSharp.Analyzers"
-            Fsproj = tmpFile
-            DllPath = "fake.dll"
-            TagPrefix = "v"
-            FsProjsSharingSameTag = [] } ]
-      ReservedVersions = Set.empty
-      PreBuildCmds = []
-      PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-      CiTimeout = None
-      RootDir = "" }
+    {
+        Packages =
+            [
+                {
+                    Name = "MichaelGlass.FSharp.Analyzers"
+                    Fsproj = tmpFile
+                    DllPath = "fake.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = []
+                }
+            ]
+        ReservedVersions = Set.empty
+        PreBuildCmds = []
+        PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+        CiTimeout = None
+        RootDir = ""
+    }
 
 let private analyzerLoadFailure =
     "could not load /home/u/.nuget/packages/michaelglass.fsharp.analyzers/1.2.0/analyzers/dotnet/fs/MichaelGlass.FSharp.Analyzers.dll: Could not find assembly 'FSharp.Analyzers.SDK, Version=0.39.0.0, Culture=neutral, PublicKeyToken=null'."
@@ -1536,12 +1713,14 @@ let ``release - Auto still aborts on a transient fetch error (does not skip)`` (
 
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.1.0\nv1.2.0")
-                  ("jj",
-                   "diff --from v1.2.0 --to @ --summary \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
-                   Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.1.0\nv1.2.0")
+                    ("jj",
+                     "diff --from v1.2.0 --to @ --summary \"glob:"
+                     + Path.GetDirectoryName(tmpFile)
+                     + "/**\"",
+                     Success "1 file changed")
+                ]
 
         let currentApi =
             [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
@@ -1553,17 +1732,23 @@ let ``release - Auto still aborts on a transient fetch error (does not skip)`` (
             | other -> failwithf "must not walk past a transient error; got fetch for %s" other
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
@@ -1583,12 +1768,14 @@ let ``release - Auto when every prior tag is absent on feed bumps conservatively
 
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.1.0\nv1.2.0")
-                  ("jj",
-                   "diff --from v1.2.0 --to @ --summary \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
-                   Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.1.0\nv1.2.0")
+                    ("jj",
+                     "diff --from v1.2.0 --to @ --summary \"glob:"
+                     + Path.GetDirectoryName(tmpFile)
+                     + "/**\"",
+                     Success "1 file changed")
+                ]
 
         let extractPreviousApi (_pkg: string) (_version: string) =
             NotRestorable "error NU1102: Unable to find package MyLib"
@@ -1597,17 +1784,23 @@ let ``release - Auto when every prior tag is absent on feed bumps conservatively
             [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runAutoOnFeed fakeRun config extractPreviousApi (fun _ -> currentApi) (fun _ _ -> NotOnFeed)
@@ -1628,12 +1821,14 @@ let ``release - Auto every prior tag absent honours the reserved-version skip`` 
 
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.1.0\nv1.2.0")
-                  ("jj",
-                   "diff --from v1.2.0 --to @ --summary \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
-                   Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0\nv1.1.0\nv1.2.0")
+                    ("jj",
+                     "diff --from v1.2.0 --to @ --summary \"glob:"
+                     + Path.GetDirectoryName(tmpFile)
+                     + "/**\"",
+                     Success "1 file changed")
+                ]
 
         let extractPreviousApi (_pkg: string) (_version: string) =
             NotRestorable "error NU1102: Unable to find package MyLib"
@@ -1642,18 +1837,24 @@ let ``release - Auto every prior tag absent honours the reserved-version skip`` 
             [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              // 1.2.1 is reserved => 1.2.2.
-              ReservedVersions = Set.ofList [ "1.2.1" ]
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                // 1.2.1 is reserved => 1.2.2.
+                ReservedVersions = Set.ofList [ "1.2.1" ]
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runAutoOnFeed fakeRun config extractPreviousApi (fun _ -> currentApi) (fun _ _ -> NotOnFeed)
@@ -1673,36 +1874,48 @@ let ``release - Auto pre-1.0 breaking change bumps minor (UnionConfig 0.3.0 -> 0
 
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v0.3.0")
-                  ("jj",
-                   "diff --from v0.3.0 --to @ --summary \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
-                   Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v0.3.0")
+                    ("jj",
+                     "diff --from v0.3.0 --to @ --summary \"glob:"
+                     + Path.GetDirectoryName(tmpFile)
+                     + "/**\"",
+                     Success "1 file changed")
+                ]
 
         let oldApi =
-            [ ApiSignature "type ConfigVarKind"
-              ApiSignature "  ConfigVarKind+AutoGenerated"
-              ApiSignature "  AutoGenerated::initialValue: FSharpOption<String>" ]
+            [
+                ApiSignature "type ConfigVarKind"
+                ApiSignature "  ConfigVarKind+AutoGenerated"
+                ApiSignature "  AutoGenerated::initialValue: FSharpOption<String>"
+            ]
 
         let currentApi =
-            [ ApiSignature "type ConfigVarKind"
-              ApiSignature "  ConfigVarKind+AutoGenerated" ]
+            [
+                ApiSignature "type ConfigVarKind"
+                ApiSignature "  ConfigVarKind+AutoGenerated"
+            ]
 
         let extractPreviousApi (_pkg: string) (_version: string) = Found oldApi
 
         let config =
-            { Packages =
-                [ { Name = "UnionConfig"
-                    Fsproj = tmpFile
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "UnionConfig"
+                            Fsproj = tmpFile
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
@@ -1749,17 +1962,23 @@ let ``release - does not push tags when post-push CI fails`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
@@ -1805,17 +2024,23 @@ let ``release - does not push tags when post-push CI times out`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 3
@@ -1859,17 +2084,23 @@ let ``release - does not push tags when post-push CI has no runs`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
@@ -1912,12 +2143,14 @@ let ``release - reconciles coverage via loosen-from-ci after CI is green`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
-        { Packages = []
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages = []
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
@@ -1944,12 +2177,14 @@ let ``release - returns 1 when coverageratchet loosen-from-ci fails`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
-        { Packages = []
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages = []
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
@@ -1968,12 +2203,14 @@ let ``release - prints coverageratchet error message when loosen-from-ci fails``
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
-        { Packages = []
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages = []
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let output, result =
         withCapturedConsole (fun () -> runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10)
@@ -1996,12 +2233,14 @@ let ``release - fails fast with actionable push-first message when commit isn't 
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
-        { Packages = []
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages = []
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let output, result =
         withCapturedConsole (fun () -> runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10)
@@ -2051,12 +2290,14 @@ let ``release - with --push pushes the commit then waits for CI when not pushed`
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
-        { Packages = []
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages = []
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let result =
         runReleaseWithPush fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10 true
@@ -2077,12 +2318,14 @@ let ``release - distinguishes a genuine CI failure from an unpushed commit`` () 
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
-        { Packages = []
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages = []
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let output, result =
         withCapturedConsole (fun () -> runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10)
@@ -2104,12 +2347,14 @@ let ``release - returns 1 when CI status is Unknown`` () =
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
-        { Packages = []
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages = []
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
 
@@ -2128,12 +2373,14 @@ let ``release - waits then returns 1 when pushed CI times out still in progress`
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
-        { Packages = []
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages = []
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 2
 
@@ -2150,12 +2397,14 @@ let ``release - returns 1 when the release commit sha can't be determined`` () =
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
-        { Packages = []
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages = []
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let output, result =
         withCapturedConsole (fun () -> runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10)
@@ -2175,12 +2424,14 @@ let ``release - pushed commit whose CI run never registers times out`` () =
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
-        { Packages = []
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages = []
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let output, result =
         withCapturedConsole (fun () -> runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 2)
@@ -2200,25 +2451,33 @@ let ``release - PromoteToRC with HasPreviousRelease succeeds`` () =
 
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0-beta.3")
-                  ("jj",
-                   "diff --from v1.0.0-beta.3 --to @ --summary \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
-                   Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0-beta.3")
+                    ("jj",
+                     "diff --from v1.0.0-beta.3 --to @ --summary \"glob:"
+                     + Path.GetDirectoryName(tmpFile)
+                     + "/**\"",
+                     Success "1 file changed")
+                ]
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config PromoteToRC PushTags noPreviousApi noCurrentApi 0 10
@@ -2238,25 +2497,33 @@ let ``release - PromoteToStable with HasPreviousRelease succeeds`` () =
 
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0-rc.1")
-                  ("jj",
-                   "diff --from v1.0.0-rc.1 --to @ --summary \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
-                   Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0-rc.1")
+                    ("jj",
+                     "diff --from v1.0.0-rc.1 --to @ --summary \"glob:"
+                     + Path.GetDirectoryName(tmpFile)
+                     + "/**\"",
+                     Success "1 file changed")
+                ]
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config PromoteToStable PushTags noPreviousApi noCurrentApi 0 10
@@ -2276,25 +2543,33 @@ let ``release - PromoteToBeta with HasPreviousRelease succeeds`` () =
 
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v0.1.0-alpha.3")
-                  ("jj",
-                   "diff --from v0.1.0-alpha.3 --to @ --summary \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
-                   Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v0.1.0-alpha.3")
+                    ("jj",
+                     "diff --from v0.1.0-alpha.3 --to @ --summary \"glob:"
+                     + Path.GetDirectoryName(tmpFile)
+                     + "/**\"",
+                     Success "1 file changed")
+                ]
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config PromoteToBeta PushTags noPreviousApi noCurrentApi 0 10
@@ -2364,17 +2639,23 @@ let ``release - updates fsProjsSharingSameTag versions too`` () =
         let (fakeRun, _getCalls) = passingCiRun []
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFileMain
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [ tmpFileShared ] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFileMain
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = [ tmpFileShared ]
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
@@ -2420,17 +2701,23 @@ let ``release - resumes when fsproj already has target version (idempotent)`` ()
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
@@ -2482,17 +2769,23 @@ let ``release - fails fast when resuming and CI has failed`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
@@ -2530,17 +2823,23 @@ let ``release - a tag that triggered no workflow run fails the release`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
@@ -2590,17 +2889,23 @@ let ``release - resumes and polls when CI is in progress`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
@@ -2634,17 +2939,23 @@ let ``release - second run after successful first run produces no changes`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
@@ -2682,40 +2993,48 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = Path.GetTempPath() }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = Path.GetTempPath()
+            }
 
         let result =
             release
-                { Run = fakeRun
-                  Config = config
-                  Command = StartAlpha
-                  Mode = PushTags
-                  TargetPackages = []
-                  ExtractPreviousApi = noPreviousApi
-                  ExtractCurrentApi = noCurrentApi
-                  ExtractPreviousGrammar = noPreviousGrammar
-                  ExtractCurrentGrammar = noCurrentGrammar
-                  CiPollIntervalMs = 0
-                  CiWait = CiWaitTests.fixedCiWait 0 10
-                  TagPush = immediateTagPush
-                  CheckFeedPresence = (fun _ _ -> OnFeed)
-                  CheckRestorable = (fun _ _ _ -> OnFeed)
-                  WaitForNuGet = false
-                  NuGetPollIntervalMs = 0
-                  NuGetMaxAttempts = 1
-                  Push = false
-                  Check = false
-                  Canary = noCanary }
+                {
+                    Run = fakeRun
+                    Config = config
+                    Command = StartAlpha
+                    Mode = PushTags
+                    TargetPackages = []
+                    ExtractPreviousApi = noPreviousApi
+                    ExtractCurrentApi = noCurrentApi
+                    ExtractPreviousGrammar = noPreviousGrammar
+                    ExtractCurrentGrammar = noCurrentGrammar
+                    CiPollIntervalMs = 0
+                    CiWait = CiWaitTests.fixedCiWait 0 10
+                    TagPush = immediateTagPush
+                    CheckFeedPresence = (fun _ _ -> OnFeed)
+                    CheckRestorable = (fun _ _ _ -> OnFeed)
+                    WaitForNuGet = false
+                    NuGetPollIntervalMs = 0
+                    NuGetMaxAttempts = 1
+                    Push = false
+                    Check = false
+                    Canary = noCanary
+                }
 
         test <@ result = 1 @>
         test <@ File.ReadAllText(tmpFile) = fsprojBefore @>
@@ -2746,17 +3065,23 @@ let ``release - dryRun skips uncommitted check and does not write fsproj`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha DryRun noPreviousApi noCurrentApi 0 10
@@ -2786,42 +3111,50 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
             | _ -> Failure(sprintf "unexpected: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = fsprojPath
-                    DllPath = "x.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = tmpDir }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = fsprojPath
+                            DllPath = "x.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = tmpDir
+            }
 
         // rootDir has no CHANGELOG.md.
         let output, result =
             withCapturedConsole (fun () ->
                 release
-                    { Run = fakeRun
-                      Config = config
-                      Command = StartAlpha
-                      Mode = DryRun
-                      TargetPackages = []
-                      ExtractPreviousApi = noPreviousApi
-                      ExtractCurrentApi = noCurrentApi
-                      ExtractPreviousGrammar = noPreviousGrammar
-                      ExtractCurrentGrammar = noCurrentGrammar
-                      CiPollIntervalMs = 0
-                      CiWait = CiWaitTests.fixedCiWait 0 10
-                      TagPush = immediateTagPush
-                      CheckFeedPresence = (fun _ _ -> OnFeed)
-                      CheckRestorable = (fun _ _ _ -> OnFeed)
-                      WaitForNuGet = false
-                      NuGetPollIntervalMs = 0
-                      NuGetMaxAttempts = 1
-                      Push = false
-                      Check = false
-                      Canary = noCanary })
+                    {
+                        Run = fakeRun
+                        Config = config
+                        Command = StartAlpha
+                        Mode = DryRun
+                        TargetPackages = []
+                        ExtractPreviousApi = noPreviousApi
+                        ExtractCurrentApi = noCurrentApi
+                        ExtractPreviousGrammar = noPreviousGrammar
+                        ExtractCurrentGrammar = noCurrentGrammar
+                        CiPollIntervalMs = 0
+                        CiWait = CiWaitTests.fixedCiWait 0 10
+                        TagPush = immediateTagPush
+                        CheckFeedPresence = (fun _ _ -> OnFeed)
+                        CheckRestorable = (fun _ _ _ -> OnFeed)
+                        WaitForNuGet = false
+                        NuGetPollIntervalMs = 0
+                        NuGetMaxAttempts = 1
+                        Push = false
+                        Check = false
+                        Canary = noCanary
+                    })
 
         test <@ result = 0 @>
 
@@ -2860,17 +3193,23 @@ let ``release - resume in DryRun mode takes no actions and returns 0`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha DryRun noPreviousApi noCurrentApi 0 10
@@ -2912,17 +3251,23 @@ let ``release - resume with LocalPublish packs without pushing`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha LocalPublish noPreviousApi noCurrentApi 0 10
@@ -2988,28 +3333,31 @@ let private runReleaseWithNuGetWait run config cmd checkFeedPresence maxAttempts
     seedTmpChangelog ()
 
     release
-        { Run = run
-          Config =
-            { config with
-                RootDir = Path.GetTempPath() }
-          Command = cmd
-          Mode = PushTags
-          TargetPackages = []
-          ExtractPreviousApi = noPreviousApi
-          ExtractCurrentApi = noCurrentApi
-          ExtractPreviousGrammar = noPreviousGrammar
-          ExtractCurrentGrammar = noCurrentGrammar
-          CiPollIntervalMs = 0
-          CiWait = CiWaitTests.fixedCiWait 0 10
-          TagPush = immediateTagPush
-          CheckFeedPresence = checkFeedPresence
-          CheckRestorable = (fun _ _ _ -> OnFeed)
-          WaitForNuGet = true
-          NuGetPollIntervalMs = 0
-          NuGetMaxAttempts = maxAttempts
-          Push = false
-          Check = false
-          Canary = noCanary }
+        {
+            Run = run
+            Config =
+                { config with
+                    RootDir = Path.GetTempPath()
+                }
+            Command = cmd
+            Mode = PushTags
+            TargetPackages = []
+            ExtractPreviousApi = noPreviousApi
+            ExtractCurrentApi = noCurrentApi
+            ExtractPreviousGrammar = noPreviousGrammar
+            ExtractCurrentGrammar = noCurrentGrammar
+            CiPollIntervalMs = 0
+            CiWait = CiWaitTests.fixedCiWait 0 10
+            TagPush = immediateTagPush
+            CheckFeedPresence = checkFeedPresence
+            CheckRestorable = (fun _ _ _ -> OnFeed)
+            WaitForNuGet = true
+            NuGetPollIntervalMs = 0
+            NuGetMaxAttempts = maxAttempts
+            Push = false
+            Check = false
+            Canary = noCanary
+        }
 
 [<Fact>]
 let ``release - waits for NuGet after pushing tags and checks the published package`` () =
@@ -3026,17 +3374,23 @@ let ``release - waits for NuGet after pushing tags and checks the published pack
             OnFeed
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkFeedPresence 5
 
@@ -3056,17 +3410,23 @@ let ``release - an unconfirmed NuGet wait exits 2, not 0`` () =
         let checkFeedPresence (_id: string) (_ver: string) = NotOnFeed
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkFeedPresence 2
 
@@ -3087,17 +3447,23 @@ let ``release - a fully confirmed NuGet wait still exits 0`` () =
         let checkFeedPresence (_id: string) (_ver: string) = OnFeed
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result = runReleaseWithNuGetWait fakeRun config StartAlpha checkFeedPresence 2
 
@@ -3107,11 +3473,13 @@ let ``release - a fully confirmed NuGet wait still exits 0`` () =
 
 
 let private pkg name fsproj prefix : PackageConfig =
-    { Name = name
-      Fsproj = fsproj
-      DllPath = sprintf "%s.dll" name
-      TagPrefix = prefix
-      FsProjsSharingSameTag = [] }
+    {
+        Name = name
+        Fsproj = fsproj
+        DllPath = sprintf "%s.dll" name
+        TagPrefix = prefix
+        FsProjsSharingSameTag = []
+    }
 
 [<Fact>]
 let ``selectPackages - empty target returns all packages unchanged`` () =
@@ -3156,28 +3524,31 @@ let private runReleaseTargeting run config cmd mode targets =
     seedTmpChangelog ()
 
     release
-        { Run = run
-          Config =
-            { config with
-                RootDir = Path.GetTempPath() }
-          Command = cmd
-          Mode = mode
-          TargetPackages = targets
-          ExtractPreviousApi = noPreviousApi
-          ExtractCurrentApi = noCurrentApi
-          ExtractPreviousGrammar = noPreviousGrammar
-          ExtractCurrentGrammar = noCurrentGrammar
-          CiPollIntervalMs = 0
-          CiWait = CiWaitTests.fixedCiWait 0 10
-          TagPush = immediateTagPush
-          CheckFeedPresence = (fun _ _ -> OnFeed)
-          CheckRestorable = (fun _ _ _ -> OnFeed)
-          WaitForNuGet = false
-          NuGetPollIntervalMs = 0
-          NuGetMaxAttempts = 1
-          Push = false
-          Check = false
-          Canary = noCanary }
+        {
+            Run = run
+            Config =
+                { config with
+                    RootDir = Path.GetTempPath()
+                }
+            Command = cmd
+            Mode = mode
+            TargetPackages = targets
+            ExtractPreviousApi = noPreviousApi
+            ExtractCurrentApi = noCurrentApi
+            ExtractPreviousGrammar = noPreviousGrammar
+            ExtractCurrentGrammar = noCurrentGrammar
+            CiPollIntervalMs = 0
+            CiWait = CiWaitTests.fixedCiWait 0 10
+            TagPush = immediateTagPush
+            CheckFeedPresence = (fun _ _ -> OnFeed)
+            CheckRestorable = (fun _ _ _ -> OnFeed)
+            WaitForNuGet = false
+            NuGetPollIntervalMs = 0
+            NuGetMaxAttempts = 1
+            Push = false
+            Check = false
+            Canary = noCanary
+        }
 
 [<Fact>]
 let ``release - scoped to one package only tags that package`` () =
@@ -3188,23 +3559,31 @@ let ``release - scoped to one package only tags that package`` () =
         let (fakeRun, getCalls) = passingCiRun []
 
         let config =
-            { Packages =
-                [ { Name = "LibA"
-                    Fsproj = tmpFileA
-                    DllPath = "src/LibA/bin/Release/net10.0/LibA.dll"
-                    TagPrefix = "liba-v"
-                    FsProjsSharingSameTag = [] }
-                  // LibB's fsproj does not exist: processing it would crash.
-                  { Name = "LibB"
-                    Fsproj = "/no/such/LibB.fsproj"
-                    DllPath = "src/LibB/bin/Release/net10.0/LibB.dll"
-                    TagPrefix = "libb-v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "LibA"
+                            Fsproj = tmpFileA
+                            DllPath = "src/LibA/bin/Release/net10.0/LibA.dll"
+                            TagPrefix = "liba-v"
+                            FsProjsSharingSameTag = []
+                        }
+                        // LibB's fsproj does not exist: processing it would crash.
+                        {
+                            Name = "LibB"
+                            Fsproj = "/no/such/LibB.fsproj"
+                            DllPath = "src/LibB/bin/Release/net10.0/LibB.dll"
+                            TagPrefix = "libb-v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result = runReleaseTargeting fakeRun config StartAlpha PushTags [ "LibA" ]
 
@@ -3240,45 +3619,55 @@ let ``release - --only on a multi-package repo uses the per-package CHANGELOG, n
         let (fakeRun, getCalls) = passingCiRun []
 
         let config =
-            { Packages =
-                [ { Name = "LibA"
-                    Fsproj = fsprojA
-                    DllPath = "a.dll"
-                    TagPrefix = "liba-v"
-                    FsProjsSharingSameTag = [] }
-                  { Name = "LibB"
-                    Fsproj = "/no/such/LibB.fsproj"
-                    DllPath = "b.dll"
-                    TagPrefix = "libb-v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = rootDir }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "LibA"
+                            Fsproj = fsprojA
+                            DllPath = "a.dll"
+                            TagPrefix = "liba-v"
+                            FsProjsSharingSameTag = []
+                        }
+                        {
+                            Name = "LibB"
+                            Fsproj = "/no/such/LibB.fsproj"
+                            DllPath = "b.dll"
+                            TagPrefix = "libb-v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = rootDir
+            }
 
         let result =
             release
-                { Run = fakeRun
-                  Config = config
-                  Command = StartAlpha
-                  Mode = PushTags
-                  TargetPackages = [ "LibA" ]
-                  ExtractPreviousApi = noPreviousApi
-                  ExtractCurrentApi = noCurrentApi
-                  ExtractPreviousGrammar = noPreviousGrammar
-                  ExtractCurrentGrammar = noCurrentGrammar
-                  CiPollIntervalMs = 0
-                  CiWait = CiWaitTests.fixedCiWait 0 10
-                  TagPush = immediateTagPush
-                  CheckFeedPresence = (fun _ _ -> OnFeed)
-                  CheckRestorable = (fun _ _ _ -> OnFeed)
-                  WaitForNuGet = false
-                  NuGetPollIntervalMs = 0
-                  NuGetMaxAttempts = 1
-                  Push = false
-                  Check = false
-                  Canary = noCanary }
+                {
+                    Run = fakeRun
+                    Config = config
+                    Command = StartAlpha
+                    Mode = PushTags
+                    TargetPackages = [ "LibA" ]
+                    ExtractPreviousApi = noPreviousApi
+                    ExtractCurrentApi = noCurrentApi
+                    ExtractPreviousGrammar = noPreviousGrammar
+                    ExtractCurrentGrammar = noCurrentGrammar
+                    CiPollIntervalMs = 0
+                    CiWait = CiWaitTests.fixedCiWait 0 10
+                    TagPush = immediateTagPush
+                    CheckFeedPresence = (fun _ _ -> OnFeed)
+                    CheckRestorable = (fun _ _ _ -> OnFeed)
+                    WaitForNuGet = false
+                    NuGetPollIntervalMs = 0
+                    NuGetMaxAttempts = 1
+                    Push = false
+                    Check = false
+                    Canary = noCanary
+                }
 
         let calls = getCalls ()
         test <@ result = 0 @>
@@ -3305,27 +3694,37 @@ let ``release - scoped to multiple packages tags exactly those`` () =
         let (fakeRun, getCalls) = passingCiRun []
 
         let config =
-            { Packages =
-                [ { Name = "LibA"
-                    Fsproj = tmpA
-                    DllPath = "a.dll"
-                    TagPrefix = "liba-v"
-                    FsProjsSharingSameTag = [] }
-                  { Name = "LibB"
-                    Fsproj = "/no/such/LibB.fsproj"
-                    DllPath = "b.dll"
-                    TagPrefix = "libb-v"
-                    FsProjsSharingSameTag = [] }
-                  { Name = "LibC"
-                    Fsproj = tmpC
-                    DllPath = "c.dll"
-                    TagPrefix = "libc-v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "LibA"
+                            Fsproj = tmpA
+                            DllPath = "a.dll"
+                            TagPrefix = "liba-v"
+                            FsProjsSharingSameTag = []
+                        }
+                        {
+                            Name = "LibB"
+                            Fsproj = "/no/such/LibB.fsproj"
+                            DllPath = "b.dll"
+                            TagPrefix = "libb-v"
+                            FsProjsSharingSameTag = []
+                        }
+                        {
+                            Name = "LibC"
+                            Fsproj = tmpC
+                            DllPath = "c.dll"
+                            TagPrefix = "libc-v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runReleaseTargeting fakeRun config StartAlpha PushTags [ "LibA"; "LibC" ]
@@ -3359,17 +3758,23 @@ let ``release - unknown target package aborts with exit 1 before any work`` () =
         Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
-        { Packages =
-            [ { Name = "LibA"
-                Fsproj = "a.fsproj"
-                DllPath = "a.dll"
-                TagPrefix = "liba-v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages =
+                [
+                    {
+                        Name = "LibA"
+                        Fsproj = "a.fsproj"
+                        DllPath = "a.dll"
+                        TagPrefix = "liba-v"
+                        FsProjsSharingSameTag = []
+                    }
+                ]
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let output, result =
         withCapturedConsole (fun () -> runReleaseTargeting fakeRun config StartAlpha PushTags [ "Nope" ])
@@ -3392,22 +3797,30 @@ let ``release - scoping composes with dry-run (only target previewed)`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "LibA"
-                    Fsproj = tmpA
-                    DllPath = "a.dll"
-                    TagPrefix = "liba-v"
-                    FsProjsSharingSameTag = [] }
-                  { Name = "LibB"
-                    Fsproj = "/no/such/LibB.fsproj"
-                    DllPath = "b.dll"
-                    TagPrefix = "libb-v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "LibA"
+                            Fsproj = tmpA
+                            DllPath = "a.dll"
+                            TagPrefix = "liba-v"
+                            FsProjsSharingSameTag = []
+                        }
+                        {
+                            Name = "LibB"
+                            Fsproj = "/no/such/LibB.fsproj"
+                            DllPath = "b.dll"
+                            TagPrefix = "libb-v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let output, result =
             withCapturedConsole (fun () -> runReleaseTargeting fakeRun config StartAlpha DryRun [ "LibA" ])
@@ -3458,17 +3871,23 @@ let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "FsHotWatch"
-                    Fsproj = tmpFile
-                    DllPath = "src/FsHotWatch/bin/Release/net10.0/FsHotWatch.dll"
-                    TagPrefix = "core-v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "FsHotWatch"
+                            Fsproj = tmpFile
+                            DllPath = "src/FsHotWatch/bin/Release/net10.0/FsHotWatch.dll"
+                            TagPrefix = "core-v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         // The previous API is unreadable: resume must short-circuit before the diff.
         let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
@@ -3507,17 +3926,23 @@ let ``release - Auto dry-run reports the resume plan instead of 'No packages to 
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "FsHotWatch"
-                    Fsproj = tmpFile
-                    DllPath = "x.dll"
-                    TagPrefix = "core-v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "FsHotWatch"
+                            Fsproj = tmpFile
+                            DllPath = "x.dll"
+                            TagPrefix = "core-v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let output, result =
             withCapturedConsole (fun () -> runRelease fakeRun config Auto DryRun noPreviousApi noCurrentApi 0 10)
@@ -3557,17 +3982,23 @@ let ``release - Auto with fsproj equal to last tag has nothing to do (not a resu
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "FsHotWatch"
-                    Fsproj = tmpFile
-                    DllPath = "x.dll"
-                    TagPrefix = "core-v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "FsHotWatch"
+                            Fsproj = tmpFile
+                            DllPath = "x.dll"
+                            TagPrefix = "core-v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let output, result =
             withCapturedConsole (fun () -> runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10)
@@ -3584,27 +4015,35 @@ let ``release - Auto with fsproj equal to last tag has nothing to do (not a resu
 /// leaving the tag in place and the version and changelog as they are.
 let private orphanTagFakeRun (tmpFile: string) =
     passingCiRun
-        [ ("git", "tag -l \"v*\"", Success "v0.3.2\nv0.3.3\nv0.3.4")
-          ("jj",
-           "diff --from v0.3.4 --to @ --summary \"glob:"
-           + Path.GetDirectoryName(tmpFile)
-           + "/**\"",
-           Success "")
-          ("jj", "tag list v0.3.4", Success "v0.3.4") ]
+        [
+            ("git", "tag -l \"v*\"", Success "v0.3.2\nv0.3.3\nv0.3.4")
+            ("jj",
+             "diff --from v0.3.4 --to @ --summary \"glob:"
+             + Path.GetDirectoryName(tmpFile)
+             + "/**\"",
+             Success "")
+            ("jj", "tag list v0.3.4", Success "v0.3.4")
+        ]
 
 /// The single-package config for the tests above.
 let private orphanTagConfig (tmpFile: string) =
-    { Packages =
-        [ { Name = "Falco.UnionRoutes"
-            Fsproj = tmpFile
-            DllPath = "x.dll"
-            TagPrefix = "v"
-            FsProjsSharingSameTag = [] } ]
-      ReservedVersions = Set.empty
-      PreBuildCmds = []
-      PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-      CiTimeout = None
-      RootDir = "" }
+    {
+        Packages =
+            [
+                {
+                    Name = "Falco.UnionRoutes"
+                    Fsproj = tmpFile
+                    DllPath = "x.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = []
+                }
+            ]
+        ReservedVersions = Set.empty
+        PreBuildCmds = []
+        PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+        CiTimeout = None
+        RootDir = ""
+    }
 
 /// Like `runRelease`, but drives the feed seam. The previous API stays unreadable,
 /// so the orphan decision can only come from the feed.
@@ -3612,28 +4051,31 @@ let private runReleaseWithFeed run config checkFeedPresence =
     seedTmpChangelog ()
 
     release
-        { Run = run
-          Config =
-            { config with
-                RootDir = Path.GetTempPath() }
-          Command = Auto
-          Mode = PushTags
-          TargetPackages = []
-          ExtractPreviousApi = noPreviousApi
-          ExtractCurrentApi = noCurrentApi
-          ExtractPreviousGrammar = noPreviousGrammar
-          ExtractCurrentGrammar = noCurrentGrammar
-          CiPollIntervalMs = 0
-          CiWait = CiWaitTests.fixedCiWait 0 10
-          TagPush = immediateTagPush
-          CheckFeedPresence = checkFeedPresence
-          CheckRestorable = (fun _ _ _ -> OnFeed)
-          WaitForNuGet = false
-          NuGetPollIntervalMs = 0
-          NuGetMaxAttempts = 1
-          Push = false
-          Check = false
-          Canary = noCanary }
+        {
+            Run = run
+            Config =
+                { config with
+                    RootDir = Path.GetTempPath()
+                }
+            Command = Auto
+            Mode = PushTags
+            TargetPackages = []
+            ExtractPreviousApi = noPreviousApi
+            ExtractCurrentApi = noCurrentApi
+            ExtractPreviousGrammar = noPreviousGrammar
+            ExtractCurrentGrammar = noCurrentGrammar
+            CiPollIntervalMs = 0
+            CiWait = CiWaitTests.fixedCiWait 0 10
+            TagPush = immediateTagPush
+            CheckFeedPresence = checkFeedPresence
+            CheckRestorable = (fun _ _ _ -> OnFeed)
+            WaitForNuGet = false
+            NuGetPollIntervalMs = 0
+            NuGetMaxAttempts = 1
+            Push = false
+            Check = false
+            Canary = noCanary
+        }
 
 /// A library and a `PackAsTool` CLI (whose API cannot be probed): the orphan
 /// tests run against both.
@@ -3757,28 +4199,31 @@ let ``release - a published package whose DLL is unreadable is never republished
                 seedTmpChangelog ()
 
                 release
-                    { Run = fakeRun
-                      Config =
-                        { orphanTagConfig tmpFile with
-                            RootDir = Path.GetTempPath() }
-                      Command = Auto
-                      Mode = PushTags
-                      TargetPackages = []
-                      ExtractPreviousApi = extractPreviousApi
-                      ExtractCurrentApi = noCurrentApi
-                      ExtractPreviousGrammar = noPreviousGrammar
-                      ExtractCurrentGrammar = noCurrentGrammar
-                      CiPollIntervalMs = 0
-                      CiWait = CiWaitTests.fixedCiWait 0 10
-                      TagPush = immediateTagPush
-                      CheckFeedPresence = (fun _ _ -> OnFeed)
-                      CheckRestorable = (fun _ _ _ -> OnFeed)
-                      WaitForNuGet = false
-                      NuGetPollIntervalMs = 0
-                      NuGetMaxAttempts = 1
-                      Push = false
-                      Check = false
-                      Canary = noCanary })
+                    {
+                        Run = fakeRun
+                        Config =
+                            { orphanTagConfig tmpFile with
+                                RootDir = Path.GetTempPath()
+                            }
+                        Command = Auto
+                        Mode = PushTags
+                        TargetPackages = []
+                        ExtractPreviousApi = extractPreviousApi
+                        ExtractCurrentApi = noCurrentApi
+                        ExtractPreviousGrammar = noPreviousGrammar
+                        ExtractCurrentGrammar = noCurrentGrammar
+                        CiPollIntervalMs = 0
+                        CiWait = CiWaitTests.fixedCiWait 0 10
+                        TagPush = immediateTagPush
+                        CheckFeedPresence = (fun _ _ -> OnFeed)
+                        CheckRestorable = (fun _ _ _ -> OnFeed)
+                        WaitForNuGet = false
+                        NuGetPollIntervalMs = 0
+                        NuGetMaxAttempts = 1
+                        Push = false
+                        Check = false
+                        Canary = noCanary
+                    })
 
         let calls = getCalls ()
 
@@ -3824,12 +4269,14 @@ let ``release - fresh changes still bump normally (not treated as resume)`` () =
 
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
-                  ("jj",
-                   "diff --from v1.0.0 --to @ --summary \"glob:"
-                   + Path.GetDirectoryName(tmpFile)
-                   + "/**\"",
-                   Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0")
+                    ("jj",
+                     "diff --from v1.0.0 --to @ --summary \"glob:"
+                     + Path.GetDirectoryName(tmpFile)
+                     + "/**\"",
+                     Success "1 file changed")
+                ]
 
         let oldApi = [ ApiSignature "type Foo" ]
 
@@ -3839,17 +4286,23 @@ let ``release - fresh changes still bump normally (not treated as resume)`` () =
         let extractPreviousApi (_pkg: string) (_version: string) = Found oldApi
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config Auto PushTags extractPreviousApi (fun _ -> currentApi) 0 10
@@ -3904,22 +4357,30 @@ let ``release - multi-package mixed: one mid-release resumes, one fresh bumps`` 
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "LibA"
-                    Fsproj = tmpResume
-                    DllPath = "a.dll"
-                    TagPrefix = "liba-v"
-                    FsProjsSharingSameTag = [] }
-                  { Name = "LibB"
-                    Fsproj = tmpFresh
-                    DllPath = "b.dll"
-                    TagPrefix = "libb-v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "LibA"
+                            Fsproj = tmpResume
+                            DllPath = "a.dll"
+                            TagPrefix = "liba-v"
+                            FsProjsSharingSameTag = []
+                        }
+                        {
+                            Name = "LibB"
+                            Fsproj = tmpFresh
+                            DllPath = "b.dll"
+                            TagPrefix = "libb-v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
@@ -3976,26 +4437,28 @@ let private writeBundlingRepo (root: string) (toolVersion: string) =
 
 let private runReleaseInRoot run config cmd =
     release
-        { Run = run
-          Config = config
-          Command = cmd
-          Mode = PushTags
-          TargetPackages = []
-          ExtractPreviousApi = noPreviousApi
-          ExtractCurrentApi = noCurrentApi
-          ExtractPreviousGrammar = noPreviousGrammar
-          ExtractCurrentGrammar = noCurrentGrammar
-          CiPollIntervalMs = 0
-          CiWait = CiWaitTests.fixedCiWait 0 10
-          TagPush = immediateTagPush
-          CheckFeedPresence = (fun _ _ -> OnFeed)
-          CheckRestorable = (fun _ _ _ -> OnFeed)
-          WaitForNuGet = false
-          NuGetPollIntervalMs = 0
-          NuGetMaxAttempts = 1
-          Push = false
-          Check = false
-          Canary = noCanary }
+        {
+            Run = run
+            Config = config
+            Command = cmd
+            Mode = PushTags
+            TargetPackages = []
+            ExtractPreviousApi = noPreviousApi
+            ExtractCurrentApi = noCurrentApi
+            ExtractPreviousGrammar = noPreviousGrammar
+            ExtractCurrentGrammar = noCurrentGrammar
+            CiPollIntervalMs = 0
+            CiWait = CiWaitTests.fixedCiWait 0 10
+            TagPush = immediateTagPush
+            CheckFeedPresence = (fun _ _ -> OnFeed)
+            CheckRestorable = (fun _ _ _ -> OnFeed)
+            WaitForNuGet = false
+            NuGetPollIntervalMs = 0
+            NuGetMaxAttempts = 1
+            Push = false
+            Check = false
+            Canary = noCanary
+        }
 
 [<Fact>]
 let ``release - Auto rebundles when only a bundled dependency changed`` () =
@@ -4027,17 +4490,23 @@ let ``release - Auto rebundles when only a bundled dependency changed`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "Tool"
-                    Fsproj = toolFsproj
-                    DllPath = "src/Tool/bin/Release/net10.0/Tool.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = root }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "Tool"
+                            Fsproj = toolFsproj
+                            DllPath = "src/Tool/bin/Release/net10.0/Tool.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = root
+            }
 
         let result = runReleaseInRoot fakeRun config Auto
 
@@ -4078,17 +4547,23 @@ let ``release - Auto skips when neither own nor dependency changed`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "Tool"
-                    Fsproj = toolFsproj
-                    DllPath = "src/Tool/bin/Release/net10.0/Tool.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = root }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "Tool"
+                            Fsproj = toolFsproj
+                            DllPath = "src/Tool/bin/Release/net10.0/Tool.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = root
+            }
 
         let result = runReleaseInRoot fakeRun config Auto
 
@@ -4133,40 +4608,48 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
         let currentApi = [ ApiSignature "type Foo"; ApiSignature "  Foo::New(): String" ]
 
         let config =
-            { Packages =
-                [ { Name = "Tool"
-                    Fsproj = toolFsproj
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = root }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "Tool"
+                            Fsproj = toolFsproj
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = root
+            }
 
         let result =
             release
-                { Run = fakeRun
-                  Config = config
-                  Command = Auto
-                  Mode = PushTags
-                  TargetPackages = []
-                  ExtractPreviousApi = (fun _ _ -> Found oldApi)
-                  ExtractCurrentApi = (fun _ -> currentApi)
-                  ExtractPreviousGrammar = noPreviousGrammar
-                  ExtractCurrentGrammar = noCurrentGrammar
-                  CiPollIntervalMs = 0
-                  CiWait = CiWaitTests.fixedCiWait 0 10
-                  TagPush = immediateTagPush
-                  CheckFeedPresence = (fun _ _ -> OnFeed)
-                  CheckRestorable = (fun _ _ _ -> OnFeed)
-                  WaitForNuGet = false
-                  NuGetPollIntervalMs = 0
-                  NuGetMaxAttempts = 1
-                  Push = false
-                  Check = false
-                  Canary = noCanary }
+                {
+                    Run = fakeRun
+                    Config = config
+                    Command = Auto
+                    Mode = PushTags
+                    TargetPackages = []
+                    ExtractPreviousApi = (fun _ _ -> Found oldApi)
+                    ExtractCurrentApi = (fun _ -> currentApi)
+                    ExtractPreviousGrammar = noPreviousGrammar
+                    ExtractCurrentGrammar = noCurrentGrammar
+                    CiPollIntervalMs = 0
+                    CiWait = CiWaitTests.fixedCiWait 0 10
+                    TagPush = immediateTagPush
+                    CheckFeedPresence = (fun _ _ -> OnFeed)
+                    CheckRestorable = (fun _ _ _ -> OnFeed)
+                    WaitForNuGet = false
+                    NuGetPollIntervalMs = 0
+                    NuGetMaxAttempts = 1
+                    Push = false
+                    Check = false
+                    Canary = noCanary
+                }
 
         test <@ result = 0 @>
         test <@ File.ReadAllText(toolFsproj).Contains("<Version>1.1.0</Version>") @>)
@@ -4201,17 +4684,23 @@ let ``release - explicit command rebundles on dependency-only change`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "Tool"
-                    Fsproj = toolFsproj
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = root }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "Tool"
+                            Fsproj = toolFsproj
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = root
+            }
 
         // Only the bundled dependency changed, but the explicit alpha -> beta still applies.
         let result = runReleaseInRoot fakeRun config PromoteToBeta
@@ -4252,17 +4741,23 @@ let ``release - dependency-only rebundle skips a reserved explicit version`` () 
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "Tool"
-                    Fsproj = toolFsproj
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.ofList [ "0.1.0-beta.1" ]
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = root }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "Tool"
+                            Fsproj = toolFsproj
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.ofList [ "0.1.0-beta.1" ]
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = root
+            }
 
         let result = runReleaseInRoot fakeRun config PromoteToBeta
 
@@ -4323,45 +4818,55 @@ let ``release - library does NOT rebundle when only a separately-published depen
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "Lib"
-                    Fsproj = libFsproj
-                    DllPath = "fake.dll"
-                    TagPrefix = "lib-v"
-                    FsProjsSharingSameTag = [] }
-                  { Name = "Core"
-                    Fsproj = "src/Core/Core.fsproj"
-                    DllPath = "fake.dll"
-                    TagPrefix = "core-v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = root }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "Lib"
+                            Fsproj = libFsproj
+                            DllPath = "fake.dll"
+                            TagPrefix = "lib-v"
+                            FsProjsSharingSameTag = []
+                        }
+                        {
+                            Name = "Core"
+                            Fsproj = "src/Core/Core.fsproj"
+                            DllPath = "fake.dll"
+                            TagPrefix = "core-v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = root
+            }
 
         let result =
             release
-                { Run = fakeRun
-                  Config = config
-                  Command = Auto
-                  Mode = PushTags
-                  TargetPackages = []
-                  ExtractPreviousApi = noPreviousApi
-                  ExtractCurrentApi = noCurrentApi
-                  ExtractPreviousGrammar = noPreviousGrammar
-                  ExtractCurrentGrammar = noCurrentGrammar
-                  CiPollIntervalMs = 0
-                  CiWait = CiWaitTests.fixedCiWait 0 10
-                  TagPush = immediateTagPush
-                  CheckFeedPresence = (fun _ _ -> OnFeed)
-                  CheckRestorable = (fun _ _ _ -> OnFeed)
-                  WaitForNuGet = false
-                  NuGetPollIntervalMs = 0
-                  NuGetMaxAttempts = 1
-                  Push = false
-                  Check = false
-                  Canary = noCanary }
+                {
+                    Run = fakeRun
+                    Config = config
+                    Command = Auto
+                    Mode = PushTags
+                    TargetPackages = []
+                    ExtractPreviousApi = noPreviousApi
+                    ExtractCurrentApi = noCurrentApi
+                    ExtractPreviousGrammar = noPreviousGrammar
+                    ExtractCurrentGrammar = noCurrentGrammar
+                    CiPollIntervalMs = 0
+                    CiWait = CiWaitTests.fixedCiWait 0 10
+                    TagPush = immediateTagPush
+                    CheckFeedPresence = (fun _ _ -> OnFeed)
+                    CheckRestorable = (fun _ _ _ -> OnFeed)
+                    WaitForNuGet = false
+                    NuGetPollIntervalMs = 0
+                    NuGetMaxAttempts = 1
+                    Push = false
+                    Check = false
+                    Canary = noCanary
+                }
 
         test <@ result = 0 @>
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
@@ -4424,45 +4929,55 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "Cli"
-                    Fsproj = cliFsproj
-                    DllPath = "fake.dll"
-                    TagPrefix = "cli-v"
-                    FsProjsSharingSameTag = [] }
-                  { Name = "Core"
-                    Fsproj = "src/Core/Core.fsproj"
-                    DllPath = "fake.dll"
-                    TagPrefix = "core-v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = root }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "Cli"
+                            Fsproj = cliFsproj
+                            DllPath = "fake.dll"
+                            TagPrefix = "cli-v"
+                            FsProjsSharingSameTag = []
+                        }
+                        {
+                            Name = "Core"
+                            Fsproj = "src/Core/Core.fsproj"
+                            DllPath = "fake.dll"
+                            TagPrefix = "core-v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = root
+            }
 
         let result =
             release
-                { Run = fakeRun
-                  Config = config
-                  Command = Auto
-                  Mode = PushTags
-                  TargetPackages = [ "Cli" ]
-                  ExtractPreviousApi = noPreviousApi
-                  ExtractCurrentApi = noCurrentApi
-                  ExtractPreviousGrammar = noPreviousGrammar
-                  ExtractCurrentGrammar = noCurrentGrammar
-                  CiPollIntervalMs = 0
-                  CiWait = CiWaitTests.fixedCiWait 0 10
-                  TagPush = immediateTagPush
-                  CheckFeedPresence = (fun _ _ -> OnFeed)
-                  CheckRestorable = (fun _ _ _ -> OnFeed)
-                  WaitForNuGet = false
-                  NuGetPollIntervalMs = 0
-                  NuGetMaxAttempts = 1
-                  Push = false
-                  Check = false
-                  Canary = noCanary }
+                {
+                    Run = fakeRun
+                    Config = config
+                    Command = Auto
+                    Mode = PushTags
+                    TargetPackages = [ "Cli" ]
+                    ExtractPreviousApi = noPreviousApi
+                    ExtractCurrentApi = noCurrentApi
+                    ExtractPreviousGrammar = noPreviousGrammar
+                    ExtractCurrentGrammar = noCurrentGrammar
+                    CiPollIntervalMs = 0
+                    CiWait = CiWaitTests.fixedCiWait 0 10
+                    TagPush = immediateTagPush
+                    CheckFeedPresence = (fun _ _ -> OnFeed)
+                    CheckRestorable = (fun _ _ _ -> OnFeed)
+                    WaitForNuGet = false
+                    NuGetPollIntervalMs = 0
+                    NuGetMaxAttempts = 1
+                    Push = false
+                    Check = false
+                    Canary = noCanary
+                }
 
         test <@ result = 0 @>
         test <@ File.ReadAllText(cliFsproj).Contains("<Version>1.0.1</Version>") @>
@@ -4523,40 +5038,48 @@ let ``release - library rebundles when a non-configured helper dependency change
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "Lib"
-                    Fsproj = libFsproj
-                    DllPath = "fake.dll"
-                    TagPrefix = "lib-v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = root }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "Lib"
+                            Fsproj = libFsproj
+                            DllPath = "fake.dll"
+                            TagPrefix = "lib-v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = root
+            }
 
         let result =
             release
-                { Run = fakeRun
-                  Config = config
-                  Command = Auto
-                  Mode = PushTags
-                  TargetPackages = []
-                  ExtractPreviousApi = noPreviousApi
-                  ExtractCurrentApi = noCurrentApi
-                  ExtractPreviousGrammar = noPreviousGrammar
-                  ExtractCurrentGrammar = noCurrentGrammar
-                  CiPollIntervalMs = 0
-                  CiWait = CiWaitTests.fixedCiWait 0 10
-                  TagPush = immediateTagPush
-                  CheckFeedPresence = (fun _ _ -> OnFeed)
-                  CheckRestorable = (fun _ _ _ -> OnFeed)
-                  WaitForNuGet = false
-                  NuGetPollIntervalMs = 0
-                  NuGetMaxAttempts = 1
-                  Push = false
-                  Check = false
-                  Canary = noCanary }
+                {
+                    Run = fakeRun
+                    Config = config
+                    Command = Auto
+                    Mode = PushTags
+                    TargetPackages = []
+                    ExtractPreviousApi = noPreviousApi
+                    ExtractCurrentApi = noCurrentApi
+                    ExtractPreviousGrammar = noPreviousGrammar
+                    ExtractCurrentGrammar = noCurrentGrammar
+                    CiPollIntervalMs = 0
+                    CiWait = CiWaitTests.fixedCiWait 0 10
+                    TagPush = immediateTagPush
+                    CheckFeedPresence = (fun _ _ -> OnFeed)
+                    CheckRestorable = (fun _ _ _ -> OnFeed)
+                    WaitForNuGet = false
+                    NuGetPollIntervalMs = 0
+                    NuGetMaxAttempts = 1
+                    Push = false
+                    Check = false
+                    Canary = noCanary
+                }
 
         test <@ result = 0 @>
         test <@ File.ReadAllText(libFsproj).Contains("<Version>1.0.1</Version>") @>
@@ -4599,17 +5122,23 @@ let ``release - pushes main before creating tags so a push failure leaves no orp
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let threw =
             try
@@ -4637,26 +5166,28 @@ let private descArgsFor (ownDir: string) =
     sprintf "log -r \"v1.0.0..@\" --no-graph -T \"description ++ \\\"\\x1e\\\"\" \"%s\"" ownDir
 
 let private releaseInput run config cmd mode check : ReleaseInput =
-    { Run = run
-      Config = config
-      Command = cmd
-      Mode = mode
-      TargetPackages = []
-      ExtractPreviousApi = noPreviousApi
-      ExtractCurrentApi = noCurrentApi
-      ExtractPreviousGrammar = noPreviousGrammar
-      ExtractCurrentGrammar = noCurrentGrammar
-      CiPollIntervalMs = 0
-      CiWait = CiWaitTests.fixedCiWait 0 10
-      TagPush = immediateTagPush
-      CheckFeedPresence = (fun _ _ -> OnFeed)
-      CheckRestorable = (fun _ _ _ -> OnFeed)
-      WaitForNuGet = false
-      NuGetPollIntervalMs = 0
-      NuGetMaxAttempts = 1
-      Push = false
-      Check = check
-      Canary = noCanary }
+    {
+        Run = run
+        Config = config
+        Command = cmd
+        Mode = mode
+        TargetPackages = []
+        ExtractPreviousApi = noPreviousApi
+        ExtractCurrentApi = noCurrentApi
+        ExtractPreviousGrammar = noPreviousGrammar
+        ExtractCurrentGrammar = noCurrentGrammar
+        CiPollIntervalMs = 0
+        CiWait = CiWaitTests.fixedCiWait 0 10
+        TagPush = immediateTagPush
+        CheckFeedPresence = (fun _ _ -> OnFeed)
+        CheckRestorable = (fun _ _ _ -> OnFeed)
+        WaitForNuGet = false
+        NuGetPollIntervalMs = 0
+        NuGetMaxAttempts = 1
+        Push = false
+        Check = check
+        Canary = noCanary
+    }
 
 /// A single-package repo at 1.0.0 with the given CHANGELOG body.
 /// Returns (fsproj, ownDir, changelogPath, config).
@@ -4669,17 +5200,23 @@ let private seedSinglePackageRepo (rootDir: string) (changelogBody: string) =
     File.WriteAllText(changelog, changelogBody)
 
     let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = fsproj
-                DllPath = "fake.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = rootDir }
+        {
+            Packages =
+                [
+                    {
+                        Name = "MyLib"
+                        Fsproj = fsproj
+                        DllPath = "fake.dll"
+                        TagPrefix = "v"
+                        FsProjsSharingSameTag = []
+                    }
+                ]
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = rootDir
+        }
 
     fsproj, Path.GetDirectoryName(fsproj), changelog, config
 
@@ -4699,9 +5236,11 @@ let ``release - derives the Unreleased section from commits when it is empty`` (
 
         let (fakeRun, _) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
-                  ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + ownDir + "/**\"", Success "1 file changed")
-                  ("jj", descArgsFor ownDir, Success descOut) ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0")
+                    ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + ownDir + "/**\"", Success "1 file changed")
+                    ("jj", descArgsFor ownDir, Success descOut)
+                ]
 
         let result = release (releaseInput fakeRun config StartAlpha PushTags false)
 
@@ -4725,9 +5264,11 @@ let ``release - never clobbers a hand-authored Unreleased entry (derive skipped)
 
         let (fakeRun, _) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
-                  ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + ownDir + "/**\"", Success "1 file changed")
-                  ("jj", descArgsFor ownDir, Success("feat: derived thing that must NOT appear" + rs)) ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0")
+                    ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + ownDir + "/**\"", Success "1 file changed")
+                    ("jj", descArgsFor ownDir, Success("feat: derived thing that must NOT appear" + rs))
+                ]
 
         let result = release (releaseInput fakeRun config StartAlpha PushTags false)
 
@@ -4747,9 +5288,11 @@ let ``release - aborts before writes when Unreleased is empty and nothing is der
 
         let (fakeRun, _) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
-                  ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + ownDir + "/**\"", Success "1 file changed")
-                  ("jj", descArgsFor ownDir, Success("Bump versions: MyLib 1.0.0" + rs)) ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0")
+                    ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + ownDir + "/**\"", Success "1 file changed")
+                    ("jj", descArgsFor ownDir, Success("Bump versions: MyLib 1.0.0" + rs))
+                ]
 
         let result = release (releaseInput fakeRun config StartAlpha PushTags false)
 
@@ -4855,10 +5398,12 @@ let private seedReleaseWithRefs (rootDir: string) (changelogBody: string) refsAt
 
     let (run, _) =
         passingCiRun
-            [ ("git", "tag -l \"v*\"", Success "v1.0.0")
-              ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + ownDir + "/**\"", Success "1 file changed")
-              ("jj", descArgsFor ownDir, Success commits)
-              ("jj", sprintf "file show -r \"v1.0.0\" \"%s\"" fsproj, Success(fsprojWithRefs refsAtTag)) ]
+            [
+                ("git", "tag -l \"v*\"", Success "v1.0.0")
+                ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + ownDir + "/**\"", Success "1 file changed")
+                ("jj", descArgsFor ownDir, Success commits)
+                ("jj", sprintf "file show -r \"v1.0.0\" \"%s\"" fsproj, Success(fsprojWithRefs refsAtTag))
+            ]
 
     run, changelog, config
 
@@ -4959,24 +5504,31 @@ let ``--check and release agree: an empty section is derived from commits and de
 [<Fact>]
 let ``fsprojsForChangelog - a multi-package changelog gets only the fsprojs beside it`` () =
     let pkg =
-        { Name = "Alpha"
-          Fsproj = "src/Alpha/Alpha.fsproj"
-          DllPath = ""
-          TagPrefix = "alpha-v"
-          FsProjsSharingSameTag = [ "src/Alpha.Cli/Alpha.Cli.fsproj" ] }
+        {
+            Name = "Alpha"
+            Fsproj = "src/Alpha/Alpha.fsproj"
+            DllPath = ""
+            TagPrefix = "alpha-v"
+            FsProjsSharingSameTag = [ "src/Alpha.Cli/Alpha.Cli.fsproj" ]
+        }
 
     let config =
-        { Packages =
-            [ pkg
-              { pkg with
-                  Name = "Beta"
-                  Fsproj = "src/Beta/Beta.fsproj"
-                  FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "/repo" }
+        {
+            Packages =
+                [
+                    pkg
+                    { pkg with
+                        Name = "Beta"
+                        Fsproj = "src/Beta/Beta.fsproj"
+                        FsProjsSharingSameTag = []
+                    }
+                ]
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = "/repo"
+        }
 
     test <@ fsprojsForChangelog config pkg "src/Alpha.Cli/CHANGELOG.md" = [ "src/Alpha.Cli/Alpha.Cli.fsproj" ] @>
 
@@ -4992,12 +5544,14 @@ let ``dependencyChangesSinceTag - an fsproj unreadable at the tag or on disk der
         File.WriteAllText(fsproj, fsprojWithRefs pgvectorRefsNow)
 
         let config =
-            { Packages = []
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = rootDir }
+            {
+                Packages = []
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = rootDir
+            }
 
         let noHistory (_: string) (_: string) = Failure("no such path at tag", 1)
         test <@ List.isEmpty (dependencyChangesSinceTag noHistory config "v1.0.0" [ fsproj ]) @>
@@ -5028,50 +5582,64 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
 
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
-                  ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0")
+                    ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed")
+                ]
 
-        let previousGrammar = { Roots = [ Leaf("check-api", [], []) ] }
+        let previousGrammar =
+            {
+                Roots = [ Leaf("check-api", [], []) ]
+            }
+
         let currentGrammar = { Roots = [ Leaf("diff-api", [], []) ] }
 
         let config =
-            { Packages =
-                [ { Name = "MyTool"
-                    Fsproj = fsproj
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = dir }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyTool"
+                            Fsproj = fsproj
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = dir
+            }
 
         let result =
             release
-                { Run = fakeRun
-                  Config = config
-                  Command = Auto
-                  Mode = PushTags
-                  TargetPackages = []
-                  // Constructing an API probe for a PackAsTool package raises NU1212.
-                  ExtractPreviousApi =
-                    (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package (NU1212)")
-                  ExtractCurrentApi =
-                    (fun _ -> failwith "API probe must not be constructed for a PackAsTool package (NU1212)")
-                  ExtractPreviousGrammar = (fun _ _ -> Some previousGrammar)
-                  ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
-                  CiPollIntervalMs = 0
-                  CiWait = CiWaitTests.fixedCiWait 0 10
-                  TagPush = immediateTagPush
-                  CheckFeedPresence = (fun _ _ -> OnFeed)
-                  CheckRestorable = (fun _ _ _ -> OnFeed)
-                  WaitForNuGet = false
-                  NuGetPollIntervalMs = 0
-                  NuGetMaxAttempts = 1
-                  Push = false
-                  Check = false
-                  Canary = noCanary }
+                {
+                    Run = fakeRun
+                    Config = config
+                    Command = Auto
+                    Mode = PushTags
+                    TargetPackages = []
+                    // Constructing an API probe for a PackAsTool package raises NU1212.
+                    ExtractPreviousApi =
+                        (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package (NU1212)")
+                    ExtractCurrentApi =
+                        (fun _ -> failwith "API probe must not be constructed for a PackAsTool package (NU1212)")
+                    ExtractPreviousGrammar = (fun _ _ -> Some previousGrammar)
+                    ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
+                    CiPollIntervalMs = 0
+                    CiWait = CiWaitTests.fixedCiWait 0 10
+                    TagPush = immediateTagPush
+                    CheckFeedPresence = (fun _ _ -> OnFeed)
+                    CheckRestorable = (fun _ _ _ -> OnFeed)
+                    WaitForNuGet = false
+                    NuGetPollIntervalMs = 0
+                    NuGetMaxAttempts = 1
+                    Push = false
+                    Check = false
+                    Canary = noCanary
+                }
 
         test <@ result = 0 @>
         test <@ (File.ReadAllText fsproj).Contains("<Version>2.0.0</Version>") @>
@@ -5101,45 +5669,55 @@ let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative 
 
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
-                  ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0")
+                    ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed")
+                ]
 
         let config =
-            { Packages =
-                [ { Name = "MyTool"
-                    Fsproj = fsproj
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = dir }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyTool"
+                            Fsproj = fsproj
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = dir
+            }
 
         let result =
             release
-                { Run = fakeRun
-                  Config = config
-                  Command = Auto
-                  Mode = PushTags
-                  TargetPackages = []
-                  ExtractPreviousApi =
-                    (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package")
-                  ExtractCurrentApi = (fun _ -> failwith "API probe must not be constructed for a PackAsTool package")
-                  ExtractPreviousGrammar = noPreviousGrammar
-                  ExtractCurrentGrammar = noCurrentGrammar
-                  CiPollIntervalMs = 0
-                  CiWait = CiWaitTests.fixedCiWait 0 10
-                  TagPush = immediateTagPush
-                  CheckFeedPresence = (fun _ _ -> OnFeed)
-                  CheckRestorable = (fun _ _ _ -> OnFeed)
-                  WaitForNuGet = false
-                  NuGetPollIntervalMs = 0
-                  NuGetMaxAttempts = 1
-                  Push = false
-                  Check = false
-                  Canary = noCanary }
+                {
+                    Run = fakeRun
+                    Config = config
+                    Command = Auto
+                    Mode = PushTags
+                    TargetPackages = []
+                    ExtractPreviousApi =
+                        (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package")
+                    ExtractCurrentApi = (fun _ -> failwith "API probe must not be constructed for a PackAsTool package")
+                    ExtractPreviousGrammar = noPreviousGrammar
+                    ExtractCurrentGrammar = noCurrentGrammar
+                    CiPollIntervalMs = 0
+                    CiWait = CiWaitTests.fixedCiWait 0 10
+                    TagPush = immediateTagPush
+                    CheckFeedPresence = (fun _ _ -> OnFeed)
+                    CheckRestorable = (fun _ _ _ -> OnFeed)
+                    WaitForNuGet = false
+                    NuGetPollIntervalMs = 0
+                    NuGetMaxAttempts = 1
+                    Push = false
+                    Check = false
+                    Canary = noCanary
+                }
 
         test <@ result = 0 @>
         test <@ (File.ReadAllText fsproj).Contains("<Version>1.0.1</Version>") @>
@@ -5169,47 +5747,57 @@ let ``release - PackAsTool CLI aborts when the previous grammar cannot be read``
 
         let (fakeRun, _getCalls) =
             passingCiRun
-                [ ("git", "tag -l \"v*\"", Success "v1.0.0")
-                  ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed") ]
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0")
+                    ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed")
+                ]
 
         let currentGrammar = { Roots = [ Leaf("diff-api", [], []) ] }
 
         let config =
-            { Packages =
-                [ { Name = "MyTool"
-                    Fsproj = fsproj
-                    DllPath = "fake.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = dir }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyTool"
+                            Fsproj = fsproj
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = dir
+            }
 
         let result =
             release
-                { Run = fakeRun
-                  Config = config
-                  Command = Auto
-                  Mode = PushTags
-                  TargetPackages = []
-                  ExtractPreviousApi =
-                    (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package")
-                  ExtractCurrentApi = (fun _ -> failwith "API probe must not be constructed for a PackAsTool package")
-                  ExtractPreviousGrammar = noPreviousGrammar
-                  ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
-                  CiPollIntervalMs = 0
-                  CiWait = CiWaitTests.fixedCiWait 0 10
-                  TagPush = immediateTagPush
-                  CheckFeedPresence = (fun _ _ -> OnFeed)
-                  CheckRestorable = (fun _ _ _ -> OnFeed)
-                  WaitForNuGet = false
-                  NuGetPollIntervalMs = 0
-                  NuGetMaxAttempts = 1
-                  Push = false
-                  Check = false
-                  Canary = noCanary }
+                {
+                    Run = fakeRun
+                    Config = config
+                    Command = Auto
+                    Mode = PushTags
+                    TargetPackages = []
+                    ExtractPreviousApi =
+                        (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package")
+                    ExtractCurrentApi = (fun _ -> failwith "API probe must not be constructed for a PackAsTool package")
+                    ExtractPreviousGrammar = noPreviousGrammar
+                    ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
+                    CiPollIntervalMs = 0
+                    CiWait = CiWaitTests.fixedCiWait 0 10
+                    TagPush = immediateTagPush
+                    CheckFeedPresence = (fun _ _ -> OnFeed)
+                    CheckRestorable = (fun _ _ _ -> OnFeed)
+                    WaitForNuGet = false
+                    NuGetPollIntervalMs = 0
+                    NuGetMaxAttempts = 1
+                    Push = false
+                    Check = false
+                    Canary = noCanary
+                }
 
         test <@ result = 1 @>
         test <@ (File.ReadAllText fsproj).Contains("<Version>1.0.0</Version>") @>
@@ -5223,11 +5811,13 @@ let ``release - PackAsTool CLI aborts when the previous grammar cannot be read``
 // that, and derivable commits never suppress it.
 
 let private calloutPkg (dir: string) (name: string) : PackageConfig =
-    { Name = name
-      Fsproj = Path.Combine(dir, name, name + ".fsproj")
-      DllPath = ""
-      TagPrefix = name.ToLowerInvariant() + "-v"
-      FsProjsSharingSameTag = [] }
+    {
+        Name = name
+        Fsproj = Path.Combine(dir, name, name + ".fsproj")
+        DllPath = ""
+        TagPrefix = name.ToLowerInvariant() + "-v"
+        FsProjsSharingSameTag = []
+    }
 
 let private writeChangelog (dir: string) (name: string) (text: string) =
     let sub = Path.Combine(dir, name)
@@ -5247,37 +5837,41 @@ let private noTags (cmd: string) (args: string) : CommandResult =
 
 let private runCheck (config: ToolConfig) =
     release
-        { Run = noTags
-          Config = config
-          Command = Auto
-          Mode = DryRun
-          TargetPackages = []
-          ExtractPreviousApi = noPreviousApi
-          ExtractCurrentApi = noCurrentApi
-          ExtractPreviousGrammar = noPreviousGrammar
-          ExtractCurrentGrammar = noCurrentGrammar
-          CiPollIntervalMs = 0
-          CiWait = CiWaitTests.fixedCiWait 0 1
-          TagPush = immediateTagPush
-          CheckFeedPresence = (fun _ _ -> OnFeed)
-          CheckRestorable = (fun _ _ _ -> OnFeed)
-          WaitForNuGet = false
-          NuGetPollIntervalMs = 0
-          NuGetMaxAttempts = 1
-          Push = false
-          Check = true
-          Canary = noCanary }
+        {
+            Run = noTags
+            Config = config
+            Command = Auto
+            Mode = DryRun
+            TargetPackages = []
+            ExtractPreviousApi = noPreviousApi
+            ExtractCurrentApi = noCurrentApi
+            ExtractPreviousGrammar = noPreviousGrammar
+            ExtractCurrentGrammar = noCurrentGrammar
+            CiPollIntervalMs = 0
+            CiWait = CiWaitTests.fixedCiWait 0 1
+            TagPush = immediateTagPush
+            CheckFeedPresence = (fun _ _ -> OnFeed)
+            CheckRestorable = (fun _ _ _ -> OnFeed)
+            WaitForNuGet = false
+            NuGetPollIntervalMs = 0
+            NuGetMaxAttempts = 1
+            Push = false
+            Check = true
+            Canary = noCanary
+        }
 
 [<Fact>]
 let ``calloutCheckPaths - multi-package repo also covers the repo-root changelog`` () =
     withTempDir (fun dir ->
         let config =
-            { Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = dir }
+            {
+                Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = dir
+            }
 
         let paths = calloutCheckPaths config config.Packages |> List.map snd
 
@@ -5289,12 +5883,14 @@ let ``calloutCheckPaths - multi-package repo also covers the repo-root changelog
 let ``calloutCheckPaths - single-package repo lists the root changelog once, under the package`` () =
     withTempDir (fun dir ->
         let config =
-            { Packages = [ calloutPkg dir "Solo" ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = dir }
+            {
+                Packages = [ calloutPkg dir "Solo" ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = dir
+            }
 
         let paths = calloutCheckPaths config config.Packages
         test <@ paths = [ "Solo", Path.Combine(dir, "CHANGELOG.md") ] @>)
@@ -5305,12 +5901,14 @@ let ``release --check - fails when a package changelog buries its callout`` () =
         writeChangelog dir "Alpha" calloutBuriedText
 
         let config =
-            { Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = dir }
+            {
+                Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = dir
+            }
 
         test <@ runCheck config = 1 @>)
 
@@ -5321,12 +5919,14 @@ let ``release --check - passes when the callout leads the section`` () =
         writeChangelog dir "Alpha" calloutFirstText
 
         let config =
-            { Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = dir }
+            {
+                Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = dir
+            }
 
         test <@ runCheck config = 0 @>)
 
@@ -5338,12 +5938,14 @@ let ``release --check - fails when the repo-root aggregate buries its callout`` 
         File.WriteAllText(Path.Combine(dir, "CHANGELOG.md"), calloutBuriedText)
 
         let config =
-            { Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = dir }
+            {
+                Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = dir
+            }
 
         test <@ runCheck config = 1 @>)
 
@@ -5353,23 +5955,24 @@ let ``calloutOrderProblems - names the package and the buried callout`` () =
         writeChangelog dir "Alpha" calloutBuriedText
 
         let config =
-            { Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = dir }
+            {
+                Packages = [ calloutPkg dir "Alpha"; calloutPkg dir "Beta" ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = dir
+            }
 
         let problems = calloutOrderProblems config config.Packages
 
         test
             <@
-                problems = [ "Alpha",
-                             Changelog.CalloutNotFirst(
-                                 Path.Combine(dir, "Alpha", "CHANGELOG.md"),
-                                 "Read this first",
-                                 7
-                             ) ]
+                problems =
+                    [
+                        "Alpha",
+                        Changelog.CalloutNotFirst(Path.Combine(dir, "Alpha", "CHANGELOG.md"), "Read this first", 7)
+                    ]
             @>)
 
 
@@ -5393,44 +5996,53 @@ let private ciRunWithLateTagRun (emptyRounds: int) =
     run, getCalls
 
 let private singlePackage (tmpFile: string) : ToolConfig =
-    { Packages =
-        [ { Name = "MyLib"
-            Fsproj = tmpFile
-            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-            TagPrefix = "v"
-            FsProjsSharingSameTag = [] } ]
-      ReservedVersions = Set.empty
-      PreBuildCmds = []
-      PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-      CiTimeout = None
-      RootDir = "" }
+    {
+        Packages =
+            [
+                {
+                    Name = "MyLib"
+                    Fsproj = tmpFile
+                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                    TagPrefix = "v"
+                    FsProjsSharingSameTag = []
+                }
+            ]
+        ReservedVersions = Set.empty
+        PreBuildCmds = []
+        PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+        CiTimeout = None
+        RootDir = ""
+    }
 
 let private releaseWithTagPush run config (policy: TagPushPolicy) =
     seedTmpChangelog ()
 
     release
-        { Run = run
-          Config =
-            { config with
-                RootDir = Path.GetTempPath() }
-          Command = StartAlpha
-          Mode = PushTags
-          TargetPackages = []
-          ExtractPreviousApi = noPreviousApi
-          ExtractCurrentApi = noCurrentApi
-          ExtractPreviousGrammar = noPreviousGrammar
-          ExtractCurrentGrammar = noCurrentGrammar
-          CiPollIntervalMs = 0
-          CiWait = CiWaitTests.fixedCiWait 0 10
-          TagPush = policy
-          CheckFeedPresence = (fun _ _ -> OnFeed)
-          CheckRestorable = (fun _ _ _ -> OnFeed)
-          WaitForNuGet = false
-          NuGetPollIntervalMs = 0
-          NuGetMaxAttempts = 1
-          Push = false
-          Check = false
-          Canary = noCanary }
+        {
+            Run = run
+            Config =
+                { config with
+                    RootDir = Path.GetTempPath()
+                }
+            Command = StartAlpha
+            Mode = PushTags
+            TargetPackages = []
+            ExtractPreviousApi = noPreviousApi
+            ExtractCurrentApi = noCurrentApi
+            ExtractPreviousGrammar = noPreviousGrammar
+            ExtractCurrentGrammar = noCurrentGrammar
+            CiPollIntervalMs = 0
+            CiWait = CiWaitTests.fixedCiWait 0 10
+            TagPush = policy
+            CheckFeedPresence = (fun _ _ -> OnFeed)
+            CheckRestorable = (fun _ _ _ -> OnFeed)
+            WaitForNuGet = false
+            NuGetPollIntervalMs = 0
+            NuGetMaxAttempts = 1
+            Push = false
+            Check = false
+            Canary = noCanary
+        }
 
 [<Fact>]
 let ``release - a Release run that registers a few polls after the push exits 0 and is never MISSING`` () =
@@ -5445,10 +6057,12 @@ let ``release - a Release run that registers a few polls after the push exits 0 
                 releaseWithTagPush
                     run
                     (singlePackage tmpFile)
-                    { PushAttempts = 1
-                      PushRetryDelayMs = 0
-                      RunPollIntervalMs = 0
-                      RunPollAttempts = 10 })
+                    {
+                        PushAttempts = 1
+                        PushRetryDelayMs = 0
+                        RunPollIntervalMs = 0
+                        RunPollAttempts = 10
+                    })
 
         test <@ result = 0 @>
         test <@ not (output.Contains("MISSING TRIGGER")) @>
@@ -5470,10 +6084,12 @@ let ``release - a Release run that never appears within the budget is reported, 
                 releaseWithTagPush
                     run
                     (singlePackage tmpFile)
-                    { PushAttempts = 1
-                      PushRetryDelayMs = 0
-                      RunPollIntervalMs = 0
-                      RunPollAttempts = 3 })
+                    {
+                        PushAttempts = 1
+                        PushRetryDelayMs = 0
+                        RunPollIntervalMs = 0
+                        RunPollAttempts = 3
+                    })
 
         test <@ result = 2 @>
         test <@ output.Contains("ARE on the remote") @>
@@ -5560,15 +6176,21 @@ let ``a failed publish run still reads as a sentence when GitHub reports no name
     let output, result =
         withCapturedConsole (fun () ->
             reportTagConfirmationFailures
-                [ TagConfirmationFailure.WorkflowRunFailed(
-                      "fssemantictagger-v0.14.0-alpha.8",
-                      [ { Workflow = PublishWorkflow ".github/workflows/release.yml"
-                          Name = ""
-                          Url = ""
-                          RunId = "42"
-                          Status = Completed
-                          Conclusion = FailureConclusion } ]
-                  ) ])
+                [
+                    TagConfirmationFailure.WorkflowRunFailed(
+                        "fssemantictagger-v0.14.0-alpha.8",
+                        [
+                            {
+                                Workflow = PublishWorkflow ".github/workflows/release.yml"
+                                Name = ""
+                                Url = ""
+                                RunId = "42"
+                                Status = Completed
+                                Conclusion = FailureConclusion
+                            }
+                        ]
+                    )
+                ])
 
     test <@ result = 1 @>
     test <@ output.Contains("publish workflow .github/workflows/release.yml finished") @>
@@ -5587,17 +6209,23 @@ let ``release - a preBuildCmd with no arguments runs with an empty argument stri
             passingCiRun [ ("restore-tools", "", Success "Restored.") ]
 
         let config =
-            { Packages =
-                [ { Name = "MyLib"
-                    Fsproj = tmpFile
-                    DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = [ "restore-tools" ]
-              PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = "" }
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = [ "restore-tools" ]
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
 
         let result =
             runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
@@ -5655,22 +6283,30 @@ let private writeSharedTagRepo (root: string) =
         File.WriteAllText(Path.Combine(dirOf name, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n- fix: a\n")
 
     let config =
-        { Packages =
-            [ { Name = "Core"
-                Fsproj = fsproj "Core"
-                DllPath = "fake.dll"
-                TagPrefix = "core-v"
-                FsProjsSharingSameTag = [ fsproj "Cli" ] }
-              { Name = "Other"
-                Fsproj = fsproj "Other"
-                DllPath = "fake.dll"
-                TagPrefix = "other-v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = root }
+        {
+            Packages =
+                [
+                    {
+                        Name = "Core"
+                        Fsproj = fsproj "Core"
+                        DllPath = "fake.dll"
+                        TagPrefix = "core-v"
+                        FsProjsSharingSameTag = [ fsproj "Cli" ]
+                    }
+                    {
+                        Name = "Other"
+                        Fsproj = fsproj "Other"
+                        DllPath = "fake.dll"
+                        TagPrefix = "other-v"
+                        FsProjsSharingSameTag = []
+                    }
+                ]
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = root
+        }
 
     fsproj "Core", config
 
