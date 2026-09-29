@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: `check` says how many files the reader skipped (`Result: 3/3 files in the report passed (1 more was excluded by the reader; …)`) and `targets` lists them with the filter that matched. A skipped file never gets a floor, so it was missing from both sides of the count without a word — e.g. a production `TestKit.fs`, which the `Test` name filter catches.
+
 ## 0.15.0-alpha.17 - 2026-09-27
 
 - feat: `propose-from-ci <run-id> [output]` reads a CI run's `coverage-thresholds` artifact and lists every file below the floor that run's platform enforces, across every project at once, with a drafted `overrides` entry for each: lowered only where it fell, to the measured value rounded down, tagged with the platform, and a reason citing the run, the commit and the numbers. It is read-only: it never edits a floor file, never commits and never pushes. A whole-number measurement against a fractional floor is reported as undetermined rather than drafted.

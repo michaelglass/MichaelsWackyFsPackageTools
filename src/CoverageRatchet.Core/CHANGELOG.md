@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- feat: `ReaderOptions` makes the Cobertura reader's filters (source extensions, excluded file-name patterns, excluded path segments) configurable, so C# and VB reports can be read. `ReaderOptions.defaults` is the previous behaviour.
+- feat: `readReports options xmlContents` reads reports in one pass and returns a `Report`: the `RawLine`s read plus the `ExcludedFile`s skipped, each with an `ExclusionReason`. `parseXml`, `parseFiles`, `extractRawLines` and friends are unchanged and use the defaults.
+
 ## 0.1.0-alpha.10 - 2026-09-27
 
 - feat: `resolveConfigFor platform raw` resolves the floors a named platform enforces (what a CI runner on that platform checks), whichever machine reads the file; `resolveConfig` is now `resolveConfigFor Platform.current`.

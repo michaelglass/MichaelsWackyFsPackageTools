@@ -2453,3 +2453,128 @@ let ``extractFileScope - a trailing --file with no value is left for the parser 
 
     test <@ List.isEmpty files @>
     test <@ remaining = [| "baseline-lines"; "--file" |] @>
+
+// ── Files the reader skipped ──────────────────────────────────────────────────────
+
+/// Four production files with identical coverage; the name filter skips `TestKit.fs`.
+let private fourFilesOneNamedTestKit =
+    let cls (name: string) =
+        sprintf
+            """<class filename="MyLib/%s"><lines><line number="1" hits="1" /><line number="2" hits="0" /></lines></class>"""
+            name
+
+    sprintf
+        """<?xml version="1.0" encoding="utf-8"?>
+<coverage><packages><package name="MyLib"><classes>%s%s%s%s</classes></package></packages></coverage>"""
+        (cls "Harness.fs")
+        (cls "TestKit.fs")
+        (cls "ProtestBanner.fs")
+        (cls "Latest.fs")
+
+[<Fact>]
+let ``run - check says how many files the reader did not read`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), fourFilesOneNamedTestKit)
+        let configPath = Path.Combine(tmpDir, "config.json")
+
+        File.WriteAllText(
+            configPath,
+            """{
+  "overrides": {
+    "Harness.fs": { "line": 50, "branch": 100 },
+    "ProtestBanner.fs": { "line": 50, "branch": 100 },
+    "Latest.fs": { "line": 50, "branch": 100 }
+  }
+}"""
+        )
+
+        let output, result =
+            withCapturedConsole (fun () -> run (Check(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 0 @>
+        test <@ output.Contains("Result: 3/3 files in the report passed") @>
+        test <@ output.Contains("1 more was excluded by the reader") @>)
+
+[<Fact>]
+let ``run - check says nothing extra when the reader read everything`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 100)
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, """{ "overrides": { "Foo.fs": { "line": 50, "branch": 100 } } }""")
+
+        let output, result =
+            withCapturedConsole (fun () -> run (Check(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 0 @>
+        test <@ output.Contains("Result: 1/1 files in the report passed") @>
+        test <@ not (output.Contains("excluded by the reader")) @>)
+
+[<Fact>]
+let ``run - targets names the dropped file and why`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), fourFilesOneNamedTestKit)
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, "{}")
+
+        let output, result =
+            withCapturedConsole (fun () -> run (Targets(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 0 @>
+        test <@ output.Contains("3 files") @>
+        test <@ output.Contains("Not read by the coverage reader:") @>
+        test <@ output.Contains("TestKit.fs") @>
+        test <@ output.Contains("name contains \"Test\"") @>)
+
+[<Fact>]
+let ``run - targets stays quiet when nothing was dropped`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 100)
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, "{}")
+
+        let output, result =
+            withCapturedConsole (fun () -> run (Targets(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 0 @>
+        test <@ not (output.Contains("Not read by the coverage reader")) @>)
+
+let private coverageXmlOf (fileNames: string list) =
+    fileNames
+    |> List.map (sprintf """<class filename="MyLib/%s"><lines><line number="1" hits="1" /></lines></class>""")
+    |> String.concat ""
+    |> sprintf
+        """<?xml version="1.0" encoding="utf-8"?>
+<coverage><packages><package name="MyLib"><classes>%s</classes></package></packages></coverage>"""
+
+[<Fact>]
+let ``run - check counts several skipped files in the plural`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(
+            Path.Combine(tmpDir, "coverage.cobertura.xml"),
+            coverageXmlOf [ "Real.fs"; "TestKit.fs"; "AssemblyInfo.fs" ]
+        )
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, """{ "overrides": { "Real.fs": { "line": 100, "branch": 100 } } }""")
+
+        let output, result =
+            withCapturedConsole (fun () -> run (Check(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 0 @>
+        test <@ output.Contains("Result: 1/1 files in the report passed (2 more were excluded by the reader") @>)
+
+[<Fact>]
+let ``run - targets lists at most 20 skipped files`` () =
+    withTempDir (fun tmpDir ->
+        let skipped = [ for i in 1..21 -> sprintf "Test%02d.fs" i ]
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), coverageXmlOf ("Real.fs" :: skipped))
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, "{}")
+
+        let output, result =
+            withCapturedConsole (fun () -> run (Targets(config = Some configPath)) tmpDir false)
+
+        test <@ result = Ok 0 @>
+        test <@ output.Contains("Test20.fs") @>
+        test <@ not (output.Contains("Test21.fs")) @>
+        test <@ output.Contains("... and 1 more") @>)

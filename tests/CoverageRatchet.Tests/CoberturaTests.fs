@@ -1080,3 +1080,10 @@ let ``parseXml - line dedup first miss then hit counts as hit`` () =
 
     test <@ result.Length = 1 @>
     test <@ result.[0].LinePct = 100.0 @>
+
+[<Fact>]
+let ``ExclusionReason.describe - names the value that matched`` () =
+    test <@ ExclusionReason.describe (ExcludedByExtension ".cs") = "extension \".cs\" is not read" @>
+    test <@ ExclusionReason.describe (ExcludedByExtension "") = "has no extension" @>
+    test <@ ExclusionReason.describe (ExcludedByFileName "Test") = "name contains \"Test\"" @>
+    test <@ ExclusionReason.describe (ExcludedByPath "vendor") = "under a \"vendor\" path segment" @>

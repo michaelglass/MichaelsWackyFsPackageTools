@@ -148,7 +148,15 @@ let private reportUnmeasuredFloors (configPath: string) (unmeasured: UnmeasuredF
         printfn "    the report was read mid-write. Re-run the full suite."
         printfn "  - the FILE is gone: delete its entry from %s." configPath
 
-let private runCheck (configPath: string) (files: FileCoverage list) =
+/// A skipped file is missing from both sides of "N/N files passed", so say how many
+/// there were; `targets` names them.
+let private excludedClause (exclusions: ExcludedFile list) =
+    match exclusions.Length with
+    | 0 -> ""
+    | 1 -> " (1 more was excluded by the reader; see `targets`)"
+    | n -> sprintf " (%d more were excluded by the reader; see `targets`)" n
+
+let private runCheck (configPath: string) (exclusions: ExcludedFile list) (files: FileCoverage list) =
     let config = loadConfig configPath
     let verdict = judge config files
 
@@ -180,7 +188,7 @@ let private runCheck (configPath: string) (files: FileCoverage list) =
         // denominator came from the report, so it read identically at 7 files
         // and at 50. It stays, because it is the useful per-run detail — but it
         // no longer decides anything, and it now names the set it counted.
-        printfn "Result: %d/%d files in the report passed" passed.Length allResults.Length
+        printfn "Result: %d/%d files in the report passed%s" passed.Length allResults.Length (excludedClause exclusions)
 
         let countResults = buildCountResults config files
 
@@ -327,7 +335,7 @@ let private runCheckJson (configPath: string) (outputPath: string) (files: FileC
 
     exitCodeOf verdict
 
-let private runTargets (configPath: string) (files: FileCoverage list) =
+let private runTargets (configPath: string) (exclusions: ExcludedFile list) (files: FileCoverage list) =
     let config = loadConfig configPath
     let allResults = buildFileResults config files
 
@@ -345,11 +353,21 @@ let private runTargets (configPath: string) (files: FileCoverage list) =
     printfn "────────────────────────────────────────────────────────────────"
     printfn ""
     printfn "  %d files" sorted.Length
+
+    if not (List.isEmpty exclusions) then
+        printfn ""
+        printfn "  Not read by the coverage reader:"
+
+        for e in exclusions |> List.truncate 20 do
+            printfn "    %s — %s" e.FileName (ExclusionReason.describe e.Reason)
+
+        if exclusions.Length > 20 then
+            printfn "    ... and %d more" (exclusions.Length - 20)
+
     printfn ""
     0
 
-let private runGaps (xmlContents: string list) =
-    let rawLines = xmlContents |> List.collect extractRawLines
+let private runGaps (rawLines: RawLine list) =
     let gapFiles = buildBranchGaps rawLines
 
     if List.isEmpty gapFiles then
@@ -664,22 +682,19 @@ type CoverageFileCommand =
     | CfTargets
     | CfGaps
 
-let private runWithCoverageFiles
-    (cmd: CoverageFileCommand)
-    (configPath: string)
-    (xmlPaths: string list)
-    (files: FileCoverage list)
-    =
+let private runWithCoverageFiles (cmd: CoverageFileCommand) (configPath: string) (report: Report) =
+    let files = buildCoverage report.Lines
+
     match cmd with
     | CfRatchet -> runRatchet configPath files
-    | CfCheck -> runCheck configPath files
+    | CfCheck -> runCheck configPath report.Excluded files
     | CfLoosen -> runLoosen configPath files
     | CfBaselineLines scope -> runBaselineLines configPath scope files
     | CfCheckJson outputOpt ->
         let outputPath = outputOpt |> Option.defaultValue "coverage-results.json"
         runCheckJson configPath outputPath files
-    | CfTargets -> runTargets configPath files
-    | CfGaps -> runGaps (xmlPaths |> List.map File.ReadAllText)
+    | CfTargets -> runTargets configPath report.Excluded files
+    | CfGaps -> runGaps report.Lines
 
 /// `fileScope` is the `--file` list: the files a `baseline-lines` run is limited to.
 /// No other command takes one, and refusing it there is cheaper than a run that
@@ -766,8 +781,10 @@ let runScoped
             if List.isEmpty xmlPaths then
                 Error "No coverage.cobertura.xml found"
             else
-                let files = parseFiles xmlPaths
-                let result = runWithCoverageFiles cmd configPath xmlPaths files
+                let report =
+                    xmlPaths |> List.map File.ReadAllText |> readReports ReaderOptions.defaults
+
+                let result = runWithCoverageFiles cmd configPath report
 
                 // If the run just completed a known-full test suite (signalled
                 // by fs-hot-watch via FSHW_RAN_FULL_SUITE=true), advance the

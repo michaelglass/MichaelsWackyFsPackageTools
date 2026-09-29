@@ -66,7 +66,55 @@ let rawLines = extractRawLines xmlContent
 let gaps: FileBranchGaps list = buildBranchGaps rawLines
 ```
 
-Files from paths like `paket-files/`, `vendor/`, `node_modules/`, and `.fable/` are automatically excluded, as are files matching `Test`, `AssemblyInfo`, or `AssemblyAttributes` in their name. Only `.fs` files are included.
+By default the reader reads `.fs` files and skips files under `paket-files/`, `vendor/`, `node_modules/` or `.fable/`, and files whose name contains `Test`, `AssemblyInfo` or `AssemblyAttributes`.
+
+#### Reader options and skipped files
+
+`readReports` reads one or more reports in a single pass with the filters you pass, and returns the lines it read alongside the files it skipped:
+
+<!-- sync:reader-options:start src=src/CoverageRatchet.Core/Cobertura.fs -->
+```fsharp
+/// Which `<class>` elements of a Cobertura report the reader reads.
+///
+/// A file is read when its name ends with one of `IncludedExtensions`, its base name
+/// contains none of `ExcludedFileNamePatterns` (case-sensitive substring), and no path
+/// segment equals one of `ExcludedPathPatterns` (case-insensitive).
+///
+/// To read a C# report: `{ ReaderOptions.defaults with IncludedExtensions = [| ".cs" |] }`.
+type ReaderOptions =
+    { IncludedExtensions: string[]
+      ExcludedFileNamePatterns: string[]
+      ExcludedPathPatterns: string[] }
+```
+<!-- sync:reader-options:end -->
+
+<!-- sync:exclusion-reason:start src=src/CoverageRatchet.Core/Cobertura.fs -->
+```fsharp
+/// Which `ReaderOptions` filter skipped a file, and the value that matched.
+type ExclusionReason =
+    | ExcludedByExtension of extension: string
+    | ExcludedByFileName of pattern: string
+    | ExcludedByPath of pattern: string
+
+/// A file in the report that the reader skipped, keyed by base name like `FileCoverage`.
+type ExcludedFile =
+    { FileName: string
+      Reason: ExclusionReason }
+```
+<!-- sync:exclusion-reason:end -->
+
+```fsharp
+let csharp = { ReaderOptions.defaults with IncludedExtensions = [| ".cs" |] }
+let report: Report = readReports csharp [ File.ReadAllText "coverage.cobertura.xml" ]
+
+let files: FileCoverage list = buildCoverage report.Lines
+
+for e in report.Excluded do
+    printfn "%s — %s" e.FileName (ExclusionReason.describe e.Reason)
+    // AssemblyInfo.cs — name contains "AssemblyInfo"
+```
+
+The parameterless functions (`parseXml`, `parseFiles`, `extractRawLines`, …) use `ReaderOptions.defaults`.
 
 ### `CoverageRatchet.Thresholds`
 
