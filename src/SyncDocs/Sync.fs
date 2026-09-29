@@ -39,6 +39,23 @@ type DiscoveryResult =
     { Pairs: SyncPair list
       Warnings: DiscoveryWarning list }
 
+/// A document's line ending: whichever of CRLF/LF ends most of its lines (LF on a tie).
+type private LineEnding =
+    | Lf
+    | Crlf
+
+let private lineEndingOf (text: string) : LineEnding =
+    let breaks = text |> Seq.filter (fun c -> c = '\n') |> Seq.length
+    let crlfs = Regex.Matches(text, "\r\n").Count
+    if crlfs * 2 > breaks then Crlf else Lf
+
+let private withLineEnding (ending: LineEnding) (text: string) : string =
+    let lf = text.Replace("\r\n", "\n")
+
+    match ending with
+    | Lf -> lf
+    | Crlf -> lf.Replace("\n", "\r\n")
+
 /// Extract tagged sections from source (README) content.
 /// Source uses: <!-- sync:name:start -->...<!-- sync:name:end -->
 /// A start marker may also carry a `src=...` code-region attribute, which is
@@ -113,14 +130,17 @@ let extractRegion (content: string) (region: string) : Result<string list, Regio
 
 /// Replace tagged sections in target (docs) content with new content from source.
 /// Target uses: <!-- sync:name -->...<!-- sync:name:end --> (no :start suffix).
+/// Replaced bodies take the target's line ending; the rest of the target is left as is.
 let replaceSections (content: string) (sections: Map<string, string>) : string =
+    let ending = lineEndingOf content
+
     sections
     |> Map.fold
         (fun (acc: string) name newContent ->
             let pattern =
-                sprintf @"(<!-- sync:%s -->)[ \t]*\n[\s\S]*?(<!-- sync:%s:end -->)" name name
+                sprintf @"(<!-- sync:%s -->)[ \t]*\r?\n[\s\S]*?(<!-- sync:%s:end -->)" name name
 
-            let escaped = newContent.Replace("$", "$$")
+            let escaped = (withLineEnding ending newContent).Replace("$", "$$")
             Regex.Replace(acc, pattern, sprintf "$1%s$2" escaped))
         content
 
@@ -180,6 +200,7 @@ let private currentCodeBody (readme: string) (name: string) : string option =
 let syncCodeRegions (mode: SyncMode) (rootDir: string) (readmePath: string) : Result<SyncOutcome, CodeSyncError> =
     let readme = File.ReadAllText readmePath
     let blocks = extractCodeBlocks readme
+    let ending = lineEndingOf readme
 
     let resolveBody (block: CodeBlock) : Result<string, CodeSyncError> =
         let fullPath = Path.Combine(rootDir, block.RelativePath)
@@ -189,7 +210,7 @@ let syncCodeRegions (mode: SyncMode) (rootDir: string) (readmePath: string) : Re
         else
             match extractRegion (File.ReadAllText fullPath) block.Region with
             | Error regionErr -> Error(CodeRegionError(block.RelativePath, regionErr))
-            | Ok lines -> Ok(renderCodeBlock lines)
+            | Ok lines -> Ok(renderCodeBlock lines |> withLineEnding ending)
 
     let folder (state: Result<string * bool, CodeSyncError>) (block: CodeBlock) =
         state
@@ -219,30 +240,23 @@ let syncPair (mode: SyncMode) (sourcePath: string) (targetPath: string) : Result
         Error(TargetMissing targetPath)
     else
         let sourceContent = File.ReadAllText sourcePath
+        let targetContent = File.ReadAllText targetPath
         let sections = extractSections sourceContent
 
-        if sections.IsEmpty then
-            // Full-file sync
-            let targetContent = File.ReadAllText targetPath
-
-            if sourceContent = targetContent then
-                Ok InSync
-            elif mode = Check then
-                Ok OutOfSync
+        let expected =
+            if sections.IsEmpty then
+                // Full-file sync
+                withLineEnding (lineEndingOf targetContent) sourceContent
             else
-                File.WriteAllText(targetPath, sourceContent)
-                Ok Updated
+                replaceSections targetContent sections
+
+        if expected = targetContent then
+            Ok InSync
+        elif mode = Check then
+            Ok OutOfSync
         else
-            let targetContent = File.ReadAllText targetPath
-            let replaced = replaceSections targetContent sections
-
-            if replaced = targetContent then
-                Ok InSync
-            elif mode = Check then
-                Ok OutOfSync
-            else
-                File.WriteAllText(targetPath, replaced)
-                Ok Updated
+            File.WriteAllText(targetPath, expected)
+            Ok Updated
 
 /// Enumerate all conventional candidate pairs.
 let private candidatePairs (rootDir: string) : (string * SyncPair) list =

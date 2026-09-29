@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: documents with CRLF line endings are now synced. Previously a section in a CRLF docs page was never replaced, so `sync` changed nothing and `check` reported the stale page as in sync; a CRLF README's code-sourced blocks likewise read as out of sync forever. Synced content now takes the target file's line endings (the majority ending in a mixed file), so a CRLF file stays CRLF and an LF file stays LF
+
 ## 0.13.0-alpha.6 - 2026-09-16
 
 - fix: a configured package (a README that exists by convention) whose docs target is missing is now a hard error — `check` and `sync` exit 1 naming the package and the path that was looked for, instead of printing a warning and passing. `check` ends with `compared N of M pairs`, so a run that compared nothing can no longer read as a clean pass. Both the exit code and the count are folded from one per-pair `PairOutcome` (`Compared` / `TargetMissing` / `SourceMissing`), so they cannot disagree. A docs page with no README remains a warning
