@@ -3,6 +3,7 @@ module FsSemanticTagger.Tests.ApiTests
 open Xunit
 open Tests.Common
 open Swensen.Unquote
+open FsSemanticTagger
 open FsSemanticTagger.Api
 
 /// The tool's own compiled DLL, a fixture for reading a real assembly.
@@ -101,12 +102,15 @@ let ``differ reports Breaking when a ctor parameter type moves assemblies`` () =
     // versions. Rendered through the real formatTypeName exactly as extractFromAssembly
     // builds a ctor signature, then diffed through the real compare.
     let ctorSig (paramType: System.Type) =
-        ApiSignature(sprintf "  Holder::.ctor(%s)" (formatTypeName paramType))
+        ApiSignature.Member("Holder", sprintf ".ctor(%s)" (formatTypeName paramType))
 
     let oldApi =
-        [ ApiSignature "type Holder"; ctorSig typeof<FsSemanticTagger.Version.Version> ]
+        [
+            ApiSignature.TypeDecl "Holder"
+            ctorSig typeof<FsSemanticTagger.Version.Version>
+        ]
 
-    let newApi = [ ApiSignature "type Holder"; ctorSig typeof<System.Version> ]
+    let newApi = [ ApiSignature.TypeDecl "Holder"; ctorSig typeof<System.Version> ]
 
     // On the unqualified renderer both ctor sigs read "  Holder::.ctor(Version)", so
     // compare sees NoChange and the release under-bumps (MINOR/patch instead of MAJOR).
@@ -130,43 +134,53 @@ let ``differ reports NoChange when a ctor parameter type is identical across ver
     // Converse of the break test: the same type (same assembly, same full name) on
     // both sides must stay NoChange. The fix must not flag a stable signature.
     let ctorSig (paramType: System.Type) =
-        ApiSignature(sprintf "  Holder::.ctor(%s)" (formatTypeName paramType))
+        ApiSignature.Member("Holder", sprintf ".ctor(%s)" (formatTypeName paramType))
 
-    let oldApi = [ ApiSignature "type Holder"; ctorSig typeof<System.Version> ]
-    let newApi = [ ApiSignature "type Holder"; ctorSig typeof<System.Version> ]
+    let oldApi = [ ApiSignature.TypeDecl "Holder"; ctorSig typeof<System.Version> ]
+    let newApi = [ ApiSignature.TypeDecl "Holder"; ctorSig typeof<System.Version> ]
     test <@ compare oldApi newApi = NoChange @>
 
 [<Fact>]
 let ``compare with identical APIs returns NoChange`` () =
-    let api = [ ApiSignature "type Foo"; ApiSignature "  Foo::Bar(): String" ]
+    let api =
+        [ ApiSignature.TypeDecl "Foo"; ApiSignature.Member("Foo", "Bar(): String") ]
 
     test <@ compare api api = NoChange @>
 
 [<Fact>]
 let ``compare with added signatures returns Addition`` () =
-    let baseline = [ ApiSignature "type Foo" ]
+    let baseline = [ ApiSignature.TypeDecl "Foo" ]
 
-    let current = [ ApiSignature "type Foo"; ApiSignature "  Foo::Bar(): String" ]
+    let current =
+        [ ApiSignature.TypeDecl "Foo"; ApiSignature.Member("Foo", "Bar(): String") ]
 
     let result = compare baseline current
 
-    test <@ result = Addition(ApiSignature "  Foo::Bar(): String", []) @>
+    test <@ result = Addition(ApiSignature.Member("Foo", "Bar(): String"), []) @>
 
 [<Fact>]
 let ``compare with removed signatures returns Breaking`` () =
-    let baseline = [ ApiSignature "type Foo"; ApiSignature "  Foo::Bar(): String" ]
+    let baseline =
+        [ ApiSignature.TypeDecl "Foo"; ApiSignature.Member("Foo", "Bar(): String") ]
 
-    let current = [ ApiSignature "type Foo" ]
+    let current = [ ApiSignature.TypeDecl "Foo" ]
     let result = compare baseline current
 
-    test <@ result = Breaking(ApiSignature "  Foo::Bar(): String", []) @>
+    test <@ result = Breaking(ApiSignature.Member("Foo", "Bar(): String"), []) @>
 
 [<Fact>]
 let ``compare with both added and removed returns Breaking`` () =
     let baseline =
-        [ ApiSignature "type Foo"; ApiSignature "  Foo::OldMethod(): String" ]
+        [
+            ApiSignature.TypeDecl "Foo"
+            ApiSignature.Member("Foo", "OldMethod(): String")
+        ]
 
-    let current = [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): Int32" ]
+    let current =
+        [
+            ApiSignature.TypeDecl "Foo"
+            ApiSignature.Member("Foo", "NewMethod(): Int32")
+        ]
 
     match compare baseline current with
     | Breaking _ -> ()
@@ -184,24 +198,24 @@ let ``extractFromAssembly extracts signatures from own DLL`` () =
 
     let hasVersionType =
         signatures
-        |> List.exists (fun (ApiSignature s) -> s = "type FsSemanticTagger.Version+Version")
+        |> List.exists (ApiSignature.render >> fun s -> s = "type FsSemanticTagger.Version+Version")
 
     test <@ hasVersionType @>
 
     // `parse` is compiled as a static method.
     let hasParseFunction =
-        signatures |> List.exists (fun (ApiSignature s) -> s.Contains("parse"))
+        signatures |> List.exists (ApiSignature.render >> fun s -> s.Contains("parse"))
 
     test <@ hasParseFunction @>
 
     test <@ signatures.Length > 5 @>
 
 [<Fact>]
-let ``extractFromAssembly results are sorted`` () =
+let ``extractFromAssembly results are sorted by their rendered text`` () =
     let dllPath = taggerDll
 
     let signatures = extractFromAssembly dllPath
-    let sorted = List.sort signatures
+    let sorted = List.sortBy ApiSignature.render signatures
     test <@ signatures = sorted @>
 
 [<Fact>]
@@ -215,13 +229,13 @@ let ``getAssemblySearchPaths includes DLL directory and runtime directory`` () =
 
 [<Fact>]
 let ``compare with only additions and no removals returns Addition`` () =
-    let baseline = [ ApiSignature "type Foo" ]
+    let baseline = [ ApiSignature.TypeDecl "Foo" ]
 
     let current =
         [
-            ApiSignature "type Foo"
-            ApiSignature "  Foo::Bar(): String"
-            ApiSignature "  Foo::Baz(): Int32"
+            ApiSignature.TypeDecl "Foo"
+            ApiSignature.Member("Foo", "Bar(): String")
+            ApiSignature.Member("Foo", "Baz(): Int32")
         ]
 
     match compare baseline current with
@@ -232,12 +246,12 @@ let ``compare with only additions and no removals returns Addition`` () =
 let ``compare with only removals returns Breaking`` () =
     let baseline =
         [
-            ApiSignature "type Foo"
-            ApiSignature "  Foo::Bar(): String"
-            ApiSignature "  Foo::Baz(): Int32"
+            ApiSignature.TypeDecl "Foo"
+            ApiSignature.Member("Foo", "Bar(): String")
+            ApiSignature.Member("Foo", "Baz(): Int32")
         ]
 
-    let current = [ ApiSignature "type Foo" ]
+    let current = [ ApiSignature.TypeDecl "Foo" ]
 
     match compare baseline current with
     | Breaking _ -> test <@ (ApiChange.toList (compare baseline current)).Length = 2 @>
@@ -248,17 +262,23 @@ let ``compare with only removals returns Breaking`` () =
 // diff as two releases of one library.
 
 let private fixtureApi (ns: string) : ApiSignature list =
+    let toLib (name: string) = name.Replace(ns + ".", "Lib.")
+
     typeof<ApiFixtures.NewCaseWithFields.Before.Shape>.Assembly.GetExportedTypes()
     |> Array.filter (fun t -> t.Namespace = ns)
     |> extractFromTypes
-    |> List.map (fun (ApiSignature s) -> ApiSignature(s.Replace(ns + ".", "Lib.")))
+    |> List.map (function
+        | ApiSignature.UnionCase(union, case) -> ApiSignature.UnionCase(toLib union, case)
+        | ApiSignature.TypeDecl fullName -> ApiSignature.TypeDecl(toLib fullName)
+        | ApiSignature.Member(declaringType, signature) -> ApiSignature.Member(declaringType, toLib signature)
+        | ApiSignature.Marker text -> ApiSignature.Marker text)
 
 let private diffScenario (scenario: string) : ApiChange =
     compare (fixtureApi $"ApiFixtures.{scenario}.Before") (fixtureApi $"ApiFixtures.{scenario}.After")
 
 let private breakingHead (change: ApiChange) : string option =
     match change with
-    | Breaking(ApiSignature s, _) -> Some s
+    | Breaking(head, _) -> Some(ApiSignature.render head)
     | Addition _
     | NoChange -> None
 
@@ -295,7 +315,7 @@ let ``new types and functions inside an existing module are an addition`` () =
     let change = diffScenario "TypeInModule"
     test <@ isAddition change @>
 
-    let added = ApiChange.toList change |> List.map (fun (ApiSignature s) -> s)
+    let added = ApiChange.toList change |> List.map ApiSignature.render
     test <@ added |> List.contains "type Lib.Cobertura+ReaderOptions" @>
     test <@ added |> List.contains "case Lib.Cobertura+ExclusionReason::Matched" @>
 
@@ -311,7 +331,7 @@ let ``a new case on a union with a private representation is not breaking`` () =
     test
         <@
             fixtureApi "ApiFixtures.PrivateUnion.After"
-            |> List.forall (fun (ApiSignature s) -> not (s.StartsWith "case "))
+            |> List.forall (ApiSignature.render >> fun s -> not (s.StartsWith "case "))
         @>
 
 [<Fact>]
@@ -322,7 +342,7 @@ let ``a removed union case is breaking`` () =
     test
         <@
             ApiChange.toList change
-            |> List.contains (ApiSignature "case Lib.Platform::Windows")
+            |> List.contains (ApiSignature.UnionCase("Lib.Platform", "Windows"))
         @>
 
     test <@ breakingHead change |> Option.isSome @>
@@ -333,7 +353,7 @@ let private namesModule =
     typeof<ApiFixtures.CompilerInvented.Money>.Assembly.GetType "ApiFixtures.CompilerInvented.Names"
 
 let private signatureLines (types: System.Type list) : string list =
-    extractFromTypes types |> List.map (fun (ApiSignature s) -> s)
+    extractFromTypes types |> List.map ApiSignature.render
 
 [<Fact>]
 let ``a Debug build's __debug copies of inline functions are not API`` () =
@@ -388,7 +408,7 @@ let ``an anonymous record type is not API, but a member exposing one still names
 [<Fact>]
 let ``extractFromAssembly drops compiler-invented members through the metadata load context`` () =
     let dll = typeof<ApiFixtures.CompilerInvented.Money>.Assembly.Location
-    let lines = extractFromAssembly dll |> List.map (fun (ApiSignature s) -> s)
+    let lines = extractFromAssembly dll |> List.map ApiSignature.render
     test <@ lines |> List.forall (fun s -> not (s.Contains "__debug@")) @>
     test <@ lines |> List.forall (fun s -> not (s.StartsWith "type <>f__AnonymousType")) @>
 
@@ -404,7 +424,7 @@ let ``extractFromAssembly reads union cases through the metadata load context`` 
     // The fixtures above use runtime reflection; releases read a dll through a
     // MetadataLoadContext, whose attribute data must yield the same cases.
     let dll = typeof<ApiFixtures.NewCaseWithFields.Before.Shape>.Assembly.Location
-    let signatures = extractFromAssembly dll |> List.map (fun (ApiSignature s) -> s)
+    let signatures = extractFromAssembly dll |> List.map ApiSignature.render
 
     let expected =
         set
@@ -426,10 +446,10 @@ let ``extractFromAssembly reads union cases through the metadata load context`` 
         @>
 
 [<Fact>]
-let ``extractFromNuGetCache returns NotCached for nonexistent package`` () =
-    test <@ extractFromNuGetCache "ThisPackageDoesNotExist12345" "1.0.0" = NotCached @>
+let ``readNuGetCache returns NotCached for nonexistent package`` () =
+    test <@ (Extraction.readNuGetCache "ThisPackageDoesNotExist12345" "1.0.0").Api = NotCached @>
 
-// downloadToCache / extractPreviousFromNuGet — the prior-API fetch path.
+// downloadToCache / Extraction.readPrevious — the prior-API fetch path.
 // These guard the bug where a missing prior package silently became "no change".
 
 [<Fact>]
@@ -766,24 +786,32 @@ let ``probeRestoreArgs omits --configfile when no repo nuget.config`` () =
     let args = probeRestoreArgs None "/tmp/probe.csproj"
     test <@ args = "restore \"/tmp/probe.csproj\"" @>
 
+/// The previous release's API when it could be read, else None.
+let private previousApi run (packageId: string) (version: string) : ApiSignature list option =
+    match (Extraction.readPrevious run packageId version).Api with
+    | Found api -> Some api
+    | Unreadable _
+    | NotRestorable _
+    | FetchError _ -> None
+
 [<Fact>]
-let ``extractPreviousFromNuGet returns None when uncached and download fails`` () =
+let ``readPrevious API returns None when uncached and download fails`` () =
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         FsSemanticTagger.Shell.Failure("restore failed", 1)
 
-    test <@ extractPreviousFromNuGet fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = None @>
+    test <@ previousApi fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = None @>
 
 [<Fact>]
-let ``extractPreviousFromNuGet returns None when download succeeds but package still absent`` () =
+let ``readPrevious API returns None when download succeeds but package still absent`` () =
     // Restore "succeeds" but our fake doesn't actually place the package in the cache,
     // so the re-check still finds nothing — must stay None, never fabricate an API.
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         FsSemanticTagger.Shell.Success ""
 
-    test <@ extractPreviousFromNuGet fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = None @>
+    test <@ previousApi fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = None @>
 
 [<Fact>]
-let ``extractPreviousFromNuGet returns cached API without downloading when already present`` () =
+let ``readPrevious API returns cached API without downloading when already present`` () =
     // FSharp.Core is always in the cache (it's a build dependency). Find a version
     // whose lib/ contains the dll, then assert the cache hit short-circuits download.
     let home =
@@ -803,7 +831,7 @@ let ``extractPreviousFromNuGet returns cached API without downloading when alrea
         downloadAttempted <- true
         FsSemanticTagger.Shell.Failure("should not be called on a cache hit", 1)
 
-    let result = extractPreviousFromNuGet fakeRun "FSharp.Core" cachedVersion
+    let result = previousApi fakeRun "FSharp.Core" cachedVersion
     test <@ Option.isSome result @>
     test <@ not downloadAttempted @>
 
@@ -838,45 +866,47 @@ let ``classifyRestoreFailure - NU1301 service-index 404 is FetchError not NotRes
     test <@ classifyRestoreFailure msg = FetchError msg @>
 
 [<Fact>]
-let ``extractPreviousFromNuGetResult - NotRestorable when uncached and restore reports package absent`` () =
+let ``readPrevious - NotRestorable when uncached and restore reports package absent`` () =
     let msg = "error NU1101: Unable to find package ThisPackageDoesNotExist12345"
 
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         FsSemanticTagger.Shell.Failure(msg, 1)
 
-    test <@ extractPreviousFromNuGetResult fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = NotRestorable msg @>
+    test <@ (Extraction.readPrevious fakeRun "ThisPackageDoesNotExist12345" "9.9.9").Api = NotRestorable msg @>
 
 [<Fact>]
-let ``extractPreviousFromNuGetResult - FetchError when restore succeeds but the package is still not cached`` () =
+let ``readPrevious - FetchError when restore succeeds but the package is still not cached`` () =
     // Restore said yes, yet nothing is where we read from (e.g. a relocated global
     // packages folder). That is not knowledge of absence: it must abort, not walk back.
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         FsSemanticTagger.Shell.Success ""
 
-    match extractPreviousFromNuGetResult fakeRun "ThisPackageDoesNotExist12345" "9.9.9" with
+    match (Extraction.readPrevious fakeRun "ThisPackageDoesNotExist12345" "9.9.9").Api with
     | FetchError reason -> test <@ reason.Contains("restore succeeded") @>
     | other -> failwithf "Expected FetchError, got %A" other
 
 [<Fact>]
-let ``extractPreviousFromNuGetResult - FetchError when uncached and feed unreachable`` () =
+let ``readPrevious - FetchError when uncached and feed unreachable`` () =
     let msg = "Unable to load the service index ... connection timed out"
 
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         FsSemanticTagger.Shell.Failure(msg, 1)
 
-    test <@ extractPreviousFromNuGetResult fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = FetchError msg @>
+    test <@ (Extraction.readPrevious fakeRun "ThisPackageDoesNotExist12345" "9.9.9").Api = FetchError msg @>
 
 // ApiChange.toList
 
 [<Fact>]
 let ``ApiChange.toList Breaking returns all items`` () =
-    let change = Breaking(ApiSignature "a", [ ApiSignature "b"; ApiSignature "c" ])
-    test <@ ApiChange.toList change = [ ApiSignature "a"; ApiSignature "b"; ApiSignature "c" ] @>
+    let change =
+        Breaking(ApiSignature.Marker "a", [ ApiSignature.Marker "b"; ApiSignature.Marker "c" ])
+
+    test <@ ApiChange.toList change = [ ApiSignature.Marker "a"; ApiSignature.Marker "b"; ApiSignature.Marker "c" ] @>
 
 [<Fact>]
 let ``ApiChange.toList Addition returns all items`` () =
-    let change = Addition(ApiSignature "a", [ ApiSignature "b" ])
-    test <@ ApiChange.toList change = [ ApiSignature "a"; ApiSignature "b" ] @>
+    let change = Addition(ApiSignature.Marker "a", [ ApiSignature.Marker "b" ])
+    test <@ ApiChange.toList change = [ ApiSignature.Marker "a"; ApiSignature.Marker "b" ] @>
 
 [<Fact>]
 let ``ApiChange.toList NoChange returns empty`` () =
@@ -884,11 +914,11 @@ let ``ApiChange.toList NoChange returns empty`` () =
 
 [<Fact>]
 let ``ApiChange.toList single item Breaking`` () =
-    let change = Breaking(ApiSignature "a", [])
-    test <@ ApiChange.toList change = [ ApiSignature "a" ] @>
+    let change = Breaking(ApiSignature.Marker "a", [])
+    test <@ ApiChange.toList change = [ ApiSignature.Marker "a" ] @>
 
 [<Fact>]
-let ``extractFromCacheRoot returns signatures for cached tool package`` () =
+let ``readCacheRoot returns signatures for cached tool package`` () =
     // Build a fake NuGet cache layout mimicking a dotnet tool:
     //   <root>/fakepkg/1.0.0/tools/net10.0/any/FakePkg.dll
     // Reuse the compiled test assembly as the DLL payload so the test has no
@@ -912,14 +942,14 @@ let ``extractFromCacheRoot returns signatures for cached tool package`` () =
             System.IO.File.Copy(dep, System.IO.Path.Combine(toolsDir, destName), true)
 
     try
-        match extractFromCacheRoot cacheRoot "FakePkg" "1.0.0" with
+        match (Extraction.readCacheRoot cacheRoot "FakePkg" "1.0.0").Api with
         | CachedRead sigs -> test <@ sigs.Length > 0 @>
         | other -> failwithf "Expected signatures from fixture cache, got %A" other
     finally
         System.IO.Directory.Delete(cacheRoot, true)
 
 [<Fact>]
-let ``extractFromCacheRoot finds an analyzer-packaged assembly under analyzers-dotnet-fs`` () =
+let ``readCacheRoot finds an analyzer-packaged assembly under analyzers-dotnet-fs`` () =
     // An FSharp.Analyzers.SDK analyzer package (IncludeBuildOutput=false,
     // DevelopmentDependency=true) ships its assembly under analyzers/dotnet/fs/<id>.dll
     // with NO lib/ folder. A resolver that searches only lib/ and tools/ never finds
@@ -943,7 +973,7 @@ let ``extractFromCacheRoot finds an analyzer-packaged assembly under analyzers-d
             System.IO.File.Copy(dep, System.IO.Path.Combine(analyzerDir, destName), true)
 
     try
-        match extractFromCacheRoot cacheRoot "FakeAnalyzer" "1.0.0" with
+        match (Extraction.readCacheRoot cacheRoot "FakeAnalyzer" "1.0.0").Api with
         | CachedRead sigs -> test <@ sigs.Length > 0 @>
         | other ->
             failwithf "Expected signatures from analyzer-packaged fixture cache (analyzers/dotnet/fs), got %A" other
@@ -951,7 +981,7 @@ let ``extractFromCacheRoot finds an analyzer-packaged assembly under analyzers-d
         System.IO.Directory.Delete(cacheRoot, true)
 
 [<Fact>]
-let ``extractFromCacheRoot still finds a lib-packaged assembly (lib layout unchanged)`` () =
+let ``readCacheRoot still finds a lib-packaged assembly (lib layout unchanged)`` () =
     // Regression guard: adding the analyzers/ search path must not disturb the
     // classic library layout <root>/<id>/<ver>/lib/<tfm>/<id>.dll.
     let srcDll = taggerDll
@@ -971,14 +1001,14 @@ let ``extractFromCacheRoot still finds a lib-packaged assembly (lib layout uncha
             System.IO.File.Copy(dep, System.IO.Path.Combine(libDir, destName), true)
 
     try
-        match extractFromCacheRoot cacheRoot "FakeLib" "1.0.0" with
+        match (Extraction.readCacheRoot cacheRoot "FakeLib" "1.0.0").Api with
         | CachedRead sigs -> test <@ sigs.Length > 0 @>
         | other -> failwithf "Expected signatures from lib-packaged fixture cache, got %A" other
     finally
         System.IO.Directory.Delete(cacheRoot, true)
 
 [<Fact>]
-let ``extractFromCacheRoot reports a cached package with no assembly as unreadable, not as an API`` () =
+let ``readCacheRoot reports a cached package with no assembly as unreadable, not as an API`` () =
     // The analyzers/ fallback must not conjure an API out of nothing: a package dir
     // that exists but ships no <id>.dll under lib/, tools/ or analyzers/ is
     // CachedUnreadable — a real package with no readable API, never "absent".
@@ -995,7 +1025,7 @@ let ``extractFromCacheRoot reports a cached package with no assembly as unreadab
     try
         test
             <@
-                extractFromCacheRoot cacheRoot "EmptyPkg" "1.0.0" =
+                (Extraction.readCacheRoot cacheRoot "EmptyPkg" "1.0.0").Api =
                     CachedUnreadable
                         "EmptyPkg 1.0.0 is in the NuGet cache but ships no EmptyPkg.dll under lib/, tools/ or analyzers/"
             @>
@@ -1003,11 +1033,11 @@ let ``extractFromCacheRoot reports a cached package with no assembly as unreadab
         System.IO.Directory.Delete(cacheRoot, true)
 
 [<Fact>]
-let ``extractPreviousFromNuGetResult reports Found for an analyzer-packaged cached package`` () =
+let ``readPrevious reports Found for an analyzer-packaged cached package`` () =
     // End-to-end: an analyzer package whose assembly lives under
     // analyzers/dotnet/fs/ must resolve from the local cache as Found, NOT be
     // reported as unreadable. Fixture a GUID-named package
-    // in the real user cache so extractFromNuGetCache (which reads ~/.nuget/packages)
+    // in the real user cache so Extraction.readNuGetCache (which reads ~/.nuget/packages)
     // sees it, then assert the cache hit short-circuits before any restore.
     let home =
         System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
@@ -1035,7 +1065,7 @@ let ``extractPreviousFromNuGetResult reports Found for an analyzer-packaged cach
         FsSemanticTagger.Shell.Failure("restore must not be reached for a cached package", 1)
 
     try
-        match extractPreviousFromNuGetResult failRun pkgId "1.0.0" with
+        match (Extraction.readPrevious failRun pkgId "1.0.0").Api with
         | Found sigs -> test <@ not (List.isEmpty sigs) @>
         | other -> failwithf "Expected Found for analyzer-packaged cache, got %A" other
     finally
@@ -1066,57 +1096,75 @@ let ``formatTypeName handles generic array combinations`` () =
 let ``compare reads a new nested type under an existing type as an addition`` () =
     // A nested type alone does not mean a union case: modules compile to classes
     // too. Only a `case` signature on a union that already had cases breaks.
-    let baseline = [ ApiSignature "type MyModule.Parent" ]
+    let baseline = [ ApiSignature.TypeDecl "MyModule.Parent" ]
 
     let current =
         [
-            ApiSignature "type MyModule.Parent"
-            ApiSignature "type MyModule.Parent+Child"
+            ApiSignature.TypeDecl "MyModule.Parent"
+            ApiSignature.TypeDecl "MyModule.Parent+Child"
         ]
 
-    test <@ compare baseline current = Addition(ApiSignature "type MyModule.Parent+Child", []) @>
+    test <@ compare baseline current = Addition(ApiSignature.TypeDecl "MyModule.Parent+Child", []) @>
 
 [<Fact>]
 let ``compare lists only the breaking signatures, cases first`` () =
     let baseline =
         [
-            ApiSignature "  U::NewA(): M.U"
-            ApiSignature "  U::NewGone(): M.U"
-            ApiSignature "case M.U::A"
-            ApiSignature "case M.U::Gone"
-            ApiSignature "type M.U"
-            ApiSignature "type M.U+Gone"
+            ApiSignature.Member("U", "NewA(): M.U")
+            ApiSignature.Member("U", "NewGone(): M.U")
+            ApiSignature.UnionCase("M.U", "A")
+            ApiSignature.UnionCase("M.U", "Gone")
+            ApiSignature.TypeDecl "M.U"
+            ApiSignature.TypeDecl "M.U+Gone"
         ]
 
     let current =
         [
-            ApiSignature "  U::NewA(): M.U"
-            ApiSignature "  U::NewB(): M.U"
-            ApiSignature "case M.U::A"
-            ApiSignature "case M.U::B"
-            ApiSignature "type M.U"
-            ApiSignature "type M.U+B"
+            ApiSignature.Member("U", "NewA(): M.U")
+            ApiSignature.Member("U", "NewB(): M.U")
+            ApiSignature.UnionCase("M.U", "A")
+            ApiSignature.UnionCase("M.U", "B")
+            ApiSignature.TypeDecl "M.U"
+            ApiSignature.TypeDecl "M.U+B"
         ]
 
     test
         <@
             compare baseline current =
                 Breaking(
-                    ApiSignature "case M.U::B",
+                    ApiSignature.UnionCase("M.U", "B"),
                     [
-                        ApiSignature "case M.U::Gone"
-                        ApiSignature "type M.U+Gone"
-                        ApiSignature "  U::NewGone(): M.U"
+                        ApiSignature.UnionCase("M.U", "Gone")
+                        ApiSignature.TypeDecl "M.U+Gone"
+                        ApiSignature.Member("U", "NewGone(): M.U")
                     ]
                 )
         @>
 
 [<Fact>]
+let ``compare classifies a case whose name contains :: by its union, not its text`` () =
+    // A double-backtick case name may contain "::". Read back from the rendered
+    // "case M.U::A::B", the union would be "M.U::A", a union the baseline never had,
+    // and the new case would pass as a mere addition.
+    let baseline = [ ApiSignature.TypeDecl "M.U"; ApiSignature.UnionCase("M.U", "A") ]
+    let added = ApiSignature.UnionCase("M.U", "A::B")
+
+    test <@ compare baseline (added :: baseline) = Breaking(added, []) @>
+
+[<Fact>]
+let ``render prints each signature kind as extract-api always has`` () =
+    test <@ ApiSignature.render (ApiSignature.UnionCase("M.U", "A")) = "case M.U::A" @>
+    test <@ ApiSignature.render (ApiSignature.TypeDecl "M.U+A") = "type M.U+A" @>
+    test <@ ApiSignature.render (ApiSignature.Member("U", "get_A(): M.U")) = "  U::get_A(): M.U" @>
+    test <@ ApiSignature.render (ApiSignature.Marker "grammar: changed") = "grammar: changed" @>
+
+[<Fact>]
 let ``compare non-nested new type is Addition not Breaking`` () =
     // New type that is NOT a nested DU case (no + in name)
-    let baseline = [ ApiSignature "type MyModule.Foo" ]
+    let baseline = [ ApiSignature.TypeDecl "MyModule.Foo" ]
 
-    let current = [ ApiSignature "type MyModule.Foo"; ApiSignature "type MyModule.Bar" ]
+    let current =
+        [ ApiSignature.TypeDecl "MyModule.Foo"; ApiSignature.TypeDecl "MyModule.Bar" ]
 
     match compare baseline current with
     | Addition _ -> ()
@@ -1125,13 +1173,13 @@ let ``compare non-nested new type is Addition not Breaking`` () =
 [<Fact>]
 let ``compare new nested type where parent is also new is Addition`` () =
     // Both parent and nested type are new - not breaking
-    let baseline = [ ApiSignature "type MyModule.Other" ]
+    let baseline = [ ApiSignature.TypeDecl "MyModule.Other" ]
 
     let current =
         [
-            ApiSignature "type MyModule.Other"
-            ApiSignature "type MyModule.NewUnion"
-            ApiSignature "type MyModule.NewUnion+CaseA"
+            ApiSignature.TypeDecl "MyModule.Other"
+            ApiSignature.TypeDecl "MyModule.NewUnion"
+            ApiSignature.TypeDecl "MyModule.NewUnion+CaseA"
         ]
 
     match compare baseline current with
@@ -1145,7 +1193,7 @@ let ``extractFromAssembly extracts constructors`` () =
     let signatures = extractFromAssembly dllPath
 
     let hasCtors =
-        signatures |> List.exists (fun (ApiSignature s) -> s.Contains(".ctor"))
+        signatures |> List.exists (ApiSignature.render >> fun s -> s.Contains(".ctor"))
 
     test <@ hasCtors @>
 
@@ -1157,18 +1205,22 @@ let ``extractFromAssembly extracts properties`` () =
 
     let hasProps =
         signatures
-        |> List.exists (fun (ApiSignature s) -> s.Contains("::") && s.Contains(": ") && not (s.Contains("(")))
+        |> List.exists (
+            ApiSignature.render
+            >> fun s -> s.Contains("::") && s.Contains(": ") && not (s.Contains("("))
+        )
 
     test <@ hasProps @>
 
 [<Fact>]
 let ``compare with added non-type signatures is Addition`` () =
-    let baseline = [ ApiSignature "type Foo" ]
+    let baseline = [ ApiSignature.TypeDecl "Foo" ]
 
-    let current = [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): Void" ]
+    let current =
+        [ ApiSignature.TypeDecl "Foo"; ApiSignature.Member("Foo", "NewMethod(): Void") ]
 
     match compare baseline current with
-    | Addition(ApiSignature s, []) -> test <@ s.Contains("NewMethod") @>
+    | Addition(s, []) -> test <@ (ApiSignature.render s).Contains("NewMethod") @>
     | other -> failwithf "Expected Addition, got %A" other
 
 [<Fact>]
@@ -1187,15 +1239,15 @@ let ``compare hasNewDuCase with only non-type additions is Addition`` () =
     // When all additions are non-type (methods, properties), hasNewDuCase is false
     let baseline =
         [
-            ApiSignature "type MyModule.MyUnion"
-            ApiSignature "type MyModule.MyUnion+CaseA"
+            ApiSignature.TypeDecl "MyModule.MyUnion"
+            ApiSignature.TypeDecl "MyModule.MyUnion+CaseA"
         ]
 
     let current =
         [
-            ApiSignature "type MyModule.MyUnion"
-            ApiSignature "type MyModule.MyUnion+CaseA"
-            ApiSignature "  MyUnion::NewMethod(): Void"
+            ApiSignature.TypeDecl "MyModule.MyUnion"
+            ApiSignature.TypeDecl "MyModule.MyUnion+CaseA"
+            ApiSignature.Member("MyUnion", "NewMethod(): Void")
         ]
 
     match compare baseline current with
@@ -1207,27 +1259,31 @@ let ``compare with removed and added returns Breaking prioritizing removals`` ()
     // When there are both removals and additions, Breaking uses removals
     let baseline =
         [
-            ApiSignature "type Foo"
-            ApiSignature "  Foo::OldMethod(): String"
-            ApiSignature "  Foo::AnotherOld(): Int32"
+            ApiSignature.TypeDecl "Foo"
+            ApiSignature.Member("Foo", "OldMethod(): String")
+            ApiSignature.Member("Foo", "AnotherOld(): Int32")
         ]
 
-    let current = [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+    let current =
+        [
+            ApiSignature.TypeDecl "Foo"
+            ApiSignature.Member("Foo", "NewMethod(): String")
+        ]
 
     match compare baseline current with
     | Breaking(h, t) ->
         let all = h :: t
-        test <@ all |> List.exists (fun (ApiSignature s) -> s.Contains("OldMethod")) @>
-        test <@ all |> List.exists (fun (ApiSignature s) -> s.Contains("AnotherOld")) @>
+        test <@ all |> List.exists (ApiSignature.render >> fun s -> s.Contains("OldMethod")) @>
+        test <@ all |> List.exists (ApiSignature.render >> fun s -> s.Contains("AnotherOld")) @>
     | other -> failwithf "Expected Breaking, got %A" other
 
 [<Fact>]
-let ``extractFromNuGetCache returns NotCached for nonexistent version of real package`` () =
+let ``readNuGetCache returns NotCached for nonexistent version of real package`` () =
     // Package ID might exist but version won't
-    test <@ extractFromNuGetCache "FSharp.Core" "0.0.0-nonexistent" = NotCached @>
+    test <@ (Extraction.readNuGetCache "FSharp.Core" "0.0.0-nonexistent").Api = NotCached @>
 
 [<Fact>]
-let ``createResolver returns a PathAssemblyResolver`` () =
+let ``createResolver's resolver loads a DLL and its references`` () =
     let dllPath = taggerDll
 
     let resolver = createResolver dllPath
@@ -1245,23 +1301,26 @@ let ``extractFromAssembly extracts methods with parameters`` () =
     // Should have methods with parameter types listed
     let hasMethodWithParams =
         signatures
-        |> List.exists (fun (ApiSignature s) -> s.Contains("(") && s.Contains(")") && s.Contains(",") |> not |> not)
+        |> List.exists (
+            ApiSignature.render
+            >> fun s -> s.Contains("(") && s.Contains(")") && s.Contains(",") |> not |> not
+        )
 
     // At least some signatures should contain method signatures with return types
     let hasReturnTypes =
-        signatures |> List.exists (fun (ApiSignature s) -> s.Contains("): "))
+        signatures |> List.exists (ApiSignature.render >> fun s -> s.Contains("): "))
 
     test <@ hasReturnTypes @>
 
 [<Fact>]
 let ``compare adding non-nested type with plus sign in module name is Addition`` () =
     // A type name that contains + but parent is not in baseline (brand new module+type)
-    let baseline = [ ApiSignature "type OtherModule.Foo" ]
+    let baseline = [ ApiSignature.TypeDecl "OtherModule.Foo" ]
 
     let current =
         [
-            ApiSignature "type OtherModule.Foo"
-            ApiSignature "type BrandNew.Namespace+SubType"
+            ApiSignature.TypeDecl "OtherModule.Foo"
+            ApiSignature.TypeDecl "BrandNew.Namespace+SubType"
         ]
 
     match compare baseline current with
@@ -1307,32 +1366,32 @@ let ``getAssemblySearchPaths searches the SDK FSharp dirs and shared frameworks 
         test <@ not (paths.All |> List.exists (fun p -> p.StartsWith noFsharpSdk)) @>)
 
 [<Fact>]
-let ``resolverDllsFor lists the .NET installation once per process and the package dir every time`` () =
+let ``the .NET installation's directories are listed once per process, a package's DLLs on every lookup`` () =
     TestHelpers.withTempDir (fun tmp ->
         let dotnetRoot = System.IO.Path.Combine(tmp, "dotnet")
         let framework = System.IO.Path.Combine(dotnetRoot, "shared", "Fake.App", "1.0.0")
         let packageDir = System.IO.Path.Combine(tmp, "pkg")
         System.IO.Directory.CreateDirectory framework |> ignore
         System.IO.Directory.CreateDirectory packageDir |> ignore
+        let dll = System.IO.Path.Combine(packageDir, "Pkg.dll")
+        System.IO.File.WriteAllText(dll, "")
 
-        let touch (dir: string) (name: string) =
-            let path = System.IO.Path.Combine(dir, name)
-            System.IO.File.WriteAllText(path, "")
-            path
+        let first = assemblySearchPathsFor (Some dotnetRoot) dll
 
-        let frameworkDll = touch framework "FakeFramework.dll"
-        let dll = touch packageDir "Pkg.dll"
+        let laterFramework =
+            System.IO.Path.Combine(dotnetRoot, "shared", "Fake.App", "2.0.0")
 
-        let first = resolverDllsFor (Some dotnetRoot) dll
-        let addedToFramework = touch framework "AddedLater.dll"
-        let addedToPackage = touch packageDir "AddedDependency.dll"
-        let second = resolverDllsFor (Some dotnetRoot) dll
+        System.IO.Directory.CreateDirectory laterFramework |> ignore
+        let second = assemblySearchPathsFor (Some dotnetRoot) dll
 
-        test <@ first |> List.contains frameworkDll @>
-        test <@ second |> List.contains frameworkDll @>
-        test <@ not (second |> List.contains addedToFramework) @>
-        test <@ not (first |> List.contains addedToPackage) @>
-        test <@ second |> List.contains addedToPackage @>)
+        test <@ first.Installation |> List.contains framework @>
+        test <@ not (second.Installation |> List.contains laterFramework) @>
+
+        // A restore can add a dependency mid-run; the next lookup finds it.
+        test <@ firstDllNamed second.All "AddedDependency" = None @>
+        let added = System.IO.Path.Combine(packageDir, "AddedDependency.dll")
+        System.IO.File.WriteAllText(added, "")
+        test <@ firstDllNamed second.All "AddedDependency" = Some added @>)
 
 [<Fact>]
 let ``oncePerProcess forgets a computation that threw, so the next call retries`` () =
@@ -1350,22 +1409,45 @@ let ``oncePerProcess forgets a computation that threw, so the next call retries`
     test <@ calls.Value = 2 @>
 
 [<Fact>]
-let ``resolverDllsFor keeps the first dll of each name, in search-path order`` () =
+let ``firstDllNamed takes the first dll of that name, in search-path order`` () =
     TestHelpers.withTempDir (fun tmp ->
-        let dotnetRoot = System.IO.Path.Combine(tmp, "dotnet")
-        let framework = System.IO.Path.Combine(dotnetRoot, "shared", "Fake.App", "1.0.0")
-        let packageDir = System.IO.Path.Combine(tmp, "pkg")
-        System.IO.Directory.CreateDirectory framework |> ignore
-        System.IO.Directory.CreateDirectory packageDir |> ignore
-        let packageCopy = System.IO.Path.Combine(packageDir, "Shared.dll")
-        let frameworkCopy = System.IO.Path.Combine(framework, "Shared.dll")
-        System.IO.File.WriteAllText(packageCopy, "")
+        let dirs =
+            [ "own"; "framework"; "package" ]
+            |> List.map (fun name -> System.IO.Path.Combine(tmp, name))
+
+        for dir in dirs do
+            System.IO.Directory.CreateDirectory dir |> ignore
+
+        let frameworkCopy = System.IO.Path.Combine(dirs[1], "Shared.dll")
         System.IO.File.WriteAllText(frameworkCopy, "")
+        System.IO.File.WriteAllText(System.IO.Path.Combine(dirs[2], "Shared.dll"), "")
 
-        let dlls = resolverDllsFor (Some dotnetRoot) packageCopy
+        test <@ firstDllNamed dirs "Shared" = Some frameworkCopy @>
+        test <@ firstDllNamed dirs "Missing" = None @>)
 
-        test <@ dlls |> List.contains packageCopy @>
-        test <@ not (dlls |> List.contains frameworkCopy) @>)
+[<Fact>]
+let ``a reference is satisfied by a matching public key token, or by any when it names none`` () =
+    let token = Some [| 1uy; 2uy |]
+    test <@ satisfiesReference token token @>
+    test <@ satisfiesReference None token @>
+    test <@ satisfiesReference (Some [||]) None @>
+    test <@ not (satisfiesReference token None) @>
+    test <@ not (satisfiesReference token (Some [| 3uy |])) @>
+
+[<Fact>]
+let ``the probing resolver refuses a dll whose public key token the reference does not match`` () =
+    TestHelpers.withTempDir (fun dir ->
+        // An unsigned assembly in a file named for FSharp.Core, which is signed.
+        System.IO.File.Copy(taggerDll, System.IO.Path.Combine(dir, "FSharp.Core.dll"))
+        let resolver = ProbingAssemblyResolver [ dir ]
+        use context = new System.Reflection.MetadataLoadContext(createResolver taggerDll)
+
+        let resolve (name: string) =
+            resolver.Resolve(context, System.Reflection.AssemblyName name)
+
+        test <@ isNull (resolve "FSharp.Core, PublicKeyToken=b03f5f7f11d50a3a") @>
+        test <@ isNull (resolve "NotThere") @>
+        test <@ not (isNull (resolve "FSharp.Core")) @>)
 
 [<Fact>]
 let ``getAssemblySearchPaths returns dllDir when dll has no deps.json`` () =
@@ -1714,7 +1796,7 @@ let ``readNuspecDependencies skips deps without id and defaults missing version`
             ()
 
 [<Fact>]
-let ``extractFromCacheRoot reports a cached assembly that cannot be read as CachedUnreadable naming it`` () =
+let ``readCacheRoot reports a cached assembly that cannot be read as CachedUnreadable naming it`` () =
     let cacheRoot =
         System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"))
 
@@ -1727,7 +1809,7 @@ let ``extractFromCacheRoot reports a cached assembly that cannot be read as Cach
         let badDll = System.IO.Path.Combine(libDir, "BadPkg.dll")
         System.IO.File.WriteAllText(badDll, "not a real assembly")
 
-        match extractFromCacheRoot cacheRoot "BadPkg" "1.0.0" with
+        match (Extraction.readCacheRoot cacheRoot "BadPkg" "1.0.0").Api with
         | CachedUnreadable reason -> test <@ reason.StartsWith("could not load " + badDll + ": ") @>
         | other -> failwithf "Expected CachedUnreadable, got %A" other
     finally
@@ -1749,6 +1831,76 @@ let private writeUnloadableCopy (path: string) =
     bytes[at + name.Length - 2] <- byte 'X'
     System.IO.File.WriteAllBytes(path, bytes)
 
+[<Fact>]
+let ``readDll reads a DLL's API and its CLI grammar`` () =
+    let read = Extraction.readDll taggerDll
+
+    test
+        <@
+            match read.Api with
+            | Ok api -> api |> List.contains (ApiSignature.TypeDecl "FsSemanticTagger.Program+Command")
+            | Error _ -> false
+        @>
+
+    test
+        <@
+            match read.Grammar with
+            | GrammarModelled grammar -> not grammar.Roots.IsEmpty
+            | GrammarNotModellable _
+            | GrammarUnreadable _ -> false
+        @>
+
+[<Fact>]
+let ``readDll of a file that is not an assembly is unreadable for both, for the same reason`` () =
+    TestHelpers.withTempDir (fun dir ->
+        let dll = System.IO.Path.Combine(dir, "Bad.dll")
+        System.IO.File.WriteAllText(dll, "not an assembly")
+
+        let read = Extraction.readDll dll
+
+        match read.Api, read.Grammar with
+        | Error reason, GrammarUnreadable grammarReason ->
+            test <@ reason.StartsWith("could not load " + dll + ": ") @>
+            test <@ grammarReason = reason @>
+        | other -> failwithf "Expected both unreadable, got %A" other)
+
+[<Fact>]
+let ``readDll reports an API that cannot be read from an assembly that loads`` () =
+    TestHelpers.withTempDir (fun dir ->
+        let dll = System.IO.Path.Combine(dir, "Unloadable.dll")
+        writeUnloadableCopy dll
+
+        match (Extraction.readDll dll).Api with
+        | Error reason ->
+            test <@ reason.StartsWith("could not load " + dll + ": ") @>
+            test <@ reason.Contains "CommandTreX" @>
+        | Ok api -> failwithf "Expected the API to be unreadable, got %d signatures" api.Length)
+
+[<Fact>]
+let ``readCacheRoot reads the API from the first candidate assembly whose API reads`` () =
+    TestHelpers.withTempDir (fun cacheRoot ->
+        let libDir (tfm: string) =
+            let dir = System.IO.Path.Combine(cacheRoot, "pkg", "1.0.0", "lib", tfm)
+            System.IO.Directory.CreateDirectory dir |> ignore
+            dir
+
+        // Tried first (newest-tfm-first sorts net9.0 above net10.0), and unreadable.
+        writeUnloadableCopy (System.IO.Path.Combine(libDir "net9.0", "Pkg.dll"))
+        let readable = libDir "net10.0"
+        // With its dependencies beside it, so its API loads.
+        for dll in System.IO.Directory.GetFiles(System.IO.Path.GetDirectoryName taggerDll, "*.dll") do
+            System.IO.File.Copy(dll, System.IO.Path.Combine(readable, System.IO.Path.GetFileName dll))
+
+        System.IO.File.Copy(taggerDll, System.IO.Path.Combine(readable, "Pkg.dll"))
+
+        test
+            <@
+                match (Extraction.readCacheRoot cacheRoot "Pkg" "1.0.0").Api with
+                | CachedRead api -> api |> List.contains (ApiSignature.TypeDecl "FsSemanticTagger.Program+Command")
+                | NotCached
+                | CachedUnreadable _ -> false
+            @>)
+
 /// The unreadable-assembly misclassification, at its source. A published package
 /// whose assembly will not load — here our own DLL referencing an assembly no
 /// cache holds, the same "Could not find assembly" failure an analyzer hits when
@@ -1757,7 +1909,7 @@ let private writeUnloadableCopy (path: string) =
 /// assembly and the dependency, and no restore is attempted: the package is right
 /// there in the cache.
 [<Fact>]
-let ``extractPreviousFromNuGetResult - a cached assembly that fails to load is Unreadable, never absent`` () =
+let ``readPrevious - a cached assembly that fails to load is Unreadable, never absent`` () =
     let home =
         System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
 
@@ -1775,7 +1927,7 @@ let ``extractPreviousFromNuGetResult - a cached assembly that fails to load is U
         FsSemanticTagger.Shell.Success ""
 
     try
-        match extractPreviousFromNuGetResult restoreRun pkgId "1.0.0" with
+        match (Extraction.readPrevious restoreRun pkgId "1.0.0").Api with
         | Unreadable reason ->
             test <@ reason.StartsWith("could not load " + dllPath + ": ") @>
             test <@ reason.Contains("Could not find assembly 'CommandTreX") @>
@@ -1786,7 +1938,7 @@ let ``extractPreviousFromNuGetResult - a cached assembly that fails to load is U
         System.IO.Directory.Delete(pkgRoot, true)
 
 [<Fact>]
-let ``extractPreviousFromNuGetResult - a package restored but unloadable is Unreadable, never absent`` () =
+let ``readPrevious - a package restored but unloadable is Unreadable, never absent`` () =
     // The uncached path: restore brings the package in, and it still will not load.
     // This is exactly the shape that used to become AbsentOnFeed after a successful
     // restore.
@@ -1804,7 +1956,7 @@ let ``extractPreviousFromNuGetResult - a package restored but unloadable is Unre
         FsSemanticTagger.Shell.Success ""
 
     try
-        match extractPreviousFromNuGetResult restoreRun pkgId "1.0.0" with
+        match (Extraction.readPrevious restoreRun pkgId "1.0.0").Api with
         | Unreadable reason -> test <@ reason.Contains("Could not find assembly") @>
         | other -> failwithf "Expected Unreadable, got %A" other
     finally
@@ -1879,7 +2031,7 @@ let ``referencedPackageDirsFor adds the cached package of an unprovided referenc
         test <@ List.isEmpty (referencedPackageDirsFor cacheRoot (fun _ -> true) taggerDll) @>)
 
 [<Fact>]
-let ``extractFromCacheRoot reads an analyzer-layout package whose nuspec declares no dependencies`` () =
+let ``readCacheRoot reads an analyzer-layout package whose nuspec declares no dependencies`` () =
     // An FSharp.Analyzers.SDK analyzer ships alone under analyzers/dotnet/fs/ and
     // lists no dependency; its references resolve from the NuGet cache by name.
     TestHelpers.withTempDir (fun cacheRoot ->
@@ -1894,6 +2046,6 @@ let ``extractFromCacheRoot reads an analyzer-layout package whose nuspec declare
 
         System.IO.File.Copy(taggerDll, System.IO.Path.Combine(analyzerDir, "Fake.Analyzer.dll"))
 
-        match extractFromCacheRoot cacheRoot "Fake.Analyzer" "1.0.0" with
-        | CachedRead api -> test <@ api |> List.contains (ApiSignature "type FsSemanticTagger.Program+Command") @>
+        match (Extraction.readCacheRoot cacheRoot "Fake.Analyzer" "1.0.0").Api with
+        | CachedRead api -> test <@ api |> List.contains (ApiSignature.TypeDecl "FsSemanticTagger.Program+Command") @>
         | other -> failwithf "expected the analyzer's API, got %A" other)

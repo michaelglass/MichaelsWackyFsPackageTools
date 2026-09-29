@@ -19,6 +19,7 @@ open FsSemanticTagger.Config
 open FsSemanticTagger.Api
 open FsSemanticTagger.Release
 open Tests.Common.TestHelpers
+open FsSemanticTagger.Tests.ExtractionFakes
 
 let private noCanary: ConsumerCanary.Settings =
     {
@@ -187,10 +188,9 @@ let private run
                         Command = command
                         Mode = PushTags
                         TargetPackages = targets
-                        ExtractPreviousApi = fun _ _ -> FetchError "not used"
-                        ExtractCurrentApi = fun _ -> []
-                        ExtractPreviousGrammar = fun _ _ -> GrammarUnreadable "not cached"
-                        ExtractCurrentGrammar = fun _ -> None
+                        ExtractPrevious = noPrevious
+                        ExtractCachedPrevious = noCachedPrevious
+                        ExtractCurrent = noCurrent
                         CiPollIntervalMs = 0
                         CiWait = CiWaitTests.fixedCiWait 0 10
                         TagPush =

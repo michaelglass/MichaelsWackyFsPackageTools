@@ -3,7 +3,7 @@
     "Api.fs": [
       {
         "line": 96,
-        "branch": 88,
+        "branch": 89,
         "reason": "httpGet is a live HttpClient network call, exercised in tests only through the injected fetch seam; the remaining partial branches are reflection and NuGet-cache probes that depend on what this machine has installed. The DOTNET_ROOT sdk/ and shared/ probes are covered through `assemblySearchPathsFor`, which takes DOTNET_ROOT as a parameter instead of reading (or making tests mutate) the process environment. Measured 2026-09-29 on macOS, SDK 10.0.4xx: 95.1% line, 86.8% branch (131/151). global.json pins the 10.0.4xx SDK band so macOS and Linux measure the same compiler output.",
         "platform": "macos"
       },
@@ -56,8 +56,8 @@
     ],
     "Program.fs": [
       {
-        "line": 97,
-        "branch": 75,
+        "line": 98,
+        "branch": 77,
         "reason": "CLI entry point using exit and CWD; initCommand prints to stdout. Re-measured 2026-09-27 on macOS: SDK 10.0.302 (FSharp.Core 10.1.302) counted 31/38 branches; SDK 10.0.400 (FSharp.Core 10.1.400) counts 72/97, byte-identical to Linux CI on SDK 10.0.401, with identical line hits. Branch floor 74 is the measured 10.0.4xx value. global.json now pins the 10.0.4xx SDK band so macOS and Linux measure the same compiler output; the earlier floor was a 10.0.3xx measurement (the 2026-09-11 10.0.400 re-measure had been undone by merge 5aadcce1).",
         "platform": "macos"
       },

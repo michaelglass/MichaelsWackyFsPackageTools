@@ -5,7 +5,33 @@ open System.IO
 open System.Reflection
 open System.Runtime.InteropServices
 
-type ApiSignature = ApiSignature of string
+/// One declaration of a public API surface, or a marker standing in for one in a
+/// verdict no declaration produced. Each declaration keeps the names it is made of
+/// apart, so classifying one never re-parses its rendered text.
+[<RequireQualifiedAccess>]
+type ApiSignature =
+    /// A public case of a union, which consumers can match on.
+    | UnionCase of union: string * case: string
+    /// A public type, by its full name.
+    | TypeDecl of fullName: string
+    /// A public method, property or constructor of a type. The type is named by its
+    /// short `Name`; `signature` is the member's name with its parameter and return
+    /// types, as `ApiSignature.render` prints it after the `::`.
+    | Member of declaringType: string * signature: string
+    /// Not a declaration: the human-readable reason a verdict carries when no
+    /// declaration produced it, such as a CLI grammar change or a changelog's
+    /// declared bump.
+    | Marker of text: string
+
+module ApiSignature =
+    /// The one-line text of a signature, as `extract-api`, `check-api` and the
+    /// release output print it.
+    let render (signature: ApiSignature) : string =
+        match signature with
+        | ApiSignature.UnionCase(union, case) -> sprintf "case %s::%s" union case
+        | ApiSignature.TypeDecl fullName -> sprintf "type %s" fullName
+        | ApiSignature.Member(declaringType, signature) -> sprintf "  %s::%s" declaringType signature
+        | ApiSignature.Marker text -> text
 
 type ApiChange =
     | Breaking of head: ApiSignature * rest: ApiSignature list
@@ -18,6 +44,13 @@ module ApiChange =
         | Breaking(h, t)
         | Addition(h, t) -> h :: t
         | NoChange -> []
+
+    /// The verdict in words, naming the signature that decided it.
+    let describe (change: ApiChange) : string =
+        match change with
+        | Breaking(s, _) -> sprintf "a breaking change (%s)" ((ApiSignature.render s).Trim())
+        | Addition(s, _) -> sprintf "an addition (%s)" ((ApiSignature.render s).Trim())
+        | NoChange -> "no public API change"
 
 let private supportedTfms =
     [ "net10.0"; "net9.0"; "net8.0"; "netstandard2.1"; "netstandard2.0" ]
@@ -327,34 +360,45 @@ let internal assemblySearchPathsFor (dotnetRootVar: string option) (dllPath: str
 let getAssemblySearchPaths (dllPath: string) : string list =
     (assemblySearchPathsFor (dotnetRootFromEnvironment ()) dllPath).All
 
-/// The DLLs directly in `dir`, or none when it does not exist.
-let private dllsIn (dir: string) : string list =
-    if Directory.Exists(dir) then
-        Directory.GetFiles(dir, "*.dll") |> Array.toList
-    else
-        []
+/// The first `<name>.dll` in `searchDirs`, in their order.
+let internal firstDllNamed (searchDirs: string list) (name: string) : string option =
+    searchDirs
+    |> List.map (fun dir -> Path.Combine(dir, name + ".dll"))
+    |> List.tryFind File.Exists
 
-/// `dllsIn` for a directory of the .NET installation, listed once per process.
-/// Listing the installed runtimes is most of the cost of a resolver: thousands of
-/// files on a machine with several SDKs and frameworks, which took a GitHub Windows
-/// runner about 9s cold. The other directories are listed afresh every time.
-let private installedDllsIn = oncePerProcess dllsIn
+/// Does an assembly with public key token `candidate` satisfy a reference asking
+/// for `wanted`? `PathAssemblyResolver`'s rule: the tokens match, or the reference
+/// names none.
+let internal satisfiesReference (wanted: byte[] option) (candidate: byte[] option) : bool =
+    let token = Option.defaultValue [||]
+    Array.isEmpty (token wanted) || token wanted = token candidate
 
-/// The DLLs a resolver for `dllPath` offers, from the search paths in priority
-/// order; the first occurrence of a file name wins.
-let internal resolverDllsFor (dotnetRootVar: string option) (dllPath: string) : string list =
-    let paths = assemblySearchPathsFor dotnetRootVar dllPath
+/// Resolves a reference to the first `<name>.dll` on the search paths, in priority
+/// order: the dll's own directory, the .NET installation, then the package
+/// directories. It probes for the one name a reference asks for rather than listing
+/// every DLL on every path up front, as `PathAssemblyResolver` needs: listing the
+/// .NET installation (every SDK and shared framework) ran past 10s on a cold GitHub
+/// Windows runner, inside a single test's time budget.
+type internal ProbingAssemblyResolver(searchDirs: string list) =
+    inherit MetadataAssemblyResolver()
 
-    let seen =
-        System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    override _.Resolve(context: MetadataLoadContext, assemblyName: AssemblyName) : Assembly =
+        match firstDllNamed searchDirs assemblyName.Name with
+        | None -> null
+        | Some path ->
+            let candidate = context.LoadFromAssemblyPath path
 
-    dllsIn paths.DllDir
-    @ List.collect installedDllsIn paths.Installation
-    @ List.collect dllsIn paths.Packages
-    |> List.filter (fun path -> seen.Add(Path.GetFileName(path)))
+            if
+                satisfiesReference
+                    (Option.ofObj (assemblyName.GetPublicKeyToken()))
+                    (Option.ofObj (candidate.GetName().GetPublicKeyToken()))
+            then
+                candidate
+            else
+                null
 
 let createResolver (dllPath: string) : MetadataAssemblyResolver =
-    PathAssemblyResolver(resolverDllsFor (dotnetRootFromEnvironment ()) dllPath)
+    ProbingAssemblyResolver(getAssemblySearchPaths dllPath)
 
 /// Render a type as a comparison key, handling generics and arrays. A type is
 /// identified by its **assembly name + full name**, not its short name: a member
@@ -445,27 +489,6 @@ let internal unionCaseOf (m: MethodInfo) : string option =
     | Some prefix when isCaseFactory () -> Some(m.Name.Substring prefix.Length)
     | _ -> None
 
-/// The signature declaring that `unionFullName` has the public case `caseName`.
-/// Cases are signatures of their own because adding one breaks every consumer's
-/// exhaustive match, which no other signature can express.
-let private unionCaseSignature (unionFullName: string) (caseName: string) =
-    ApiSignature(sprintf "case %s::%s" unionFullName caseName)
-
-/// What a signature line declares, from most to least specific about what a
-/// consumer depends on: a union's case, a type, or a member of a type.
-type private SignatureKind =
-    | UnionCase of union: string
-    | TypeDeclaration
-    | Member
-
-let private kindOf (ApiSignature s) : SignatureKind =
-    if s.StartsWith("case ", StringComparison.Ordinal) then
-        UnionCase(s.Substring(5, s.LastIndexOf("::", StringComparison.Ordinal) - 5))
-    elif s.StartsWith("type ", StringComparison.Ordinal) then
-        TypeDeclaration
-    else
-        Member
-
 /// Characters the compiler puts in the names it invents (`<sumBy>__debug@292`,
 /// `<>f__AnonymousType…`, `…$W`) and that no source identifier contains.
 let private generatedNameChars = [| '<'; '>'; '@'; '$' |]
@@ -496,7 +519,7 @@ let rec private isInventedType (t: Type) : bool =
 let extractFromTypes (types: Type seq) : ApiSignature list =
     [
         for t in types |> Seq.filter (isInventedType >> not) do
-            yield ApiSignature(sprintf "type %s" t.FullName)
+            yield ApiSignature.TypeDecl t.FullName
 
             let declaredPublic =
                 BindingFlags.Public
@@ -523,17 +546,19 @@ let extractFromTypes (types: Type seq) : ApiSignature list =
                         |> Array.map (fun p -> formatTypeName p.ParameterType)
                         |> String.concat ", "
 
-                    yield ApiSignature(sprintf "  %s::%s(%s): %s" t.Name m.Name ps (formatTypeName m.ReturnType))
+                    yield ApiSignature.Member(t.Name, sprintf "%s(%s): %s" m.Name ps (formatTypeName m.ReturnType))
 
                 // A fieldless case's factory is a property getter, so this is
-                // checked for accessors too.
+                // checked for accessors too. Cases are signatures of their own
+                // because adding one breaks every consumer's exhaustive match, which
+                // no other signature can express.
                 if m.IsStatic then
                     match unionCaseOf m with
-                    | Some case -> yield unionCaseSignature t.FullName case
+                    | Some case -> yield ApiSignature.UnionCase(t.FullName, case)
                     | None -> ()
 
             for p in properties do
-                yield ApiSignature(sprintf "  %s::%s: %s" t.Name p.Name (formatTypeName p.PropertyType))
+                yield ApiSignature.Member(t.Name, sprintf "%s: %s" p.Name (formatTypeName p.PropertyType))
 
             for c in t.GetConstructors(BindingFlags.Public ||| BindingFlags.Instance ||| BindingFlags.DeclaredOnly) do
                 let ps =
@@ -541,19 +566,49 @@ let extractFromTypes (types: Type seq) : ApiSignature list =
                     |> Array.map (fun p -> formatTypeName p.ParameterType)
                     |> String.concat ", "
 
-                yield ApiSignature(sprintf "  %s::.ctor(%s)" t.Name ps)
+                yield ApiSignature.Member(t.Name, sprintf ".ctor(%s)" ps)
     ]
     // A member line names its type by `Name`, not `FullName`, so two same-named
     // types nested in different modules can yield the same line.
-    |> List.sort
+    |> List.sortBy ApiSignature.render
     |> List.distinct
 
-let extractFromAssembly (dllPath: string) : ApiSignature list =
-    let resolver = createResolver dllPath
-    use context = new MetadataLoadContext(resolver)
+/// A DLL read from disk once: its assembly, loaded into a `MetadataLoadContext`
+/// whose resolver searches `getAssemblySearchPaths`, and a `PEReader` over the same
+/// bytes for what reflection does not show (the IL of method bodies). The API
+/// extractor and the CLI grammar reader share one, so a DLL read for both builds
+/// its resolver (deps.json, .nuspec closure, referenced packages) and load context
+/// once.
+[<NoEquality; NoComparison>]
+type LoadedDll =
+    {
+        Path: string
+        Assembly: Assembly
+        PE: PortableExecutable.PEReader
+    }
 
-    let assembly = context.LoadFromAssemblyPath(Path.GetFullPath(dllPath))
-    extractFromTypes (assembly.GetExportedTypes())
+/// Load `dllPath` and run `read` over it. The load context and the PE reader are
+/// disposed when `read` returns, so nothing `read` returns may hold on to them.
+let withLoadedDll (dllPath: string) (read: LoadedDll -> 'T) : 'T =
+    let image = File.ReadAllBytes dllPath
+    use context = new MetadataLoadContext(createResolver dllPath)
+
+    use pe =
+        new PortableExecutable.PEReader(Runtime.InteropServices.ImmutableCollectionsMarshal.AsImmutableArray image)
+
+    read
+        {
+            Path = dllPath
+            Assembly = context.LoadFromByteArray image
+            PE = pe
+        }
+
+/// The public API of a loaded DLL.
+let extractFromLoaded (dll: LoadedDll) : ApiSignature list =
+    extractFromTypes (dll.Assembly.GetExportedTypes())
+
+/// The public API of the DLL at `dllPath`. Throws when it cannot be loaded.
+let extractFromAssembly (dllPath: string) : ApiSignature list = withLoadedDll dllPath extractFromLoaded
 
 /// Locate the candidate directories (newest-tfm-first) and expected DLL file name
 /// for a cached package version. Covers the `lib/<tfm>/` (library) and
@@ -614,45 +669,6 @@ type CachedApi =
     /// resolve. Carries why, naming the assembly and the load error.
     | CachedUnreadable of reason: string
 
-/// Read a previously published package's public API from an arbitrary cache
-/// root (cacheRoot/<id>/<version>/{lib,tools,analyzers}/...). The first assembly
-/// that loads wins; a load failure is reported only when no candidate loads.
-let extractFromCacheRoot (cacheRoot: string) (packageId: string) (version: string) : CachedApi =
-    match packageCacheSearch cacheRoot packageId version with
-    | None -> NotCached
-    | Some(searchDirs, dllName) ->
-        let noAssembly =
-            sprintf
-                "%s %s is in the NuGet cache but ships no %s under lib/, tools/ or analyzers/"
-                packageId
-                version
-                dllName
-
-        // Newest-tfm-first; the first assembly that loads wins. Only when none
-        // loads is the FIRST load failure reported (it names the assembly and the
-        // dependency that could not be resolved).
-        let rec firstReadable (dllPaths: string list) (firstFailure: string option) =
-            match dllPaths with
-            | [] -> CachedUnreadable(defaultArg firstFailure noAssembly)
-            | dllPath :: rest ->
-                try
-                    CachedRead(extractFromAssembly dllPath)
-                with ex ->
-                    let failure = sprintf "could not load %s: %s" dllPath ex.Message
-                    firstReadable rest (Some(defaultArg firstFailure failure))
-
-        let dllPaths =
-            searchDirs
-            |> List.map (fun dir -> Path.Combine(dir, dllName))
-            |> List.filter File.Exists
-
-        firstReadable dllPaths None
-
-/// Read a previously published package's public API from the default
-/// user-local cache at ~/.nuget/packages/.
-let extractFromNuGetCache (packageId: string) (version: string) : CachedApi =
-    extractFromCacheRoot (nugetCacheRoot ()) packageId version
-
 /// Build the `dotnet restore` arguments for the probe project. The probe lives
 /// in a temp dir, so NuGet would otherwise resolve sources from the temp/global
 /// hierarchy and miss the repo's `nuget.config` — pin it with `--configfile`
@@ -670,7 +686,7 @@ let internal probeAvailabilityArgs (nugetConfig: string option) (proj: string) :
     probeRestoreArgs nugetConfig proj + " --no-http-cache"
 
 /// The repo's nuget.config in the current working directory, if any.
-let private currentNuGetConfig () : string option =
+let internal currentNuGetConfig () : string option =
     let cwd = Directory.GetCurrentDirectory()
 
     [ "nuget.config"; "NuGet.config" ]
@@ -681,7 +697,7 @@ let private currentNuGetConfig () : string option =
 /// `packageId`/`version`, run `f` against the project path, and clean up the
 /// temp dir afterwards. Shared by the cache-download and availability-probe
 /// paths so both reference the same package the same way.
-let private withProbeProject (packageId: string) (version: string) (f: string -> 'a) : 'a =
+let internal withProbeProject (packageId: string) (version: string) (f: string -> 'a) : 'a =
     let tmpDir =
         Path.Combine(Path.GetTempPath(), "fsst-probe-" + Guid.NewGuid().ToString("N"))
 
@@ -980,57 +996,6 @@ let isPublished
     : bool =
     checkFeedPresence fetch run packageId version = OnFeed
 
-/// Extract the previous release's API: try the local NuGet cache first, then
-/// fall back to downloading the published package into the cache.
-///
-/// A package that is cached but unreadable is `Unreadable` straight away — the
-/// package plainly exists, and restoring it again cannot change its contents.
-/// Neither `Unreadable` nor `NotRestorable` claims the version is unpublished;
-/// callers decide that with `checkFeedPresence`. A transient `FetchError` (offline,
-/// feed unreachable, or a private feed without credentials) means callers MUST
-/// NOT guess the bump. Callers MUST NOT treat any failure as "no API change", or a
-/// breaking release would ship as a patch.
-let extractPreviousFromNuGetResult
-    (run: string -> string -> Shell.CommandResult)
-    (packageId: string)
-    (version: string)
-    : PreviousApiResult =
-    match extractFromNuGetCache packageId version with
-    | CachedRead api -> Found api
-    | CachedUnreadable reason -> Unreadable reason
-    | NotCached ->
-        withProbeProject packageId version (fun proj ->
-            match run "dotnet" (probeRestoreArgs (currentNuGetConfig ()) proj) with
-            | Shell.Failure(msg, _) -> classifyRestoreFailure msg
-            | Shell.Success _ ->
-                match extractFromNuGetCache packageId version with
-                | CachedRead api -> Found api
-                | CachedUnreadable reason -> Unreadable reason
-                | NotCached ->
-                    // Restore said yes but the package is not where we read from
-                    // (e.g. a relocated global packages folder). The truth is
-                    // unknown, so this must abort, never walk back.
-                    FetchError(
-                        sprintf
-                            "restore succeeded but %s %s is not in the NuGet cache at ~/.nuget/packages"
-                            packageId
-                            version
-                    ))
-
-/// Extract the previous release's API as an option: `None` whenever it could not
-/// be read, for any reason — callers MUST NOT treat None as "no API change", or a
-/// breaking release would be mis-versioned as a patch.
-let extractPreviousFromNuGet
-    (run: string -> string -> Shell.CommandResult)
-    (packageId: string)
-    (version: string)
-    : ApiSignature list option =
-    match extractPreviousFromNuGetResult run packageId version with
-    | Found api -> Some api
-    | Unreadable _
-    | NotRestorable _
-    | FetchError _ -> None
-
 /// Compare two API surfaces. A removal is breaking; so is a new case on a union
 /// that was already public, because consumers' exhaustive matches stop covering
 /// it. Every other addition — including new types nested in an existing module,
@@ -1041,26 +1006,37 @@ let compare (baseline: ApiSignature list) (current: ApiSignature list) : ApiChan
     let baseSet = Set.ofList baseline
     let currSet = Set.ofList current
     let removed = baseSet - currSet |> Set.toList
-    let added = currSet - baseSet |> Set.toList
+    let added = currSet - baseSet |> Set.toList |> List.sortBy ApiSignature.render
 
     let baselineUnions =
         baseline
-        |> List.choose (fun signature ->
-            match kindOf signature with
-            | UnionCase union -> Some union
-            | TypeDeclaration
-            | Member -> None)
+        |> List.choose (function
+            | ApiSignature.UnionCase(union, _) -> Some union
+            | ApiSignature.TypeDecl _
+            | ApiSignature.Member _
+            | ApiSignature.Marker _ -> None)
         |> Set.ofList
 
     let newCases, additions =
         added
-        |> List.partition (fun signature ->
-            match kindOf signature with
-            | UnionCase union -> baselineUnions.Contains union
-            | TypeDeclaration
-            | Member -> false)
+        |> List.partition (function
+            | ApiSignature.UnionCase(union, _) -> baselineUnions.Contains union
+            | ApiSignature.TypeDecl _
+            | ApiSignature.Member _
+            | ApiSignature.Marker _ -> false)
 
-    match removed @ newCases |> List.sortBy (fun s -> kindOf s, s), additions with
+    // Cases (grouped by union), then types, then members.
+    let breakingOrder (signature: ApiSignature) =
+        let rank =
+            match signature with
+            | ApiSignature.UnionCase(union, _) -> 0, union
+            | ApiSignature.TypeDecl _ -> 1, ""
+            | ApiSignature.Member _
+            | ApiSignature.Marker _ -> 2, ""
+
+        rank, ApiSignature.render signature
+
+    match removed @ newCases |> List.sortBy breakingOrder, additions with
     | h :: t, _ -> Breaking(h, t)
     | [], h :: t -> Addition(h, t)
     | [], [] -> NoChange

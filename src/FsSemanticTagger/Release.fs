@@ -5,6 +5,7 @@ open FsSemanticTagger.Api
 open FsSemanticTagger.Config
 open FsSemanticTagger.Shell
 open FsSemanticTagger.Vcs
+open FsSemanticTagger.Extraction
 
 type ReleaseCommand =
     | Auto
@@ -28,21 +29,25 @@ type ReleaseInput =
         /// When non-empty, restrict the run to packages whose `Name` is in this
         /// list (the `--only` filter). Empty = all packages (the default).
         TargetPackages: string list
-        /// Fetch a prior release's public API by (packageName, version). It says
-        /// whether the API could be READ, never whether the version is PUBLISHED —
-        /// that is `CheckFeedPresence`'s question alone. A transient `FetchError`
-        /// aborts rather than under-bumps.
-        ExtractPreviousApi: string -> string -> PreviousApiResult
-        ExtractCurrentApi: string -> ApiSignature list
-        /// Read a prior release's realized CLI grammar by (packageName, version),
-        /// and the current build's grammar by DLL path. When BOTH sides yield a
+        /// Read a prior release by (packageName, version), from the NuGet cache or
+        /// else by restoring it there: its public API and its realized CLI grammar,
+        /// from one load of its DLL. The API result says whether the API could be
+        /// READ, never whether the version is PUBLISHED — that is
+        /// `CheckFeedPresence`'s question alone. A transient `FetchError` aborts
+        /// rather than under-bumps.
+        ExtractPrevious: string -> string -> PreviousDll
+        /// Read a prior release by (packageName, version) from the NuGet cache only.
+        /// A PackAsTool package is read this way: a restore of a tool package always
+        /// fails (NU1212), so it could only cost time.
+        ExtractCachedPrevious: string -> string -> CachedDll
+        /// Read the current build's DLL by path: its public API and its realized CLI
+        /// grammar, from one load. When BOTH this and the prior release yield a
         /// `Grammar`, the grammar diff is folded into the API diff (stronger bump
         /// wins) before `determineBump`, so a `[<Cmd(Name)>]` rename or a flag arity
         /// change bumps even though the assembly signature is unchanged. Otherwise
         /// the API diff is in sole charge of the bump, except for a PackAsTool
         /// package whose previous release could not be read at all.
-        ExtractPreviousGrammar: string -> string -> GrammarRead
-        ExtractCurrentGrammar: string -> Grammar option
+        ExtractCurrent: string -> ExtractedDll
         CiPollIntervalMs: int
         /// The budget for a wait on CI, asked for when a wait starts. Production
         /// sizes it from the repo's CI history (`CiWait.size`); a test fixes it.
@@ -977,8 +982,9 @@ let private inProgressResumeVersion (input: ReleaseInput) (state: ReleaseState) 
 /// first, the feed (`CheckFeedPresence`) for the second — and this type keeps the
 /// three that matter apart instead of collapsing two of them into "no API".
 type private PriorRelease =
-    /// Published, and its public API was read.
-    | PublishedWithApi of ApiSignature list
+    /// Published, and its public API was read. Carries that API and the CLI
+    /// grammar read with it.
+    | PublishedWithApi of api: ApiSignature list * grammar: GrammarRead
     /// Not shown to be absent from the feed, but its public API could not be read
     /// (no assembly in the package, an assembly that will not load, or a restore
     /// that could not find it). Carries why. It is still the baseline this release
@@ -1003,8 +1009,10 @@ let private classifyPriorRelease (input: ReleaseInput) (pkg: PackageConfig) (ver
         | OnFeed
         | FeedUnknown _ -> PublishedUnreadable reason
 
-    match input.ExtractPreviousApi pkg.Name (format version) with
-    | Found api -> PublishedWithApi api
+    let previous = input.ExtractPrevious pkg.Name (format version)
+
+    match previous.Api with
+    | Found api -> PublishedWithApi(api, previous.Grammar)
     | FetchError msg -> Unknown msg
     | Unreadable reason -> unreadableUnlessAbsent reason
     | NotRestorable reason -> unreadableUnlessAbsent (sprintf "restore could not find it: %s" reason)
@@ -1012,10 +1020,9 @@ let private classifyPriorRelease (input: ReleaseInput) (pkg: PackageConfig) (ver
 /// The baseline API to diff the current build against, having walked the release
 /// tags newest-first looking for one whose package is actually published.
 type private BaselineApi =
-    /// Found a published prior release to diff against: the version it resolved to
-    /// (so the same release's grammar can be fetched at the fold point) and its API
-    /// surface.
-    | BaselineFound of version: Version * api: ApiSignature list
+    /// Found a published prior release to diff against: the version it resolved to,
+    /// its API surface and its CLI grammar.
+    | BaselineFound of version: Version * api: ApiSignature list * grammar: GrammarRead
     /// The newest published prior release — the baseline this release actually
     /// follows — is published but its API could not be read. Carries its tag and
     /// why. The walk stops here: diffing against an older release instead would
@@ -1044,7 +1051,7 @@ let private resolveBaselineApi
     sortedTags
     |> List.tryPick (fun (tag, version) ->
         match classifyPriorRelease input pkg version with
-        | PublishedWithApi api -> Some(BaselineFound(version, api))
+        | PublishedWithApi(api, grammar) -> Some(BaselineFound(version, api, grammar))
         | PublishedUnreadable reason -> Some(BaselineUnreadable(tag, reason))
         | Unknown msg -> Some(BaselineFetchError msg)
         | NotPublished ->
@@ -1062,7 +1069,7 @@ let private resolveBaselineApi
 /// would block the release for nothing. Asked of `determineBump` itself rather than
 /// by matching on stages, so it stays true if the bump rules change.
 let private bumpDependsOnApiDiff (current: Version) : bool =
-    let probe = ApiSignature ""
+    let probe = ApiSignature.Marker ""
 
     [ Breaking(probe, []); Addition(probe, []) ]
     |> List.exists (fun change -> determineBump current change <> determineBump current NoChange)
@@ -1129,13 +1136,31 @@ let private decideBump
         // Bumped-but-untagged: finish the existing release rather than starting a
         // new one. Skips the "no changes since tag" no-op, the Auto API recompute,
         // and the changelog re-roll — all of which assume work still to be done.
+        printfn
+            "Resuming %s: %s declares %s, which has no tag yet (a release bumped it and stopped before tagging). Finishing that release."
+            pkg.Name
+            pkg.Fsproj
+            (format resumeVersion)
+
         AlreadyBumped(pkg, resumeVersion) |> Some
     | None ->
-        let toDecision (trigger: BumpTrigger) (newVersion: Version) =
+        // Every decision that puts `pkg` in the plan comes through here, with the one
+        // line that says why.
+        let bump (reason: string) (trigger: BumpTrigger) (newVersion: Version) =
+            printfn "Bumping %s: %s" pkg.Name reason
+
             if readFsprojVersion pkg.Fsproj = Some newVersion then
-                AlreadyBumped(pkg, newVersion)
+                Some(AlreadyBumped(pkg, newVersion))
             else
-                NeedsBump(pkg, newVersion, trigger)
+                Some(NeedsBump(pkg, newVersion, trigger))
+
+        let requested =
+            match input.Command with
+            | Auto -> "release"
+            | StartAlpha -> "alpha"
+            | PromoteToBeta -> "beta"
+            | PromoteToRC -> "rc"
+            | PromoteToStable -> "stable"
 
         // Apply an explicit (non-Auto) command's stage transition. Explicit
         // commands bypass API diffing entirely, so the resulting version comes
@@ -1143,14 +1168,14 @@ let private decideBump
         // forCommand error are handled once here for every explicit path
         // (own-changed, dep-only, and first-release). `trigger` records whether
         // this was an own-source bump or a dependency-only rebundle.
-        let explicitBump (trigger: BumpTrigger) =
+        let explicitBump (reason: string) (trigger: BumpTrigger) =
             match forCommand state input.Command with
             | Ok v ->
                 if input.Config.ReservedVersions.Contains(format v) then
                     printfn "Warning: version %s is reserved, skipping" (format v)
                     None
                 else
-                    Some(toDecision trigger v)
+                    bump (sprintf "%s; `%s` requested" reason requested) trigger v
             | Error msg ->
                 printfn "%s for %s" msg pkg.Name
                 None
@@ -1171,8 +1196,7 @@ let private decideBump
         // existing reserved-version patch-skip.
         let depBumpAuto (currentVersion: Version) (tag: string) =
             let newVersion = skipReserved (determineBump currentVersion NoChange)
-            printfn "Bumping %s: bundled dependency changed since %s (rebundle)" pkg.Name tag
-            Some(toDecision DependencyChange newVersion)
+            bump (sprintf "bundled dependency changed since %s (rebundle)" tag) DependencyChange newVersion
 
         match state with
         | HasPreviousRelease currentVersion ->
@@ -1192,7 +1216,7 @@ let private decideBump
             // changelog(s) behind this tag declare (`DeclaredBump`): the API diff cannot
             // see a changed `[<Literal>]`, but an author who wrote `feat!:` has said it
             // breaks. Every disagreement is printed; no markers leaves `change` as is.
-            let ownChangeBump (change: ApiChange) =
+            let ownChangeBump (reason: string) (change: ApiChange) =
                 let declared =
                     changelogPathsFor input.Config pkg
                     |> List.choose (fun (_, path) ->
@@ -1202,8 +1226,24 @@ let private decideBump
                     |> DeclaredBump.strongest
 
                 let floored, report = DeclaredBump.floor change declared
+
+                let decision =
+                    bump reason OwnChange (skipReserved (determineBump currentVersion floored))
+
                 report |> Option.iter (printfn "%s: %s" pkg.Name)
-                Some(toDecision OwnChange (skipReserved (determineBump currentVersion floored)))
+                decision
+
+            // The current build could not be read, so there is no API to diff: refuse
+            // to guess, as for an unreadable previous release.
+            let currentApiUnreadable (reason: string) =
+                Some(
+                    CannotDetermine(
+                        pkg,
+                        sprintf
+                            "could not read the public API of the current build (%s). Refusing to guess the version bump; use an explicit alpha/beta/rc/stable command."
+                            reason
+                    )
+                )
 
             match ownChanged, depChanged with
             | false, false ->
@@ -1250,9 +1290,7 @@ let private decideBump
             | false, true ->
                 match input.Command with
                 | Auto -> depBumpAuto currentVersion tag
-                | _ ->
-                    printfn "Bumping %s: bundled dependency changed since %s (rebundle)" pkg.Name tag
-                    explicitBump DependencyChange
+                | _ -> explicitBump (sprintf "bundled dependency changed since %s (rebundle)" tag) DependencyChange
             | true, _ ->
                 match input.Command, isPackAsTool (System.IO.File.ReadAllText pkg.Fsproj) with
                 | Auto, true ->
@@ -1268,57 +1306,70 @@ let private decideBump
                     // out of the NuGet cache and constructs no PackageReference probe,
                     // so it cannot raise NU1212. Walk the tags newest-first for the
                     // first whose package could be read, mirroring `resolveBaselineApi`.
-                    let previousGrammars =
+                    let previousReads =
                         sortedTags
-                        |> Seq.map (fun (_, version) -> version, input.ExtractPreviousGrammar pkg.Name (format version))
+                        |> Seq.map (fun (_, version) -> version, input.ExtractCachedPrevious pkg.Name (format version))
                         |> Seq.cache
 
-                    let previousVersion, previousGrammar =
-                        previousGrammars
+                    let previousVersion, previous =
+                        previousReads
                         |> Seq.tryFind (fun (_, read) ->
-                            match read with
+                            match read.Grammar with
                             | GrammarUnreadable _ -> false
                             | GrammarModelled _
                             | GrammarNotModellable _ -> true)
-                        |> Option.orElseWith (fun () -> Seq.tryHead previousGrammars)
-                        |> Option.defaultValue (currentVersion, GrammarUnreadable "no release tag to read it from")
+                        |> Option.orElseWith (fun () -> Seq.tryHead previousReads)
+                        |> Option.defaultValue (
+                            currentVersion,
+                            {
+                                Api = NotCached
+                                Grammar = GrammarUnreadable "no release tag to read it from"
+                            }
+                        )
 
                     let previousTag = toTag pkg.TagPrefix previousVersion
+                    let current = input.ExtractCurrent pkg.DllPath
 
-                    match previousGrammar, input.ExtractCurrentGrammar pkg.DllPath with
-                    | GrammarModelled previousGrammar, Some currentGrammar ->
+                    match previous.Grammar, current.Grammar with
+                    | GrammarModelled previousGrammar, GrammarModelled currentGrammar ->
                         // Folded against a `NoChange` API baseline — a tool has no library
                         // API, so the grammar alone decides. Reusing `foldDiffIntoApi` keeps
                         // one translation from GrammarChange to ApiChange, not two.
                         let change =
                             Grammar.foldDiffIntoApi (Some pkg.Name) NoChange previousGrammar currentGrammar
 
-                        printfn
-                            "Bumping %s: own change to a PackAsTool package — CLI grammar diffed since %s"
-                            pkg.Name
-                            tag
-
-                        ownChangeBump change
-                    | GrammarNotModellable _, Some _ ->
+                        ownChangeBump
+                            (sprintf "own change to a PackAsTool package — CLI grammar diffed since %s" tag)
+                            change
+                    | GrammarNotModellable _, GrammarModelled _ ->
                         // The previous release was read, but its CLI has no grammar to
                         // model (not yet a CommandTree consumer, or no single root
                         // union). There is nothing to diff the grammar against, so the
-                        // public API decides, as for a library. Its assembly loaded
-                        // from the cache just now, so its API reads from there too.
-                        Grammar.noGrammarNote (sprintf "the previous release %s" previousTag) previousGrammar
+                        // public API decides, as for a library. Its API was read from
+                        // the same load of its assembly.
+                        Grammar.noGrammarNote (sprintf "the previous release %s" previousTag) previous.Grammar
                         |> Option.iter (printfn "note: %s: %s" pkg.Name)
 
-                        match input.ExtractPreviousApi pkg.Name (format previousVersion) with
-                        | Found previousApi ->
-                            printfn
-                                "Bumping %s: own change to a PackAsTool package — public API diffed since %s"
-                                pkg.Name
-                                previousTag
-
-                            ownChangeBump (compare previousApi (input.ExtractCurrentApi pkg.DllPath))
-                        | Unreadable reason
-                        | NotRestorable reason
-                        | FetchError reason ->
+                        match previous.Api with
+                        | CachedRead previousApi ->
+                            match current.Api with
+                            | Ok currentApi ->
+                                ownChangeBump
+                                    (sprintf
+                                        "own change to a PackAsTool package — public API diffed since %s"
+                                        previousTag)
+                                    (compare previousApi currentApi)
+                            | Error reason -> currentApiUnreadable reason
+                        | NotCached ->
+                            Some(
+                                CannotDetermine(
+                                    pkg,
+                                    sprintf
+                                        "the CLI grammar of the previous release %s could not be modelled, and its public API could not be read either (it is not in the NuGet cache). Refusing to guess the version bump — a breaking CLI change would otherwise ship as a patch. Use an explicit alpha/beta/rc/stable command."
+                                        previousTag
+                                )
+                            )
+                        | CachedUnreadable reason ->
                             Some(
                                 CannotDetermine(
                                     pkg,
@@ -1328,7 +1379,7 @@ let private decideBump
                                         reason
                                 )
                             )
-                    | GrammarUnreadable reason, Some _ ->
+                    | GrammarUnreadable reason, GrammarModelled _ ->
                         // FAIL CLOSED. This package HAS a CLI grammar, but the previous
                         // release could not be read — the extractor is cache-only and
                         // this path skips the API download that would have populated the
@@ -1349,17 +1400,17 @@ let private decideBump
                                     (format previousVersion)
                             )
                         )
-                    | _, None ->
+                    | _, GrammarNotModellable _
+                    | _, GrammarUnreadable _ ->
                         // No current grammar: this package is not a CommandTree consumer
                         // and has no CLI contract to protect. Deliberately NOT failing
                         // closed — that would block every non-CLI PackAsTool release on a
                         // guard that does not apply to it.
-                        printfn
-                            "Bumping %s: own change to a PackAsTool package (not a CommandTree CLI — no grammar to diff) since %s"
-                            pkg.Name
-                            tag
-
-                        ownChangeBump NoChange
+                        ownChangeBump
+                            (sprintf
+                                "own change to a PackAsTool package (not a CommandTree CLI — no grammar to diff) since %s"
+                                tag)
+                            NoChange
                 | Auto, false ->
                     // Diff against the most recent *published* prior release,
                     // walking back past any orphan tags (whose package never landed
@@ -1379,14 +1430,13 @@ let private decideBump
                             )
                         )
                     | BaselineUnreadable(unreadableTag, reason) when not (bumpDependsOnApiDiff currentVersion) ->
-                        printfn
-                            "Bumping %s: the public API of %s could not be read (%s), but the bump from %s does not depend on the API diff"
-                            pkg.Name
-                            unreadableTag
-                            reason
-                            (format currentVersion)
-
-                        ownChangeBump NoChange
+                        ownChangeBump
+                            (sprintf
+                                "the public API of %s could not be read (%s), but the bump from %s does not depend on the API diff"
+                                unreadableTag
+                                reason
+                                (format currentVersion))
+                            NoChange
                     | BaselineUnreadable(unreadableTag, reason) ->
                         // FAIL CLOSED. The release this one follows IS published, so it
                         // is the only correct baseline; walking back to an older tag
@@ -1409,39 +1459,61 @@ let private decideBump
                         // against, and so no breaking-change risk to guard (no consumer
                         // ever received those releases). Bump conservatively off the
                         // latest tag rather than aborting.
-                        ownChangeBump NoChange
-                    | BaselineFound(baselineVersion, oldApi) ->
-                        let currentApi = input.ExtractCurrentApi pkg.DllPath
-                        let apiChange = compare oldApi currentApi
+                        ownChangeBump
+                            (sprintf
+                                "own change since %s; no prior release reached the feed, so there is no published API to diff against"
+                                tag)
+                            NoChange
+                    | BaselineFound(baselineVersion, oldApi, previousGrammar) ->
+                        let current = input.ExtractCurrent pkg.DllPath
 
-                        // Fold the realized-CLI-grammar diff into the API diff (stronger
-                        // bump wins). Only when BOTH the prior release and the current
-                        // build yield a grammar (a CommandTree consumer with an
-                        // unambiguous root) — otherwise the API diff alone governs.
-                        let change =
-                            match
-                                input.ExtractPreviousGrammar pkg.Name (format baselineVersion),
-                                input.ExtractCurrentGrammar pkg.DllPath
-                            with
-                            | GrammarModelled previousGrammar, Some currentGrammar ->
-                                Grammar.foldDiffIntoApi (Some pkg.Name) apiChange previousGrammar currentGrammar
-                            | previousGrammar, Some _ ->
-                                let previousTag = toTag pkg.TagPrefix baselineVersion
+                        match current.Api with
+                        | Error reason -> currentApiUnreadable reason
+                        | Ok currentApi ->
+                            let apiChange = compare oldApi currentApi
 
-                                Grammar.noGrammarNote (sprintf "the previous release %s" previousTag) previousGrammar
-                                |> Option.iter (printfn "note: %s: %s" pkg.Name)
+                            // Fold the realized-CLI-grammar diff into the API diff (stronger
+                            // bump wins). Only when BOTH the prior release and the current
+                            // build yield a grammar (a CommandTree consumer with an
+                            // unambiguous root) — otherwise the API diff alone governs.
+                            let change =
+                                match previousGrammar, current.Grammar with
+                                | GrammarModelled previousGrammar, GrammarModelled currentGrammar ->
+                                    Grammar.foldDiffIntoApi (Some pkg.Name) apiChange previousGrammar currentGrammar
+                                | previousGrammar, GrammarModelled _ ->
+                                    let previousTag = toTag pkg.TagPrefix baselineVersion
 
-                                apiChange
-                            | _, None -> apiChange
+                                    Grammar.noGrammarNote
+                                        (sprintf "the previous release %s" previousTag)
+                                        previousGrammar
+                                    |> Option.iter (printfn "note: %s: %s" pkg.Name)
 
-                        ownChangeBump change
-                | _ -> explicitBump OwnChange
+                                    apiChange
+                                | _, GrammarNotModellable _
+                                | _, GrammarUnreadable _ -> apiChange
+
+                            let baselineTag = toTag pkg.TagPrefix baselineVersion
+
+                            let diffedAgainst =
+                                if baselineTag = tag then
+                                    ""
+                                else
+                                    sprintf " against %s, the newest published release" baselineTag
+
+                            ownChangeBump
+                                (sprintf
+                                    "own change since %s — public API diffed%s: %s"
+                                    tag
+                                    diffedAgainst
+                                    (ApiChange.describe change))
+                                change
+                | _ -> explicitBump (sprintf "own change since %s" tag) OwnChange
         | FirstRelease ->
             match input.Command with
             | Auto ->
                 // A first release has no prior tag to API-diff against, so the declared
                 // fsproj <Version> is what ships. Forced to NeedsBump rather than
-                // `toDecision`, which would call a fsproj already at the target version
+                // `bump`, which would call a fsproj already at the target version
                 // AlreadyBumped and skip the changelog promotion; FirstRelease has no
                 // prior tag, so this can never be an in-progress resume.
                 match declaredFsprojVersion pkg with
@@ -1458,7 +1530,7 @@ let private decideBump
                 | Some v ->
                     printfn "Bumping %s: first release at declared version %s" pkg.Name (format v)
                     Some(NeedsBump(pkg, v, OwnChange))
-            | _ -> explicitBump OwnChange
+            | _ -> explicitBump "first release" OwnChange
 
 let private resumeAlreadyBumped
     (input: ReleaseInput)

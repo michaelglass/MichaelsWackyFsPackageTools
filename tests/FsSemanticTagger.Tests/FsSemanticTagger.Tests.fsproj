@@ -27,6 +27,7 @@
     <Compile Include="VcsTests.fs" />
     <Compile Include="CiWaitTests.fs" />
     <Compile Include="ReleaseOrderTests.fs" />
+    <Compile Include="ExtractionFakes.fs" />
     <Compile Include="ReleaseTests.fs" />
     <Compile Include="ConsumerCanaryTests.fs" />
     <Compile Include="ReleaseWavesTests.fs" />
@@ -34,6 +35,7 @@
     <Compile Include="BumpTests.fs" />
     <Compile Include="DeclaredBumpTests.fs" />
     <Compile Include="ProgramTests.fs" />
+    <Compile Include="CommandTreeDeclarations.fs" />
     <Compile Include="GrammarDiffSpec.fs" />
   </ItemGroup>
   <ItemGroup>

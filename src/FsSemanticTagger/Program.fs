@@ -114,10 +114,9 @@ let internal envVarFrom (getRaw: string -> string) (name: string) : string optio
 let internal runReleaseWith
     (cwd: string)
     (run: string -> string -> Shell.CommandResult)
-    (extractPreviousApi: string -> string -> Api.PreviousApiResult)
-    (extractCurrentApi: string -> Api.ApiSignature list)
-    (extractPreviousGrammar: string -> string -> GrammarRead)
-    (extractCurrentGrammar: string -> Grammar option)
+    (extractPrevious: string -> string -> Extraction.PreviousDll)
+    (extractCachedPrevious: string -> string -> Extraction.CachedDll)
+    (extractCurrent: string -> Extraction.ExtractedDll)
     (releaseCmd: Release.ReleaseCommand)
     (flags: ReleaseFlag list)
     : Result<int, string> =
@@ -136,10 +135,9 @@ let internal runReleaseWith
                     Command = releaseCmd
                     Mode = releaseMode flags
                     TargetPackages = targetPackages flags
-                    ExtractPreviousApi = extractPreviousApi
-                    ExtractCurrentApi = extractCurrentApi
-                    ExtractPreviousGrammar = extractPreviousGrammar
-                    ExtractCurrentGrammar = extractCurrentGrammar
+                    ExtractPrevious = extractPrevious
+                    ExtractCachedPrevious = extractCachedPrevious
+                    ExtractCurrent = extractCurrent
                     CiPollIntervalMs = 15000
                     CiWait =
                         fun () ->
@@ -166,12 +164,57 @@ let private runRelease (releaseCmd: Release.ReleaseCommand) (flags: ReleaseFlag 
     runReleaseWith
         cwd
         (Shell.runWithGitDir (Vcs.resolveGitDir cwd))
-        (Api.extractPreviousFromNuGetResult Shell.run)
-        Api.extractFromAssembly
-        Grammar.readPreviousGrammarFromNuGet
-        Grammar.extractGrammarFromAssembly
+        (Extraction.readPrevious Shell.run)
+        Extraction.readNuGetCache
+        Extraction.readDll
         releaseCmd
         flags
+
+/// `check-api`: diff two DLLs' public APIs, with their CLI grammars folded in.
+/// Each DLL is loaded once, for both.
+let private checkApi (oldDll: string) (newDll: string) : Result<int, string> =
+    let oldRead = Extraction.readDll oldDll
+    let newRead = Extraction.readDll newDll
+
+    match oldRead.Api, newRead.Api with
+    | Error reason, _
+    | _, Error reason -> Error reason
+    | Ok oldApi, Ok newApi ->
+        let apiChange = Api.compare oldApi newApi
+
+        // Fold in the realized-CLI-grammar diff (stronger bump wins) when both DLLs
+        // are CommandTree consumers, so a command/flag rename or arity change — invisible
+        // to the assembly-signature diff — is surfaced by check-api too.
+        let change =
+            match oldRead.Grammar, newRead.Grammar with
+            | GrammarModelled oldGrammar, GrammarModelled newGrammar ->
+                Grammar.foldDiffIntoApi None apiChange oldGrammar newGrammar
+            | oldGrammar, GrammarModelled _ ->
+                Grammar.noGrammarNote oldDll oldGrammar |> Option.iter (printfn "note: %s")
+                apiChange
+            | GrammarModelled _, newGrammar ->
+                Grammar.noGrammarNote newDll newGrammar |> Option.iter (printfn "note: %s")
+                apiChange
+            | _ -> apiChange
+
+        match change with
+        | Api.Breaking _ ->
+            printfn "BREAKING changes detected:"
+
+            for s in Api.ApiChange.toList change |> List.truncate 10 do
+                printfn "  ! %s" (Api.ApiSignature.render s)
+
+            Ok 2
+        | Api.Addition _ ->
+            printfn "Non-breaking additions:"
+
+            for s in Api.ApiChange.toList change |> List.truncate 10 do
+                printfn "  + %s" (Api.ApiSignature.render s)
+
+            Ok 1
+        | Api.NoChange ->
+            printfn "No API changes"
+            Ok 0
 
 /// The version this build runs as: the entry assembly's informational version,
 /// `<Version>` from the fsproj plus SourceLink's `+<sha>`.
@@ -196,48 +239,11 @@ let internal runCommandWith
         else
             let sigs = Api.extractFromAssembly dll
 
-            for (Api.ApiSignature s) in sigs do
-                printfn "%s" s
+            for s in sigs do
+                printfn "%s" (Api.ApiSignature.render s)
 
             Ok 0
-    | CheckApi(oldDll, newDll) ->
-        let oldApi = Api.extractFromAssembly oldDll
-        let newApi = Api.extractFromAssembly newDll
-        let apiChange = Api.compare oldApi newApi
-
-        // Fold in the realized-CLI-grammar diff (stronger bump wins) when both DLLs
-        // are CommandTree consumers, so a command/flag rename or arity change — invisible
-        // to the assembly-signature diff — is surfaced by check-api too.
-        let change =
-            match Grammar.readGrammar oldDll, Grammar.readGrammar newDll with
-            | GrammarModelled oldGrammar, GrammarModelled newGrammar ->
-                Grammar.foldDiffIntoApi None apiChange oldGrammar newGrammar
-            | oldGrammar, GrammarModelled _ ->
-                Grammar.noGrammarNote oldDll oldGrammar |> Option.iter (printfn "note: %s")
-                apiChange
-            | GrammarModelled _, newGrammar ->
-                Grammar.noGrammarNote newDll newGrammar |> Option.iter (printfn "note: %s")
-                apiChange
-            | _ -> apiChange
-
-        match change with
-        | Api.Breaking _ ->
-            printfn "BREAKING changes detected:"
-
-            for (Api.ApiSignature s) in Api.ApiChange.toList change |> List.truncate 10 do
-                printfn "  ! %s" s
-
-            Ok 2
-        | Api.Addition _ ->
-            printfn "Non-breaking additions:"
-
-            for (Api.ApiSignature s) in Api.ApiChange.toList change |> List.truncate 10 do
-                printfn "  + %s" s
-
-            Ok 1
-        | Api.NoChange ->
-            printfn "No API changes"
-            Ok 0
+    | CheckApi(oldDll, newDll) -> checkApi oldDll newDll
     | Release opts -> release Release.Auto opts
     | Alpha opts -> release Release.StartAlpha opts
     | Beta opts -> release Release.PromoteToBeta opts

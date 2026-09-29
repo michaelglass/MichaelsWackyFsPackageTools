@@ -278,8 +278,8 @@ module Grammar =
     /// grammar diff has no assembly-signature strings of its own).
     let toApiChange (change: GrammarChange) : ApiChange =
         match change with
-        | GBreaking -> Breaking(ApiSignature "grammar: a breaking CLI grammar change was detected", [])
-        | GAddition -> Addition(ApiSignature "grammar: an additive CLI grammar change was detected", [])
+        | GBreaking -> Breaking(ApiSignature.Marker "grammar: a breaking CLI grammar change was detected", [])
+        | GAddition -> Addition(ApiSignature.Marker "grammar: an additive CLI grammar change was detected", [])
         | GNoChange -> NoChange
 
     /// Fold a grammar verdict into an API verdict, stronger bump wins. The API
@@ -1017,50 +1017,92 @@ module Grammar =
             | [ Some prefix ] -> LiteralPrefix prefix
             | _ -> UnknownPrefix
 
-    /// The global flags `root` is parsed with: the flags union the assembly passes
-    /// alongside `root` to a `*WithGlobals` entry point. None when it never does,
-    /// and none when it passes several different unions, since which one a given
-    /// run uses cannot be read from metadata. Global flags read env vars only
-    /// through an `*AndEnv` entry point: CommandTree skips their env resolution,
-    /// `[<CmdEnvRaw>]` included, without a prefix.
-    let private globalFlagsOf (asm: Assembly) (calls: Instantiation list) (prefix: EnvPrefix) : FlagSpec list =
+    /// What the root command union declares about how it is parsed, with
+    /// CommandTree's `[<CmdEnvPrefix(prefix)>]` and `[<CmdGlobals(typeof<G>)>]`
+    /// (CommandTree 0.13 on). CommandTree takes a declaration over whatever an entry
+    /// point passes, and so does the grammar; the IL call-site scan remains for a
+    /// consumer that declares nothing, as one on an older CommandTree cannot.
+    [<NoEquality; NoComparison>]
+    type private Declarations =
+        {
+            /// The declared prefix. A blank one is a `SpecError.InvalidEnvPrefix`,
+            /// under which CommandTree binds no prefix at all.
+            EnvPrefix: EnvPrefix option
+            Globals: Type option
+        }
+
+    let private declarationsOf (root: Type) : Declarations =
+        let attrs = root.GetCustomAttributesData() |> List.ofSeq
+
+        {
+            EnvPrefix =
+                ctorString "CommandTree.CmdEnvPrefixAttribute" attrs
+                |> Option.map (fun prefix ->
+                    if String.IsNullOrWhiteSpace prefix then
+                        NoPrefix
+                    else
+                        LiteralPrefix prefix)
+            Globals =
+                attrs
+                |> List.tryFind (fun a ->
+                    a.AttributeType.FullName = "CommandTree.CmdGlobalsAttribute"
+                    && a.ConstructorArguments.Count = 1)
+                |> Option.bind (fun a ->
+                    match a.ConstructorArguments.[0].Value with
+                    | :? Type as t -> Some t
+                    | _ -> None)
+        }
+
+    /// The global flags `root` is parsed with: the union it declares with
+    /// `[<CmdGlobals>]`, else the flags union the assembly passes alongside `root`
+    /// to a `*WithGlobals` entry point. None when it does neither, and none when it
+    /// passes several different unions, since which one a given run uses cannot be
+    /// read from metadata. Global flags read env vars only under a prefix: a
+    /// declared one, or one passed to an `*AndEnv` entry point. Without one
+    /// CommandTree skips their env resolution, `[<CmdEnvRaw>]` included.
+    let private globalFlagsOf
+        (asm: Assembly)
+        (calls: Instantiation list)
+        (declarations: Declarations)
+        (prefix: EnvPrefix)
+        : FlagSpec list =
         let withGlobals =
             calls
             |> List.choose (fun i -> i.Globals |> Option.map (fun globals -> globals, i.EnvPrefixes.IsSome))
 
+        let prefixDeclared =
+            declarations.EnvPrefix |> Option.exists (fun declared -> declared <> NoPrefix)
+
         let envOf =
-            if withGlobals |> List.exists snd then
+            if prefixDeclared || withGlobals |> List.exists snd then
                 envBinding prefix
             else
                 fun _ _ -> None
 
-        match withGlobals |> List.map fst |> List.distinct with
-        | [ globals ] ->
-            match asm.GetType globals |> Option.ofObj with
-            | Some t when isUnionType t -> flagInfos envOf t
-            | _ -> []
+        let globals =
+            match declarations.Globals with
+            | Some declared -> Some declared
+            | None ->
+                match withGlobals |> List.map fst |> List.distinct with
+                | [ passed ] -> asm.GetType passed |> Option.ofObj
+                | _ -> None
+
+        match globals with
+        | Some t when isUnionType t -> flagInfos envOf t
         | _ -> []
 
     /// The realized grammar rooted at `root`: its command forest and its global flags.
     let private grammarOf (pe: PEReader) (asm: Assembly) (root: Type) : Grammar =
         let calls = instantiations pe root.FullName
-        let prefix = envPrefixOf calls
+        let declarations = declarationsOf root
+        // A declared prefix is known whatever the call sites pass.
+        let prefix =
+            declarations.EnvPrefix |> Option.defaultWith (fun () -> envPrefixOf calls)
 
         {
             Roots = walkUnion prefix root
-            GlobalFlags = globalFlagsOf asm calls prefix
+            GlobalFlags = globalFlagsOf asm calls declarations prefix
         }
-
-    /// Reads `dllPath` from disk once, into a `MetadataLoadContext` for its types
-    /// and a `PEReader` for the IL of its entry-point calls.
-    let private readAssembly (dllPath: string) (read: Assembly -> PEReader -> 'T) : 'T =
-        let image = File.ReadAllBytes dllPath
-        use context = new MetadataLoadContext(createResolver dllPath)
-
-        use pe =
-            new PEReader(Runtime.InteropServices.ImmutableCollectionsMarshal.AsImmutableArray image)
-
-        read (context.LoadFromByteArray image) pe
 
     /// Recover the realized CLI grammar of a single named root command union in an
     /// assembly. Internal seam for tests: bypasses consumer detection / root
@@ -1068,78 +1110,40 @@ module Grammar =
     /// failure or when the named type isn't a union.
     let internal extractGrammarForType (dllPath: string) (rootTypeFullName: string) : Grammar option =
         try
-            readAssembly dllPath (fun asm pe ->
-                match asm.GetType(rootTypeFullName) |> Option.ofObj with
-                | Some t when isUnionType t -> Some(grammarOf pe asm t)
+            withLoadedDll dllPath (fun dll ->
+                match dll.Assembly.GetType(rootTypeFullName) |> Option.ofObj with
+                | Some t when isUnionType t -> Some(grammarOf dll.PE dll.Assembly t)
                 | _ -> None)
         with _ ->
             None
 
-    /// Read the realized CLI grammar of a CommandTree consumer assembly. NEVER
-    /// fabricates a grammar: an assembly that is not a consumer, or has no single
-    /// root command union, is `GrammarNotModellable`, and one that cannot be read
-    /// is `GrammarUnreadable`, each saying why.
+    let private unreadable (dllPath: string) (ex: exn) =
+        GrammarUnreadable(sprintf "could not load %s: %s" dllPath ex.Message)
+
+    /// Read the realized CLI grammar of a loaded CommandTree consumer assembly.
+    /// NEVER fabricates a grammar: an assembly that is not a consumer, or has no
+    /// single root command union, is `GrammarNotModellable`, and one whose types
+    /// cannot be read is `GrammarUnreadable`, each saying why.
+    let readLoaded (dll: LoadedDll) : GrammarRead =
+        try
+            let types = safeGetTypes dll.Assembly
+
+            if not (isCommandTreeConsumer dll.Assembly types) then
+                GrammarNotModellable "it is not a CommandTree consumer"
+            else
+                match findRootCommandUnion types with
+                | Ok root -> GrammarModelled(grammarOf dll.PE dll.Assembly root)
+                | Error reason -> GrammarNotModellable reason
+        with ex ->
+            unreadable dll.Path ex
+
+    /// `readLoaded` of the DLL at `dllPath`; `GrammarUnreadable` when it cannot be
+    /// loaded.
     let readGrammar (dllPath: string) : GrammarRead =
         try
-            readAssembly dllPath (fun asm pe ->
-                let types = safeGetTypes asm
-
-                if not (isCommandTreeConsumer asm types) then
-                    GrammarNotModellable "it is not a CommandTree consumer"
-                else
-                    match findRootCommandUnion types with
-                    | Ok root -> GrammarModelled(grammarOf pe asm root)
-                    | Error reason -> GrammarNotModellable reason)
+            withLoadedDll dllPath readLoaded
         with ex ->
-            GrammarUnreadable(sprintf "could not load %s: %s" dllPath ex.Message)
-
-    /// `readGrammar`'s grammar, if it modelled one. The API diff governs the bump
-    /// when this is `None`.
-    let extractGrammarFromAssembly (dllPath: string) : Grammar option =
-        match readGrammar dllPath with
-        | GrammarModelled grammar -> Some grammar
-        | GrammarNotModellable _
-        | GrammarUnreadable _ -> None
-
-    /// Grammar counterpart of `Api.extractFromCacheRoot`: read a previously
-    /// published package's grammar from an arbitrary cache root, looking in exactly
-    /// the directories the API extractor does (`Api.packageCacheSearch`). The first
-    /// assembly that loads decides; a load failure is reported only when none does.
-    let readGrammarFromCacheRoot (cacheRoot: string) (packageId: string) (version: string) : GrammarRead =
-        match packageCacheSearch cacheRoot packageId version with
-        | None -> GrammarUnreadable(sprintf "%s %s is not in the NuGet cache at %s" packageId version cacheRoot)
-        | Some(searchDirs, dllName) ->
-            let reads =
-                searchDirs
-                |> List.map (fun dir -> Path.Combine(dir, dllName))
-                |> List.filter File.Exists
-                |> List.map readGrammar
-
-            let loaded =
-                reads
-                |> List.tryFind (function
-                    | GrammarUnreadable _ -> false
-                    | GrammarModelled _
-                    | GrammarNotModellable _ -> true)
-
-            match loaded, reads with
-            | Some read, _ -> read
-            | None, firstFailure :: _ -> firstFailure
-            | None, [] ->
-                GrammarUnreadable(
-                    sprintf
-                        "%s %s is in the NuGet cache but ships no %s under lib/, tools/ or analyzers/"
-                        packageId
-                        version
-                        dllName
-                )
-
-    /// Grammar counterpart of `Api.extractPreviousFromNuGet`: read a prior release's
-    /// grammar from the user-local NuGet cache. Cache-only: the release flow has
-    /// already downloaded a library while extracting its API; a PackAsTool package
-    /// is never downloaded, so a cold cache reads as `GrammarUnreadable`.
-    let readPreviousGrammarFromNuGet (packageId: string) (version: string) : GrammarRead =
-        readGrammarFromCacheRoot (nugetCacheRoot ()) packageId version
+            unreadable dllPath ex
 
     /// Why `read` of `what` leaves no grammar to diff, as a note to print, or
     /// `None` when it modelled one.
