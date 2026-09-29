@@ -1136,13 +1136,31 @@ let private decideBump
         // Bumped-but-untagged: finish the existing release rather than starting a
         // new one. Skips the "no changes since tag" no-op, the Auto API recompute,
         // and the changelog re-roll — all of which assume work still to be done.
+        printfn
+            "Resuming %s: %s declares %s, which has no tag yet (a release bumped it and stopped before tagging). Finishing that release."
+            pkg.Name
+            pkg.Fsproj
+            (format resumeVersion)
+
         AlreadyBumped(pkg, resumeVersion) |> Some
     | None ->
-        let toDecision (trigger: BumpTrigger) (newVersion: Version) =
+        // Every decision that puts `pkg` in the plan comes through here, with the one
+        // line that says why.
+        let bump (reason: string) (trigger: BumpTrigger) (newVersion: Version) =
+            printfn "Bumping %s: %s" pkg.Name reason
+
             if readFsprojVersion pkg.Fsproj = Some newVersion then
-                AlreadyBumped(pkg, newVersion)
+                Some(AlreadyBumped(pkg, newVersion))
             else
-                NeedsBump(pkg, newVersion, trigger)
+                Some(NeedsBump(pkg, newVersion, trigger))
+
+        let requested =
+            match input.Command with
+            | Auto -> "release"
+            | StartAlpha -> "alpha"
+            | PromoteToBeta -> "beta"
+            | PromoteToRC -> "rc"
+            | PromoteToStable -> "stable"
 
         // Apply an explicit (non-Auto) command's stage transition. Explicit
         // commands bypass API diffing entirely, so the resulting version comes
@@ -1150,14 +1168,14 @@ let private decideBump
         // forCommand error are handled once here for every explicit path
         // (own-changed, dep-only, and first-release). `trigger` records whether
         // this was an own-source bump or a dependency-only rebundle.
-        let explicitBump (trigger: BumpTrigger) =
+        let explicitBump (reason: string) (trigger: BumpTrigger) =
             match forCommand state input.Command with
             | Ok v ->
                 if input.Config.ReservedVersions.Contains(format v) then
                     printfn "Warning: version %s is reserved, skipping" (format v)
                     None
                 else
-                    Some(toDecision trigger v)
+                    bump (sprintf "%s; `%s` requested" reason requested) trigger v
             | Error msg ->
                 printfn "%s for %s" msg pkg.Name
                 None
@@ -1178,8 +1196,7 @@ let private decideBump
         // existing reserved-version patch-skip.
         let depBumpAuto (currentVersion: Version) (tag: string) =
             let newVersion = skipReserved (determineBump currentVersion NoChange)
-            printfn "Bumping %s: bundled dependency changed since %s (rebundle)" pkg.Name tag
-            Some(toDecision DependencyChange newVersion)
+            bump (sprintf "bundled dependency changed since %s (rebundle)" tag) DependencyChange newVersion
 
         match state with
         | HasPreviousRelease currentVersion ->
@@ -1199,7 +1216,7 @@ let private decideBump
             // changelog(s) behind this tag declare (`DeclaredBump`): the API diff cannot
             // see a changed `[<Literal>]`, but an author who wrote `feat!:` has said it
             // breaks. Every disagreement is printed; no markers leaves `change` as is.
-            let ownChangeBump (change: ApiChange) =
+            let ownChangeBump (reason: string) (change: ApiChange) =
                 let declared =
                     changelogPathsFor input.Config pkg
                     |> List.choose (fun (_, path) ->
@@ -1209,8 +1226,12 @@ let private decideBump
                     |> DeclaredBump.strongest
 
                 let floored, report = DeclaredBump.floor change declared
+
+                let decision =
+                    bump reason OwnChange (skipReserved (determineBump currentVersion floored))
+
                 report |> Option.iter (printfn "%s: %s" pkg.Name)
-                Some(toDecision OwnChange (skipReserved (determineBump currentVersion floored)))
+                decision
 
             // The current build could not be read, so there is no API to diff: refuse
             // to guess, as for an unreadable previous release.
@@ -1269,9 +1290,7 @@ let private decideBump
             | false, true ->
                 match input.Command with
                 | Auto -> depBumpAuto currentVersion tag
-                | _ ->
-                    printfn "Bumping %s: bundled dependency changed since %s (rebundle)" pkg.Name tag
-                    explicitBump DependencyChange
+                | _ -> explicitBump (sprintf "bundled dependency changed since %s (rebundle)" tag) DependencyChange
             | true, _ ->
                 match input.Command, isPackAsTool (System.IO.File.ReadAllText pkg.Fsproj) with
                 | Auto, true ->
@@ -1319,12 +1338,9 @@ let private decideBump
                         let change =
                             Grammar.foldDiffIntoApi (Some pkg.Name) NoChange previousGrammar currentGrammar
 
-                        printfn
-                            "Bumping %s: own change to a PackAsTool package — CLI grammar diffed since %s"
-                            pkg.Name
-                            tag
-
-                        ownChangeBump change
+                        ownChangeBump
+                            (sprintf "own change to a PackAsTool package — CLI grammar diffed since %s" tag)
+                            change
                     | GrammarNotModellable _, GrammarModelled _ ->
                         // The previous release was read, but its CLI has no grammar to
                         // model (not yet a CommandTree consumer, or no single root
@@ -1338,12 +1354,11 @@ let private decideBump
                         | CachedRead previousApi ->
                             match current.Api with
                             | Ok currentApi ->
-                                printfn
-                                    "Bumping %s: own change to a PackAsTool package — public API diffed since %s"
-                                    pkg.Name
-                                    previousTag
-
-                                ownChangeBump (compare previousApi currentApi)
+                                ownChangeBump
+                                    (sprintf
+                                        "own change to a PackAsTool package — public API diffed since %s"
+                                        previousTag)
+                                    (compare previousApi currentApi)
                             | Error reason -> currentApiUnreadable reason
                         | NotCached ->
                             Some(
@@ -1391,12 +1406,11 @@ let private decideBump
                         // and has no CLI contract to protect. Deliberately NOT failing
                         // closed — that would block every non-CLI PackAsTool release on a
                         // guard that does not apply to it.
-                        printfn
-                            "Bumping %s: own change to a PackAsTool package (not a CommandTree CLI — no grammar to diff) since %s"
-                            pkg.Name
-                            tag
-
-                        ownChangeBump NoChange
+                        ownChangeBump
+                            (sprintf
+                                "own change to a PackAsTool package (not a CommandTree CLI — no grammar to diff) since %s"
+                                tag)
+                            NoChange
                 | Auto, false ->
                     // Diff against the most recent *published* prior release,
                     // walking back past any orphan tags (whose package never landed
@@ -1416,14 +1430,13 @@ let private decideBump
                             )
                         )
                     | BaselineUnreadable(unreadableTag, reason) when not (bumpDependsOnApiDiff currentVersion) ->
-                        printfn
-                            "Bumping %s: the public API of %s could not be read (%s), but the bump from %s does not depend on the API diff"
-                            pkg.Name
-                            unreadableTag
-                            reason
-                            (format currentVersion)
-
-                        ownChangeBump NoChange
+                        ownChangeBump
+                            (sprintf
+                                "the public API of %s could not be read (%s), but the bump from %s does not depend on the API diff"
+                                unreadableTag
+                                reason
+                                (format currentVersion))
+                            NoChange
                     | BaselineUnreadable(unreadableTag, reason) ->
                         // FAIL CLOSED. The release this one follows IS published, so it
                         // is the only correct baseline; walking back to an older tag
@@ -1446,7 +1459,11 @@ let private decideBump
                         // against, and so no breaking-change risk to guard (no consumer
                         // ever received those releases). Bump conservatively off the
                         // latest tag rather than aborting.
-                        ownChangeBump NoChange
+                        ownChangeBump
+                            (sprintf
+                                "own change since %s; no prior release reached the feed, so there is no published API to diff against"
+                                tag)
+                            NoChange
                     | BaselineFound(baselineVersion, oldApi, previousGrammar) ->
                         let current = input.ExtractCurrent pkg.DllPath
 
@@ -1475,14 +1492,28 @@ let private decideBump
                                 | _, GrammarNotModellable _
                                 | _, GrammarUnreadable _ -> apiChange
 
-                            ownChangeBump change
-                | _ -> explicitBump OwnChange
+                            let baselineTag = toTag pkg.TagPrefix baselineVersion
+
+                            let diffedAgainst =
+                                if baselineTag = tag then
+                                    ""
+                                else
+                                    sprintf " against %s, the newest published release" baselineTag
+
+                            ownChangeBump
+                                (sprintf
+                                    "own change since %s — public API diffed%s: %s"
+                                    tag
+                                    diffedAgainst
+                                    (ApiChange.describe change))
+                                change
+                | _ -> explicitBump (sprintf "own change since %s" tag) OwnChange
         | FirstRelease ->
             match input.Command with
             | Auto ->
                 // A first release has no prior tag to API-diff against, so the declared
                 // fsproj <Version> is what ships. Forced to NeedsBump rather than
-                // `toDecision`, which would call a fsproj already at the target version
+                // `bump`, which would call a fsproj already at the target version
                 // AlreadyBumped and skip the changelog promotion; FirstRelease has no
                 // prior tag, so this can never be an in-progress resume.
                 match declaredFsprojVersion pkg with
@@ -1499,7 +1530,7 @@ let private decideBump
                 | Some v ->
                     printfn "Bumping %s: first release at declared version %s" pkg.Name (format v)
                     Some(NeedsBump(pkg, v, OwnChange))
-            | _ -> explicitBump OwnChange
+            | _ -> explicitBump "first release" OwnChange
 
 let private resumeAlreadyBumped
     (input: ReleaseInput)

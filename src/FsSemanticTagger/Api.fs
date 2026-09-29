@@ -45,6 +45,13 @@ module ApiChange =
         | Addition(h, t) -> h :: t
         | NoChange -> []
 
+    /// The verdict in words, naming the signature that decided it.
+    let describe (change: ApiChange) : string =
+        match change with
+        | Breaking(s, _) -> sprintf "a breaking change (%s)" ((ApiSignature.render s).Trim())
+        | Addition(s, _) -> sprintf "an addition (%s)" ((ApiSignature.render s).Trim())
+        | NoChange -> "no public API change"
+
 let private supportedTfms =
     [ "net10.0"; "net9.0"; "net8.0"; "netstandard2.1"; "netstandard2.0" ]
 

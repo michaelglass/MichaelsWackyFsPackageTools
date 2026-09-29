@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- fix: **every package in the release plan has one line saying why it is there.** A library bumped by its own change printed none, so FsHotWatch.Coverage, whose only change was a CoverageRatchet.Core bump and a CHANGELOG entry, appeared in the plan unexplained. Neither did a bump when no prior release reached the feed, an explicit `alpha`/`beta`/`rc`/`stable` bump of a changed package or of a first release, nor a resumed release whose `<Version>` was bumped but never tagged. They now print, for example:
+  - `Bumping FsHotWatch.Coverage: own change since coverage-v0.1.0-alpha.5 — public API diffed: no public API change` (or `… against <tag>, the newest published release: an addition (…)` after skipping orphan tags)
+  - `Bumping MyLib: own change since v1.0.0; `alpha` requested`
+  - `Resuming MyLib: src/MyLib/MyLib.fsproj declares 1.1.0, which has no tag yet (a release bumped it and stopped before tagging). Finishing that release.`
+  - New `Api.ApiChange.describe`, the verdict in words.
 - feat!: **`check-api` and `release` load each DLL once for both its public API and its CLI grammar.** Each read used to build its own resolver (deps.json, .nuspec closure, referenced packages) and `MetadataLoadContext`, so every DLL was loaded twice.
   - New `Extraction` module: `readDll` (a built DLL), `readCacheRoot` / `readNuGetCache` (a cached package) and `readPrevious` (cached, else restored), each returning the API and the grammar. They replace `Api.extractFromCacheRoot`, `Api.extractFromNuGetCache`, `Api.extractPreviousFromNuGetResult`, `Api.extractPreviousFromNuGet`, `Grammar.readGrammarFromCacheRoot`, `Grammar.readPreviousGrammarFromNuGet` and `Grammar.extractGrammarFromAssembly`. `Api.withLoadedDll` loads a DLL for any reader; `Grammar.readLoaded` and `Api.extractFromLoaded` read one.
   - `ReleaseInput`'s `ExtractPreviousApi`, `ExtractCurrentApi`, `ExtractPreviousGrammar` and `ExtractCurrentGrammar` become `ExtractPrevious`, `ExtractCachedPrevious` (a PackAsTool package, never restored) and `ExtractCurrent`.

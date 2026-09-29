@@ -116,12 +116,6 @@ let private describeLevel (level: DeclaredLevel) : string =
     | DeclaresFeature -> "a feature"
     | DeclaresPatch -> "a patch-level change"
 
-let private describeChange (change: ApiChange) : string =
-    match change with
-    | Breaking(s, _) -> sprintf "a breaking change (%s)" ((ApiSignature.render s).Trim())
-    | Addition(s, _) -> sprintf "an addition (%s)" ((ApiSignature.render s).Trim())
-    | NoChange -> "no public API change"
-
 /// Bound `computed` below by `declared`: the result is the stronger of the two.
 /// The report is `Some` exactly when they disagree, in either direction — a
 /// declaration raising the bump says it did and why; a computed change stronger
@@ -144,7 +138,7 @@ let floor (computed: ApiChange) (declared: Declaration option) : ApiChange * str
             sprintf
                 "the changelog declares %s, but the API diff found %s. Bumping as %s: a declared change is a floor the API diff cannot lower. Declared in %s by: %s"
                 (describeLevel d.Level)
-                (describeChange computed)
+                (ApiChange.describe computed)
                 (describeLevel d.Level)
                 d.Source
                 d.Entry
@@ -154,7 +148,7 @@ let floor (computed: ApiChange) (declared: Declaration option) : ApiChange * str
         Some(
             sprintf
                 "the API diff found %s, but the changelog declares only %s (strongest entry, in %s: %s). Bumping from the API diff, the stronger of the two; if the change is intended, declare it in the changelog."
-                (describeChange computed)
+                (ApiChange.describe computed)
                 (describeLevel d.Level)
                 d.Source
                 d.Entry

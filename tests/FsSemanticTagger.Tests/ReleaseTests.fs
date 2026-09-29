@@ -112,6 +112,15 @@ let private runRelease run config cmd mode prev cur poll max =
 let private runAutoOnFeed run config prev cur checkFeedPresence =
     runReleaseOnFeed run config Auto PushTags prev cur 0 10 false checkFeedPresence
 
+/// The lines of `output` that say why `pkg` is, or is not, in the release plan.
+let private reasonLines (pkg: string) (output: string) : string list =
+    output.Split('\n')
+    |> Array.map (fun line -> line.TrimEnd('\r'))
+    |> Array.filter (fun line ->
+        [ "Bumping "; "Resuming "; "Skipping " ]
+        |> List.exists (fun verb -> line.StartsWith(verb + pkg + ": ")))
+    |> Array.toList
+
 /// A tag whose run never appeared, with the check command the poll would print.
 let private missingRun (waited: System.TimeSpan) (everAnswered: bool) =
     TagConfirmationFailure.WorkflowTriggerMissing(
@@ -457,10 +466,12 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
                 RootDir = ""
             }
 
-        let result =
-            runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
+        let output, result =
+            withCapturedConsole (fun () ->
+                runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10)
 
         test <@ result = 0 @>
+        test <@ reasonLines "MyLib" output = [ "Bumping MyLib: first release; `alpha` requested" ] @>
 
         test
             <@
@@ -1707,6 +1718,14 @@ let ``release - Auto skips an orphan tag and diffs against the last published pr
 
         test <@ result = 0 @>
         test <@ output.Contains("v1.2.0") && output.Contains("orphan") @>
+
+        test
+            <@
+                reasonLines "MyLib" output =
+                    [
+                        "Bumping MyLib: own change since v1.2.0 — public API diffed against v1.1.0, the newest published release: an addition (Foo::NewMethod(): String)"
+                    ]
+            @>
         // Bump off 1.2.0 with the v1.1.0 diff (addition) => 1.3.0.
         let content = File.ReadAllText(tmpFile)
         test <@ content.Contains("<Version>1.3.0</Version>") @>
@@ -1952,11 +1971,21 @@ let ``release - Auto when every prior tag is absent on feed bumps conservatively
                 RootDir = ""
             }
 
-        let result =
-            runAutoOnFeed fakeRun config extractPreviousApi (fun _ -> currentApi) (fun _ _ -> NotOnFeed)
+        let output, result =
+            withCapturedConsole (fun () ->
+                runAutoOnFeed fakeRun config extractPreviousApi (fun _ -> currentApi) (fun _ _ -> NotOnFeed))
 
         // Nothing published to diff against => NoChange => 1.2.1.
         test <@ result = 0 @>
+
+        test
+            <@
+                reasonLines "MyLib" output =
+                    [
+                        "Bumping MyLib: own change since v1.2.0; no prior release reached the feed, so there is no published API to diff against"
+                    ]
+            @>
+
         let content = File.ReadAllText(tmpFile)
         test <@ content.Contains("<Version>1.2.1</Version>") @>
     finally
@@ -4032,9 +4061,20 @@ let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that
             }
 
         // The previous API is unreadable: resume must short-circuit before the diff.
-        let result = runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10
+        let output, result =
+            withCapturedConsole (fun () -> runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10)
 
         test <@ result = 0 @>
+
+        test
+            <@
+                reasonLines "FsHotWatch" output =
+                    [
+                        sprintf
+                            "Resuming FsHotWatch: %s declares 0.8.0-alpha.17, which has no tag yet (a release bumped it and stopped before tagging). Finishing that release."
+                            tmpFile
+                    ]
+            @>
 
         test
             <@
@@ -4452,6 +4492,152 @@ let ``release - fresh changes still bump normally (not treated as resume)`` () =
         test <@ File.ReadAllText(tmpFile).Contains("<Version>1.1.0</Version>") @>
     finally
         File.Delete(tmpFile)
+
+/// Release `MyLib` 1.0.0 (tag v1.0.0, one own change since) with `cmd`, its prior
+/// release read by `previous` and its current build by `current`. Returns the
+/// output and the exit code.
+let private releaseLibraryReading (cmd: ReleaseCommand) previous current =
+    let tmpFile = scratchFile ()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0")
+                    ("jj",
+                     "diff --from v1.0.0 --to @ --summary \"glob:"
+                     + Path.GetDirectoryName(tmpFile)
+                     + "/**\"",
+                     Success "1 file changed")
+                ]
+
+        let config =
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
+
+        withCapturedConsole (fun () ->
+            runReleaseReading fakeRun config cmd PushTags previous current 0 10 false (fun _ _ -> OnFeed))
+    finally
+        File.Delete(tmpFile)
+
+/// `releaseLibraryReading` with the prior and current API both `[ type Foo ]` and
+/// no CLI grammar.
+let private releaseUnchangedApi (cmd: ReleaseCommand) =
+    let api = [ ApiSignature.TypeDecl "Foo" ]
+
+    releaseLibraryReading
+        cmd
+        (previousWith (fun _ _ -> Found api) (fun _ _ -> noPreviousGrammar))
+        (currentWith (fun _ -> api) (fun _ -> None))
+
+[<Fact>]
+let ``release - a library whose current grammar cannot be read is bumped by its API diff alone`` () =
+    let api = [ ApiSignature.TypeDecl "Foo" ]
+
+    let output, result =
+        releaseLibraryReading
+            Auto
+            (previousWith (fun _ _ -> Found api) (fun _ _ -> GrammarModelled checkApiGrammar))
+            (fun _ ->
+                {
+                    Api = Ok api
+                    Grammar = GrammarUnreadable "could not load fake.dll: bad image"
+                })
+
+    test <@ result = 0 @>
+
+    test
+        <@
+            reasonLines "MyLib" output =
+                [
+                    "Bumping MyLib: own change since v1.0.0 — public API diffed: no public API change"
+                ]
+        @>
+
+
+[<Theory>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``release - Auto first release ships the declared version unless it is reserved`` (reserved: bool) =
+    let tmpFile = scratchFile ()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
+
+        let (fakeRun, _getCalls) = passingCiRun [ ("git", "tag -l \"v*\"", Success "") ]
+
+        let config =
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = if reserved then Set.ofList [ "1.0.0" ] else Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
+
+        let output, result =
+            withCapturedConsole (fun () -> runRelease fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10)
+
+        test <@ result = 0 @>
+
+        if reserved then
+            test <@ output.Contains "Warning: version 1.0.0 is reserved, skipping MyLib (first release)" @>
+            test <@ List.isEmpty (reasonLines "MyLib" output) @>
+            test <@ output.Contains "No packages to release" @>
+        else
+            test <@ reasonLines "MyLib" output = [ "Bumping MyLib: first release at declared version 1.0.0" ] @>
+    finally
+        File.Delete(tmpFile)
+
+// A library whose own change leaves its public API unchanged (FsHotWatch.Coverage:
+// a dependency bump and a CHANGELOG entry) was planned with no line saying why.
+[<Fact>]
+let ``release - a library bumped with an unchanged API says why, once`` () =
+    let output, result = releaseUnchangedApi Auto
+
+    test <@ result = 0 @>
+
+    test
+        <@
+            reasonLines "MyLib" output =
+                [
+                    "Bumping MyLib: own change since v1.0.0 — public API diffed: no public API change"
+                ]
+        @>
+
+[<Fact>]
+let ``release - an explicit command's own-change bump says why, once`` () =
+    let output, result = releaseUnchangedApi StartAlpha
+
+    test <@ result = 0 @>
+    test <@ reasonLines "MyLib" output = [ "Bumping MyLib: own change since v1.0.0; `alpha` requested" ] @>
 
 [<Fact>]
 let ``release - multi-package mixed: one mid-release resumes, one fresh bumps`` () =
@@ -5778,8 +5964,22 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
         with _ ->
             ()
 
-[<Fact>]
-let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative NoChange bump`` () =
+[<Theory>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative NoChange bump``
+    (grammarUnreadable: bool)
+    =
+    let current (_dll: string) : Extraction.ExtractedDll =
+        {
+            Api = Ok []
+            Grammar =
+                if grammarUnreadable then
+                    GrammarUnreadable "could not load fake.dll: bad image"
+                else
+                    GrammarNotModellable "it is not a CommandTree consumer"
+        }
+
     // No current grammar: not a CommandTree CLI, nothing to diff, so not fatal.
     let dir =
         Path.Combine(scratchDir, "fsst-packastool-nogrammar-" + System.Guid.NewGuid().ToString("N"))
@@ -5832,7 +6032,7 @@ let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative 
                     TargetPackages = []
                     ExtractPrevious = mustNotRestore
                     ExtractCachedPrevious = noCachedPrevious
-                    ExtractCurrent = noCurrent
+                    ExtractCurrent = current
                     CiPollIntervalMs = 0
                     CiWait = CiWaitTests.fixedCiWait 0 10
                     TagPush = immediateTagPush
