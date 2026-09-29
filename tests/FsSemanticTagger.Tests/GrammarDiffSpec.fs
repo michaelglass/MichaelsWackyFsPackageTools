@@ -268,36 +268,27 @@ module Fixtures =
             )
         | Group g -> FsSemanticTagger.CommandNode.Group(g.Name, g.Children |> List.map toNode)
 
-    /// The realized grammar CommandTree builds at runtime for `'Cmd` (the root group's
-    /// children become the grammar's roots).
+    /// The realized grammar of a runtime command tree and its global flags (the
+    /// root group's children become the grammar's roots).
+    let private grammarOfTree (tree: CommandTree<'Cmd>) (globals: FlagInfo list) : FsSemanticTagger.Grammar =
+        {
+            FsSemanticTagger.Grammar.Roots =
+                match tree with
+                | Group g -> g.Children |> List.map toNode
+                | leaf -> [ toNode leaf ]
+            GlobalFlags = globals |> List.map toFlag
+        }
+
+    /// The realized grammar CommandTree builds at runtime for `'Cmd`.
     let expectedGrammar<'Cmd> () : FsSemanticTagger.Grammar =
-        match CommandReflection.fromUnion<'Cmd> "fixture" with
-        | Group g ->
-            {
-                FsSemanticTagger.Grammar.Roots = g.Children |> List.map toNode
-                GlobalFlags = []
-            }
-        | leaf ->
-            {
-                FsSemanticTagger.Grammar.Roots = [ toNode leaf ]
-                GlobalFlags = []
-            }
+        grammarOfTree (CommandReflection.fromUnion<'Cmd> "fixture") []
 
     /// The realized grammar of a `GlobalSpec`: its command tree plus its global flags.
     let grammarOfGlobalSpec (spec: GlobalSpec<'Globals, 'Cmd>) : FsSemanticTagger.Grammar =
-        match spec.Tree with
-        | Group g ->
-            {
-                FsSemanticTagger.Grammar.Roots = g.Children |> List.map toNode
-                GlobalFlags = spec.GlobalFlags |> List.map toFlag
-            }
-        | leaf ->
-            {
-                FsSemanticTagger.Grammar.Roots = [ toNode leaf ]
-                GlobalFlags = spec.GlobalFlags |> List.map toFlag
-            }
+        grammarOfTree spec.Tree spec.GlobalFlags
 
 open FsSemanticTagger
+open FsSemanticTagger.Tests.GrammarBuilders
 
 // ---- tiny builders (now over the production model) --------------------------
 
@@ -315,16 +306,6 @@ let private optArg name =
         IsOptional = true
         IsList = false
         TypeName = "string"
-    }
-
-let private flag long arity =
-    {
-        LongName = long
-        ShortName = None
-        Arity = arity
-        TypeName = "bool"
-        IsRepeatable = false
-        Env = None
     }
 
 let private leaf name args flags = Leaf(name, args, flags)
@@ -894,7 +875,6 @@ let ``a call site that does not name one local union beside the root gives no gl
 
 // ---- env bindings (CommandReflection.*WithEnv / *AndEnv, CmdEnv, CmdEnvRaw) --
 
-let private withEnv env (f: FlagSpec) = { f with Env = env }
 
 let private envGrammar env =
     grammar [ leaf "run" [] [ flag "dry-run" Nullary |> withEnv env ] ]
@@ -931,7 +911,7 @@ let ``an unknown prefix compares the suffix only`` () =
 [<Fact>]
 let ``caveats name the flags whose env prefix is unknown`` () =
     let known = envGrammar (Some(EnvVar "APP_DRY_RUN"))
-    test <@ List.isEmpty (Grammar.caveats known known) @>
+    test <@ (Grammar.diff known known).Caveat = None @>
 
     let unknown =
         {
@@ -944,30 +924,23 @@ let ``caveats name the flags whose env prefix is unknown`` () =
 
     test
         <@
-            Grammar.caveats
+            (Grammar.diff
                 known
                 { unknown with
                     Roots = [ Group("db", unknown.Roots) ]
-                }
+                })
+                .Caveat
                 =
-                [
+                Some
                     "the CLI's env-var prefix is not a string literal where it is passed to CommandTree, so the env vars of --verbose, --dry-run are compared by suffix only; a change to the prefix is not detected"
-                ]
         @>
 
 let private extractEnv (root: System.Type) =
     Grammar.extractGrammarForType typeof<Fixtures.EnvFlag>.Assembly.Location root.FullName
 
 let private flagEnvs (grammar: Grammar option) : (string * EnvBinding option) list =
-    let rec nodeFlags =
-        function
-        | Leaf(_, _, flags) -> flags
-        | Group(_, children) -> List.collect nodeFlags children
-
     match grammar with
-    | Some g ->
-        g.GlobalFlags @ List.collect nodeFlags g.Roots
-        |> List.map (fun f -> f.LongName, f.Env)
+    | Some g -> Grammar.allFlags g |> List.map (fun f -> f.LongName, f.Env)
     | None -> []
 
 [<Fact>]
@@ -1055,3 +1028,70 @@ let ``extraction + diff end-to-end: env bindings bump`` () =
     test <@ diff typeof<Fixtures.ECmdTree> typeof<Fixtures.ECmdPlain> = Some GBreaking @>
     test <@ diff typeof<Fixtures.ECmdTree> typeof<Fixtures.ECmdRenamed> = Some GBreaking @>
     test <@ diff typeof<Fixtures.ECmdTree> typeof<Fixtures.ECmdConflict> = Some GNoChange @>
+
+[<Fact>]
+let ``entry-point signatures read string as string and every other shape as other`` () =
+    let types = Grammar.signatureTypes
+    let reader = Unchecked.defaultof<System.Reflection.Metadata.MetadataReader>
+
+    let noTypes =
+        System.Collections.Immutable.ImmutableArray<Grammar.SignatureType>.Empty
+
+    let others =
+        [
+            types.GetPrimitiveType System.Reflection.Metadata.PrimitiveTypeCode.Int32
+            types.GetTypeFromReference(reader, System.Reflection.Metadata.TypeReferenceHandle(), 0uy)
+            types.GetTypeFromSpecification(reader, (), System.Reflection.Metadata.TypeSpecificationHandle(), 0uy)
+            types.GetGenericInstantiation(Grammar.OtherType, noTypes)
+            types.GetGenericMethodParameter((), 0)
+            types.GetGenericTypeParameter((), 0)
+            types.GetSZArrayType Grammar.StringType
+            types.GetArrayType(
+                Grammar.StringType,
+                System.Reflection.Metadata.ArrayShape(
+                    1,
+                    System.Collections.Immutable.ImmutableArray<int>.Empty,
+                    System.Collections.Immutable.ImmutableArray<int>.Empty
+                )
+            )
+            types.GetByReferenceType Grammar.StringType
+            types.GetPointerType Grammar.StringType
+            types.GetPinnedType Grammar.StringType
+            types.GetFunctionPointerType(
+                System.Reflection.Metadata.MethodSignature(
+                    System.Reflection.Metadata.SignatureHeader(),
+                    Grammar.StringType,
+                    0,
+                    0,
+                    noTypes
+                )
+            )
+        ]
+
+    test <@ types.GetPrimitiveType System.Reflection.Metadata.PrimitiveTypeCode.String = Grammar.StringType @>
+    test <@ others |> List.forall ((=) Grammar.OtherType) @>
+    // A modifier (`modreq`/`modopt`) does not change what the type is.
+    test <@ types.GetModifiedType(Grammar.OtherType, Grammar.StringType, true) = Grammar.StringType @>
+
+[<Fact>]
+let ``folding a diff prints its caveat as a note, about the subject when there is one`` () =
+    let known = envGrammar (Some(EnvVar "APP_DRY_RUN"))
+    let unknown = envGrammar (Some(EnvVarUnknownPrefix "DRY_RUN"))
+
+    let note =
+        "the CLI's env-var prefix is not a string literal where it is passed to CommandTree, so the env vars of --dry-run are compared by suffix only; a change to the prefix is not detected"
+
+    let plain, change =
+        Tests.Common.TestHelpers.withCapturedConsole (fun () -> Grammar.foldDiffIntoApi None Api.NoChange known unknown)
+
+    let aboutPkg, _ =
+        Tests.Common.TestHelpers.withCapturedConsole (fun () ->
+            Grammar.foldDiffIntoApi (Some "Pkg") Api.NoChange known unknown)
+
+    let quiet, _ =
+        Tests.Common.TestHelpers.withCapturedConsole (fun () -> Grammar.foldDiffIntoApi None Api.NoChange known known)
+
+    test <@ change = Api.NoChange @>
+    test <@ plain.Trim() = "note: " + note @>
+    test <@ aboutPkg.Trim() = "note: Pkg: " + note @>
+    test <@ quiet = "" @>

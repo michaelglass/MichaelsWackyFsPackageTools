@@ -21,6 +21,7 @@
     <Compile Include="ChangelogTests.fs" />
     <Compile Include="ApiFixtures.fs" />
     <Compile Include="ApiTests.fs" />
+    <Compile Include="GrammarBuilders.fs" />
     <Compile Include="ConfigTests.fs" />
     <Compile Include="ShellTests.fs" />
     <Compile Include="VcsTests.fs" />

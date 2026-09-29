@@ -1273,14 +1273,11 @@ let private decideBump
 
                     match previousGrammar, input.ExtractCurrentGrammar pkg.DllPath with
                     | Some previousGrammar, Some currentGrammar ->
-                        for caveat in Grammar.caveats previousGrammar currentGrammar do
-                            printfn "note: %s: %s" pkg.Name caveat
-
                         // Folded against a `NoChange` API baseline — a tool has no library
-                        // API, so the grammar alone decides. Reusing `foldIntoApi` keeps
+                        // API, so the grammar alone decides. Reusing `foldDiffIntoApi` keeps
                         // one translation from GrammarChange to ApiChange, not two.
                         let change =
-                            Grammar.foldIntoApi NoChange (Grammar.compare previousGrammar currentGrammar)
+                            Grammar.foldDiffIntoApi (Some pkg.Name) NoChange previousGrammar currentGrammar
 
                         printfn
                             "Bumping %s: own change to a PackAsTool package — CLI grammar diffed since %s"
@@ -1382,10 +1379,7 @@ let private decideBump
                                 input.ExtractCurrentGrammar pkg.DllPath
                             with
                             | Some previousGrammar, Some currentGrammar ->
-                                for caveat in Grammar.caveats previousGrammar currentGrammar do
-                                    printfn "note: %s: %s" pkg.Name caveat
-
-                                Grammar.foldIntoApi apiChange (Grammar.compare previousGrammar currentGrammar)
+                                Grammar.foldDiffIntoApi (Some pkg.Name) apiChange previousGrammar currentGrammar
                             | _ -> apiChange
 
                         ownChangeBump change

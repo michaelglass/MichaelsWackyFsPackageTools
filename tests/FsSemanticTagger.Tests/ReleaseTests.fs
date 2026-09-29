@@ -1159,6 +1159,31 @@ let ``release - Auto detects breaking API change and bumps major`` () =
     finally
         File.Delete(tmpFile)
 
+/// A CLI with the one command `check-api`.
+let private checkApiGrammar =
+    {
+        Roots = [ Leaf("check-api", [], []) ]
+        GlobalFlags = []
+    }
+
+/// `checkApiGrammar` with the command renamed `diff-api` (a breaking change) and
+/// given a `--wait` flag whose env prefix is unknown (a caveat).
+let private diffApiGrammar =
+    {
+        Roots =
+            [
+                Leaf(
+                    "diff-api",
+                    [],
+                    [
+                        GrammarBuilders.flag "wait" Nullary
+                        |> GrammarBuilders.withEnv (Some(EnvVarUnknownPrefix "WAIT"))
+                    ]
+                )
+            ]
+        GlobalFlags = []
+    }
+
 [<Fact>]
 let ``release - Auto folds a breaking grammar change into the bump when the API is unchanged`` () =
     // Identical API, but the CLI grammar renamed a command: must bump major.
@@ -1180,34 +1205,6 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
                 ]
 
         let api = [ ApiSignature "type Foo" ]
-
-        let previousGrammar =
-            {
-                Roots = [ Leaf("check-api", [], []) ]
-                GlobalFlags = []
-            }
-
-        let currentGrammar =
-            {
-                Roots =
-                    [
-                        Leaf(
-                            "diff-api",
-                            [],
-                            [
-                                {
-                                    LongName = "wait"
-                                    ShortName = None
-                                    Arity = Nullary
-                                    TypeName = "bool"
-                                    IsRepeatable = false
-                                    Env = Some(EnvVarUnknownPrefix "WAIT")
-                                }
-                            ]
-                        )
-                    ]
-                GlobalFlags = []
-            }
 
         let config =
             {
@@ -1239,8 +1236,8 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
                         TargetPackages = []
                         ExtractPreviousApi = (fun _ _ -> Found api)
                         ExtractCurrentApi = (fun _ -> api)
-                        ExtractPreviousGrammar = (fun _ _ -> Some previousGrammar)
-                        ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
+                        ExtractPreviousGrammar = (fun _ _ -> Some checkApiGrammar)
+                        ExtractCurrentGrammar = (fun _ -> Some diffApiGrammar)
                         CiPollIntervalMs = 0
                         CiWait = CiWaitTests.fixedCiWait 0 10
                         TagPush = immediateTagPush
@@ -5611,34 +5608,6 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
                     ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed")
                 ]
 
-        let previousGrammar =
-            {
-                Roots = [ Leaf("check-api", [], []) ]
-                GlobalFlags = []
-            }
-
-        let currentGrammar =
-            {
-                Roots =
-                    [
-                        Leaf(
-                            "diff-api",
-                            [],
-                            [
-                                {
-                                    LongName = "wait"
-                                    ShortName = None
-                                    Arity = Nullary
-                                    TypeName = "bool"
-                                    IsRepeatable = false
-                                    Env = Some(EnvVarUnknownPrefix "WAIT")
-                                }
-                            ]
-                        )
-                    ]
-                GlobalFlags = []
-            }
-
         let config =
             {
                 Packages =
@@ -5672,8 +5641,8 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
                             (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package (NU1212)")
                         ExtractCurrentApi =
                             (fun _ -> failwith "API probe must not be constructed for a PackAsTool package (NU1212)")
-                        ExtractPreviousGrammar = (fun _ _ -> Some previousGrammar)
-                        ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
+                        ExtractPreviousGrammar = (fun _ _ -> Some checkApiGrammar)
+                        ExtractCurrentGrammar = (fun _ -> Some diffApiGrammar)
                         CiPollIntervalMs = 0
                         CiWait = CiWaitTests.fixedCiWait 0 10
                         TagPush = immediateTagPush
@@ -6171,7 +6140,7 @@ let ``nuGetPollFromEnv - honours the same overrides as FsHotWatch's barrier`` ()
     test <@ garbageAttempts = defaultAttempts @>
 
 [<Fact>]
-let ``waitForNuGetTimed - the give-up names the measured wait, not the budget`` () =
+let ``waitForNuGetOn - the give-up names the measured wait, not the budget`` () =
     // 3 attempts 100ms apart sleep twice: 200ms, not the 300ms budget. The clock is the
     // test's, so the answer is exact however loaded the machine is.
     let mutable now = System.TimeSpan.Zero

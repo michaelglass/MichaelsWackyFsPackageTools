@@ -23,7 +23,7 @@ let private supportedTfms =
     [ "net10.0"; "net9.0"; "net8.0"; "netstandard2.1"; "netstandard2.0" ]
 
 /// The user-local NuGet package cache root (~/.nuget/packages).
-let private nugetCacheRoot () =
+let internal nugetCacheRoot () =
     Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages")
 
 /// Pick the first existing lib/<tfm> directory for a cached package-version dir.
@@ -130,12 +130,20 @@ let private getDotnetRoot (dotnetRootVar: string option) (runtimeDir: string) =
         Path.GetDirectoryName(Path.GetDirectoryName(runtimeParent))
 
 /// Memoizes `compute` per key for the life of the process. `Lazy` makes concurrent
-/// first callers share one computation instead of each doing it.
-let private oncePerProcess (compute: string -> 'T) : string -> 'T =
+/// first callers share one computation instead of each doing it. A computation
+/// that throws is forgotten, so the next caller tries again.
+let internal oncePerProcess (compute: string -> 'T) : string -> 'T =
     let cache =
         System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<'T>>(StringComparer.Ordinal)
 
-    fun key -> cache.GetOrAdd(key, (fun k -> lazy (compute k))).Value
+    fun key ->
+        let entry = cache.GetOrAdd(key, (fun k -> lazy (compute k)))
+
+        try
+            entry.Value
+        with _ ->
+            cache.TryRemove(Collections.Generic.KeyValuePair(key, entry)) |> ignore
+            reraise ()
 
 /// The directories of the .NET installation at `dotnetRoot` that hold reference
 /// assemblies: every SDK's FSharp dir, then every version of every shared framework.
@@ -173,24 +181,38 @@ let private installationDirsFor (dotnetRootVar: string option) : string list =
     let runtimeDir = RuntimeEnvironment.GetRuntimeDirectory()
     runtimeDir :: installationDirsUnder (getDotnetRoot dotnetRootVar runtimeDir)
 
+/// This process's DOTNET_ROOT, if set.
+let private dotnetRootFromEnvironment () : string option =
+    Option.ofObj (Environment.GetEnvironmentVariable "DOTNET_ROOT")
+
+/// Where a resolver for a dll looks for the assemblies it references, in
+/// priority order: the dll's own directory, the .NET installation, then the
+/// package directories. The installation does not change while this process
+/// runs; a restore can add a package directory mid-run.
+type internal AssemblySearchPaths =
+    {
+        DllDir: string
+        Installation: string list
+        Packages: string list
+    }
+
+    /// Every directory, in priority order.
+    member this.All = this.DllDir :: this.Installation @ this.Packages
+
 /// `getAssemblySearchPaths` with the DOTNET_ROOT value passed in rather than read
 /// from this process's environment, so a test can vary it without changing the
 /// environment every concurrently started `dotnet` inherits.
-let internal assemblySearchPathsFor (dotnetRootVar: string option) (dllPath: string) : string list =
+let internal assemblySearchPathsFor (dotnetRootVar: string option) (dllPath: string) : AssemblySearchPaths =
     let dllDir = Path.GetDirectoryName(Path.GetFullPath(dllPath))
 
     let nugetDirs =
-        let home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
-
-        let nugetBase = Path.Combine(home, ".nuget", "packages", "fsharp.core")
+        let nugetBase = Path.Combine(nugetCacheRoot (), "fsharp.core")
 
         if Directory.Exists(nugetBase) then
             Directory.GetDirectories(nugetBase)
             |> Array.toList
             |> List.collect (fun versionDir ->
-                let tfms = supportedTfms
-
-                tfms
+                supportedTfms
                 |> List.map (fun tfm -> Path.Combine(versionDir, "lib", tfm))
                 |> List.filter Directory.Exists)
         else
@@ -201,8 +223,7 @@ let internal assemblySearchPathsFor (dotnetRootVar: string option) (dllPath: str
         let depsJsonPath = Path.Combine(dllDir, assemblyName + ".deps.json")
 
         if File.Exists(depsJsonPath) then
-            let nugetRoot =
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages")
+            let nugetRoot = nugetCacheRoot ()
 
             try
                 use doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(depsJsonPath))
@@ -234,14 +255,14 @@ let internal assemblySearchPathsFor (dotnetRootVar: string option) (dllPath: str
     // transitive dependencies come from the .nuspec graph instead.
     let nuspecClosureDirs = nuspecClosureDirsFor (nugetCacheRoot ()) dllPath
 
-    [ dllDir ]
-    @ installationDirsFor dotnetRootVar
-    @ nugetDirs
-    @ depsJsonDirs
-    @ nuspecClosureDirs
+    {
+        DllDir = dllDir
+        Installation = installationDirsFor dotnetRootVar
+        Packages = nugetDirs @ depsJsonDirs @ nuspecClosureDirs
+    }
 
 let getAssemblySearchPaths (dllPath: string) : string list =
-    assemblySearchPathsFor (Option.ofObj (Environment.GetEnvironmentVariable "DOTNET_ROOT")) dllPath
+    (assemblySearchPathsFor (dotnetRootFromEnvironment ()) dllPath).All
 
 /// The DLLs directly in `dir`, or none when it does not exist.
 let private dllsIn (dir: string) : string list =
@@ -253,29 +274,24 @@ let private dllsIn (dir: string) : string list =
 /// `dllsIn` for a directory of the .NET installation, listed once per process.
 /// Listing the installed runtimes is most of the cost of a resolver: thousands of
 /// files on a machine with several SDKs and frameworks, which took a GitHub Windows
-/// runner about 9s cold. The package directories are listed afresh every time: a
-/// restore can add one mid-run.
+/// runner about 9s cold. The other directories are listed afresh every time.
 let private installedDllsIn = oncePerProcess dllsIn
 
 /// The DLLs a resolver for `dllPath` offers, from the search paths in priority
 /// order; the first occurrence of a file name wins.
 let internal resolverDllsFor (dotnetRootVar: string option) (dllPath: string) : string list =
-    let installation =
-        System.Collections.Generic.HashSet<string>(installationDirsFor dotnetRootVar, StringComparer.Ordinal)
+    let paths = assemblySearchPathsFor dotnetRootVar dllPath
 
     let seen =
         System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
 
-    assemblySearchPathsFor dotnetRootVar dllPath
-    |> List.collect (fun dir ->
-        if installation.Contains dir then
-            installedDllsIn dir
-        else
-            dllsIn dir)
+    dllsIn paths.DllDir
+    @ List.collect installedDllsIn paths.Installation
+    @ List.collect dllsIn paths.Packages
     |> List.filter (fun path -> seen.Add(Path.GetFileName(path)))
 
 let createResolver (dllPath: string) : MetadataAssemblyResolver =
-    PathAssemblyResolver(resolverDllsFor (Option.ofObj (Environment.GetEnvironmentVariable "DOTNET_ROOT")) dllPath)
+    PathAssemblyResolver(resolverDllsFor (dotnetRootFromEnvironment ()) dllPath)
 
 /// Render a type as a comparison key, handling generics and arrays. A type is
 /// identified by its **assembly name + full name**, not its short name: a member
@@ -309,14 +325,40 @@ let rec formatTypeName (t: Type) : string =
     else
         sprintf "%s [%s]" (fullOrName t) (t.Assembly.GetName().Name)
 
-/// The `SourceConstructFlags.UnionCase` value of FSharp.Core's
-/// `CompilationMappingAttribute`, and the mask that isolates the construct kind
-/// from the flag bits above it.
+/// The attribute of type `attributeFullName` on `m`, read as metadata: this works
+/// under a `MetadataLoadContext`, where instantiating the attribute throws.
+let internal attributeData (attributeFullName: string) (m: MemberInfo) : CustomAttributeData option =
+    m.GetCustomAttributesData()
+    |> Seq.tryFind (fun a -> a.AttributeType.FullName = attributeFullName)
+
+/// Does `m` carry an attribute of type `attributeFullName`?
+let internal hasAttribute (attributeFullName: string) (m: MemberInfo) : bool =
+    attributeData attributeFullName m |> Option.isSome
+
+/// Values of FSharp.Core's `SourceConstructFlags`: construct kinds, the mask that
+/// isolates the kind, and the bit a private representation adds above it.
 [<Literal>]
-let private UnionCaseConstruct = 8
+let internal SumTypeConstruct = 1
 
 [<Literal>]
-let private ConstructKindMask = 31
+let internal RecordTypeConstruct = 2
+
+[<Literal>]
+let internal UnionCaseConstruct = 8
+
+[<Literal>]
+let internal ConstructKindMask = 31
+
+/// The `SourceConstructFlags` of the `[<CompilationMapping>]` the F# compiler puts
+/// on a type or member it compiles from an F# construct, unmasked. A union or
+/// record with a private representation carries `NonPublicRepresentation` (32)
+/// beside its kind.
+let internal compilationFlagOf (m: MemberInfo) : int option =
+    attributeData "Microsoft.FSharp.Core.CompilationMappingAttribute" m
+    |> Option.bind (fun a ->
+        a.ConstructorArguments
+        |> Seq.tryFind (fun ca -> ca.ArgumentType.Name = "SourceConstructFlags"))
+    |> Option.map (fun ca -> Convert.ToInt32 ca.Value)
 
 /// The union case a public static method constructs, read from the
 /// `[<CompilationMapping(SourceConstructFlags.UnionCase, i)>]` the F# compiler puts
@@ -327,17 +369,14 @@ let private ConstructKindMask = 31
 /// type, and a module compiles to a class whose nested types look like case
 /// types. A union with a private representation has no public factories, so it
 /// has no public cases — consumers cannot match on it.
-let private unionCaseOf (m: MethodInfo) : string option =
-    let isCaseFactory () =
-        m.GetCustomAttributesData()
-        |> Seq.exists (fun a ->
-            a.AttributeType.FullName = "Microsoft.FSharp.Core.CompilationMappingAttribute"
-            && a.ConstructorArguments.Count > 0
-            && (Convert.ToInt32(a.ConstructorArguments.[0].Value) &&& ConstructKindMask) = UnionCaseConstruct)
-
+let internal unionCaseOf (m: MethodInfo) : string option =
     let factoryPrefix =
         [ "New"; "get_" ]
         |> List.tryFind (fun prefix -> m.Name.StartsWith(prefix, StringComparison.Ordinal))
+
+    let isCaseFactory () =
+        compilationFlagOf m
+        |> Option.exists (fun flags -> flags &&& ConstructKindMask = UnionCaseConstruct)
 
     match factoryPrefix with
     | Some prefix when isCaseFactory () -> Some(m.Name.Substring prefix.Length)
@@ -380,8 +419,7 @@ let private generatedNameChars = [| '<'; '>'; '@'; '$' |]
 /// through that member's parameter or return type.
 let private isCompilerInvented (m: MemberInfo) : bool =
     m.Name.IndexOfAny generatedNameChars >= 0
-    && m.GetCustomAttributesData()
-       |> Seq.exists (fun a -> a.AttributeType.FullName = "System.Runtime.CompilerServices.CompilerGeneratedAttribute")
+    && hasAttribute "System.Runtime.CompilerServices.CompilerGeneratedAttribute" m
 
 /// A compiler-invented type, or one nested inside a compiler-invented type.
 let rec private isInventedType (t: Type) : bool =
@@ -403,12 +441,14 @@ let extractFromTypes (types: Type seq) : ApiSignature list =
                 ||| BindingFlags.Static
                 ||| BindingFlags.DeclaredOnly
 
+            let properties = t.GetProperties(declaredPublic)
+
             // A property's accessors are listed as the property below. Other
             // special-name methods are API in their own right: F# marks its
             // operators (`op_Addition`) and active patterns (`|Even|Odd|`)
             // special-name too, as C# does an event's `add_`/`remove_`.
             let propertyAccessors =
-                t.GetProperties(declaredPublic)
+                properties
                 |> Array.collect (fun p -> p.GetAccessors())
                 |> Array.map (fun a -> a.MetadataToken)
                 |> Set.ofArray
@@ -422,7 +462,14 @@ let extractFromTypes (types: Type seq) : ApiSignature list =
 
                     yield ApiSignature(sprintf "  %s::%s(%s): %s" t.Name m.Name ps (formatTypeName m.ReturnType))
 
-            for p in t.GetProperties(declaredPublic) do
+                // A fieldless case's factory is a property getter, so this is
+                // checked for accessors too.
+                if m.IsStatic then
+                    match unionCaseOf m with
+                    | Some case -> yield unionCaseSignature t.FullName case
+                    | None -> ()
+
+            for p in properties do
                 yield ApiSignature(sprintf "  %s::%s: %s" t.Name p.Name (formatTypeName p.PropertyType))
 
             for c in t.GetConstructors(BindingFlags.Public ||| BindingFlags.Instance ||| BindingFlags.DeclaredOnly) do
@@ -432,14 +479,11 @@ let extractFromTypes (types: Type seq) : ApiSignature list =
                     |> String.concat ", "
 
                 yield ApiSignature(sprintf "  %s::.ctor(%s)" t.Name ps)
-
-            for m in t.GetMethods(BindingFlags.Public ||| BindingFlags.Static ||| BindingFlags.DeclaredOnly) do
-                match unionCaseOf m with
-                | Some case -> yield unionCaseSignature t.FullName case
-                | None -> ()
     ]
-    |> List.distinct
+    // A member line names its type by `Name`, not `FullName`, so two same-named
+    // types nested in different modules can yield the same line.
     |> List.sort
+    |> List.distinct
 
 let extractFromAssembly (dllPath: string) : ApiSignature list =
     let resolver = createResolver dllPath
@@ -544,8 +588,7 @@ let extractFromCacheRoot (cacheRoot: string) (packageId: string) (version: strin
 /// Read a previously published package's public API from the default
 /// user-local cache at ~/.nuget/packages/.
 let extractFromNuGetCache (packageId: string) (version: string) : CachedApi =
-    let home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
-    extractFromCacheRoot (Path.Combine(home, ".nuget", "packages")) packageId version
+    extractFromCacheRoot (nugetCacheRoot ()) packageId version
 
 /// Build the `dotnet restore` arguments for the probe project. The probe lives
 /// in a temp dir, so NuGet would otherwise resolve sources from the temp/global
@@ -954,13 +997,7 @@ let compare (baseline: ApiSignature list) (current: ApiSignature list) : ApiChan
             | TypeDeclaration
             | Member -> false)
 
-    let declarationFirst (signature: ApiSignature) =
-        match kindOf signature with
-        | UnionCase _ -> 0
-        | TypeDeclaration -> 1
-        | Member -> 2
-
-    match removed @ newCases |> List.sortBy (fun s -> declarationFirst s, s), additions with
+    match removed @ newCases |> List.sortBy (fun s -> kindOf s, s), additions with
     | h :: t, _ -> Breaking(h, t)
     | [], h :: t -> Addition(h, t)
     | [], [] -> NoChange

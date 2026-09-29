@@ -210,11 +210,7 @@ let internal runCommandWith
         // to the assembly-signature diff — is surfaced by check-api too.
         let change =
             match Grammar.extractGrammarFromAssembly oldDll, Grammar.extractGrammarFromAssembly newDll with
-            | Some oldGrammar, Some newGrammar ->
-                for caveat in Grammar.caveats oldGrammar newGrammar do
-                    printfn "note: %s" caveat
-
-                Grammar.foldIntoApi apiChange (Grammar.compare oldGrammar newGrammar)
+            | Some oldGrammar, Some newGrammar -> Grammar.foldDiffIntoApi None apiChange oldGrammar newGrammar
             | _ -> apiChange
 
         match change with

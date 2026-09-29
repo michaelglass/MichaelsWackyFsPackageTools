@@ -90,6 +90,14 @@ type GrammarChange =
     | GAddition
     | GBreaking
 
+/// A grammar comparison: the verdict, and what the comparison could not see (a
+/// sentence to print beside the verdict), if anything.
+type GrammarDiff =
+    {
+        Change: GrammarChange
+        Caveat: string option
+    }
+
 module Grammar =
 
     // -----------------------------------------------------------------------
@@ -286,17 +294,21 @@ module Grammar =
         else
             api
 
-    /// What diffing `previous` against `current` cannot see, one sentence each,
-    /// for `check-api` and `release` to print beside the verdict: the flags whose
-    /// env var has a prefix that is not a string literal at the call site.
-    let caveats (previous: Grammar) (current: Grammar) : string list =
+    /// Every flag of `grammar`: the global flags, then each command's, depth first.
+    let allFlags (grammar: Grammar) : FlagSpec list =
         let rec nodeFlags =
             function
             | Leaf(_, _, flags) -> flags
             | Group(_, children) -> List.collect nodeFlags children
 
+        grammar.GlobalFlags @ List.collect nodeFlags grammar.Roots
+
+    /// What diffing `previous` against `current` cannot see, as one sentence: the
+    /// flags whose env var has a prefix that is not a string literal at the call
+    /// site.
+    let private caveat (previous: Grammar) (current: Grammar) : string option =
         let flagsWithUnknownPrefix (grammar: Grammar) =
-            grammar.GlobalFlags @ List.collect nodeFlags grammar.Roots
+            allFlags grammar
             |> List.choose (fun f ->
                 match f.Env with
                 | Some(EnvVarUnknownPrefix _) -> Some("--" + f.LongName)
@@ -307,21 +319,36 @@ module Grammar =
             flagsWithUnknownPrefix previous @ flagsWithUnknownPrefix current
             |> List.distinct
         with
-        | [] -> []
+        | [] -> None
         | flags ->
-            [
+            Some(
                 sprintf
                     "the CLI's env-var prefix is not a string literal where it is passed to CommandTree, so the env vars of %s are compared by suffix only; a change to the prefix is not detected"
                     (String.concat ", " flags)
-            ]
+            )
+
+    /// `compare`, with what the comparison cannot see.
+    let diff (previous: Grammar) (current: Grammar) : GrammarDiff =
+        {
+            Change = compare previous current
+            Caveat = caveat previous current
+        }
+
+    /// Fold the diff of `previous` against `current` into `api` (`foldIntoApi`),
+    /// printing its caveat, if any, as a note about `subject`.
+    let foldDiffIntoApi (subject: string option) (api: ApiChange) (previous: Grammar) (current: Grammar) : ApiChange =
+        let grammarDiff = diff previous current
+
+        for note in Option.toList grammarDiff.Caveat do
+            match subject with
+            | Some name -> printfn "note: %s: %s" name note
+            | None -> printfn "note: %s" note
+
+        foldIntoApi api grammarDiff.Change
 
     // -----------------------------------------------------------------------
     // Structural recovery under MetadataLoadContext.
     // -----------------------------------------------------------------------
-
-    [<Literal>]
-    let private compilationMappingAttr =
-        "Microsoft.FSharp.Core.CompilationMappingAttribute"
 
     [<Literal>]
     let private optionTypeDef = "Microsoft.FSharp.Core.FSharpOption`1"
@@ -353,27 +380,18 @@ module Grammar =
     let private isListType (t: Type) = genericDefName t = listTypeDef
     let private listElementType (t: Type) = t.GetGenericArguments().[0]
 
-    /// The `SourceConstructFlags` value carried by an F# type's
-    /// CompilationMappingAttribute, if any (1 = SumType/union, 2 = RecordType).
-    let private compilationFlag (t: Type) : int option =
-        t.GetCustomAttributesData()
-        |> Seq.tryPick (fun a ->
-            if a.AttributeType.FullName = compilationMappingAttr then
-                a.ConstructorArguments
-                |> Seq.tryPick (fun ca ->
-                    if ca.ArgumentType.Name = "SourceConstructFlags" then
-                        Some(Convert.ToInt32 ca.Value)
-                    else
-                        None)
-            else
-                None)
-
-    // Option and list are themselves F# unions (SumType); exclude them so
-    // isUnionType matches CommandReflection.isUnionType exactly.
+    // The unmasked flags are compared on purpose: a union or record with a private
+    // representation also carries `NonPublicRepresentation`, and CommandTree
+    // (`FSharpType.IsUnion` / `IsRecord` without private access) does not treat it
+    // as one. Option and list are themselves F# unions; excluding them makes
+    // isUnionType match CommandReflection.isUnionType exactly.
     let private isUnionType (t: Type) =
-        compilationFlag t = Some 1 && not (isOptionType t) && not (isListType t)
+        compilationFlagOf t = Some SumTypeConstruct
+        && not (isOptionType t)
+        && not (isListType t)
 
-    let private isRecordType (t: Type) = compilationFlag t = Some 2
+    let private isRecordType (t: Type) =
+        compilationFlagOf t = Some RecordTypeConstruct
 
     /// A trailing `SomeUnion list` field — parsed by CommandTree as named `--flags`.
     let private isFlagDUList (t: Type) =
@@ -411,24 +429,10 @@ module Grammar =
     let private declaredInstance =
         BindingFlags.Public ||| BindingFlags.Instance ||| BindingFlags.DeclaredOnly
 
-    /// The declared static factory members of a union: `New<Case>` (cases with
-    /// fields) and `get_<Case>` singleton getters (nullary cases). Used to recover
-    /// case names for a single-case union, which F# compiles flattened (no `Tags`).
-    let private caseNameFromFactory (m: MethodInfo) : string option =
-        if m.Name.StartsWith("New", StringComparison.Ordinal) then
-            Some(m.Name.Substring 3)
-        elif
-            m.Name.StartsWith("get_", StringComparison.Ordinal)
-            && m.ReturnType = m.DeclaringType
-        then
-            Some(m.Name.Substring 4)
-        else
-            None
-
     /// Ordered case names of a union. Multi-case unions expose a nested `Tags` type
     /// whose literal int constants give the authoritative declaration order. A
     /// single-case union is compiled flattened (no `Tags`, no nested case type); its
-    /// sole case is recovered from its `New<Case>`/`get_<Case>` factory.
+    /// sole case is recovered from its factory (`Api.unionCaseOf`).
     let private orderedCaseNames (union: Type) : string list =
         match
             union.GetNestedType("Tags", BindingFlags.Public ||| BindingFlags.NonPublic)
@@ -442,7 +446,7 @@ module Grammar =
             |> Array.toList
         | None ->
             union.GetMethods(declaredStatic)
-            |> Array.choose caseNameFromFactory
+            |> Array.choose unionCaseOf
             |> Array.distinct
             |> Array.toList
 
@@ -598,61 +602,50 @@ module Grammar =
         (envOf: string -> CustomAttributeData list -> EnvBinding option)
         (flagDUType: Type)
         : FlagSpec list =
-        let data =
+        // Each flag with only its explicit `Short`, if any.
+        let explicitOnly =
             orderedCaseNames flagDUType
             |> List.map (fun caseName ->
                 let fields = caseFields flagDUType caseName
                 let attrs = caseAttributes flagDUType caseName
 
-                let arity =
-                    match fields with
-                    | [] -> Nullary
-                    | (_, t) :: _ when isOptionType t -> OptionalValue
-                    | _ -> RequiredValue
+                {
+                    LongName =
+                        namedString "CommandTree.CmdFlagAttribute" "Name" attrs
+                        |> Option.defaultValue (toKebabCase caseName)
+                    ShortName = namedString "CommandTree.CmdFlagAttribute" "Short" attrs
+                    Arity =
+                        match fields with
+                        | [] -> Nullary
+                        | (_, t) :: _ when isOptionType t -> OptionalValue
+                        | _ -> RequiredValue
+                    TypeName =
+                        match fields with
+                        | [] -> "bool"
+                        | (_, t) :: _ -> getTypeName t
+                    IsRepeatable = namedBool "CommandTree.CmdFlagAttribute" "Repeatable" attrs
+                    Env = envOf caseName attrs
+                })
 
-                let longName =
-                    namedString "CommandTree.CmdFlagAttribute" "Name" attrs
-                    |> Option.defaultValue (toKebabCase caseName)
-
-                let explicitShort = namedString "CommandTree.CmdFlagAttribute" "Short" attrs
-                let isRepeatable = namedBool "CommandTree.CmdFlagAttribute" "Repeatable" attrs
-
-                let typeName =
-                    match fields with
-                    | [] -> "bool"
-                    | (_, t) :: _ -> getTypeName t
-
-                longName, explicitShort, arity, typeName, isRepeatable, envOf caseName attrs)
+        let autoShort (spec: FlagSpec) = string spec.LongName.[0]
 
         let autoShortCounts =
-            data
-            |> List.choose (fun (longName, explicitShort, _, _, _, _) ->
-                match explicitShort with
-                | Some _ -> None
-                | None -> Some(string longName.[0]))
-            |> List.countBy id
+            explicitOnly
+            |> List.filter (fun spec -> spec.ShortName.IsNone)
+            |> List.countBy autoShort
             |> Map.ofList
 
-        data
-        |> List.map (fun (longName, explicitShort, arity, typeName, isRepeatable, env) ->
-            let shortName =
-                match explicitShort with
-                | Some s -> Some s
-                | None ->
-                    let candidate = string longName.[0]
-
-                    match Map.tryFind candidate autoShortCounts with
-                    | Some 1 -> Some candidate
-                    | _ -> None
-
-            {
-                LongName = longName
-                ShortName = shortName
-                Arity = arity
-                TypeName = typeName
-                IsRepeatable = isRepeatable
-                Env = env
-            })
+        explicitOnly
+        |> List.map (fun spec ->
+            match spec.ShortName with
+            | Some _ -> spec
+            | None ->
+                match Map.tryFind (autoShort spec) autoShortCounts with
+                | Some 1 ->
+                    { spec with
+                        ShortName = Some(autoShort spec)
+                    }
+                | _ -> spec)
 
     /// Walk one command union into its command forest, mirroring the branch order of
     /// CommandReflection.buildUnionTree exactly:
@@ -764,99 +757,89 @@ module Grammar =
         else
             definitionName reader declaring + "+" + name
 
+    /// A type in a signature, read only as far as recognising entry points needs.
+    type internal SignatureType =
+        /// A type this assembly defines, by its `Type.FullName`.
+        | DefinedHere of fullName: string
+        | StringType
+        | OtherType
+
+    /// Decodes signatures into `SignatureType`s.
+    let internal signatureTypes =
+        { new ISignatureTypeProvider<SignatureType, unit> with
+            member _.GetPrimitiveType code =
+                if code = PrimitiveTypeCode.String then
+                    StringType
+                else
+                    OtherType
+
+            member _.GetTypeFromDefinition(reader, handle, _) =
+                DefinedHere(definitionName reader handle)
+
+            member _.GetTypeFromReference(_, _, _) = OtherType
+            member _.GetTypeFromSpecification(_, _, _, _) = OtherType
+            member _.GetGenericInstantiation(_, _) = OtherType
+            member _.GetGenericMethodParameter(_, _) = OtherType
+            member _.GetGenericTypeParameter(_, _) = OtherType
+            member _.GetSZArrayType _ = OtherType
+            member _.GetArrayType(_, _) = OtherType
+            member _.GetByReferenceType _ = OtherType
+            member _.GetPointerType _ = OtherType
+            member _.GetPinnedType _ = OtherType
+            member _.GetFunctionPointerType _ = OtherType
+            member _.GetModifiedType(_, unmodified, _) = unmodified
+        }
+
     /// The full names of a generic instantiation's type arguments, when every
     /// one is a type this assembly defines; `None` for any other argument (a
     /// primitive, a constructed generic, a type from another assembly), none of
     /// which is a union this assembly declares.
-    let private typeArgumentsDefinedHere (reader: MetadataReader) (spec: MethodSpecification) : string list option =
-        let mutable blob = reader.GetBlobReader spec.Signature
-        blob.ReadSignatureHeader() |> ignore
-        let count = blob.ReadCompressedInteger()
-        let names = Collections.Generic.List<string>()
-        let mutable definedHere = true
+    let private typeArgumentsDefinedHere (spec: MethodSpecification) : string list option =
+        let arguments =
+            spec.DecodeSignature(signatureTypes, ())
+            |> Seq.map (function
+                | DefinedHere name -> Some name
+                | StringType
+                | OtherType -> None)
+            |> List.ofSeq
 
-        while definedHere && names.Count < count do
-            let argument =
-                if blob.ReadSignatureTypeCode() = SignatureTypeCode.TypeHandle then
-                    blob.ReadTypeHandle()
-                else
-                    EntityHandle()
-
-            if argument.Kind = HandleKind.TypeDefinition then
-                names.Add(definitionName reader (TypeDefinitionHandle.op_Explicit argument))
-            else
-                definedHere <- false
-
-        if definedHere then Some(List.ofSeq names) else None
-
-    /// What a `CommandTree.CommandReflection` entry point takes beside the root
-    /// command union: a globals union (`*WithGlobals*`, the second type argument)
-    /// and an env-var prefix (`*Env`, the last value argument).
-    type private EntryPoint =
-        {
-            TakesGlobals: bool
-            TakesEnvPrefix: bool
-        }
-
-    let private entryPoints =
-        Map.ofList
-            [
-                "fromUnionWithEnv",
-                {
-                    TakesGlobals = false
-                    TakesEnvPrefix = true
-                }
-                "tryFromUnionWithEnv",
-                {
-                    TakesGlobals = false
-                    TakesEnvPrefix = true
-                }
-                "fromUnionWithGlobals",
-                {
-                    TakesGlobals = true
-                    TakesEnvPrefix = false
-                }
-                "tryFromUnionWithGlobals",
-                {
-                    TakesGlobals = true
-                    TakesEnvPrefix = false
-                }
-                "fromUnionWithGlobalsAndEnv",
-                {
-                    TakesGlobals = true
-                    TakesEnvPrefix = true
-                }
-                "tryFromUnionWithGlobalsAndEnv",
-                {
-                    TakesGlobals = true
-                    TakesEnvPrefix = true
-                }
-            ]
-
-    /// The entry point a referenced method is, if it is a method of
-    /// `CommandTree.CommandReflection` listed in `entryPoints`.
-    let private entryPointOf (reader: MetadataReader) (method: MemberReference) : EntryPoint option =
-        if method.Parent.Kind <> HandleKind.TypeReference then
-            None
+        if List.forall Option.isSome arguments then
+            Some(List.choose id arguments)
         else
-            let parent = reader.GetTypeReference(TypeReferenceHandle.op_Explicit method.Parent)
+            None
 
-            if
-                reader.GetString parent.Namespace + "." + reader.GetString parent.Name = "CommandTree.CommandReflection"
-            then
-                entryPoints.TryFind(reader.GetString method.Name)
-            else
-                None
+    /// The value parameters of a `CommandTree.CommandReflection` entry point, each
+    /// mapped to whether the entry point takes an env-var prefix: a description,
+    /// and for the `*Env` ones the prefix after it.
+    let private entryPointParameters =
+        Map [ [ StringType ], false; [ StringType; StringType ], true ]
 
-    /// One instantiation of an entry point in the assembly's MethodSpec table:
-    /// its type arguments (root first, then any globals union), and, for an
-    /// `*Env` entry point, the prefix passed at each call of it (`None` for a
-    /// call whose prefix is not a string literal).
+    /// Is `method` a `CommandTree.CommandReflection` entry point, and if so does it
+    /// take an env-var prefix? Recognised by its value parameters
+    /// (`entryPointParameters`), not by name, so an entry point CommandTree adds
+    /// or renames is still read. Its first type argument is the root command
+    /// union; a second, for the `*WithGlobals*` ones, is the globals union.
+    let private entryPointTakesEnvPrefix (reader: MetadataReader) (method: MemberReference) : bool option =
+        let declaredByCommandReflection =
+            method.Parent.Kind = HandleKind.TypeReference
+            && (let parent = reader.GetTypeReference(TypeReferenceHandle.op_Explicit method.Parent)
+                reader.GetString parent.Namespace + "." + reader.GetString parent.Name = "CommandTree.CommandReflection")
+
+        if declaredByCommandReflection then
+            let signature = method.DecodeMethodSignature(signatureTypes, ())
+            entryPointParameters.TryFind(List.ofSeq signature.ParameterTypes)
+        else
+            None
+
+    /// One instantiation of an entry point for a given root command union.
     type private Instantiation =
         {
-            EntryPoint: EntryPoint
-            TypeArguments: string list
-            Prefixes: string option list
+            /// The globals union, for a `*WithGlobals*` entry point.
+            Globals: string option
+            /// For an `*Env` entry point, the prefix passed at each call of it:
+            /// `None` for a call whose prefix is not a string literal, and
+            /// `[ None ]` when no call can be read (its method passed as a value).
+            EnvPrefixes: string option list option
         }
 
     /// The opcodes the prefix scan reads, and each opcode's operand type.
@@ -894,74 +877,75 @@ module Grammar =
         (reader: MetadataReader)
         (targets: Set<int>)
         : Map<int, string option list> =
-        let found = Collections.Generic.Dictionary<int, string option list>()
+        if targets.IsEmpty then
+            Map.empty
+        else
+            let found = Collections.Generic.Dictionary<int, string option list>()
 
-        for handle in reader.MethodDefinitions do
-            let rva = (reader.GetMethodDefinition handle).RelativeVirtualAddress
+            for handle in reader.MethodDefinitions do
+                let rva = (reader.GetMethodDefinition handle).RelativeVirtualAddress
 
-            if rva <> 0 then
-                let mutable il = pe.GetMethodBody(rva).GetILReader()
-                let mutable previousString: string option = None
+                if rva <> 0 then
+                    let mutable il = pe.GetMethodBody(rva).GetILReader()
+                    let mutable previousString: string option = None
 
-                while il.RemainingBytes > 0 do
-                    let first = il.ReadByte()
+                    while il.RemainingBytes > 0 do
+                        let first = il.ReadByte()
 
-                    let opcode =
-                        if first = 0xFEuy then
-                            0xFE00us ||| uint16 (il.ReadByte())
-                        else
-                            uint16 first
+                        let opcode =
+                            if first = 0xFEuy then
+                                0xFE00us ||| uint16 (il.ReadByte())
+                            else
+                                uint16 first
 
-                    match opcode with
-                    | LdStr ->
-                        let token = il.ReadInt32()
+                        match opcode with
+                        | LdStr ->
+                            let token = il.ReadInt32()
 
-                        previousString <-
-                            Some(reader.GetUserString(MetadataTokens.UserStringHandle(token &&& 0xFFFFFF)))
-                    | Call
-                    | CallVirt ->
-                        let token = il.ReadInt32()
-                        let row = token &&& 0xFFFFFF
+                            previousString <-
+                                Some(reader.GetUserString(MetadataTokens.UserStringHandle(token &&& 0xFFFFFF)))
+                        | Call
+                        | CallVirt ->
+                            let token = il.ReadInt32()
+                            let row = token &&& 0xFFFFFF
 
-                        if (token >>> 24) = int TableIndex.MethodSpec && targets.Contains row then
-                            found.[row] <-
-                                previousString
-                                :: (match found.TryGetValue row with
-                                    | true, calls -> calls
-                                    | _ -> [])
+                            if (token >>> 24) = int TableIndex.MethodSpec && targets.Contains row then
+                                found.[row] <-
+                                    previousString
+                                    :: (match found.TryGetValue row with
+                                        | true, calls -> calls
+                                        | _ -> [])
 
-                        previousString <- None
-                    | Nop
-                    | TailPrefix -> ()
-                    | _ ->
-                        let size =
-                            match operandTypes.Value.TryGetValue opcode with
-                            | false, _ -> il.RemainingBytes
-                            | true, operandType ->
-                                match operandType with
-                                | Emit.OperandType.InlineNone -> 0
-                                | Emit.OperandType.ShortInlineBrTarget
-                                | Emit.OperandType.ShortInlineI
-                                | Emit.OperandType.ShortInlineVar -> 1
-                                | Emit.OperandType.InlineVar -> 2
-                                | Emit.OperandType.InlineI8
-                                | Emit.OperandType.InlineR -> 8
-                                | Emit.OperandType.InlineSwitch -> 4 * il.ReadInt32()
-                                | _ -> 4
+                            previousString <- None
+                        | Nop
+                        | TailPrefix -> ()
+                        | _ ->
+                            let size =
+                                match operandTypes.Value.TryGetValue opcode with
+                                | false, _ -> il.RemainingBytes
+                                | true, operandType ->
+                                    match operandType with
+                                    | Emit.OperandType.InlineNone -> 0
+                                    | Emit.OperandType.ShortInlineBrTarget
+                                    | Emit.OperandType.ShortInlineI
+                                    | Emit.OperandType.ShortInlineVar -> 1
+                                    | Emit.OperandType.InlineVar -> 2
+                                    | Emit.OperandType.InlineI8
+                                    | Emit.OperandType.InlineR -> 8
+                                    | Emit.OperandType.InlineSwitch -> 4 * il.ReadInt32()
+                                    | _ -> 4
 
-                        il.Offset <- il.Offset + size
-                        previousString <- None
+                            il.Offset <- il.Offset + size
+                            previousString <- None
 
-        found |> Seq.map (fun kv -> kv.Key, kv.Value) |> Map.ofSeq
+            found |> Seq.map (fun kv -> kv.Key, kv.Value) |> Map.ofSeq
 
-    /// Every instantiation of a CommandTree entry point whose type arguments are
-    /// all types this assembly defines. The call site is the one place the
-    /// program says which union holds its global flags (a globals case needs no
-    /// attribute, so the union cannot be recognised by its shape) and which
-    /// prefix its env vars take.
-    let private instantiations (dllPath: string) : Instantiation list =
-        use stream = File.OpenRead dllPath
-        use pe = new PEReader(stream)
+    /// Every instantiation of a CommandTree entry point for `root` whose type
+    /// arguments are all types this assembly defines. The call site is the one
+    /// place the program says which union holds its global flags (a globals case
+    /// needs no attribute, so the union cannot be recognised by its shape) and
+    /// which prefix its env vars take.
+    let private instantiations (pe: PEReader) (root: string) : Instantiation list =
         let reader = pe.GetMetadataReader()
 
         let specs =
@@ -970,35 +954,36 @@ module Grammar =
                     let spec =
                         reader.GetMethodSpecification(MetadataTokens.MethodSpecificationHandle row)
 
-                    let entryPoint =
+                    let takesEnvPrefix =
                         if spec.Method.Kind = HandleKind.MemberReference then
-                            entryPointOf
+                            entryPointTakesEnvPrefix
                                 reader
                                 (reader.GetMemberReference(MemberReferenceHandle.op_Explicit spec.Method))
                         else
                             None
 
-                    match
-                        entryPoint
-                        |> Option.bind (fun e -> typeArgumentsDefinedHere reader spec |> Option.map (fun a -> e, a))
-                    with
-                    | Some(e, arguments) -> yield row, e, arguments
-                    | None -> ()
+                    match takesEnvPrefix |> Option.bind (fun _ -> typeArgumentsDefinedHere spec) with
+                    | Some(argumentRoot :: globals) when argumentRoot = root ->
+                        yield row, List.tryHead globals, takesEnvPrefix = Some true
+                    | _ -> ()
             ]
 
         let prefixes =
             specs
-            |> List.filter (fun (_, e, _) -> e.TakesEnvPrefix)
+            |> List.filter (fun (_, _, takesEnvPrefix) -> takesEnvPrefix)
             |> List.map (fun (row, _, _) -> row)
             |> Set.ofList
             |> prefixesAtCalls pe reader
 
         [
-            for row, e, arguments in specs ->
+            for row, globals, takesEnvPrefix in specs ->
                 {
-                    EntryPoint = e
-                    TypeArguments = arguments
-                    Prefixes = prefixes.TryFind row |> Option.defaultValue []
+                    Globals = globals
+                    EnvPrefixes =
+                        if takesEnvPrefix then
+                            Some(prefixes.TryFind row |> Option.defaultValue [ None ])
+                        else
+                            None
                 }
         ]
 
@@ -1008,15 +993,10 @@ module Grammar =
     /// at different calls, or an instantiation with no call to read (its method
     /// passed as a value).
     let private envPrefixOf (calls: Instantiation list) : EnvPrefix =
-        match calls |> List.filter (fun i -> i.EntryPoint.TakesEnvPrefix) with
+        match calls |> List.choose (fun i -> i.EnvPrefixes) with
         | [] -> NoPrefix
         | envCalls ->
-            let prefixes =
-                envCalls
-                |> List.collect (fun i -> if List.isEmpty i.Prefixes then [ None ] else i.Prefixes)
-                |> List.distinct
-
-            match prefixes with
+            match List.concat envCalls |> List.distinct with
             | [ Some prefix ] -> LiteralPrefix prefix
             | _ -> UnknownPrefix
 
@@ -1027,15 +1007,17 @@ module Grammar =
     /// through an `*AndEnv` entry point: CommandTree skips their env resolution,
     /// `[<CmdEnvRaw>]` included, without a prefix.
     let private globalFlagsOf (asm: Assembly) (calls: Instantiation list) (prefix: EnvPrefix) : FlagSpec list =
-        let withGlobals = calls |> List.filter (fun i -> i.EntryPoint.TakesGlobals)
+        let withGlobals =
+            calls
+            |> List.choose (fun i -> i.Globals |> Option.map (fun globals -> globals, i.EnvPrefixes.IsSome))
 
         let envOf =
-            if withGlobals |> List.exists (fun i -> i.EntryPoint.TakesEnvPrefix) then
+            if withGlobals |> List.exists snd then
                 envBinding prefix
             else
                 fun _ _ -> None
 
-        match withGlobals |> List.map (fun i -> List.last i.TypeArguments) |> List.distinct with
+        match withGlobals |> List.map fst |> List.distinct with
         | [ globals ] ->
             match asm.GetType globals |> Option.ofObj with
             | Some t when isUnionType t -> flagInfos envOf t
@@ -1043,11 +1025,8 @@ module Grammar =
         | _ -> []
 
     /// The realized grammar rooted at `root`: its command forest and its global flags.
-    let private grammarOf (dllPath: string) (asm: Assembly) (root: Type) : Grammar =
-        let calls =
-            instantiations dllPath
-            |> List.filter (fun i -> List.head i.TypeArguments = root.FullName)
-
+    let private grammarOf (pe: PEReader) (asm: Assembly) (root: Type) : Grammar =
+        let calls = instantiations pe root.FullName
         let prefix = envPrefixOf calls
 
         {
@@ -1055,19 +1034,27 @@ module Grammar =
             GlobalFlags = globalFlagsOf asm calls prefix
         }
 
+    /// Reads `dllPath` from disk once, into a `MetadataLoadContext` for its types
+    /// and a `PEReader` for the IL of its entry-point calls.
+    let private readAssembly (dllPath: string) (read: Assembly -> PEReader -> 'T) : 'T =
+        let image = File.ReadAllBytes dllPath
+        use context = new MetadataLoadContext(createResolver dllPath)
+
+        use pe =
+            new PEReader(Runtime.InteropServices.ImmutableCollectionsMarshal.AsImmutableArray image)
+
+        read (context.LoadFromByteArray image) pe
+
     /// Recover the realized CLI grammar of a single named root command union in an
     /// assembly. Internal seam for tests: bypasses consumer detection / root
     /// discovery so a fixture DU can be walked by full name. `None` on any read
     /// failure or when the named type isn't a union.
     let internal extractGrammarForType (dllPath: string) (rootTypeFullName: string) : Grammar option =
         try
-            let resolver = createResolver dllPath
-            use context = new MetadataLoadContext(resolver)
-            let asm = context.LoadFromAssemblyPath(Path.GetFullPath dllPath)
-
-            match asm.GetType(rootTypeFullName) |> Option.ofObj with
-            | Some t when isUnionType t -> Some(grammarOf dllPath asm t)
-            | _ -> None
+            readAssembly dllPath (fun asm pe ->
+                match asm.GetType(rootTypeFullName) |> Option.ofObj with
+                | Some t when isUnionType t -> Some(grammarOf pe asm t)
+                | _ -> None)
         with _ ->
             None
 
@@ -1077,15 +1064,13 @@ module Grammar =
     /// governs the bump when this yields `None`.
     let extractGrammarFromAssembly (dllPath: string) : Grammar option =
         try
-            let resolver = createResolver dllPath
-            use context = new MetadataLoadContext(resolver)
-            let asm = context.LoadFromAssemblyPath(Path.GetFullPath dllPath)
-            let types = safeGetTypes asm
+            readAssembly dllPath (fun asm pe ->
+                let types = safeGetTypes asm
 
-            if not (isCommandTreeConsumer asm types) then
-                None
-            else
-                findRootCommandUnion types |> Option.map (grammarOf dllPath asm)
+                if not (isCommandTreeConsumer asm types) then
+                    None
+                else
+                    findRootCommandUnion types |> Option.map (grammarOf pe asm))
         with _ ->
             None
 
@@ -1110,5 +1095,4 @@ module Grammar =
     /// flow has already downloaded the package while extracting its API, so a miss
     /// here simply means "no grammar to diff" and the API diff governs the bump.
     let extractPreviousGrammarFromNuGet (packageId: string) (version: string) : Grammar option =
-        let home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
-        extractGrammarFromCacheRoot (Path.Combine(home, ".nuget", "packages")) packageId version
+        extractGrammarFromCacheRoot (nugetCacheRoot ()) packageId version
