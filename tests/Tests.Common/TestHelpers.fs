@@ -28,6 +28,7 @@ let withTempDir (action: string -> 'a) =
     finally
         cleanupDir dir
 
+/// Captured output uses `\n` line endings on every platform (`printfn` writes `\r\n` on Windows).
 let withCapturedConsole (action: unit -> 'a) : string * 'a =
     let output = System.Text.StringBuilder()
     let writer = new StringWriter(output)
@@ -37,6 +38,6 @@ let withCapturedConsole (action: unit -> 'a) : string * 'a =
     try
         let result = action ()
         writer.Flush()
-        output.ToString(), result
+        output.ToString().Replace("\r\n", "\n"), result
     finally
         Console.SetOut(original)
