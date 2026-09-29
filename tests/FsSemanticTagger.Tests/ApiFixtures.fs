@@ -137,3 +137,28 @@ type Existing = { Name: string }
 type Fresh =
     | First of int
     | Second
+
+// Members whose compiled names look unusual but are declared in source, beside
+// ones the compiler invents. In a Debug build, calling an `inline` function
+// emits a public `<sumBy>__debug@N` copy of it on the calling module; a Release
+// build inlines the call and emits nothing. Anonymous records compile to public
+// `<>f__AnonymousType…` types in both.
+namespace ApiFixtures.CompilerInvented
+
+type Money =
+    | Money of cents: int
+
+    static member (+)(Money a, Money b) = Money(a + b)
+
+module Names =
+    let total (xs: int list) : int = List.sumBy id xs
+
+    let (|Even|Odd|) (n: int) = if n % 2 = 0 then Even else Odd
+
+    let (|Positive|_|) (n: int) = if n > 0 then Some n else None
+
+    let (|>>) (a: int) (b: int) : int = a + b
+
+    let ``a <b> c`` () : int = 0
+
+    let point () = {| X = 1; Y = 2 |}

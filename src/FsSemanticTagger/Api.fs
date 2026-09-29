@@ -364,11 +364,37 @@ let private kindOf (ApiSignature s) : SignatureKind =
     else
         Member
 
+/// Characters the compiler puts in the names it invents (`<sumBy>__debug@292`,
+/// `<>f__AnonymousType…`, `…$W`) and that no source identifier contains.
+let private generatedNameChars = [| '<'; '>'; '@'; '$' |]
+
+/// Did the compiler invent this type or member, rather than the source declare
+/// it? It must carry `[<CompilerGenerated>]` AND have a name no source identifier
+/// has. Neither test is enough alone: F# also marks the equality and comparison
+/// members it derives for records and unions (`Equals`, `CompareTo`,
+/// `GetHashCode`) `[<CompilerGenerated>]`, and those are API; while a
+/// double-backtick name such as ``` ``user@host`` ``` is declared in source.
+/// What this drops: the `__debug` copies of inlined functions a Debug build emits
+/// (`Shell::<Bind>__debug@116`), which a Release build does not, and anonymous
+/// record types. An anonymous record a public member exposes is still compared,
+/// through that member's parameter or return type.
+let private isCompilerInvented (m: MemberInfo) : bool =
+    m.Name.IndexOfAny generatedNameChars >= 0
+    && m.GetCustomAttributesData()
+       |> Seq.exists (fun a -> a.AttributeType.FullName = "System.Runtime.CompilerServices.CompilerGeneratedAttribute")
+
+/// A compiler-invented type, or one nested inside a compiler-invented type.
+let rec private isInventedType (t: Type) : bool =
+    isCompilerInvented t
+    || (not (isNull t.DeclaringType) && isInventedType t.DeclaringType)
+
 /// The public API signatures of `types`: each type, its public members and
-/// constructors, and, for a union, its public cases. Sorted.
+/// constructors, and, for a union, its public cases. Sorted. Types and members
+/// the compiler invented are left out (see `isCompilerInvented`), so a Debug and
+/// a Release build of one source have the same API.
 let extractFromTypes (types: Type seq) : ApiSignature list =
     [
-        for t in types do
+        for t in types |> Seq.filter (isInventedType >> not) do
             yield ApiSignature(sprintf "type %s" t.FullName)
 
             let declaredPublic =
@@ -377,8 +403,18 @@ let extractFromTypes (types: Type seq) : ApiSignature list =
                 ||| BindingFlags.Static
                 ||| BindingFlags.DeclaredOnly
 
+            // A property's accessors are listed as the property below. Other
+            // special-name methods are API in their own right: F# marks its
+            // operators (`op_Addition`) and active patterns (`|Even|Odd|`)
+            // special-name too, as C# does an event's `add_`/`remove_`.
+            let propertyAccessors =
+                t.GetProperties(declaredPublic)
+                |> Array.collect (fun p -> p.GetAccessors())
+                |> Array.map (fun a -> a.MetadataToken)
+                |> Set.ofArray
+
             for m in t.GetMethods(declaredPublic) do
-                if not m.IsSpecialName then
+                if not (propertyAccessors.Contains m.MetadataToken) && not (isCompilerInvented m) then
                     let ps =
                         m.GetParameters()
                         |> Array.map (fun p -> formatTypeName p.ParameterType)
