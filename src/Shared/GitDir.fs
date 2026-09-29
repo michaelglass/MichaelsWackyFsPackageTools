@@ -1,4 +1,7 @@
-/// Shared between the CoverageRatchet and FsSemanticTagger tools via linked
+// CoverageRatchet (github.com/michaelglass/CoverageRatchet) keeps its own copy of this file;
+// if the copies drift, consider sharing them via a Paket GitHub file dependency.
+
+/// Shared between the FsSemanticTagger and FsProjLint tools via linked
 /// <Compile Include="../Shared/GitDir.fs" Link="GitDir.fs" /> items, so the two
 /// tools cannot drift. It is intentionally NOT its own project: adding a project
 /// would alter each tool's ProjectReference closure and change what

@@ -1,7 +1,10 @@
-/// Shared between the CoverageRatchet and FsSemanticTagger tools, the two that start
-/// `git` and `gh` processes against a jj checkout, via linked
+// CoverageRatchet (github.com/michaelglass/CoverageRatchet) keeps its own copy of this file;
+// if the copies drift, consider sharing them via a Paket GitHub file dependency.
+
+/// Used by FsSemanticTagger, the tool here that starts `git` and `gh` processes
+/// against a jj checkout, via a linked
 /// <Compile Include="../Shared/GitStoreEnvironment.fs" Link="GitStoreEnvironment.fs" />
-/// items, so the two cannot drift on which commands get the store.
+/// item.
 module Shared.GitStoreEnvironment
 
 /// The variables a child process named `cmd` needs to reach the git store

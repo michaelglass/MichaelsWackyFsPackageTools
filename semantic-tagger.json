@@ -6,11 +6,6 @@
       "tagPrefix": "fssemantictagger-v"
     },
     {
-      "name": "CoverageRatchet",
-      "fsproj": "src/CoverageRatchet/CoverageRatchet.fsproj",
-      "tagPrefix": "coverageratchet-v"
-    },
-    {
       "name": "SyncDocs",
       "fsproj": "src/SyncDocs/SyncDocs.fsproj",
       "tagPrefix": "syncdocs-v"
@@ -19,11 +14,6 @@
       "name": "FsProjLint",
       "fsproj": "src/FsProjLint/FsProjLint.fsproj",
       "tagPrefix": "fsprojlint-v"
-    },
-    {
-      "name": "CoverageRatchet.Core",
-      "fsproj": "src/CoverageRatchet.Core/CoverageRatchet.Core.fsproj",
-      "tagPrefix": "coverageratchet-core-v"
     },
     {
       "name": "RefStamp",
