@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix: reading a DLL's API or CLI grammar lists the .NET installation's reference assemblies (every SDK and shared-framework version under `DOTNET_ROOT`) once per process instead of once per DLL. A release reads several DLLs, and each listing took about 9s on a cold GitHub Windows runner.
 - fix: `release` no longer sets `GIT_DIR` on its own process while it asks git and `gh` about the remote. A git started elsewhere in the process meanwhile inherited it and failed with `this operation must be run in a work tree`. The git store now goes to each `git` and `gh` process the release starts, through the new `Shell.runWithGitDir`; in a jj checkout without a colocated `.git` that includes the local git fallbacks, which before could only answer `not a git repository`.
 
 ## 0.14.0-alpha.18 - 2026-09-29

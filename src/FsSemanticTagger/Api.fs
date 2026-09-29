@@ -129,35 +129,55 @@ let private getDotnetRoot (dotnetRootVar: string option) (runtimeDir: string) =
         // go up 3 levels to dotnet root
         Path.GetDirectoryName(Path.GetDirectoryName(runtimeParent))
 
+/// Memoizes `compute` per key for the life of the process. `Lazy` makes concurrent
+/// first callers share one computation instead of each doing it.
+let private oncePerProcess (compute: string -> 'T) : string -> 'T =
+    let cache =
+        System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<'T>>(StringComparer.Ordinal)
+
+    fun key -> cache.GetOrAdd(key, (fun k -> lazy (compute k))).Value
+
+/// The directories of the .NET installation at `dotnetRoot` that hold reference
+/// assemblies: every SDK's FSharp dir, then every version of every shared framework.
+/// The installation does not change while this process runs, so each root is
+/// listed once.
+let private installationDirsUnder =
+    oncePerProcess (fun (dotnetRoot: string) ->
+        let sdkDirs =
+            let sdkBase = Path.Combine(dotnetRoot, "sdk")
+
+            if Directory.Exists(sdkBase) then
+                Directory.GetDirectories(sdkBase)
+                |> Array.toList
+                |> List.collect (fun sdkDir ->
+                    let fsharpDir = Path.Combine(sdkDir, "FSharp")
+                    if Directory.Exists(fsharpDir) then [ fsharpDir ] else [])
+            else
+                []
+
+        let sharedFrameworkDirs =
+            let sharedBase = Path.Combine(dotnetRoot, "shared")
+
+            if Directory.Exists(sharedBase) then
+                Directory.GetDirectories(sharedBase)
+                |> Array.toList
+                |> List.collect (fun fwDir -> Directory.GetDirectories(fwDir) |> Array.toList)
+            else
+                []
+
+        sdkDirs @ sharedFrameworkDirs)
+
+/// The running runtime's directory, then the installation dirs under DOTNET_ROOT
+/// (`dotnetRootVar`, else the root the runtime directory sits in).
+let private installationDirsFor (dotnetRootVar: string option) : string list =
+    let runtimeDir = RuntimeEnvironment.GetRuntimeDirectory()
+    runtimeDir :: installationDirsUnder (getDotnetRoot dotnetRootVar runtimeDir)
+
 /// `getAssemblySearchPaths` with the DOTNET_ROOT value passed in rather than read
 /// from this process's environment, so a test can vary it without changing the
 /// environment every concurrently started `dotnet` inherits.
 let internal assemblySearchPathsFor (dotnetRootVar: string option) (dllPath: string) : string list =
     let dllDir = Path.GetDirectoryName(Path.GetFullPath(dllPath))
-    let runtimeDir = RuntimeEnvironment.GetRuntimeDirectory()
-    let dotnetRoot = getDotnetRoot dotnetRootVar runtimeDir
-
-    let sdkDirs =
-        let sdkBase = Path.Combine(dotnetRoot, "sdk")
-
-        if Directory.Exists(sdkBase) then
-            Directory.GetDirectories(sdkBase)
-            |> Array.toList
-            |> List.collect (fun sdkDir ->
-                let fsharpDir = Path.Combine(sdkDir, "FSharp")
-                if Directory.Exists(fsharpDir) then [ fsharpDir ] else [])
-        else
-            []
-
-    let sharedFrameworkDirs =
-        let sharedBase = Path.Combine(dotnetRoot, "shared")
-
-        if Directory.Exists(sharedBase) then
-            Directory.GetDirectories(sharedBase)
-            |> Array.toList
-            |> List.collect (fun fwDir -> Directory.GetDirectories(fwDir) |> Array.toList)
-        else
-            []
 
     let nugetDirs =
         let home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
@@ -214,9 +234,8 @@ let internal assemblySearchPathsFor (dotnetRootVar: string option) (dllPath: str
     // transitive dependencies come from the .nuspec graph instead.
     let nuspecClosureDirs = nuspecClosureDirsFor (nugetCacheRoot ()) dllPath
 
-    [ dllDir; runtimeDir ]
-    @ sdkDirs
-    @ sharedFrameworkDirs
+    [ dllDir ]
+    @ installationDirsFor dotnetRootVar
     @ nugetDirs
     @ depsJsonDirs
     @ nuspecClosureDirs
@@ -224,28 +243,39 @@ let internal assemblySearchPathsFor (dotnetRootVar: string option) (dllPath: str
 let getAssemblySearchPaths (dllPath: string) : string list =
     assemblySearchPathsFor (Option.ofObj (Environment.GetEnvironmentVariable "DOTNET_ROOT")) dllPath
 
-let createResolver (dllPath: string) : MetadataAssemblyResolver =
-    let searchPaths = getAssemblySearchPaths dllPath
+/// The DLLs directly in `dir`, or none when it does not exist.
+let private dllsIn (dir: string) : string list =
+    if Directory.Exists(dir) then
+        Directory.GetFiles(dir, "*.dll") |> Array.toList
+    else
+        []
 
-    let allDlls =
-        searchPaths
-        |> List.collect (fun dir ->
-            if Directory.Exists(dir) then
-                Directory.GetFiles(dir, "*.dll") |> Array.toList
-            else
-                [])
+/// `dllsIn` for a directory of the .NET installation, listed once per process.
+/// Listing the installed runtimes is most of the cost of a resolver: thousands of
+/// files on a machine with several SDKs and frameworks, which took a GitHub Windows
+/// runner about 9s cold. The package directories are listed afresh every time: a
+/// restore can add one mid-run.
+let private installedDllsIn = oncePerProcess dllsIn
 
-    // Search paths are priority-ordered, so the first occurrence of a filename wins.
+/// The DLLs a resolver for `dllPath` offers, from the search paths in priority
+/// order; the first occurrence of a file name wins.
+let internal resolverDllsFor (dotnetRootVar: string option) (dllPath: string) : string list =
+    let installation =
+        System.Collections.Generic.HashSet<string>(installationDirsFor dotnetRootVar, StringComparer.Ordinal)
+
     let seen =
         System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
 
-    let uniqueDlls =
-        allDlls
-        |> List.filter (fun path ->
-            let name = Path.GetFileName(path)
-            seen.Add(name))
+    assemblySearchPathsFor dotnetRootVar dllPath
+    |> List.collect (fun dir ->
+        if installation.Contains dir then
+            installedDllsIn dir
+        else
+            dllsIn dir)
+    |> List.filter (fun path -> seen.Add(Path.GetFileName(path)))
 
-    PathAssemblyResolver(uniqueDlls)
+let createResolver (dllPath: string) : MetadataAssemblyResolver =
+    PathAssemblyResolver(resolverDllsFor (Option.ofObj (Environment.GetEnvironmentVariable "DOTNET_ROOT")) dllPath)
 
 /// Render a type as a comparison key, handling generics and arrays. A type is
 /// identified by its **assembly name + full name**, not its short name: a member
