@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat!: **`Api.ApiSignature` is a union of what a signature declares, not a line of text.** Its cases are `UnionCase(union, case)`, `TypeDecl fullName`, `Member(declaringType, signature)` and `Marker text`, the reason a grammar or changelog verdict carries. `ApiSignature.render` prints the same lines as before, so `extract-api`, `check-api` and `release` output does not change. The diff no longer reads a signature's kind back out of its text, which misread a new case whose double-backtick name contains `::` (`case M.U::A::B`) as a case of a union `M.U::A` and released it as an addition instead of a breaking change.
+
 ## 0.14.0-alpha.19 - 2026-09-29
 
 - chore(deps): CommandTree 0.11.3 → 0.12.0.

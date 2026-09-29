@@ -118,8 +118,8 @@ let private describeLevel (level: DeclaredLevel) : string =
 
 let private describeChange (change: ApiChange) : string =
     match change with
-    | Breaking(ApiSignature s, _) -> sprintf "a breaking change (%s)" (s.Trim())
-    | Addition(ApiSignature s, _) -> sprintf "an addition (%s)" (s.Trim())
+    | Breaking(s, _) -> sprintf "a breaking change (%s)" ((ApiSignature.render s).Trim())
+    | Addition(s, _) -> sprintf "an addition (%s)" ((ApiSignature.render s).Trim())
     | NoChange -> "no public API change"
 
 /// Bound `computed` below by `declared`: the result is the stronger of the two.
@@ -132,7 +132,7 @@ let floor (computed: ApiChange) (declared: Declaration option) : ApiChange * str
     | None -> computed, None
     | Some d when d.Level > rank computed ->
         let marker =
-            ApiSignature(sprintf "changelog: %s declares %s" d.Source (describeLevel d.Level))
+            ApiSignature.Marker(sprintf "changelog: %s declares %s" d.Source (describeLevel d.Level))
 
         let change =
             match d.Level with

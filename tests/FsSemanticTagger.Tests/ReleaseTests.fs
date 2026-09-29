@@ -746,7 +746,7 @@ let ``release - Auto with reserved version bumps past it`` () =
                      Success "1 file changed")
                 ]
 
-        let sameApi = [ ApiSignature "type Foo" ]
+        let sameApi = [ ApiSignature.TypeDecl "Foo" ]
         let extractPreviousApi (_pkg: string) (_version: string) = Found sameApi
 
         let config =
@@ -1125,9 +1125,10 @@ let ``release - Auto detects breaking API change and bumps major`` () =
                      Success "1 file changed")
                 ]
 
-        let oldApi = [ ApiSignature "type Foo"; ApiSignature "  Foo::Bar(): String" ]
+        let oldApi =
+            [ ApiSignature.TypeDecl "Foo"; ApiSignature.Member("Foo", "Bar(): String") ]
 
-        let currentApi = [ ApiSignature "type Foo" ]
+        let currentApi = [ ApiSignature.TypeDecl "Foo" ]
 
         let extractPreviousApi (_pkg: string) (_version: string) = Found oldApi
 
@@ -1207,7 +1208,7 @@ let private releaseLibraryAgainstGrammar (previousGrammar: GrammarRead) =
                     ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed")
                 ]
 
-        let api = [ ApiSignature "type Foo" ]
+        let api = [ ApiSignature.TypeDecl "Foo" ]
 
         let config =
             {
@@ -1289,7 +1290,7 @@ let ``release - Auto notes a previous CLI grammar it cannot model and lets the A
 /// Auto/PushTags with an identical API, so any bump above patch comes from the
 /// changelog. Returns the captured output and the exit code.
 let private releaseWithUnchangedApi (run: string -> string -> CommandResult) (config: ToolConfig) (only: string list) =
-    let api = [ ApiSignature "type Foo" ]
+    let api = [ ApiSignature.TypeDecl "Foo" ]
 
     withCapturedConsole (fun () ->
         release
@@ -1474,10 +1475,13 @@ let ``release - Auto detects addition and bumps minor`` () =
                      Success "1 file changed")
                 ]
 
-        let oldApi = [ ApiSignature "type Foo" ]
+        let oldApi = [ ApiSignature.TypeDecl "Foo" ]
 
         let currentApi =
-            [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+            [
+                ApiSignature.TypeDecl "Foo"
+                ApiSignature.Member("Foo", "NewMethod(): String")
+            ]
 
         let extractPreviousApi (_pkg: string) (_version: string) = Found oldApi
 
@@ -1531,7 +1535,10 @@ let ``release - Auto aborts (no bump) when previous API cannot be read`` () =
         let extractPreviousApi (_pkg: string) (_version: string) = FetchError "feed unreachable"
 
         let currentApi =
-            [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+            [
+                ApiSignature.TypeDecl "Foo"
+                ApiSignature.Member("Foo", "NewMethod(): String")
+            ]
 
         let config =
             {
@@ -1581,10 +1588,13 @@ let ``release - Auto skips an orphan tag and diffs against the last published pr
                      Success "1 file changed")
                 ]
 
-        let oldApi = [ ApiSignature "type Foo" ]
+        let oldApi = [ ApiSignature.TypeDecl "Foo" ]
 
         let currentApi =
-            [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+            [
+                ApiSignature.TypeDecl "Foo"
+                ApiSignature.Member("Foo", "NewMethod(): String")
+            ]
 
         let extractPreviousApi (_pkg: string) (version: string) =
             match version with
@@ -1683,10 +1693,13 @@ let private releaseOverUnreadableBaseline (latest: string) (checkFeedPresence: s
             if version = latest then
                 Unreadable analyzerLoadFailure
             else
-                Found [ ApiSignature "type Foo"; ApiSignature "  Foo::Removed(): String" ]
+                Found [ ApiSignature.TypeDecl "Foo"; ApiSignature.Member("Foo", "Removed(): String") ]
 
         let currentApi =
-            [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+            [
+                ApiSignature.TypeDecl "Foo"
+                ApiSignature.Member("Foo", "NewMethod(): String")
+            ]
 
         let (fakeRun, _getCalls) = unreadableBaselineRun tmpFile latest
 
@@ -1779,7 +1792,10 @@ let ``release - Auto still aborts on a transient fetch error (does not skip)`` (
                 ]
 
         let currentApi =
-            [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+            [
+                ApiSignature.TypeDecl "Foo"
+                ApiSignature.Member("Foo", "NewMethod(): String")
+            ]
 
         // A transient error on the newest tag aborts; walking back could under-bump.
         let extractPreviousApi (_pkg: string) (version: string) =
@@ -1837,7 +1853,10 @@ let ``release - Auto when every prior tag is absent on feed bumps conservatively
             NotRestorable "error NU1102: Unable to find package MyLib"
 
         let currentApi =
-            [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+            [
+                ApiSignature.TypeDecl "Foo"
+                ApiSignature.Member("Foo", "NewMethod(): String")
+            ]
 
         let config =
             {
@@ -1890,7 +1909,10 @@ let ``release - Auto every prior tag absent honours the reserved-version skip`` 
             NotRestorable "error NU1102: Unable to find package MyLib"
 
         let currentApi =
-            [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+            [
+                ApiSignature.TypeDecl "Foo"
+                ApiSignature.Member("Foo", "NewMethod(): String")
+            ]
 
         let config =
             {
@@ -1941,15 +1963,15 @@ let ``release - Auto pre-1.0 breaking change bumps minor (UnionConfig 0.3.0 -> 0
 
         let oldApi =
             [
-                ApiSignature "type ConfigVarKind"
-                ApiSignature "  ConfigVarKind+AutoGenerated"
-                ApiSignature "  AutoGenerated::initialValue: FSharpOption<String>"
+                ApiSignature.TypeDecl "ConfigVarKind"
+                ApiSignature.TypeDecl "ConfigVarKind+AutoGenerated"
+                ApiSignature.Member("AutoGenerated", "initialValue: FSharpOption<String>")
             ]
 
         let currentApi =
             [
-                ApiSignature "type ConfigVarKind"
-                ApiSignature "  ConfigVarKind+AutoGenerated"
+                ApiSignature.TypeDecl "ConfigVarKind"
+                ApiSignature.TypeDecl "ConfigVarKind+AutoGenerated"
             ]
 
         let extractPreviousApi (_pkg: string) (_version: string) = Found oldApi
@@ -4325,10 +4347,13 @@ let ``release - fresh changes still bump normally (not treated as resume)`` () =
                      Success "1 file changed")
                 ]
 
-        let oldApi = [ ApiSignature "type Foo" ]
+        let oldApi = [ ApiSignature.TypeDecl "Foo" ]
 
         let currentApi =
-            [ ApiSignature "type Foo"; ApiSignature "  Foo::NewMethod(): String" ]
+            [
+                ApiSignature.TypeDecl "Foo"
+                ApiSignature.Member("Foo", "NewMethod(): String")
+            ]
 
         let extractPreviousApi (_pkg: string) (_version: string) = Found oldApi
 
@@ -4651,8 +4676,10 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         // Minor, not a rebundle's patch: the API diff ran.
-        let oldApi = [ ApiSignature "type Foo" ]
-        let currentApi = [ ApiSignature "type Foo"; ApiSignature "  Foo::New(): String" ]
+        let oldApi = [ ApiSignature.TypeDecl "Foo" ]
+
+        let currentApi =
+            [ ApiSignature.TypeDecl "Foo"; ApiSignature.Member("Foo", "New(): String") ]
 
         let config =
             {
@@ -5971,10 +5998,10 @@ let ``release - PackAsTool CLI whose previous grammar cannot be modelled is bump
             notModellable
             (fun _ version ->
                 if version = "1.0.0" then
-                    Found [ ApiSignature "type Cli" ]
+                    Found [ ApiSignature.TypeDecl "Cli" ]
                 else
                     failwith "wrong baseline")
-            (fun _ -> [ ApiSignature "type Cli"; ApiSignature "type Cli.Added" ])
+            (fun _ -> [ ApiSignature.TypeDecl "Cli"; ApiSignature.TypeDecl "Cli.Added" ])
 
     test <@ result = 0 @>
 

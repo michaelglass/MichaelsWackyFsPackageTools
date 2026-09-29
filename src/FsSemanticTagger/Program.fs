@@ -196,8 +196,8 @@ let internal runCommandWith
         else
             let sigs = Api.extractFromAssembly dll
 
-            for (Api.ApiSignature s) in sigs do
-                printfn "%s" s
+            for s in sigs do
+                printfn "%s" (Api.ApiSignature.render s)
 
             Ok 0
     | CheckApi(oldDll, newDll) ->
@@ -224,15 +224,15 @@ let internal runCommandWith
         | Api.Breaking _ ->
             printfn "BREAKING changes detected:"
 
-            for (Api.ApiSignature s) in Api.ApiChange.toList change |> List.truncate 10 do
-                printfn "  ! %s" s
+            for s in Api.ApiChange.toList change |> List.truncate 10 do
+                printfn "  ! %s" (Api.ApiSignature.render s)
 
             Ok 2
         | Api.Addition _ ->
             printfn "Non-breaking additions:"
 
-            for (Api.ApiSignature s) in Api.ApiChange.toList change |> List.truncate 10 do
-                printfn "  + %s" s
+            for s in Api.ApiChange.toList change |> List.truncate 10 do
+                printfn "  + %s" (Api.ApiSignature.render s)
 
             Ok 1
         | Api.NoChange ->

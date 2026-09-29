@@ -278,8 +278,8 @@ module Grammar =
     /// grammar diff has no assembly-signature strings of its own).
     let toApiChange (change: GrammarChange) : ApiChange =
         match change with
-        | GBreaking -> Breaking(ApiSignature "grammar: a breaking CLI grammar change was detected", [])
-        | GAddition -> Addition(ApiSignature "grammar: an additive CLI grammar change was detected", [])
+        | GBreaking -> Breaking(ApiSignature.Marker "grammar: a breaking CLI grammar change was detected", [])
+        | GAddition -> Addition(ApiSignature.Marker "grammar: an additive CLI grammar change was detected", [])
         | GNoChange -> NoChange
 
     /// Fold a grammar verdict into an API verdict, stronger bump wins. The API

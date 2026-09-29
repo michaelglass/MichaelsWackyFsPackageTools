@@ -1062,7 +1062,7 @@ let private resolveBaselineApi
 /// would block the release for nothing. Asked of `determineBump` itself rather than
 /// by matching on stages, so it stays true if the bump rules change.
 let private bumpDependsOnApiDiff (current: Version) : bool =
-    let probe = ApiSignature ""
+    let probe = ApiSignature.Marker ""
 
     [ Breaking(probe, []); Addition(probe, []) ]
     |> List.exists (fun change -> determineBump current change <> determineBump current NoChange)

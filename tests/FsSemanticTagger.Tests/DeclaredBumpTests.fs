@@ -119,8 +119,8 @@ let private declared level =
             Entry = "- feat!: SchemaVersion 9 -> 10"
         }
 
-let private breaking = Breaking(ApiSignature "  Foo::Bar(): String", [])
-let private addition = Addition(ApiSignature "  Foo::Baz(): String", [])
+let private breaking = Breaking(ApiSignature.Member("Foo", "Bar(): String"), [])
+let private addition = Addition(ApiSignature.Member("Foo", "Baz(): String"), [])
 
 [<Fact>]
 let ``with nothing declared the computed change passes through silently`` () =

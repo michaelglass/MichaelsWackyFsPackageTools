@@ -5,7 +5,33 @@ open System.IO
 open System.Reflection
 open System.Runtime.InteropServices
 
-type ApiSignature = ApiSignature of string
+/// One declaration of a public API surface, or a marker standing in for one in a
+/// verdict no declaration produced. Each declaration keeps the names it is made of
+/// apart, so classifying one never re-parses its rendered text.
+[<RequireQualifiedAccess>]
+type ApiSignature =
+    /// A public case of a union, which consumers can match on.
+    | UnionCase of union: string * case: string
+    /// A public type, by its full name.
+    | TypeDecl of fullName: string
+    /// A public method, property or constructor of a type. The type is named by its
+    /// short `Name`; `signature` is the member's name with its parameter and return
+    /// types, as `ApiSignature.render` prints it after the `::`.
+    | Member of declaringType: string * signature: string
+    /// Not a declaration: the human-readable reason a verdict carries when no
+    /// declaration produced it, such as a CLI grammar change or a changelog's
+    /// declared bump.
+    | Marker of text: string
+
+module ApiSignature =
+    /// The one-line text of a signature, as `extract-api`, `check-api` and the
+    /// release output print it.
+    let render (signature: ApiSignature) : string =
+        match signature with
+        | ApiSignature.UnionCase(union, case) -> sprintf "case %s::%s" union case
+        | ApiSignature.TypeDecl fullName -> sprintf "type %s" fullName
+        | ApiSignature.Member(declaringType, signature) -> sprintf "  %s::%s" declaringType signature
+        | ApiSignature.Marker text -> text
 
 type ApiChange =
     | Breaking of head: ApiSignature * rest: ApiSignature list
@@ -445,27 +471,6 @@ let internal unionCaseOf (m: MethodInfo) : string option =
     | Some prefix when isCaseFactory () -> Some(m.Name.Substring prefix.Length)
     | _ -> None
 
-/// The signature declaring that `unionFullName` has the public case `caseName`.
-/// Cases are signatures of their own because adding one breaks every consumer's
-/// exhaustive match, which no other signature can express.
-let private unionCaseSignature (unionFullName: string) (caseName: string) =
-    ApiSignature(sprintf "case %s::%s" unionFullName caseName)
-
-/// What a signature line declares, from most to least specific about what a
-/// consumer depends on: a union's case, a type, or a member of a type.
-type private SignatureKind =
-    | UnionCase of union: string
-    | TypeDeclaration
-    | Member
-
-let private kindOf (ApiSignature s) : SignatureKind =
-    if s.StartsWith("case ", StringComparison.Ordinal) then
-        UnionCase(s.Substring(5, s.LastIndexOf("::", StringComparison.Ordinal) - 5))
-    elif s.StartsWith("type ", StringComparison.Ordinal) then
-        TypeDeclaration
-    else
-        Member
-
 /// Characters the compiler puts in the names it invents (`<sumBy>__debug@292`,
 /// `<>f__AnonymousType…`, `…$W`) and that no source identifier contains.
 let private generatedNameChars = [| '<'; '>'; '@'; '$' |]
@@ -496,7 +501,7 @@ let rec private isInventedType (t: Type) : bool =
 let extractFromTypes (types: Type seq) : ApiSignature list =
     [
         for t in types |> Seq.filter (isInventedType >> not) do
-            yield ApiSignature(sprintf "type %s" t.FullName)
+            yield ApiSignature.TypeDecl t.FullName
 
             let declaredPublic =
                 BindingFlags.Public
@@ -523,17 +528,19 @@ let extractFromTypes (types: Type seq) : ApiSignature list =
                         |> Array.map (fun p -> formatTypeName p.ParameterType)
                         |> String.concat ", "
 
-                    yield ApiSignature(sprintf "  %s::%s(%s): %s" t.Name m.Name ps (formatTypeName m.ReturnType))
+                    yield ApiSignature.Member(t.Name, sprintf "%s(%s): %s" m.Name ps (formatTypeName m.ReturnType))
 
                 // A fieldless case's factory is a property getter, so this is
-                // checked for accessors too.
+                // checked for accessors too. Cases are signatures of their own
+                // because adding one breaks every consumer's exhaustive match, which
+                // no other signature can express.
                 if m.IsStatic then
                     match unionCaseOf m with
-                    | Some case -> yield unionCaseSignature t.FullName case
+                    | Some case -> yield ApiSignature.UnionCase(t.FullName, case)
                     | None -> ()
 
             for p in properties do
-                yield ApiSignature(sprintf "  %s::%s: %s" t.Name p.Name (formatTypeName p.PropertyType))
+                yield ApiSignature.Member(t.Name, sprintf "%s: %s" p.Name (formatTypeName p.PropertyType))
 
             for c in t.GetConstructors(BindingFlags.Public ||| BindingFlags.Instance ||| BindingFlags.DeclaredOnly) do
                 let ps =
@@ -541,11 +548,11 @@ let extractFromTypes (types: Type seq) : ApiSignature list =
                     |> Array.map (fun p -> formatTypeName p.ParameterType)
                     |> String.concat ", "
 
-                yield ApiSignature(sprintf "  %s::.ctor(%s)" t.Name ps)
+                yield ApiSignature.Member(t.Name, sprintf ".ctor(%s)" ps)
     ]
     // A member line names its type by `Name`, not `FullName`, so two same-named
     // types nested in different modules can yield the same line.
-    |> List.sort
+    |> List.sortBy ApiSignature.render
     |> List.distinct
 
 let extractFromAssembly (dllPath: string) : ApiSignature list =
@@ -1041,26 +1048,37 @@ let compare (baseline: ApiSignature list) (current: ApiSignature list) : ApiChan
     let baseSet = Set.ofList baseline
     let currSet = Set.ofList current
     let removed = baseSet - currSet |> Set.toList
-    let added = currSet - baseSet |> Set.toList
+    let added = currSet - baseSet |> Set.toList |> List.sortBy ApiSignature.render
 
     let baselineUnions =
         baseline
-        |> List.choose (fun signature ->
-            match kindOf signature with
-            | UnionCase union -> Some union
-            | TypeDeclaration
-            | Member -> None)
+        |> List.choose (function
+            | ApiSignature.UnionCase(union, _) -> Some union
+            | ApiSignature.TypeDecl _
+            | ApiSignature.Member _
+            | ApiSignature.Marker _ -> None)
         |> Set.ofList
 
     let newCases, additions =
         added
-        |> List.partition (fun signature ->
-            match kindOf signature with
-            | UnionCase union -> baselineUnions.Contains union
-            | TypeDeclaration
-            | Member -> false)
+        |> List.partition (function
+            | ApiSignature.UnionCase(union, _) -> baselineUnions.Contains union
+            | ApiSignature.TypeDecl _
+            | ApiSignature.Member _
+            | ApiSignature.Marker _ -> false)
 
-    match removed @ newCases |> List.sortBy (fun s -> kindOf s, s), additions with
+    // Cases (grouped by union), then types, then members.
+    let breakingOrder (signature: ApiSignature) =
+        let rank =
+            match signature with
+            | ApiSignature.UnionCase(union, _) -> 0, union
+            | ApiSignature.TypeDecl _ -> 1, ""
+            | ApiSignature.Member _
+            | ApiSignature.Marker _ -> 2, ""
+
+        rank, ApiSignature.render signature
+
+    match removed @ newCases |> List.sortBy breakingOrder, additions with
     | h :: t, _ -> Breaking(h, t)
     | [], h :: t -> Addition(h, t)
     | [], [] -> NoChange

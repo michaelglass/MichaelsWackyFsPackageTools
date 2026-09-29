@@ -551,12 +551,12 @@ let ``foldIntoApi keeps the stronger bump and prefers the API signatures on a ti
         @>
 
     // API at least as strong => the (richer) API change is kept unchanged.
-    let apiAddition = Api.Addition(Api.ApiSignature "  Foo::New(): int", [])
+    let apiAddition = Api.Addition(Api.ApiSignature.Member("Foo", "New(): int"), [])
     test <@ Grammar.foldIntoApi apiAddition GAddition = apiAddition @>
     test <@ Grammar.foldIntoApi apiAddition GNoChange = apiAddition @>
 
     // A breaking API keeps its bump regardless of a weaker grammar verdict.
-    let apiBreaking = Api.Breaking(Api.ApiSignature "type Gone", [])
+    let apiBreaking = Api.Breaking(Api.ApiSignature.TypeDecl "Gone", [])
     test <@ Grammar.foldIntoApi apiBreaking GAddition = apiBreaking @>
 
 // ---- structural recovery under MetadataLoadContext (the crux) ---------------
