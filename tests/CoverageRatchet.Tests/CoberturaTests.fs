@@ -1058,3 +1058,71 @@ let ``ExclusionReason.describe - names the value that matched`` () =
     test <@ ExclusionReason.describe (ExcludedByExtension ".js") = "extension \".js\" is not read" @>
     test <@ ExclusionReason.describe (ExcludedByExtension "") = "has no extension" @>
     test <@ ExclusionReason.describe (ExcludedByDirectory(Named "vendor")) = "in a directory named \"vendor\"" @>
+
+[<Fact>]
+let ``ExclusionReason.describe - names a directory suffix rule`` () =
+    test
+        <@
+            ExclusionReason.describe (ExcludedByDirectory(NameEndsWith ".Tests")) =
+                "in a directory whose name ends with \".Tests\""
+        @>
+
+[<Fact>]
+let ``ReaderOptions.includingOnly - narrows to the listed languages`` () =
+    test
+        <@
+            ReaderOptions.includingOnly [ ".CS"; ".fs" ]
+            |> Result.map (fun o -> o.IncludedExtensions)
+                =
+                Ok [| ".fs"; ".cs" |]
+        @>
+
+[<Fact>]
+let ``ReaderOptions.includingOnly - rejects an empty list, a missing dot and an unknown extension`` () =
+    test <@ ReaderOptions.includingOnly [] = Error "the extension list is empty; name one or more of .fs, .cs, .vb" @>
+    test <@ ReaderOptions.includingOnly [ "vb" ] = Error "\"vb\" must start with \".\" (e.g. \".vb\")" @>
+
+    test
+        <@
+            ReaderOptions.includingOnly [ ".razor" ] =
+                Error "\".razor\" is not a source extension the reader measures; name one or more of .fs, .cs, .vb"
+        @>
+
+[<Fact>]
+let ``buildBranchGaps - a line reported twice keeps its best branch ratio`` () =
+    let xml =
+        """<?xml version="1.0" encoding="utf-8"?>
+        <coverage><packages><package><classes>
+          <class filename="/src/Twice.fs">
+            <lines>
+              <line number="1" hits="1" condition-coverage="25% (1/4)" />
+              <line number="2" hits="1" condition-coverage="75% (3/4)" />
+            </lines>
+          </class>
+          <class filename="/src/Twice.fs">
+            <lines>
+              <line number="1" hits="1" condition-coverage="75% (3/4)" />
+              <line number="2" hits="1" condition-coverage="25% (1/4)" />
+            </lines>
+          </class>
+        </classes></package></packages></coverage>"""
+
+    let gaps = buildBranchGaps (extractRawLines xml)
+
+    test
+        <@
+            gaps |> List.collect (fun f -> f.Gaps) =
+                [ { Line = 1; Covered = 3; Total = 4 }; { Line = 2; Covered = 3; Total = 4 } ]
+        @>
+
+[<Fact>]
+let ``findCoverageFiles - does not descend into .devenv`` () =
+    TestHelpers.withTempDir (fun dir ->
+        let devenv = Path.Combine(dir, ".devenv", "state")
+        let project = Path.Combine(dir, "MyLib")
+        Directory.CreateDirectory(devenv) |> ignore
+        Directory.CreateDirectory(project) |> ignore
+        File.WriteAllText(Path.Combine(devenv, "coverage.cobertura.xml"), "<coverage/>")
+        File.WriteAllText(Path.Combine(project, "coverage.cobertura.xml"), "<coverage/>")
+
+        test <@ findCoverageFiles dir = [ Path.Combine(project, "coverage.cobertura.xml") ] @>)

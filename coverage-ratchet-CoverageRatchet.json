@@ -2,8 +2,8 @@
   "overrides": {
     "Cobertura.fs": [
       {
-        "line": 96,
-        "branch": 93,
+        "line": 99,
+        "branch": 97,
         "reason": "F# compiler generates extra branches for null checks and pattern matching",
         "platform": "macos"
       },
