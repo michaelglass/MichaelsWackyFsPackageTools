@@ -1193,16 +1193,75 @@ let ``runIn - a failure with nothing on stderr reports stdout`` () =
                 | _ -> false)
             @>)
 
+/// Kills the background `sleep` a test command recorded in `<dir>/sleep.pid`.
+let private killRecordedSleep (dir: string) =
+    Shell.runIn dir "sh" "-c \"kill $(cat sleep.pid) 2>/dev/null\"" |> ignore
+
+let private truncationNote = "stopped reading output"
+
 [<Xunit.Fact(Timeout = IntegrationTimeoutMs)>]
 let ``runLogged - a command past its budget is killed and the log says so`` () =
     withTempDir (fun dir ->
         let log = Path.Combine(dir, "logs", "gate.log")
+        let clock = Diagnostics.Stopwatch.StartNew()
+
+        try
+            let outcome =
+                Shell.runLogged
+                    dir
+                    "echo started; sleep 30 & echo $! > sleep.pid; wait $!; echo never"
+                    (TimeSpan.FromSeconds 1.0)
+                    log
+
+            // Budget 1s + drainGrace 5s; a `sleep` that outlives the tree kill
+            // (Git for Windows) must not hold the gate for its full 30s.
+            test <@ clock.Elapsed < TimeSpan.FromSeconds 20.0 @>
+            test <@ outcome = TimedOut(TimeSpan.FromSeconds 1.0) @>
+            let text = File.ReadAllText log
+            test <@ text.Contains "started" @>
+            test <@ text.Contains "killed after 0m1s" @>
+            test <@ not (text.Contains "\nnever") @>
+        finally
+            killRecordedSleep dir)
+
+[<Xunit.Fact(Timeout = IntegrationTimeoutMs)>]
+let ``runLogged - a background process holding the pipes does not stall a finished gate`` () =
+    withTempDir (fun dir ->
+        let log = Path.Combine(dir, "gate.log")
+        let clock = Diagnostics.Stopwatch.StartNew()
+
+        try
+            let outcome =
+                Shell.runLoggedWithin
+                    (TimeSpan.FromSeconds 1.0)
+                    dir
+                    "sleep 30 & echo $! > sleep.pid; echo done"
+                    (TimeSpan.FromMinutes 1.0)
+                    log
+
+            test <@ clock.Elapsed < TimeSpan.FromSeconds 10.0 @>
+            test <@ outcome = Exited 0 @>
+            let text = File.ReadAllText log
+            test <@ text.Contains "done" @>
+            test <@ text.Contains truncationNote @>
+        finally
+            killRecordedSleep dir)
+
+[<Xunit.Fact(Timeout = IntegrationTimeoutMs)>]
+let ``runLogged - a gate that leaves nothing behind is logged in full`` () =
+    withTempDir (fun dir ->
+        let log = Path.Combine(dir, "gate.log")
 
         let outcome =
-            Shell.runLogged dir "echo started; sleep 30; echo never" (TimeSpan.FromSeconds 1.0) log
+            Shell.runLogged
+                dir
+                "for i in 1 2 3; do echo out$i; echo err$i >&2; done; exit 4"
+                (TimeSpan.FromMinutes 1.0)
+                log
 
-        test <@ outcome = TimedOut(TimeSpan.FromSeconds 1.0) @>
+        test <@ outcome = Exited 4 @>
         let text = File.ReadAllText log
-        test <@ text.Contains "started" @>
-        test <@ text.Contains "killed after 0m1s" @>
-        test <@ not (text.Contains "\nnever") @>)
+
+        test <@ [ "out1"; "out2"; "out3"; "err1"; "err2"; "err3" ] |> List.forall text.Contains @>
+
+        test <@ not (text.Contains truncationNote) @>)

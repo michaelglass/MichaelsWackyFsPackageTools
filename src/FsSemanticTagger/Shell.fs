@@ -71,9 +71,19 @@ type GateOutcome =
     | Exited of exitCode: int
     | TimedOut of budget: System.TimeSpan
 
-/// Run `command` through `sh -c` in `cwd`, appending stdout and stderr to
-/// `logPath`; kill the whole process tree once `timeout` elapses.
-let runLogged (cwd: string) (command: string) (timeout: System.TimeSpan) (logPath: string) : GateOutcome =
+/// How long `runLogged` keeps reading the gate's output after the gate has
+/// ended. The gate's own output is already in the pipes by then and drains in
+/// milliseconds; only a process the gate left running holds them open longer.
+let drainGrace = System.TimeSpan.FromSeconds 5.0
+
+/// `runLogged` with the drain grace `grace`.
+let runLoggedWithin
+    (grace: System.TimeSpan)
+    (cwd: string)
+    (command: string)
+    (timeout: System.TimeSpan)
+    (logPath: string)
+    : GateOutcome =
     let psi = ProcessStartInfo("sh")
     psi.ArgumentList.Add "-c"
     psi.ArgumentList.Add command
@@ -89,31 +99,62 @@ let runLogged (cwd: string) (command: string) (timeout: System.TimeSpan) (logPat
     // try/finally and a synchronized writer instead of `use`/`lock`: those add
     // unreachable branches that the coverage floors would count.
     let file = new System.IO.StreamWriter(logPath, append = true, AutoFlush = true)
+    let stopReading = new System.Threading.CancellationTokenSource()
 
     try
         let log = System.IO.TextWriter.Synchronized file
         log.WriteLine(sprintf "$ %s   (in %s)" command cwd)
 
-        let pump (reader: System.IO.StreamReader) =
+        // Ends at end of stream, or quietly once `stopReading` fires: a reader
+        // left behind must neither write to the closed log nor fault its task.
+        // On the thread pool, since a read from a synchronous pipe may block.
+        let pump (reader: System.IO.StreamReader) : Task =
             Task.Run(fun () ->
-                let mutable line = reader.ReadLine()
+                task {
+                    try
+                        let! first = reader.ReadLineAsync(stopReading.Token)
+                        let mutable line = first
 
-                while not (isNull line) do
-                    log.WriteLine line
-                    line <- reader.ReadLine())
+                        while not (isNull line || stopReading.IsCancellationRequested) do
+                            log.WriteLine line
+                            let! next = reader.ReadLineAsync(stopReading.Token)
+                            line <- next
+                    with _ ->
+                        ()
+                }
+                :> Task)
 
         let p = Process.Start(psi)
-        let stdoutTask = pump p.StandardOutput
-        let stderrTask = pump p.StandardError
+        let readers = [| pump p.StandardOutput; pump p.StandardError |]
 
-        if p.WaitForExit(timeout) then
-            Task.WaitAll [| stdoutTask; stderrTask |]
-            Exited p.ExitCode
-        else
-            p.Kill(entireProcessTree = true)
-            p.WaitForExit()
-            Task.WaitAll [| stdoutTask; stderrTask |]
+        let outcome =
+            if p.WaitForExit(timeout) then
+                Exited p.ExitCode
+            else
+                p.Kill(entireProcessTree = true)
+                p.WaitForExit()
+                TimedOut timeout
+
+        if not (Task.WaitAll(readers, grace)) then
+            stopReading.Cancel()
+
+            log.WriteLine(
+                "[fssemantictagger] stopped reading output: a process the gate started still holds it open; "
+                + "the log may be missing its last lines"
+            )
+
+        match outcome with
+        | TimedOut _ ->
             log.WriteLine(sprintf "[fssemantictagger] killed after %dm%ds" (int timeout.TotalMinutes) timeout.Seconds)
-            TimedOut timeout
+        | Exited _ -> ()
+
+        outcome
     finally
+        stopReading.Cancel()
         file.Dispose()
+
+/// Run `command` through `sh -c` in `cwd`, appending stdout and stderr to
+/// `logPath`; kill the whole process tree once `timeout` elapses. Output still
+/// unread `drainGrace` after the gate ends is dropped, with a note in the log.
+let runLogged (cwd: string) (command: string) (timeout: System.TimeSpan) (logPath: string) : GateOutcome =
+    runLoggedWithin drainGrace cwd command timeout logPath
