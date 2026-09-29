@@ -13,6 +13,19 @@ open FsSemanticTagger.Release
 open FsSemanticTagger.Api
 open FsSemanticTagger.Vcs
 
+/// This module's own scratch directory, in place of the system temp dir. Its tests put
+/// their fsprojs in one directory with the CHANGELOG.md a release reads beside them,
+/// and the system temp dir is shared with every other process on the machine running
+/// this suite, which rewrites that CHANGELOG.md mid-release. The tests in one module
+/// run one at a time, so a directory per process is enough.
+let private scratchDir = createTempDir ()
+
+/// A new empty file in `scratchDir`, as `Path.GetTempFileName` makes in the temp dir.
+let private scratchFile () =
+    let path = Path.Combine(scratchDir, Path.GetRandomFileName())
+    File.WriteAllText(path, "")
+    path
+
 /// No waits, and one tag-run poll: tests that care about the poll pass their own.
 let private immediateTagPush: TagPushPolicy =
     {
@@ -35,10 +48,10 @@ let private noCurrentGrammar (_dll: string) : Grammar option = None
 /// No machine-local canary config, and a host that must never be reached.
 let private noCanary: ConsumerCanary.Settings =
     {
-        ConfigPath = Path.Combine(Path.GetTempPath(), "no-such-fssemantictagger.json")
+        ConfigPath = Path.Combine(scratchDir, "no-such-fssemantictagger.json")
         Skip = false
-        LogDir = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-logs")
-        PackagesCache = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-cache")
+        LogDir = Path.Combine(scratchDir, "fssemantictagger-canary-logs")
+        PackagesCache = Path.Combine(scratchDir, "fssemantictagger-canary-cache")
         Ops =
             {
                 RunIn = fun _ cmd _ -> failwithf "unexpected canary process: %s" cmd
@@ -48,7 +61,7 @@ let private noCanary: ConsumerCanary.Settings =
 
 /// Re-seeds the temp-dir CHANGELOG.md before each release call (promotion mutates it).
 let private seedTmpChangelog () =
-    let p = Path.Combine(Path.GetTempPath(), "CHANGELOG.md")
+    let p = Path.Combine(scratchDir, "CHANGELOG.md")
     File.WriteAllText(p, "# Changelog\n\n## Unreleased\n\n- test entry\n")
 
 let private runReleaseOnFeed run config cmd mode prev cur poll max push checkFeedPresence =
@@ -57,10 +70,7 @@ let private runReleaseOnFeed run config cmd mode prev cur poll max push checkFee
     release
         {
             Run = run
-            Config =
-                { config with
-                    RootDir = Path.GetTempPath()
-                }
+            Config = { config with RootDir = scratchDir }
             Command = cmd
             Mode = mode
             TargetPackages = []
@@ -204,7 +214,7 @@ let ``a workflow run that already failed stops the release, and says so as a fai
 
 [<Fact>]
 let ``updateFsprojVersion - updates Version element in fsproj`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         let content =
@@ -235,7 +245,7 @@ let ``updateFsprojVersion - updates Version element in fsproj`` () =
 
 [<Fact>]
 let ``updateFsprojVersion - handles pre-release versions`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         let content =
@@ -263,7 +273,7 @@ let ``updateFsprojVersion - handles pre-release versions`` () =
 
 [<Fact>]
 let ``readFsprojVersion - reads version from fsproj`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(
@@ -282,7 +292,7 @@ let ``readFsprojVersion - reads version from fsproj`` () =
 
 [<Fact>]
 let ``readFsprojVersion - returns None when no Version element`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(
@@ -385,7 +395,7 @@ let ``release - Auto with no previous tags returns 0 with no packages`` () =
 
 [<Fact>]
 let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(
@@ -459,7 +469,7 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
 
 [<Fact>]
 let ``release - Auto first-releases an untagged package at its declared fsproj version`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(
@@ -559,7 +569,7 @@ let private passingCiRun (extraResponses: (string * string * CommandResult) list
 /// both waits must use that budget.
 [<Fact>]
 let ``release - the version-bump commit's CI wait uses the history-sized budget, like the release commit's`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -621,7 +631,7 @@ let ``release - the version-bump commit's CI wait uses the history-sized budget,
                 PreBuildCmds = []
                 PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
                 CiTimeout = None
-                RootDir = Path.GetTempPath()
+                RootDir = scratchDir
             }
 
         seedTmpChangelog ()
@@ -672,7 +682,7 @@ let ``release - the version-bump commit's CI wait uses the history-sized budget,
 
 [<Fact>]
 let ``release - StartAlpha with LocalPublish calls dotnet pack`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -718,7 +728,7 @@ let ``release - StartAlpha with LocalPublish calls dotnet pack`` () =
 
 [<Fact>]
 let ``release - Auto with reserved version bumps past it`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
@@ -768,7 +778,7 @@ let ``release - Auto with reserved version bumps past it`` () =
 
 [<Fact>]
 let ``release - Auto with own-changed PackAsTool package skips the API-diff (NU1212 guard) and bumps`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         // A PackAsTool package with a prior tag and a change in its own dir.
@@ -878,7 +888,7 @@ let ``release - PromoteToBeta with FirstRelease returns 0 no packages`` () =
 
 [<Fact>]
 let ``release - runs preBuildCmds before build`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -1018,7 +1028,7 @@ let ``waitForCi - returns Failed immediately without polling`` () =
 
 [<Fact>]
 let ``release - skips packages with no changes since last tag`` () =
-    let tmpFileA = Path.GetTempFileName()
+    let tmpFileA = scratchFile ()
 
     try
         File.WriteAllText(tmpFileA, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -1098,7 +1108,7 @@ let ``release - skips packages with no changes since last tag`` () =
 
 [<Fact>]
 let ``release - Auto detects breaking API change and bumps major`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
@@ -1153,7 +1163,7 @@ let ``release - Auto detects breaking API change and bumps major`` () =
 let ``release - Auto folds a breaking grammar change into the bump when the API is unchanged`` () =
     // Identical API, but the CLI grammar renamed a command: must bump major.
     let dir =
-        Path.Combine(Path.GetTempPath(), "fsst-grammar-fold-" + System.Guid.NewGuid().ToString("N"))
+        Path.Combine(scratchDir, "fsst-grammar-fold-" + System.Guid.NewGuid().ToString("N"))
 
     Directory.CreateDirectory(dir) |> ignore
 
@@ -1402,7 +1412,7 @@ let ``release - Auto takes the strongest declaration across every changelog behi
 
 [<Fact>]
 let ``release - Auto detects addition and bumps minor`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
@@ -1456,7 +1466,7 @@ let ``release - Auto detects addition and bumps minor`` () =
 
 [<Fact>]
 let ``release - Auto aborts (no bump) when previous API cannot be read`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
@@ -1508,7 +1518,7 @@ let ``release - Auto aborts (no bump) when previous API cannot be read`` () =
 
 [<Fact>]
 let ``release - Auto skips an orphan tag and diffs against the last published prior`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.2.0</Version></PropertyGroup></Project>")
@@ -1611,7 +1621,7 @@ let private analyzerLoadFailure =
 
 /// Auto with an unreadable `latest` and a readable v1.1.0, recording which versions were fetched.
 let private releaseOverUnreadableBaseline (latest: string) (checkFeedPresence: string -> string -> FeedPresence) =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(
@@ -1706,7 +1716,7 @@ let ``release - Auto still skips a genuinely unpublished release whose API canno
 
 [<Fact>]
 let ``release - Auto still aborts on a transient fetch error (does not skip)`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.2.0</Version></PropertyGroup></Project>")
@@ -1761,7 +1771,7 @@ let ``release - Auto still aborts on a transient fetch error (does not skip)`` (
 
 [<Fact>]
 let ``release - Auto when every prior tag is absent on feed bumps conservatively`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.2.0</Version></PropertyGroup></Project>")
@@ -1814,7 +1824,7 @@ let ``release - Auto when every prior tag is absent on feed bumps conservatively
 
 [<Fact>]
 let ``release - Auto every prior tag absent honours the reserved-version skip`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.2.0</Version></PropertyGroup></Project>")
@@ -1867,7 +1877,7 @@ let ``release - Auto every prior tag absent honours the reserved-version skip`` 
 
 [<Fact>]
 let ``release - Auto pre-1.0 breaking change bumps minor (UnionConfig 0.3.0 -> 0.4.0)`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.3.0</Version></PropertyGroup></Project>")
@@ -1929,7 +1939,7 @@ let ``release - Auto pre-1.0 breaking change bumps minor (UnionConfig 0.3.0 -> 0
 
 [<Fact>]
 let ``release - does not push tags when post-push CI fails`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -1992,7 +2002,7 @@ let ``release - does not push tags when post-push CI fails`` () =
 
 [<Fact>]
 let ``release - does not push tags when post-push CI times out`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -2052,7 +2062,7 @@ let ``release - does not push tags when post-push CI times out`` () =
 
 [<Fact>]
 let ``release - does not push tags when post-push CI has no runs`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -2444,7 +2454,7 @@ let ``release - pushed commit whose CI run never registers times out`` () =
 
 [<Fact>]
 let ``release - PromoteToRC with HasPreviousRelease succeeds`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0-beta.3</Version></PropertyGroup></Project>")
@@ -2490,7 +2500,7 @@ let ``release - PromoteToRC with HasPreviousRelease succeeds`` () =
 
 [<Fact>]
 let ``release - PromoteToStable with HasPreviousRelease succeeds`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0-rc.1</Version></PropertyGroup></Project>")
@@ -2536,7 +2546,7 @@ let ``release - PromoteToStable with HasPreviousRelease succeeds`` () =
 
 [<Fact>]
 let ``release - PromoteToBeta with HasPreviousRelease succeeds`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.1.0-alpha.3</Version></PropertyGroup></Project>")
@@ -2628,8 +2638,8 @@ let ``waitForCi - returns Unknown immediately`` () =
 
 [<Fact>]
 let ``release - updates fsProjsSharingSameTag versions too`` () =
-    let tmpFileMain = Path.GetTempFileName()
-    let tmpFileShared = Path.GetTempFileName()
+    let tmpFileMain = scratchFile ()
+    let tmpFileShared = scratchFile ()
 
     try
         File.WriteAllText(tmpFileMain, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -2671,7 +2681,7 @@ let ``release - updates fsProjsSharingSameTag versions too`` () =
 
 [<Fact>]
 let ``release - resumes when fsproj already has target version (idempotent)`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         // A previous run already bumped to 0.2.0-alpha.1.
@@ -2737,7 +2747,7 @@ let ``release - resumes when fsproj already has target version (idempotent)`` ()
 
 [<Fact>]
 let ``release - fails fast when resuming and CI has failed`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.2.0-alpha.1</Version></PropertyGroup></Project>")
@@ -2797,7 +2807,7 @@ let ``release - fails fast when resuming and CI has failed`` () =
 [<Fact>]
 let ``release - a tag that triggered no workflow run fails the release`` () =
     // Every push succeeds but GitHub creates no run for the tag, so nothing publishes.
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.2.0-alpha.1</Version></PropertyGroup></Project>")
@@ -2850,7 +2860,7 @@ let ``release - a tag that triggered no workflow run fails the release`` () =
 
 [<Fact>]
 let ``release - resumes and polls when CI is in progress`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.2.0-alpha.1</Version></PropertyGroup></Project>")
@@ -2920,7 +2930,7 @@ let ``release - resumes and polls when CI is in progress`` () =
 
 [<Fact>]
 let ``release - second run after successful first run produces no changes`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.2.0-alpha.1</Version></PropertyGroup></Project>")
@@ -2968,8 +2978,8 @@ let ``release - second run after successful first run produces no changes`` () =
 
 [<Fact>]
 let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` () =
-    let tmpFile = Path.GetTempFileName()
-    let changelogPath = Path.Combine(Path.GetTempPath(), "CHANGELOG.md")
+    let tmpFile = scratchFile ()
+    let changelogPath = Path.Combine(scratchDir, "CHANGELOG.md")
 
     try
         let fsprojBefore =
@@ -3008,7 +3018,7 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
                 PreBuildCmds = []
                 PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
                 CiTimeout = None
-                RootDir = Path.GetTempPath()
+                RootDir = scratchDir
             }
 
         let result =
@@ -3046,7 +3056,7 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
 
 [<Fact>]
 let ``release - dryRun skips uncommitted check and does not write fsproj`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         let fsprojBefore =
@@ -3098,7 +3108,7 @@ let ``release - dryRun skips uncommitted check and does not write fsproj`` () =
 
 [<Fact>]
 let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
     let tmpDir = createTempDir ()
 
     try
@@ -3171,7 +3181,7 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
 
 [<Fact>]
 let ``release - resume in DryRun mode takes no actions and returns 0`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.2.0-alpha.1</Version></PropertyGroup></Project>")
@@ -3224,7 +3234,7 @@ let ``release - resume in DryRun mode takes no actions and returns 0`` () =
 
 [<Fact>]
 let ``release - resume with LocalPublish packs without pushing`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.2.0-alpha.1</Version></PropertyGroup></Project>")
@@ -3335,10 +3345,7 @@ let private runReleaseWithNuGetWait run config cmd checkFeedPresence maxAttempts
     release
         {
             Run = run
-            Config =
-                { config with
-                    RootDir = Path.GetTempPath()
-                }
+            Config = { config with RootDir = scratchDir }
             Command = cmd
             Mode = PushTags
             TargetPackages = []
@@ -3361,7 +3368,7 @@ let private runReleaseWithNuGetWait run config cmd checkFeedPresence maxAttempts
 
 [<Fact>]
 let ``release - waits for NuGet after pushing tags and checks the published package`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -3401,7 +3408,7 @@ let ``release - waits for NuGet after pushing tags and checks the published pack
 
 [<Fact>]
 let ``release - an unconfirmed NuGet wait exits 2, not 0`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -3438,7 +3445,7 @@ let ``release - an unconfirmed NuGet wait exits 2, not 0`` () =
 /// Positive control: a release whose packages appear exits 0.
 [<Fact>]
 let ``release - a fully confirmed NuGet wait still exits 0`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -3526,10 +3533,7 @@ let private runReleaseTargeting run config cmd mode targets =
     release
         {
             Run = run
-            Config =
-                { config with
-                    RootDir = Path.GetTempPath()
-                }
+            Config = { config with RootDir = scratchDir }
             Command = cmd
             Mode = mode
             TargetPackages = targets
@@ -3552,7 +3556,7 @@ let private runReleaseTargeting run config cmd mode targets =
 
 [<Fact>]
 let ``release - scoped to one package only tags that package`` () =
-    let tmpFileA = Path.GetTempFileName()
+    let tmpFileA = scratchFile ()
 
     try
         File.WriteAllText(tmpFileA, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -3685,8 +3689,8 @@ let ``release - --only on a multi-package repo uses the per-package CHANGELOG, n
 
 [<Fact>]
 let ``release - scoped to multiple packages tags exactly those`` () =
-    let tmpA = Path.GetTempFileName()
-    let tmpC = Path.GetTempFileName()
+    let tmpA = scratchFile ()
+    let tmpC = scratchFile ()
 
     try
         File.WriteAllText(tmpA, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -3785,7 +3789,7 @@ let ``release - unknown target package aborts with exit 1 before any work`` () =
 
 [<Fact>]
 let ``release - scoping composes with dry-run (only target previewed)`` () =
-    let tmpA = Path.GetTempFileName()
+    let tmpA = scratchFile ()
 
     try
         File.WriteAllText(tmpA, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
@@ -3839,7 +3843,7 @@ let ``release - scoping composes with dry-run (only target previewed)`` () =
 let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that version (even if previous API unreadable)``
     ()
     =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         // Last tag alpha.16, fsproj alpha.17, no alpha.17 tag.
@@ -3909,7 +3913,7 @@ let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that
 
 [<Fact>]
 let ``release - Auto dry-run reports the resume plan instead of 'No packages to release'`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(
@@ -3956,7 +3960,7 @@ let ``release - Auto dry-run reports the resume plan instead of 'No packages to 
 
 [<Fact>]
 let ``release - Auto with fsproj equal to last tag has nothing to do (not a resume)`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(
@@ -4053,10 +4057,7 @@ let private runReleaseWithFeed run config checkFeedPresence =
     release
         {
             Run = run
-            Config =
-                { config with
-                    RootDir = Path.GetTempPath()
-                }
+            Config = { config with RootDir = scratchDir }
             Command = Auto
             Mode = PushTags
             TargetPackages = []
@@ -4089,7 +4090,7 @@ let private toolFsproj =
 [<InlineData(false)>]
 [<InlineData(true)>]
 let ``release - orphan newest tag with no changes resumes that same version in place`` (packAsTool: bool) =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, (if packAsTool then toolFsproj else libraryFsproj))
@@ -4122,7 +4123,7 @@ let ``release - orphan newest tag with no changes resumes that same version in p
 [<InlineData(false)>]
 [<InlineData(true)>]
 let ``release - published newest tag with no changes still skips (no spurious release)`` (packAsTool: bool) =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, (if packAsTool then toolFsproj else libraryFsproj))
@@ -4155,7 +4156,7 @@ let ``release - published newest tag with no changes still skips (no spurious re
 [<InlineData(true, "unreadable flat-container index for Falco.UnionRoutes")>]
 [<InlineData(true, "No such host is known.")>]
 let ``release - unreachable feed on the newest tag never triggers a republish`` (packAsTool: bool) (reason: string) =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, (if packAsTool then toolFsproj else libraryFsproj))
@@ -4181,7 +4182,7 @@ let ``release - unreachable feed on the newest tag never triggers a republish`` 
 /// `Unreadable`. The feed decides, and says published: skip, without asking the extractor.
 [<Fact>]
 let ``release - a published package whose DLL is unreadable is never republished`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, libraryFsproj)
@@ -4203,7 +4204,7 @@ let ``release - a published package whose DLL is unreadable is never republished
                         Run = fakeRun
                         Config =
                             { orphanTagConfig tmpFile with
-                                RootDir = Path.GetTempPath()
+                                RootDir = scratchDir
                             }
                         Command = Auto
                         Mode = PushTags
@@ -4238,7 +4239,7 @@ let ``release - a published package whose DLL is unreadable is never republished
 
 [<Fact>]
 let ``release - orphan newest tag is not resumed when the tree declares a different version`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         // The tree still says 0.3.3: resuming would publish 0.3.3 under the 0.3.4 tag.
@@ -4262,7 +4263,7 @@ let ``release - orphan newest tag is not resumed when the tree declares a differ
 
 [<Fact>]
 let ``release - fresh changes still bump normally (not treated as resume)`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
@@ -4315,8 +4316,8 @@ let ``release - fresh changes still bump normally (not treated as resume)`` () =
 
 [<Fact>]
 let ``release - multi-package mixed: one mid-release resumes, one fresh bumps`` () =
-    let tmpResume = Path.GetTempFileName()
-    let tmpFresh = Path.GetTempFileName()
+    let tmpResume = scratchFile ()
+    let tmpFresh = scratchFile ()
 
     try
         // LibA: ahead of its tag, no tag at its version => resume.
@@ -5095,7 +5096,7 @@ let ``release - library rebundles when a non-configured helper dependency change
 
 [<Fact>]
 let ``release - pushes main before creating tags so a push failure leaves no orphan local tag`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -5566,7 +5567,7 @@ let ``dependencyChangesSinceTag - an fsproj unreadable at the tag or on disk der
 [<Fact>]
 let ``release - PackAsTool grammar break bumps major without constructing an API probe`` () =
     let dir =
-        Path.Combine(Path.GetTempPath(), "fsst-packastool-grammar-" + System.Guid.NewGuid().ToString("N"))
+        Path.Combine(scratchDir, "fsst-packastool-grammar-" + System.Guid.NewGuid().ToString("N"))
 
     Directory.CreateDirectory(dir) |> ignore
 
@@ -5653,7 +5654,7 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
 let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative NoChange bump`` () =
     // No current grammar: not a CommandTree CLI, nothing to diff, so not fatal.
     let dir =
-        Path.Combine(Path.GetTempPath(), "fsst-packastool-nogrammar-" + System.Guid.NewGuid().ToString("N"))
+        Path.Combine(scratchDir, "fsst-packastool-nogrammar-" + System.Guid.NewGuid().ToString("N"))
 
     Directory.CreateDirectory(dir) |> ignore
 
@@ -5731,7 +5732,7 @@ let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative 
 let ``release - PackAsTool CLI aborts when the previous grammar cannot be read`` () =
     // A current grammar but no readable baseline (cold cache): refuse to guess, exit 1.
     let dir =
-        Path.Combine(Path.GetTempPath(), "fsst-packastool-coldcache-" + System.Guid.NewGuid().ToString("N"))
+        Path.Combine(scratchDir, "fsst-packastool-coldcache-" + System.Guid.NewGuid().ToString("N"))
 
     Directory.CreateDirectory(dir) |> ignore
 
@@ -6020,10 +6021,7 @@ let private releaseWithTagPush run config (policy: TagPushPolicy) =
     release
         {
             Run = run
-            Config =
-                { config with
-                    RootDir = Path.GetTempPath()
-                }
+            Config = { config with RootDir = scratchDir }
             Command = StartAlpha
             Mode = PushTags
             TargetPackages = []
@@ -6046,7 +6044,7 @@ let private releaseWithTagPush run config (policy: TagPushPolicy) =
 
 [<Fact>]
 let ``release - a Release run that registers a few polls after the push exits 0 and is never MISSING`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -6073,7 +6071,7 @@ let ``release - a Release run that registers a few polls after the push exits 0 
 
 [<Fact>]
 let ``release - a Release run that never appears within the budget is reported, without re-push advice`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -6124,19 +6122,33 @@ let ``nuGetPollFromEnv - honours the same overrides as FsHotWatch's barrier`` ()
 
 [<Fact>]
 let ``waitForNuGetTimed - the give-up names the measured wait, not the budget`` () =
-    // 3 attempts 100ms apart sleep twice: ~200ms, not the 300ms budget.
+    // 3 attempts 100ms apart sleep twice: 200ms, not the 300ms budget. The clock is the
+    // test's, so the answer is exact however loaded the machine is.
+    let mutable now = System.TimeSpan.Zero
+
+    let sleep (ms: int) =
+        now <- now + System.TimeSpan.FromMilliseconds(float ms)
+
     let output, (unconfirmed, waited) =
-        withCapturedConsole (fun () -> waitForNuGetTimed (fun _ _ -> NotOnFeed) 100 3 [ "PkgA", "1.0.0" ])
+        withCapturedConsole (fun () ->
+            waitForNuGetOn sleep (fun () -> now) (fun _ _ -> NotOnFeed) 100 3 [ "PkgA", "1.0.0" ])
 
     test <@ unconfirmed = [ "PkgA", "1.0.0" ] @>
-    test <@ waited >= System.TimeSpan.FromMilliseconds 150.0 @>
-    test <@ waited < System.TimeSpan.FromMilliseconds 290.0 @>
-    test <@ output.Contains("Gave up waiting for PkgA 1.0.0 on NuGet after ") @>
-    test <@ output.Contains("(3 checks") @>
+    test <@ waited = System.TimeSpan.FromMilliseconds 200.0 @>
+    test <@ output.Contains("Gave up waiting for PkgA 1.0.0 on NuGet after 0.2s (3 checks") @>
+
+[<Fact>]
+let ``waitForNuGetTimed - measures the wait on the wall clock`` () =
+    let _, (unconfirmed, waited) =
+        withCapturedConsole (fun () -> waitForNuGetTimed (fun _ _ -> NotOnFeed) 50 2 [ "PkgA", "1.0.0" ])
+
+    test <@ unconfirmed = [ "PkgA", "1.0.0" ] @>
+    // One 50ms sleep: a floor only, since a loaded machine can only make it longer.
+    test <@ waited >= System.TimeSpan.FromMilliseconds 50.0 @>
 
 [<Fact>]
 let ``release - the NuGet give-up says the tags and Release runs are the evidence and a re-run resumes`` () =
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")
@@ -6200,7 +6212,7 @@ let ``a failed publish run still reads as a sentence when GitHub reports no name
 [<Fact>]
 let ``release - a preBuildCmd with no arguments runs with an empty argument string`` () =
     // A bare command name splits into one part.
-    let tmpFile = Path.GetTempFileName()
+    let tmpFile = scratchFile ()
 
     try
         File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.0.0</Version></PropertyGroup></Project>")

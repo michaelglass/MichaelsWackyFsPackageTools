@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: `loosen-from-ci` and `propose-from-ci` no longer set `GIT_DIR` on their own process for their `gh` queries. Each `gh` process gets it through the new `Shell.runWithGitDir`; the plain-git commit fallback of `loosen-from-ci` still runs without it.
+
 ## 0.15.0-alpha.18 - 2026-09-29
 
 - fix: `ratchet`, `loosen` and the other config-writing commands keep `\n` line endings on Windows instead of rewriting the whole file with `\r\n`.

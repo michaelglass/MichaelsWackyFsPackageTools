@@ -77,10 +77,9 @@ let tagRevision (run: string -> string -> CommandResult) (tag: string) (revision
     | Success _ -> ()
     | Failure(jjError, _) ->
         // The fallback exists for a PLAIN-GIT repo, where `jj` is not a thing. In a
-        // non-colocated jj checkout it can never succeed — there is no root `.git` —
-        // so quoting it alone reports `fatal: not a git repository`: true, useless,
-        // and pointing at the wrong VCS while the jj error that IS the diagnosis is
-        // discarded. Report both, and let the reader tell which repo they are in.
+        // jj checkout the jj error IS the diagnosis, and quoting git's answer alone
+        // would point at the wrong VCS while discarding it. Report both, and let the
+        // reader tell which repo they are in.
         match run "git" (sprintf "tag -f -a %s -m \"%s\" %s" tag tag revision) with
         | Success _ -> ()
         | Failure(gitError, _) -> failwithf "cannot tag %s at %s\n  jj: %s\n  git: %s" tag revision jjError gitError
@@ -153,22 +152,11 @@ let getCurrentCommitSha (run: string -> string -> CommandResult) : string option
         | None -> None
 
 // Shared with CoverageRatchet via the linked Shared/GitDir.fs compile item;
-// walks up from any nested subdir to the repo root.
+// walks up from any nested subdir to the repo root. The `run` handed to this
+// module's `git`/`gh` calls is built from it once (`Shell.runWithGitDir`), so a
+// jj checkout with no colocated `.git` reaches its store without GIT_DIR ever
+// being set on this process.
 let internal resolveGitDir (startDir: string) : string option = Shared.GitDir.resolveGitDir startDir
-
-let private withJjGitDir (f: unit -> 'a) : 'a =
-    let gitDir = resolveGitDir (System.IO.Directory.GetCurrentDirectory())
-
-    match gitDir with
-    | Some dir -> System.Environment.SetEnvironmentVariable("GIT_DIR", dir)
-    | None -> ()
-
-    try
-        f ()
-    finally
-        match gitDir with
-        | Some _ -> System.Environment.SetEnvironmentVariable("GIT_DIR", null)
-        | None -> ()
 
 type RunStatus =
     | Completed
@@ -282,80 +270,79 @@ let checkCiStatusForSha (run: string -> string -> CommandResult) (sha: string) :
             "run list --workflow .github/workflows/ci.yml --commit %s --json status,conclusion,name,url,databaseId,attempt,createdAt,workflowDatabaseId"
             sha
 
-    withJjGitDir (fun () ->
-        match run "gh" args with
-        | Success output ->
-            // The workflow PATH is the stable identity. Display names are not:
-            // two workflows may share one, and a name can be edited at any time.
-            let consideredRuns = parseCiRuns output
+    match run "gh" args with
+    | Success output ->
+        // The workflow PATH is the stable identity. Display names are not:
+        // two workflows may share one, and a name can be edited at any time.
+        let consideredRuns = parseCiRuns output
 
-            let ordered =
-                consideredRuns
-                |> List.sortByDescending (fun workflowRun ->
-                    workflowRun.CreatedAt, workflowRun.Attempt, workflowRun.RunIdOrdinal)
+        let ordered =
+            consideredRuns
+            |> List.sortByDescending (fun workflowRun ->
+                workflowRun.CreatedAt, workflowRun.Attempt, workflowRun.RunIdOrdinal)
 
-            let runs = ordered |> List.truncate 1
+        let runs = ordered |> List.truncate 1
 
-            let reportRefusal reason =
-                printfn "Required CI workflow refused the release for %s: %s" sha reason
+        let reportRefusal reason =
+            printfn "Required CI workflow refused the release for %s: %s" sha reason
 
-                for workflowRun in consideredRuns do
-                    let decision =
-                        if runs |> List.contains workflowRun then
-                            "authoritative attempt"
-                        else
-                            "older attempt"
+            for workflowRun in consideredRuns do
+                let decision =
+                    if runs |> List.contains workflowRun then
+                        "authoritative attempt"
+                    else
+                        "older attempt"
 
-                    printfn
-                        "  run %s attempt %d workflow %A: %s — created=%O status=%A conclusion=%A — %s"
-                        workflowRun.RunId
-                        workflowRun.Attempt
-                        workflowRun.WorkflowId
-                        workflowRun.Name
-                        workflowRun.CreatedAt
-                        workflowRun.Status
-                        workflowRun.Conclusion
-                        decision
+                printfn
+                    "  run %s attempt %d workflow %A: %s — created=%O status=%A conclusion=%A — %s"
+                    workflowRun.RunId
+                    workflowRun.Attempt
+                    workflowRun.WorkflowId
+                    workflowRun.Name
+                    workflowRun.CreatedAt
+                    workflowRun.Status
+                    workflowRun.Conclusion
+                    decision
 
-            if runs.IsEmpty then
-                reportRefusal "no run from .github/workflows/ci.yml exists on the exact release SHA"
-                NoRuns
-            else
-                let latest = List.head runs
+        if runs.IsEmpty then
+            reportRefusal "no run from .github/workflows/ci.yml exists on the exact release SHA"
+            NoRuns
+        else
+            let latest = List.head runs
 
-                let workflowIdentityAmbiguous =
-                    ordered |> List.choose _.WorkflowId |> List.distinct |> List.length > 1
+            let workflowIdentityAmbiguous =
+                ordered |> List.choose _.WorkflowId |> List.distinct |> List.length > 1
 
-                let ambiguous =
+            let ambiguous =
+                ordered
+                |> List.skip 1
+                |> List.exists (fun other ->
+                    other.CreatedAt = latest.CreatedAt
+                    && other.Attempt = latest.Attempt
+                    && other.RunIdOrdinal = latest.RunIdOrdinal)
+
+            if workflowIdentityAmbiguous then
+                reportRefusal "the workflow path resolved to more than one workflow database id"
+                Failed ordered
+            elif ambiguous then
+                reportRefusal "multiple newest CI runs have the same creation time and attempt"
+
+                Failed(
                     ordered
-                    |> List.skip 1
-                    |> List.exists (fun other ->
+                    |> List.takeWhile (fun other ->
                         other.CreatedAt = latest.CreatedAt
                         && other.Attempt = latest.Attempt
                         && other.RunIdOrdinal = latest.RunIdOrdinal)
-
-                if workflowIdentityAmbiguous then
-                    reportRefusal "the workflow path resolved to more than one workflow database id"
-                    Failed ordered
-                elif ambiguous then
-                    reportRefusal "multiple newest CI runs have the same creation time and attempt"
-
-                    Failed(
-                        ordered
-                        |> List.takeWhile (fun other ->
-                            other.CreatedAt = latest.CreatedAt
-                            && other.Attempt = latest.Attempt
-                            && other.RunIdOrdinal = latest.RunIdOrdinal)
-                    )
-                elif latest.Status = Completed && latest.Conclusion = SuccessConclusion then
-                    Passed
-                elif latest.Status = InProgressStatus || latest.Status = Queued then
-                    reportRefusal "the newest required CI attempt is queued or running"
-                    InProgress runs
-                else
-                    reportRefusal "the newest required CI attempt ended without success"
-                    Failed runs
-        | Failure _ -> Unknown)
+                )
+            elif latest.Status = Completed && latest.Conclusion = SuccessConclusion then
+                Passed
+            elif latest.Status = InProgressStatus || latest.Status = Queued then
+                reportRefusal "the newest required CI attempt is queued or running"
+                InProgress runs
+            else
+                reportRefusal "the newest required CI attempt ended without success"
+                Failed runs
+    | Failure _ -> Unknown
 
 /// How long each of the last `limit` successful runs of the required CI workflow
 /// took, newest first: from the run's start to its last update, which for a
@@ -373,29 +360,28 @@ let successfulRunDurations
             "run list --workflow .github/workflows/ci.yml --status success --limit %d --json startedAt,updatedAt"
             limit
 
-    withJjGitDir (fun () ->
-        match run "gh" args with
-        | Failure(message, _) -> Error message
-        | Success output ->
-            try
-                use doc = System.Text.Json.JsonDocument.Parse(output)
+    match run "gh" args with
+    | Failure(message, _) -> Error message
+    | Success output ->
+        try
+            use doc = System.Text.Json.JsonDocument.Parse(output)
 
-                [
-                    for elem in doc.RootElement.EnumerateArray() do
-                        let at (name: string) =
-                            System.DateTimeOffset.Parse(
-                                elem.GetProperty(name).GetString(),
-                                System.Globalization.CultureInfo.InvariantCulture
-                            )
+            [
+                for elem in doc.RootElement.EnumerateArray() do
+                    let at (name: string) =
+                        System.DateTimeOffset.Parse(
+                            elem.GetProperty(name).GetString(),
+                            System.Globalization.CultureInfo.InvariantCulture
+                        )
 
-                        let duration = at "updatedAt" - at "startedAt"
+                    let duration = at "updatedAt" - at "startedAt"
 
-                        if duration > System.TimeSpan.Zero then
-                            yield duration
-                ]
-                |> Ok
-            with ex ->
-                Error(sprintf "unreadable `gh run list` answer: %s" ex.Message))
+                    if duration > System.TimeSpan.Zero then
+                        yield duration
+            ]
+            |> Ok
+        with ex ->
+            Error(sprintf "unreadable `gh run list` answer: %s" ex.Message)
 
 let private checkCiForSha (run: string -> string -> CommandResult) (sha: string) : bool =
     match checkCiStatusForSha run sha with
@@ -443,10 +429,9 @@ let isCommitPushed (run: string -> string -> CommandResult) (sha: string) : bool
     match jjAnswer with
     | Some pushed -> pushed
     | None ->
-        withJjGitDir (fun () ->
-            match runSilent run "git" (sprintf "branch -r --contains %s" sha) with
-            | Some out -> out.Trim() <> ""
-            | None -> false)
+        match runSilent run "git" (sprintf "branch -r --contains %s" sha) with
+        | Some out -> out.Trim() <> ""
+        | None -> false
 
 /// Parse `git ls-remote --tags` output into tag names. A line is
 /// `<sha>\trefs/tags/<name>`; an annotated tag also appears peeled, as
@@ -466,10 +451,9 @@ let internal parseRemoteTags (output: string) : Set<string> =
 /// the two leaves tags that look released and are not: a local tag is a plan, a tag on
 /// the remote is what triggered a publish. This asks the remote.
 let remoteTags (run: string -> string -> CommandResult) : Result<Set<string>, string> =
-    withJjGitDir (fun () ->
-        match run "git" "ls-remote --tags origin" with
-        | Success output -> Ok(parseRemoteTags output)
-        | Failure(error, _) -> Error(error.Trim()))
+    match run "git" "ls-remote --tags origin" with
+    | Success output -> Ok(parseRemoteTags output)
+    | Failure(error, _) -> Error(error.Trim())
 
 /// The release-commit sha that CI must have run on. In jj, `@` is the working
 /// copy (never itself the pushed/CI'd commit when clean) — the real commit is
@@ -586,14 +570,13 @@ let internal runStatesForRef
     (publishWorkflows: PublishWorkflow list)
     (gitRef: string)
     : TagRunState list option =
-    withJjGitDir (fun () ->
-        publishWorkflows
-        |> List.fold
-            (fun acc workflow ->
-                match acc, runStatesForWorkflow run workflow gitRef with
-                | Some states, Some more -> Some(states @ more)
-                | _ -> None)
-            (Some []))
+    publishWorkflows
+    |> List.fold
+        (fun acc workflow ->
+            match acc, runStatesForWorkflow run workflow gitRef with
+            | Some states, Some more -> Some(states @ more)
+            | _ -> None)
+        (Some [])
 
 /// Whether a run has already finished WITHOUT publishing anything.
 ///
@@ -922,8 +905,7 @@ let internal pushTagsAndConfirmDetailed
     runOrFail run "jj" "git export" |> ignore
 
     // Read only when a run is missing.
-    let repoSlug =
-        lazy (withJjGitDir (fun () -> originUrl run |> Option.bind githubRepoSlug))
+    let repoSlug = lazy (originUrl run |> Option.bind githubRepoSlug)
 
     // A tag that never reached the remote is a DIFFERENT failure from one that
     // reached it and triggered nothing, and the operator's next move differs too:
@@ -931,12 +913,11 @@ let internal pushTagsAndConfirmDetailed
     // end up in the returned list — silence about either would be the lie this
     // function exists to prevent — but a failed push says so in its own words.
     let failures =
-        withJjGitDir (fun () ->
-            tags
-            |> List.choose (fun tag ->
-                match pushOneTag run policy.PushAttempts policy.PushRetryDelayMs tag with
-                | Ok() -> None
-                | Error reason -> Some(tag, reason)))
+        tags
+        |> List.choose (fun tag ->
+            match pushOneTag run policy.PushAttempts policy.PushRetryDelayMs tag with
+            | Ok() -> None
+            | Error reason -> Some(tag, reason))
 
     let pushFailures = Map.ofList failures
 

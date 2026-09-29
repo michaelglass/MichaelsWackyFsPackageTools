@@ -1612,7 +1612,7 @@ let ``runLoosenFromCi - CI passes returns 0`` () =
                 ("gh", "run list", CoverageRatchet.Shell.Success passJson)
             ]
 
-    let result = runLoosenFromCi run "coverage-ratchet.json"
+    let result = runLoosenFromCi run run "coverage-ratchet.json"
     test <@ result = 0 @>
 
 [<Fact>]
@@ -1625,7 +1625,7 @@ let ``runLoosenFromCi - CI other failure returns 1`` () =
                 ("gh", "run list", CoverageRatchet.Shell.Failure("gh exploded", 1))
             ]
 
-    let result = runLoosenFromCi run "coverage-ratchet.json"
+    let result = runLoosenFromCi run run "coverage-ratchet.json"
     test <@ result = 1 @>
 
 [<Fact>]
@@ -1664,7 +1664,7 @@ let ``runLoosenFromCi - CI coverage failure with valid artifact writes config an
                     ("gh", "run list", CoverageRatchet.Shell.Success passedJson)
                 ]
 
-        let result = runLoosenFromCi run configPath
+        let result = runLoosenFromCi run run configPath
         test <@ result = 0 @>
         test <@ File.Exists configPath @>
         test <@ not (Directory.Exists artifactDir) @>
@@ -1694,7 +1694,7 @@ let ``runLoosenFromCi - CI coverage failure with empty artifact returns 1`` () =
                 ("gh", "run download", CoverageRatchet.Shell.Success "")
             ]
 
-    let result = runLoosenFromCi run "coverage-ratchet.json"
+    let result = runLoosenFromCi run run "coverage-ratchet.json"
     test <@ result = 1 @>
     test <@ not (System.IO.Directory.Exists artifactDir) @>
 

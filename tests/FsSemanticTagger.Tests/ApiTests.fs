@@ -1133,48 +1133,63 @@ let ``compare adding non-nested type with plus sign in module name is Addition``
 
 [<Fact>]
 let ``getAssemblySearchPaths falls back to runtimeDir path computation when DOTNET_ROOT is unset`` () =
-    let original = System.Environment.GetEnvironmentVariable("DOTNET_ROOT")
+    let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
 
-    try
-        System.Environment.SetEnvironmentVariable("DOTNET_ROOT", null)
-        let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
+    let dllPath =
+        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
 
-        let dllPath =
-            System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
-
-        let paths = getAssemblySearchPaths dllPath
-        // dllDir and runtimeDir should always be present regardless of DOTNET_ROOT
-        test <@ paths.Length >= 2 @>
-    finally
-        System.Environment.SetEnvironmentVariable("DOTNET_ROOT", original)
+    let paths = assemblySearchPathsFor None dllPath
+    let withEmptyRoot = assemblySearchPathsFor (Some "") dllPath
+    // dllDir and runtimeDir should always be present regardless of DOTNET_ROOT
+    test <@ paths.Length >= 2 @>
+    // An empty DOTNET_ROOT is the same as none.
+    test <@ withEmptyRoot = paths @>
 
 [<Fact>]
 let ``getAssemblySearchPaths returns no sdk or shared dirs when DOTNET_ROOT points to empty dir`` () =
-    let original = System.Environment.GetEnvironmentVariable("DOTNET_ROOT")
-
     let tmpDir =
         System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName())
 
     System.IO.Directory.CreateDirectory(tmpDir) |> ignore
 
     try
-        System.Environment.SetEnvironmentVariable("DOTNET_ROOT", tmpDir)
         let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
 
         let dllPath =
             System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
 
-        let paths = getAssemblySearchPaths dllPath
+        let paths = assemblySearchPathsFor (Some tmpDir) dllPath
         // No paths should come from the fake empty dotnet root
         let fromFakeRoot = paths |> List.filter (fun p -> p.StartsWith(tmpDir))
         test <@ List.isEmpty fromFakeRoot @>
     finally
-        System.Environment.SetEnvironmentVariable("DOTNET_ROOT", original)
-
         try
             System.IO.Directory.Delete(tmpDir, true)
         with _ ->
             ()
+
+[<Fact>]
+let ``getAssemblySearchPaths searches the SDK FSharp dirs and shared frameworks under DOTNET_ROOT`` () =
+    TestHelpers.withTempDir (fun dotnetRoot ->
+        let fsharpDir = System.IO.Path.Combine(dotnetRoot, "sdk", "10.0.400", "FSharp")
+        let noFsharpSdk = System.IO.Path.Combine(dotnetRoot, "sdk", "9.0.100")
+
+        let framework =
+            System.IO.Path.Combine(dotnetRoot, "shared", "Microsoft.NETCore.App", "10.0.4")
+
+        System.IO.Directory.CreateDirectory fsharpDir |> ignore
+        System.IO.Directory.CreateDirectory noFsharpSdk |> ignore
+        System.IO.Directory.CreateDirectory framework |> ignore
+        let thisAssembly = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
+
+        let dllPath =
+            System.IO.Path.Combine(System.IO.Path.GetDirectoryName(thisAssembly), "FsSemanticTagger.dll")
+
+        let paths = assemblySearchPathsFor (Some dotnetRoot) dllPath
+
+        test <@ paths |> List.contains fsharpDir @>
+        test <@ paths |> List.contains framework @>
+        test <@ not (paths |> List.exists (fun p -> p.StartsWith noFsharpSdk)) @>)
 
 [<Fact>]
 let ``getAssemblySearchPaths returns dllDir when dll has no deps.json`` () =

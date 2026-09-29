@@ -235,7 +235,8 @@ let nuGetPollFromEnv (getEnv: string -> string option) : int * int =
 ///
 /// RETURNS THE PACKAGES IT COULD NOT CONFIRM, not a bool. Empty
 /// means every package is on the feed. Also returns how long it
-/// ACTUALLY waited, measured on a stopwatch, and prints that number when it gives up:
+/// ACTUALLY waited, read from `elapsed` (a stopwatch, in `waitForNuGetTimed`), and
+/// prints that number when it gives up:
 /// a poll that stopped after a minute must not say it waited the twenty it was given.
 ///
 /// This used to return `false` on timeout under a doc comment reading "callers
@@ -249,14 +250,14 @@ let nuGetPollFromEnv (getEnv: string -> string option) : int * int =
 /// code at the caller, so the release can say what it actually knows: the tags
 /// went, the packages have not appeared YET, here is what to check. Returning
 /// the names rather than a bool is what makes that message possible.
-let internal waitForNuGetTimed
+let internal waitForNuGetOn
+    (sleep: int -> unit)
+    (elapsed: unit -> System.TimeSpan)
     (checkFeedPresence: string -> string -> FeedPresence)
     (pollIntervalMs: int)
     (maxAttempts: int)
     (packages: (string * string) list)
     : (string * string) list * System.TimeSpan =
-    let clock = System.Diagnostics.Stopwatch.StartNew()
-
     let rec poll attempt pending =
         // Only a definite `OnFeed` clears a package from the poll: an unreachable
         // feed is not evidence of arrival, so keep waiting exactly as for absence.
@@ -271,20 +272,38 @@ let internal waitForNuGetTimed
                     "Gave up waiting for %s %s on NuGet after %s (%d checks, %.0fs apart)"
                     id
                     ver
-                    (formatElapsed clock.Elapsed)
+                    (formatElapsed (elapsed ()))
                     maxAttempts
                     (float pollIntervalMs / 1000.0)
 
             stillPending
         else
             for id, ver in stillPending do
-                printfn "Waiting for %s %s on NuGet... (%s so far)" id ver (formatElapsed clock.Elapsed)
+                printfn "Waiting for %s %s on NuGet... (%s so far)" id ver (formatElapsed (elapsed ()))
 
-            System.Threading.Thread.Sleep(pollIntervalMs)
+            sleep pollIntervalMs
             poll (attempt + 1) stillPending
 
     let unconfirmed = poll 0 packages
-    unconfirmed, clock.Elapsed
+    unconfirmed, elapsed ()
+
+/// `waitForNuGetOn` on the wall clock: `Thread.Sleep` between checks, and a stopwatch
+/// started now.
+let internal waitForNuGetTimed
+    (checkFeedPresence: string -> string -> FeedPresence)
+    (pollIntervalMs: int)
+    (maxAttempts: int)
+    (packages: (string * string) list)
+    : (string * string) list * System.TimeSpan =
+    let clock = System.Diagnostics.Stopwatch.StartNew()
+
+    waitForNuGetOn
+        (fun (ms: int) -> System.Threading.Thread.Sleep ms)
+        (fun () -> clock.Elapsed)
+        checkFeedPresence
+        pollIntervalMs
+        maxAttempts
+        packages
 
 let internal waitForNuGet
     (checkFeedPresence: string -> string -> FeedPresence)

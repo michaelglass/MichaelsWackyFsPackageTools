@@ -161,9 +161,11 @@ let internal runReleaseWith
         )
 
 let private runRelease (releaseCmd: Release.ReleaseCommand) (flags: ReleaseFlag list) : Result<int, string> =
+    let cwd = Directory.GetCurrentDirectory()
+
     runReleaseWith
-        (Directory.GetCurrentDirectory())
-        Shell.run
+        cwd
+        (Shell.runWithGitDir (Vcs.resolveGitDir cwd))
         (Api.extractPreviousFromNuGetResult Shell.run)
         Api.extractFromAssembly
         Grammar.extractPreviousGrammarFromNuGet

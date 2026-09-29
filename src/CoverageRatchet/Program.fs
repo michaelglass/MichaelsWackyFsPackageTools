@@ -379,21 +379,10 @@ type CiResult =
     | CiCoverageFailure of artifactDir: string
 
 // Shared/GitDir.fs (linked, also used by FsSemanticTagger): walks up to the repo root.
+// The runner for the `gh` CI queries is built from it (`Shell.runWithGitDir`), so a jj
+// checkout with no colocated `.git` reaches its store without GIT_DIR ever being set
+// on this process.
 let internal resolveGitDir (startDir: string) : string option = Shared.GitDir.resolveGitDir startDir
-
-let private withJjGitDir (f: unit -> 'a) : 'a =
-    let gitDir = resolveGitDir (Directory.GetCurrentDirectory())
-
-    match gitDir with
-    | Some dir -> System.Environment.SetEnvironmentVariable("GIT_DIR", dir)
-    | None -> ()
-
-    try
-        f ()
-    finally
-        match gitDir with
-        | Some _ -> System.Environment.SetEnvironmentVariable("GIT_DIR", null)
-        | None -> ()
 
 let internal pollCi
     (run: string -> string -> CommandResult)
@@ -407,8 +396,7 @@ let internal pollCi
             CiOtherFailure
         else
             let result =
-                withJjGitDir (fun () ->
-                    run "gh" (sprintf "run list --commit %s --json status,conclusion,databaseId" sha))
+                run "gh" (sprintf "run list --commit %s --json status,conclusion,databaseId" sha)
 
             match result with
             | Failure(msg, _) ->
@@ -453,10 +441,7 @@ let internal pollCi
                             let tmpDir = Path.Combine(Path.GetTempPath(), sprintf "coverage-%d" runId)
 
                             let dlResult =
-                                withJjGitDir (fun () ->
-                                    run
-                                        "gh"
-                                        (sprintf "run download %d -n %s -D %s" runId ProposeFromCi.ArtifactName tmpDir))
+                                run "gh" (sprintf "run download %d -n %s -D %s" runId ProposeFromCi.ArtifactName tmpDir)
 
                             match dlResult with
                             | Success _ -> CiCoverageFailure tmpDir
@@ -538,12 +523,19 @@ let internal vcsCommitAndPush (run: string -> string -> CommandResult) (configPa
         mustRun "git" "commit -m \"fix: update coverage thresholds from CI\""
         mustRun "git" "push"
 
-let internal runLoosenFromCi (runShell: string -> string -> CommandResult) (configPath: string) : int =
+/// `runShell` makes and pushes the commits; `runCi` asks `gh` about CI. They are
+/// separate because only the `gh` queries may be pointed at the git store: the
+/// plain-git commit fallback must not be.
+let internal runLoosenFromCi
+    (runShell: string -> string -> CommandResult)
+    (runCi: string -> string -> CommandResult)
+    (configPath: string)
+    : int =
     vcsPush runShell
     let sha = getVcsSha runShell
     printfn "Polling CI for commit %s..." sha
 
-    match pollCi runShell sha 30000 60 with
+    match pollCi runCi sha 30000 60 with
     | CiPassed ->
         printfn "CI passed, no coverage loosening needed."
         0
@@ -650,7 +642,7 @@ let internal runLoosenFromCi (runShell: string -> string -> CommandResult) (conf
             let newSha = getVcsSha runShell
             printfn "Re-polling CI for commit %s..." newSha
 
-            match pollCi runShell newSha 30000 60 with
+            match pollCi runCi newSha 30000 60 with
             | CiPassed ->
                 printfn "CI passed after threshold update."
                 0
@@ -711,14 +703,13 @@ let runScoped
         Merge.refreshBaselines searchDir
         Ok 0
     | ProposeFromCi(runId, output) ->
-        let runInRepo cmd args =
-            withJjGitDir (fun () -> Shell.run cmd args)
+        let cwd = Directory.GetCurrentDirectory()
 
         Ok(
             ProposeFromCi.runProposeFromCi
-                runInRepo
+                (Shell.runWithGitDir (resolveGitDir cwd))
                 (printfn "%s")
-                (Directory.GetCurrentDirectory())
+                cwd
                 defaultConfigPath
                 runId
                 output
@@ -753,7 +744,9 @@ let runScoped
             | ProposeFromCi _ -> None
 
         match coverageFileCmd with
-        | None -> Ok(runLoosenFromCi Shell.run configPath)
+        | None ->
+            let runCi = Shell.runWithGitDir (resolveGitDir (Directory.GetCurrentDirectory()))
+            Ok(runLoosenFromCi Shell.run runCi configPath)
         | Some cmd ->
             // --merge-baselines: layer each report onto its per-project baseline so a
             // partial (impact-filtered) run can't lower the ratchet.
