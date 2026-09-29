@@ -74,6 +74,26 @@ let internal readNuspecDependencies (pkgVersionDir: string) : (string * string) 
     with _ ->
         []
 
+/// The lib/<tfm> dirs of the packages the package at `pkgVersionDir` depends on,
+/// transitively, by its .nuspec and the .nuspecs under `cacheRoot` it leads to.
+let private dependencyClosureDirs (cacheRoot: string) (pkgVersionDir: string) : string list =
+    let visited =
+        System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+
+    let dirs = System.Collections.Generic.List<string>()
+
+    let rec walk (pkgVersionDir: string) =
+        if visited.Add(pkgVersionDir) then
+            for id, ver in readNuspecDependencies pkgVersionDir do
+                match resolveCachedPackageDir cacheRoot id ver with
+                | Some depVerDir ->
+                    pickLibDir depVerDir |> Option.iter dirs.Add
+                    walk depVerDir
+                | None -> ()
+
+    walk pkgVersionDir
+    List.ofSeq dirs
+
 /// Resolve the transitive dependency lib directories for a dll that lives inside
 /// the NuGet package cache (where there is no co-located .deps.json — e.g. when
 /// diffing against a previously published package). Walks the package's .nuspec
@@ -102,23 +122,55 @@ let internal nuspecClosureDirsFor (cacheRoot: string) (dllPath: string) : string
     else
         match findPkgDir dllDir with
         | None -> []
-        | Some rootPkgDir ->
-            let visited =
-                System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        | Some rootPkgDir -> dependencyClosureDirs cacheRoot rootPkgDir
 
-            let dirs = System.Collections.Generic.List<string>()
+/// The assemblies `dllPath` references, by name and version, read from its
+/// metadata without loading it; none when it cannot be read.
+let internal referencedAssemblies (dllPath: string) : (string * Version) list =
+    try
+        use stream = File.OpenRead dllPath
+        use pe = new PortableExecutable.PEReader(stream)
+        let reader = Metadata.PEReaderExtensions.GetMetadataReader pe
 
-            let rec walk (pkgVersionDir: string) =
-                if visited.Add(pkgVersionDir) then
-                    for id, ver in readNuspecDependencies pkgVersionDir do
-                        match resolveCachedPackageDir cacheRoot id ver with
-                        | Some depVerDir ->
-                            pickLibDir depVerDir |> Option.iter dirs.Add
-                            walk depVerDir
-                        | None -> ()
+        [
+            for handle in reader.AssemblyReferences do
+                let reference = reader.GetAssemblyReference handle
+                reader.GetString reference.Name, reference.Version
+        ]
+    with _ ->
+        []
 
-            walk rootPkgDir
-            List.ofSeq dirs
+/// The cached version directory of the package `name`, for an assembly `name` at
+/// `version`: the package version with the assembly version's major.minor.build,
+/// else the highest cached one (an assembly version need not match its
+/// package's, as FSharp.Core's 10.0.0.0 in package 10.1.x shows).
+let internal cachedPackageDirForAssembly (cacheRoot: string) (name: string) (version: Version) : string option =
+    let idDir = Path.Combine(cacheRoot, name.ToLowerInvariant())
+
+    if not (Directory.Exists idDir) then
+        None
+    else
+        let versionDirs = Directory.GetDirectories idDir |> Array.sortDescending
+        let assemblyVersion = sprintf "%d.%d.%d" version.Major version.Minor version.Build
+
+        versionDirs
+        |> Array.tryFind (fun dir -> (Path.GetFileName dir).Split('-').[0] = assemblyVersion)
+        |> Option.orElse (Array.tryHead versionDirs)
+
+/// The lib dirs, with their dependency closures, of the cached packages that
+/// ship the assemblies `dllPath` references but `isProvided` says nothing else
+/// supplies. This is how the dependencies of a package that declares none are
+/// found: an FSharp.Analyzers.SDK analyzer ships under analyzers/dotnet/fs/ with
+/// its SDK as a private asset, so its .nuspec lists no dependency, yet its
+/// assembly references FSharp.Analyzers.SDK, whose own .nuspec leads on to
+/// FSharp.Compiler.Service and FSharp.Core.
+let internal referencedPackageDirsFor (cacheRoot: string) (isProvided: string -> bool) (dllPath: string) : string list =
+    referencedAssemblies dllPath
+    |> List.filter (fun (name, _) -> not (isProvided name))
+    |> List.collect (fun (name, version) ->
+        match cachedPackageDirForAssembly cacheRoot name version with
+        | Some pkgDir -> Option.toList (pickLibDir pkgDir) @ dependencyClosureDirs cacheRoot pkgDir
+        | None -> [])
 
 let private getDotnetRoot (dotnetRootVar: string option) (runtimeDir: string) =
     match dotnetRootVar with
@@ -254,11 +306,22 @@ let internal assemblySearchPathsFor (dotnetRootVar: string option) (dllPath: str
     // A dll inside the NuGet package cache has no co-located .deps.json, so its
     // transitive dependencies come from the .nuspec graph instead.
     let nuspecClosureDirs = nuspecClosureDirsFor (nugetCacheRoot ()) dllPath
+    let installation = installationDirsFor dotnetRootVar
+
+    // Last, for a package that declares no dependencies: the cached packages of
+    // the assemblies it references that neither its own directory nor the .NET
+    // installation supplies.
+    let referencedPackageDirs =
+        let isProvided (name: string) =
+            dllDir :: installation
+            |> List.exists (fun dir -> File.Exists(Path.Combine(dir, name + ".dll")))
+
+        referencedPackageDirsFor (nugetCacheRoot ()) isProvided dllPath
 
     {
         DllDir = dllDir
-        Installation = installationDirsFor dotnetRootVar
-        Packages = nugetDirs @ depsJsonDirs @ nuspecClosureDirs
+        Installation = installation
+        Packages = nugetDirs @ depsJsonDirs @ nuspecClosureDirs @ referencedPackageDirs
     }
 
 let getAssemblySearchPaths (dllPath: string) : string list =

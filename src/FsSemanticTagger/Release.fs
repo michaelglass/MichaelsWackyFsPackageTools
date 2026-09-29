@@ -1391,9 +1391,10 @@ let private decideBump
                         // FAIL CLOSED. The release this one follows IS published, so it
                         // is the only correct baseline; walking back to an older tag
                         // would diff against the wrong API surface and could ship a
-                        // breaking change as a patch. Fixing the load context is not a
-                        // safe guess (an analyzer package does not declare the SDK it
-                        // builds against), so refuse and say exactly what failed.
+                        // breaking change as a patch. A dependency the load context
+                        // cannot find (say an analyzer's SDK missing from the NuGet
+                        // cache) is not something to guess around, so refuse and say
+                        // exactly what failed.
                         Some(
                             CannotDetermine(
                                 pkg,

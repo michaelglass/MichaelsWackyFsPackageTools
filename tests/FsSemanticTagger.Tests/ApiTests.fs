@@ -1736,10 +1736,22 @@ let ``extractFromCacheRoot reports a cached assembly that cannot be read as Cach
         with _ ->
             ()
 
+/// Writes to `path` a copy of the tagger's DLL whose reference to the
+/// `CommandTree` assembly names `CommandTreX` instead, an assembly no cache
+/// holds, so loading its API fails with "Could not find assembly".
+let private writeUnloadableCopy (path: string) =
+    let bytes = System.IO.File.ReadAllBytes taggerDll
+    let name = System.Text.Encoding.ASCII.GetBytes "\000CommandTree\000"
+
+    let at =
+        System.MemoryExtensions.IndexOf(System.ReadOnlySpan bytes, System.ReadOnlySpan name)
+    // The metadata string heap entry the assembly reference names.
+    bytes[at + name.Length - 2] <- byte 'X'
+    System.IO.File.WriteAllBytes(path, bytes)
+
 /// The unreadable-assembly misclassification, at its source. A published package
-/// whose assembly will not load
-/// — here our own DLL cached WITHOUT its System.Reflection.MetadataLoadContext
-/// dependency, the same "Could not find assembly" failure an analyzer hits when
+/// whose assembly will not load — here our own DLL referencing an assembly no
+/// cache holds, the same "Could not find assembly" failure an analyzer hits when
 /// FSharp.Analyzers.SDK does not resolve — used to come back as AbsentOnFeed ("not
 /// published") once a no-op restore succeeded. It is Unreadable, naming the
 /// assembly and the dependency, and no restore is attempted: the package is right
@@ -1749,14 +1761,12 @@ let ``extractPreviousFromNuGetResult - a cached assembly that fails to load is U
     let home =
         System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
 
-    let srcDll = taggerDll
-
     let pkgId = "fsst-unloadable-fixture-" + System.Guid.NewGuid().ToString("N")
     let pkgRoot = System.IO.Path.Combine(home, ".nuget", "packages", pkgId)
     let libDir = System.IO.Path.Combine(pkgRoot, "1.0.0", "lib", "net10.0")
     let dllPath = System.IO.Path.Combine(libDir, pkgId + ".dll")
     System.IO.Directory.CreateDirectory(libDir) |> ignore
-    System.IO.File.Copy(srcDll, dllPath)
+    writeUnloadableCopy dllPath
 
     let mutable restoreAttempted = false
 
@@ -1768,14 +1778,7 @@ let ``extractPreviousFromNuGetResult - a cached assembly that fails to load is U
         match extractPreviousFromNuGetResult restoreRun pkgId "1.0.0" with
         | Unreadable reason ->
             test <@ reason.StartsWith("could not load " + dllPath + ": ") @>
-            // Which of the dll's absent dependencies (CommandTree,
-            // System.Reflection.MetadataLoadContext) is hit first depends on the
-            // order the extractor reads metadata; the reason names whichever it is.
-            test
-                <@
-                    reason.Contains("Could not find assembly 'CommandTree")
-                    || reason.Contains("Could not find assembly 'System.Reflection.MetadataLoadContext")
-                @>
+            test <@ reason.Contains("Could not find assembly 'CommandTreX") @>
         | other -> failwithf "Expected Unreadable, got %A" other
 
         test <@ not restoreAttempted @>
@@ -1790,8 +1793,6 @@ let ``extractPreviousFromNuGetResult - a package restored but unloadable is Unre
     let home =
         System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
 
-    let srcDll = taggerDll
-
     let pkgId = "fsst-unloadable-fixture-" + System.Guid.NewGuid().ToString("N")
     let pkgRoot = System.IO.Path.Combine(home, ".nuget", "packages", pkgId)
     let libDir = System.IO.Path.Combine(pkgRoot, "1.0.0", "lib", "net10.0")
@@ -1799,7 +1800,7 @@ let ``extractPreviousFromNuGetResult - a package restored but unloadable is Unre
     // Restore "downloads" the package into the cache.
     let restoreRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         System.IO.Directory.CreateDirectory(libDir) |> ignore
-        System.IO.File.Copy(srcDll, System.IO.Path.Combine(libDir, pkgId + ".dll"), true)
+        writeUnloadableCopy (System.IO.Path.Combine(libDir, pkgId + ".dll"))
         FsSemanticTagger.Shell.Success ""
 
     try
@@ -1809,3 +1810,90 @@ let ``extractPreviousFromNuGetResult - a package restored but unloadable is Unre
     finally
         if System.IO.Directory.Exists pkgRoot then
             System.IO.Directory.Delete(pkgRoot, true)
+
+[<Fact>]
+let ``referencedAssemblies reads a dll's assembly references without loading it`` () =
+    let references = referencedAssemblies taggerDll |> List.map fst
+    test <@ references |> List.contains "CommandTree" @>
+    test <@ List.isEmpty (referencedAssemblies "no-such.dll") @>
+
+[<Fact>]
+let ``cachedPackageDirForAssembly prefers the assembly's major.minor.build, else the highest version`` () =
+    TestHelpers.withTempDir (fun cacheRoot ->
+        let versionDir (version: string) =
+            let dir = System.IO.Path.Combine(cacheRoot, "some.sdk", version)
+            System.IO.Directory.CreateDirectory dir |> ignore
+            dir
+
+        let _ = versionDir "0.39.0"
+        let exact = versionDir "0.39.2"
+        let highest = versionDir "0.39.9-beta"
+
+        test <@ cachedPackageDirForAssembly cacheRoot "Some.Sdk" (System.Version(0, 39, 2, 0)) = Some exact @>
+        test <@ cachedPackageDirForAssembly cacheRoot "Some.Sdk" (System.Version(1, 0, 0, 0)) = Some highest @>
+        test <@ cachedPackageDirForAssembly cacheRoot "Absent" (System.Version(1, 0, 0, 0)) = None @>)
+
+[<Fact>]
+let ``referencedPackageDirsFor adds the cached package of an unprovided reference and its dependencies`` () =
+    TestHelpers.withTempDir (fun cacheRoot ->
+        // The tagger references CommandTree, as an analyzer references FSharp.Analyzers.SDK.
+        let commandTreeVersion =
+            referencedAssemblies taggerDll
+            |> List.find (fun (name, _) -> name = "CommandTree")
+            |> snd
+
+        let package (id: string) (version: string) (dependencies: (string * string) list) =
+            let dir = System.IO.Path.Combine(cacheRoot, id.ToLowerInvariant(), version)
+
+            System.IO.Directory.CreateDirectory(System.IO.Path.Combine(dir, "lib", "net10.0"))
+            |> ignore
+
+            let dependencyElements =
+                dependencies
+                |> List.map (fun (depId, depVersion) ->
+                    sprintf "<dependency id=\"%s\" version=\"%s\" />" depId depVersion)
+                |> String.concat ""
+
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(dir, id.ToLowerInvariant() + ".nuspec"),
+                sprintf
+                    "<package><metadata><id>%s</id><dependencies><group>%s</group></dependencies></metadata></package>"
+                    id
+                    dependencyElements
+            )
+
+            System.IO.Path.Combine(dir, "lib", "net10.0")
+
+        let commandTreeLib =
+            package
+                "CommandTree"
+                (sprintf "%d.%d.%d" commandTreeVersion.Major commandTreeVersion.Minor commandTreeVersion.Build)
+                [ "Its.Dependency", "2.0.0" ]
+
+        let dependencyLib = package "Its.Dependency" "2.0.0" []
+
+        let dirs =
+            referencedPackageDirsFor cacheRoot (fun name -> name <> "CommandTree") taggerDll
+
+        test <@ dirs = [ commandTreeLib; dependencyLib ] @>
+        test <@ List.isEmpty (referencedPackageDirsFor cacheRoot (fun _ -> true) taggerDll) @>)
+
+[<Fact>]
+let ``extractFromCacheRoot reads an analyzer-layout package whose nuspec declares no dependencies`` () =
+    // An FSharp.Analyzers.SDK analyzer ships alone under analyzers/dotnet/fs/ and
+    // lists no dependency; its references resolve from the NuGet cache by name.
+    TestHelpers.withTempDir (fun cacheRoot ->
+        let pkgDir = System.IO.Path.Combine(cacheRoot, "fake.analyzer", "1.0.0")
+        let analyzerDir = System.IO.Path.Combine(pkgDir, "analyzers", "dotnet", "fs")
+        System.IO.Directory.CreateDirectory analyzerDir |> ignore
+
+        System.IO.File.WriteAllText(
+            System.IO.Path.Combine(pkgDir, "fake.analyzer.nuspec"),
+            "<package><metadata><id>Fake.Analyzer</id><developmentDependency>true</developmentDependency></metadata></package>"
+        )
+
+        System.IO.File.Copy(taggerDll, System.IO.Path.Combine(analyzerDir, "Fake.Analyzer.dll"))
+
+        match extractFromCacheRoot cacheRoot "Fake.Analyzer" "1.0.0" with
+        | CachedRead api -> test <@ api |> List.contains (ApiSignature "type FsSemanticTagger.Program+Command") @>
+        | other -> failwithf "expected the analyzer's API, got %A" other)
