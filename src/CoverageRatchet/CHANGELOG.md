@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: `--file` is now parsed by CommandTree as a repeatable global flag, so `--help` lists it under Global options (with the short form `-f` and `--file=<name>`). A `--file` with no value is now rejected with `Flag '--file' requires a value`; before, it was silently read as the config path.
+
 ## 0.15.0-alpha.18 - 2026-09-29
 
 - fix: `ratchet`, `loosen` and the other config-writing commands keep `\n` line endings on Windows instead of rewriting the whole file with `\r\n`.

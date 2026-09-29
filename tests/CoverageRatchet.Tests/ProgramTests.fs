@@ -8,6 +8,7 @@ open Tests.Common
 open Swensen.Unquote
 open CoverageRatchet.Thresholds
 open CoverageRatchet.Program
+open CommandTree
 open Tests.Common.TestHelpers
 open CoverageRatchet.Tests.CoverageTestHelpers
 
@@ -2399,20 +2400,89 @@ let ``runScoped - --file on a command other than baseline-lines is an error`` ()
         test <@ Result.isError result @>
         test <@ File.ReadAllText(configPath) = twoPlatformDocument @>)
 
-[<Fact>]
-let ``extractFileScope - collects every --file and leaves the rest of argv in place`` () =
-    let files, remaining =
-        extractFileScope [| "baseline-lines"; "--file"; "Zeta.fs"; "r.json"; "--file"; "Alpha.fs" |]
-
-    test <@ files = [ "Zeta.fs"; "Alpha.fs" ] @>
-    test <@ remaining = [| "baseline-lines"; "r.json" |] @>
+let private parseFileScope (argv: string array) =
+    cliSpec.Parse argv
+    |> Result.map (fun (globals, cmd) -> fileScopeOf globals, cmd)
 
 [<Fact>]
-let ``extractFileScope - a trailing --file with no value is left for the parser to reject`` () =
-    let files, remaining = extractFileScope [| "baseline-lines"; "--file" |]
+let ``--file - absent gives an empty scope`` () =
+    test <@ parseFileScope [| "baseline-lines" |] = Ok([], BaselineLines None) @>
 
-    test <@ List.isEmpty files @>
-    test <@ remaining = [| "baseline-lines"; "--file" |] @>
+[<Fact>]
+let ``--file - one occurrence after the command`` () =
+    test <@ parseFileScope [| "baseline-lines"; "--file"; "Zeta.fs" |] = Ok([ "Zeta.fs" ], BaselineLines None) @>
+
+[<Fact>]
+let ``--file - one occurrence before the command`` () =
+    test <@ parseFileScope [| "--file"; "Zeta.fs"; "baseline-lines" |] = Ok([ "Zeta.fs" ], BaselineLines None) @>
+
+[<Fact>]
+let ``--file - several occurrences keep argv order around positionals`` () =
+    let parsed =
+        parseFileScope
+            [|
+                "--file"
+                "Zeta.fs"
+                "baseline-lines"
+                "--file"
+                "Alpha.fs"
+                "r.json"
+                "--file"
+                "Beta.fs"
+            |]
+
+    test <@ parsed = Ok([ "Zeta.fs"; "Alpha.fs"; "Beta.fs" ], BaselineLines(Some "r.json")) @>
+
+[<Fact>]
+let ``--file - a trailing --file with no value is rejected`` () =
+    match cliSpec.Parse [| "baseline-lines"; "--file" |] with
+    | Error(InvalidArguments(_, msg)) -> test <@ msg.Contains("--file") && msg.Contains("requires a value") @>
+    | other -> failwithf "expected a missing-value error, got %A" other
+
+[<Fact>]
+let ``--file - is listed in root help as repeatable`` () =
+    let help =
+        CommandTree.helpWithGlobals cliSpec.Tree cliSpec.GlobalFlags "coverageratchet"
+
+    test <@ help.Contains("--file") && help.Contains("(repeatable)") @>
+
+[<Fact>]
+let ``main - --file before the command scopes baseline-lines to that file`` () =
+    withTempDir (fun tmpDir ->
+        let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
+        File.WriteAllText(xmlPath, makeCountCoverageXml [ "Zeta.fs", 7, 10; "Alpha.fs", 9, 10 ])
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, twoPlatformDocument)
+
+        let result =
+            main [| "--file"; "Zeta.fs"; "--search-dir"; tmpDir; "baseline-lines"; configPath |]
+
+        test <@ result = 0 @>
+
+        // Alpha's count rose but was not named, so only Zeta's entry changes.
+        let expected =
+            twoPlatformDocument.Replace(
+                sprintf
+                    "\"coveredLines\": 9,\n        \"coveredBranches\": 0,\n        \"platform\": \"%s\""
+                    platformName,
+                sprintf
+                    "\"coveredLines\": 7,\n        \"coveredBranches\": 0,\n        \"platform\": \"%s\""
+                    platformName
+            )
+
+        test <@ File.ReadAllText(configPath) = expected @>)
+
+[<Fact>]
+let ``main - --file on another command exits 1`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCountCoverageXml [ "Zeta.fs", 7, 10 ])
+
+        let configPath = Path.Combine(tmpDir, "config.json")
+        File.WriteAllText(configPath, twoPlatformDocument)
+
+        test <@ main [| "--search-dir"; tmpDir; "check"; configPath; "--file"; "Zeta.fs" |] = 1 @>
+        test <@ File.ReadAllText(configPath) = twoPlatformDocument @>)
 
 /// Four production files with identical coverage; the name filter skips `TestKit.fs`.
 let private fourFilesOneNamedTestKit =

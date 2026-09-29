@@ -55,6 +55,19 @@ type Command =
         runId: string *
         output: string option
 
+/// Flags accepted before or after the command.
+[<RequireQualifiedAccess>]
+type GlobalFlag =
+    | [<CmdFlag(Repeatable = true, Description = "(baseline-lines only) re-baseline only this file's count floor")>] File of
+        name: string
+
+/// Parses argv into the `--file` scope and the command.
+let cliSpec =
+    CommandReflection.fromUnionWithGlobals<Command, GlobalFlag> "Per-file coverage enforcement that only goes up"
+
+let fileScopeOf (globals: GlobalFlag list) : string list =
+    globals |> List.map (fun (GlobalFlag.File name) -> name)
+
 let formatFileResult (r: FileResult) =
     let branchStr =
         if r.File.BranchesTotal > 0 then
@@ -784,19 +797,6 @@ let runScoped
 let run (command: Command) (searchDir: string) (mergeBaselines: bool) : Result<int, string> =
     runScoped [] command searchDir mergeBaselines
 
-/// Pull every `--file <name>` out of argv before the command parser sees it. A
-/// trailing `--file` with no value is left in place for the parser to reject.
-let extractFileScope (argv: string array) : string list * string array =
-    let rec loop i files remaining =
-        if i >= argv.Length then
-            List.rev files, Array.ofList (List.rev remaining)
-        elif argv.[i] = "--file" && i + 1 < argv.Length then
-            loop (i + 2) (argv.[i + 1] :: files) remaining
-        else
-            loop (i + 1) files (argv.[i] :: remaining)
-
-    loop 0 [] []
-
 let extractFlags (argv: string array) : string * bool * string array =
     let rec loop i searchDir mergeBaselines remaining =
         if i >= argv.Length then
@@ -963,8 +963,6 @@ Global flags (can appear anywhere):
                         coverage.baseline.xml (max hits per line) so
                         partial test runs cannot lower the ratchet.
                         Bootstraps a baseline on first use.
-  --file <name>         (baseline-lines only; repeatable) re-baseline
-                        only this file's count floor.
 
 Config file format (default: coverage-ratchet.json):
   {
@@ -1014,35 +1012,31 @@ let private normalizeHelpFlags (argv: string array) : string array =
 let main argv =
     let argv = normalizeHelpFlags argv
     let searchDir, mergeBaselines, argv = extractFlags argv
-    let fileScope, argv = extractFileScope argv
-
-    let tree =
-        CommandReflection.fromUnion<Command> "Per-file coverage enforcement that only goes up"
+    let tree = cliSpec.Tree
 
     let printHelp (path: string list) =
-        printfn "%s" (CommandTree.helpForPath tree path "coverageratchet")
-
         if List.isEmpty path then
+            printfn "%s" (CommandTree.helpWithGlobals tree cliSpec.GlobalFlags "coverageratchet")
             printfn "%s" rootHelpExtras
         else
+            printfn "%s" (CommandTree.helpForPath tree path "coverageratchet")
+
             match subcommandExtras path with
             | Some extras -> printfn "%s" extras
             | None -> ()
 
-    if Array.isEmpty argv then
-        match runScoped fileScope (Ratchet None) searchDir mergeBaselines with
+    let runOrReport fileScope cmd =
+        match runScoped fileScope cmd searchDir mergeBaselines with
         | Ok exitCode -> exitCode
         | Error msg ->
             eprintfn "Error: %s" msg
             1
+
+    if Array.isEmpty argv then
+        runOrReport [] (Ratchet None)
     else
-        match CommandTree.parse tree argv with
-        | Ok cmd ->
-            match runScoped fileScope cmd searchDir mergeBaselines with
-            | Ok exitCode -> exitCode
-            | Error msg ->
-                eprintfn "Error: %s" msg
-                1
+        match cliSpec.Parse argv with
+        | Ok(globals, cmd) -> runOrReport (fileScopeOf globals) cmd
         | Error(HelpRequested path) ->
             printHelp path
             0
