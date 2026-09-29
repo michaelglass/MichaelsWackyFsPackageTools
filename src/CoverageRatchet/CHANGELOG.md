@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.15.0-alpha.18 - 2026-09-29
+
 - fix: `ratchet`, `loosen` and the other config-writing commands keep `\n` line endings on Windows instead of rewriting the whole file with `\r\n`.
 - fix: `check` says how many files the reader skipped (`Result: 3/3 files in the report passed (1 more was excluded by the reader; …)`) and `targets` lists them with the filter that matched. A skipped file never gets a floor, so it was missing from both sides of the count without a word — e.g. a production `TestKit.fs`, which the `Test` name filter catches.
 - chore(deps): CommandTree 0.8.1 -> 0.11.3. An unknown command that is a near-miss of a real one now ends with a suggestion, e.g. `Unknown command 'chek'. Did you mean 'coverageratchet check'?`; commands, flags and help text are otherwise unchanged.

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.18 - 2026-09-29
+
 - fix: JSON the tool writes (its config and the consumer-canary config) uses `\n` line endings on every platform, not `\r\n` on Windows.
 - fix: the consumer-canary gate runs its command through `sh` from `PATH` instead of `/bin/sh`, so it also works on Windows.
 - fix: **the "no workflow run yet" message prints a check command that works.** It said `gh run list --branch <tag>`. From a jj checkout with no colocated `.git`, `gh` could not find the repository and answered "failed to determine base repo". The command also listed runs of every workflow on the tag, not only the publish workflow the poll had asked about.

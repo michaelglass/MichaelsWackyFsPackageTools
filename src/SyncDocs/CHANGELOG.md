@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.13.0-alpha.7 - 2026-09-29
+
 - fix: documents with CRLF line endings are now synced. Previously a section in a CRLF docs page was never replaced, so `sync` changed nothing and `check` reported the stale page as in sync; a CRLF README's code-sourced blocks likewise read as out of sync forever. Synced content now takes the target file's line endings (the majority ending in a mixed file), so a CRLF file stays CRLF and an LF file stays LF
 
 ## 0.13.0-alpha.6 - 2026-09-16
