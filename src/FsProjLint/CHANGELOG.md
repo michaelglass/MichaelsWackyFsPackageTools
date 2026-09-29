@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.10.0-alpha.19 - 2026-09-29
+
 - chore(deps): CommandTree 0.11.3 → 0.12.0.
 
 ## 0.10.0-alpha.18 - 2026-09-29

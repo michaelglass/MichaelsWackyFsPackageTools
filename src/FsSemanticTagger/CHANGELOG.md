@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.19 - 2026-09-29
+
 - chore(deps): CommandTree 0.11.3 → 0.12.0.
 - fix: **the API of an FSharp.Analyzers.SDK analyzer package is read.** Such a package ships its assembly under `analyzers/dotnet/fs/` with the SDK as a private asset, so its .nuspec lists no dependency. The load context never found `FSharp.Analyzers.SDK`, and `release` stopped with "the public API of v0.1.0-alpha.7 could not be read (could not load …MichaelGlass.FSharp.Analyzers.dll: Could not find assembly 'FSharp.Analyzers.SDK, Version=0.39.2.0 …')".
   - A DLL's resolver now also searches, for each assembly it references that neither its own directory nor the .NET installation supplies, the NuGet cache package with that id: the version matching the assembly's major.minor.build, else the highest cached one, plus that package's .nuspec dependencies. For the analyzer that is FSharp.Analyzers.SDK 0.39.2, then FSharp.Compiler.Service, FSharp.Core and the rest.
