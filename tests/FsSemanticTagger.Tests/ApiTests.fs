@@ -1192,6 +1192,52 @@ let ``getAssemblySearchPaths searches the SDK FSharp dirs and shared frameworks 
         test <@ not (paths |> List.exists (fun p -> p.StartsWith noFsharpSdk)) @>)
 
 [<Fact>]
+let ``resolverDllsFor lists the .NET installation once per process and the package dir every time`` () =
+    TestHelpers.withTempDir (fun tmp ->
+        let dotnetRoot = System.IO.Path.Combine(tmp, "dotnet")
+        let framework = System.IO.Path.Combine(dotnetRoot, "shared", "Fake.App", "1.0.0")
+        let packageDir = System.IO.Path.Combine(tmp, "pkg")
+        System.IO.Directory.CreateDirectory framework |> ignore
+        System.IO.Directory.CreateDirectory packageDir |> ignore
+
+        let touch (dir: string) (name: string) =
+            let path = System.IO.Path.Combine(dir, name)
+            System.IO.File.WriteAllText(path, "")
+            path
+
+        let frameworkDll = touch framework "FakeFramework.dll"
+        let dll = touch packageDir "Pkg.dll"
+
+        let first = resolverDllsFor (Some dotnetRoot) dll
+        let addedToFramework = touch framework "AddedLater.dll"
+        let addedToPackage = touch packageDir "AddedDependency.dll"
+        let second = resolverDllsFor (Some dotnetRoot) dll
+
+        test <@ first |> List.contains frameworkDll @>
+        test <@ second |> List.contains frameworkDll @>
+        test <@ not (second |> List.contains addedToFramework) @>
+        test <@ not (first |> List.contains addedToPackage) @>
+        test <@ second |> List.contains addedToPackage @>)
+
+[<Fact>]
+let ``resolverDllsFor keeps the first dll of each name, in search-path order`` () =
+    TestHelpers.withTempDir (fun tmp ->
+        let dotnetRoot = System.IO.Path.Combine(tmp, "dotnet")
+        let framework = System.IO.Path.Combine(dotnetRoot, "shared", "Fake.App", "1.0.0")
+        let packageDir = System.IO.Path.Combine(tmp, "pkg")
+        System.IO.Directory.CreateDirectory framework |> ignore
+        System.IO.Directory.CreateDirectory packageDir |> ignore
+        let packageCopy = System.IO.Path.Combine(packageDir, "Shared.dll")
+        let frameworkCopy = System.IO.Path.Combine(framework, "Shared.dll")
+        System.IO.File.WriteAllText(packageCopy, "")
+        System.IO.File.WriteAllText(frameworkCopy, "")
+
+        let dlls = resolverDllsFor (Some dotnetRoot) packageCopy
+
+        test <@ dlls |> List.contains packageCopy @>
+        test <@ not (dlls |> List.contains frameworkCopy) @>)
+
+[<Fact>]
 let ``getAssemblySearchPaths returns dllDir when dll has no deps.json`` () =
     let tmpDir =
         System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName())
