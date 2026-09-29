@@ -40,7 +40,8 @@ let ``runSilent - returns None for failing command`` () =
 
 [<Fact>]
 let ``run - returns stdout in Failure when stderr is empty`` () =
-    match run "bash" "-c \"printf 'stdout-only-error'; exit 1\"" with
+    // `sh`, not `bash`: on Windows `bash` resolves to System32's WSL launcher.
+    match run "sh" "-c \"printf 'stdout-only-error'; exit 1\"" with
     | Failure(msg, _) -> test <@ msg = "stdout-only-error" @>
     | Success _ -> failwith "Expected Failure"
 

@@ -8,9 +8,17 @@ let createTempDir () =
     Directory.CreateDirectory(dir) |> ignore
     dir
 
+/// Recursively delete `dir`. git objects are read-only, and Windows refuses to
+/// delete read-only files, so clear the attribute and retry when that happens.
 let cleanupDir dir =
     if Directory.Exists(dir) then
-        Directory.Delete(dir, true)
+        try
+            Directory.Delete(dir, true)
+        with :? UnauthorizedAccessException ->
+            for file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories) do
+                File.SetAttributes(file, FileAttributes.Normal)
+
+            Directory.Delete(dir, true)
 
 let withTempDir (action: string -> 'a) =
     let dir = createTempDir ()

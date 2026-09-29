@@ -38,7 +38,17 @@ let ``parseJson with single package`` () =
     test <@ config.Packages[0].Fsproj = "src/MyLib/MyLib.fsproj" @>
     test <@ config.Packages[0].TagPrefix = "v" @>
 
-    test <@ config.Packages[0].DllPath = Path.Combine("src/MyLib", "bin", "Release", "net10.0", "MyLib.dll") @>
+    // Path.Combine keeps the first segment's `/`; the library's directory is normalised.
+    test
+        <@
+            config.Packages[0].DllPath = Path.Combine(
+                Path.GetDirectoryName("src/MyLib/MyLib.fsproj"),
+                "bin",
+                "Release",
+                "net10.0",
+                "MyLib.dll"
+            )
+        @>
 
     test <@ config.Packages[0].FsProjsSharingSameTag |> List.isEmpty @>
     test <@ config.ReservedVersions = Set.empty @>
@@ -138,8 +148,7 @@ let ``parseJson defaults publishWorkflows to the release workflow`` () =
 
 [<Fact>]
 let ``parseJson refuses an empty publishWorkflows`` () =
-    // No workflow to ask about means no tag can ever be confirmed. That is a config
-    // mistake, and it must surface before the version bump goes out.
+    // No workflow means no tag can be confirmed: fail before the bump goes out.
     let json =
         """{ "packages": [ { "name": "MyLib", "fsproj": "src/MyLib/MyLib.fsproj" } ], "publishWorkflows": [] }"""
 
@@ -464,7 +473,7 @@ let ``findPackableProjects excludes example exe without PackAsTool but keeps too
         for d in [ exampleDir; toolDir; libDir; isPackableFalseDir ] do
             Directory.CreateDirectory(d) |> ignore
 
-        // Example app: OutputType=Exe with a PackageId but NO PackAsTool -> must be excluded.
+        // Example app: Exe + PackageId but no PackAsTool -> excluded.
         File.WriteAllText(
             Path.Combine(exampleDir, "Demo.fsproj"),
             """<Project Sdk="Microsoft.NET.Sdk">
@@ -790,9 +799,7 @@ let ``load re-derives dllPath from fsproj with AssemblyName`` () =
         File.WriteAllText(Path.Combine(tmpDir, "semantic-tagger.json"), jsonContent)
 
         let config = load tmpDir |> Result.defaultWith failwith
-        // Should re-derive from fsproj, using AssemblyName
         test <@ config.Packages[0].DllPath.Contains("MyCustomAssembly.dll") @>
-        // Should NOT keep the old dllPath from JSON
         test <@ not (config.Packages[0].DllPath.Contains("old/path")) @>)
 
 [<Fact>]
@@ -920,9 +927,7 @@ let ``deriveDllPathFromContent uses correct output path structure`` () =
 </Project>"""
 
     let result = deriveDllPathFromContent fsprojPath content
-    test <@ result = Path.Combine("/repo/src/MyLib", "bin", "Release", "net10.0", "MyLib.dll") @>
-
-// --- parseProjectReferenceIncludes (pure) ---
+    test <@ result = Path.Combine(Path.GetDirectoryName(fsprojPath), "bin", "Release", "net10.0", "MyLib.dll") @>
 
 [<Fact>]
 let ``parseProjectReferenceIncludes parses self-closing references`` () =
@@ -967,8 +972,6 @@ let ``parseProjectReferenceIncludes returns empty when none present`` () =
 </Project>"""
 
     test <@ List.isEmpty (parseProjectReferenceIncludes content) @>
-
-// --- transitiveProjectRefDirs (I/O against a temp tree) ---
 
 let private writeFsproj (root: string) (relPath: string) (refs: string list) =
     let full = Path.Combine(root, relPath)
@@ -1025,12 +1028,9 @@ let ``transitiveProjectRefDirs skips missing referenced fsproj`` () =
         writeFsproj root "src/B/B.fsproj" []
 
         let result = transitiveProjectRefDirs root "src/A/A.fsproj"
-        // Ghost's dir is still listed (it's a declared reference), but traversal
-        // into it doesn't throw and yields nothing further.
+        // A missing referenced fsproj is still listed, but not traversed.
         test <@ List.contains "src/B" result @>
         test <@ List.contains "src/Ghost" result @>)
-
-// --- isPackAsTool (pure) ---
 
 [<Fact>]
 let ``isPackAsTool is true for a PackAsTool true project`` () =
@@ -1052,8 +1052,6 @@ let ``isPackAsTool tolerates whitespace and case`` () =
 let ``isPackAsTool is false when absent or false`` () =
     test <@ not (isPackAsTool "<Project><PropertyGroup></PropertyGroup></Project>") @>
     test <@ not (isPackAsTool "<Project><PropertyGroup><PackAsTool>false</PackAsTool></PropertyGroup></Project>") @>
-
-// --- transitiveBundledRefDirs (I/O against a temp tree) ---
 
 let private writeFsprojWith (root: string) (relPath: string) (packAsTool: bool) (refs: string list) =
     let full = Path.Combine(root, relPath)
@@ -1078,8 +1076,7 @@ let private writeFsprojWith (root: string) (relPath: string) (packAsTool: bool) 
 [<Fact>]
 let ``transitiveBundledRefDirs - PackAsTool root includes a separately-released ref (full closure)`` () =
     withTempDir (fun root ->
-        // Tool bundles everything: even though Core is "separately released",
-        // a PackAsTool ships it, so it (and its transitive ref) must be included.
+        // A PackAsTool bundles everything, including separately released refs.
         writeFsprojWith root "src/Cli/Cli.fsproj" true [ "../Core/Core.fsproj" ]
         writeFsprojWith root "src/Core/Core.fsproj" false [ "../Helper/Helper.fsproj" ]
         writeFsprojWith root "src/Helper/Helper.fsproj" false []
@@ -1091,9 +1088,7 @@ let ``transitiveBundledRefDirs - PackAsTool root includes a separately-released 
 [<Fact>]
 let ``transitiveBundledRefDirs - library root EXCLUDES a separately-released ref and stops recursing`` () =
     withTempDir (fun root ->
-        // Analyzers (library) -> Core (separately released) -> Helper.
-        // Core is a NuGet-dependency boundary: excluded, and Helper (reachable
-        // only through Core) is NOT pulled in.
+        // Lib -> Core (released) -> Helper: Core is a boundary, so Helper is not reached.
         writeFsprojWith root "src/Analyzers/Analyzers.fsproj" false [ "../Core/Core.fsproj" ]
         writeFsprojWith root "src/Core/Core.fsproj" false [ "../Helper/Helper.fsproj" ]
         writeFsprojWith root "src/Helper/Helper.fsproj" false []
@@ -1105,8 +1100,7 @@ let ``transitiveBundledRefDirs - library root EXCLUDES a separately-released ref
 [<Fact>]
 let ``transitiveBundledRefDirs - library root INCLUDES a non-released helper and recurses through it`` () =
     withTempDir (fun root ->
-        // Lib (library) -> Helper (not released) -> Deep (not released).
-        // Helper is bundled and recursed through, reaching Deep.
+        // Lib -> Helper -> Deep, none released: all bundled.
         writeFsprojWith root "src/Lib/Lib.fsproj" false [ "../Helper/Helper.fsproj" ]
         writeFsprojWith root "src/Helper/Helper.fsproj" false [ "../Deep/Deep.fsproj" ]
         writeFsprojWith root "src/Deep/Deep.fsproj" false []
@@ -1133,8 +1127,7 @@ let ``transitiveBundledRefDirs - library root mixes a bundled helper and an excl
 [<Fact>]
 let ``transitiveBundledRefDirs - cycle-safe and dedups with a library boundary`` () =
     withTempDir (fun root ->
-        // A -> B -> A (cycle); B also -> Core (released). Must terminate, dedup,
-        // exclude own dir and the released boundary.
+        // A -> B -> A cycle, B -> Core (released): terminates, dedups, excludes Core.
         writeFsprojWith root "src/A/A.fsproj" false [ "../B/B.fsproj" ]
         writeFsprojWith root "src/B/B.fsproj" false [ "../A/A.fsproj"; "../Core/Core.fsproj" ]
         writeFsprojWith root "src/Core/Core.fsproj" false []
@@ -1150,18 +1143,14 @@ let ``transitiveBundledRefDirs - skips a missing referenced fsproj`` () =
         writeFsprojWith root "src/B/B.fsproj" false []
 
         let result = transitiveBundledRefDirs root "src/A/A.fsproj" (fun _ -> false)
-        // Ghost's dir is still listed (declared, bundled), traversal into the
-        // missing file yields nothing further and does not throw.
+        // A missing referenced fsproj is still listed, but not traversed.
         test <@ List.contains "src/B" result @>
         test <@ List.contains "src/Ghost" result @>)
-
-// --- transitiveProjectRefFsprojs / repoRelativeFsproj (I/O against a temp tree) ---
 
 [<Fact>]
 let ``transitiveProjectRefFsprojs lists every reachable fsproj, crossing released boundaries`` () =
     withTempDir (fun root ->
-        // A library root: `transitiveBundledRefDirs` would stop at Core, but the
-        // release order needs to know A reaches Core AND what Core reaches.
+        // Unlike transitiveBundledRefDirs, this walks through released packages.
         writeFsprojWith root "src/A/A.fsproj" false [ "../Core/Core.fsproj"; "../B/B.fsproj" ]
         writeFsprojWith root "src/B/B.fsproj" false [ "../Core/Core.fsproj" ]
         writeFsprojWith root "src/Core/Core.fsproj" false [ "../Deep/Deep.fsproj" ]

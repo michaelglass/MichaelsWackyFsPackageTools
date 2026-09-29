@@ -87,6 +87,26 @@ Exit 2 also covers a report with no F# file in it at all: the wrong
 `--search-dir`, a collector that wrote nothing, a report read mid-write. Zero
 files examined is not zero files failing.
 
+#### Files the reader skipped
+
+The reader skips generated and vendored files and any file whose name contains
+`Test`. A skipped file never gets a floor, so it is missing from both sides of
+`N/N` — and `Test` matches anywhere in the name, so a production `TestKit.fs` is
+skipped too. `check` says how many were skipped:
+
+```
+Result: 3/3 files in the report passed (1 more was excluded by the reader; see `targets`)
+```
+
+and `targets` names them with the filter that matched:
+
+```
+  3 files
+
+  Not read by the coverage reader:
+    TestKit.fs — name contains "Test"
+```
+
 ### Loosen thresholds
 
 If you need `check` to pass right now (e.g., after a big refactor that dropped coverage), loosen sets every file's threshold to its current actual coverage:

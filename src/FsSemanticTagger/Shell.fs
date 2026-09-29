@@ -42,8 +42,7 @@ let runSilent (cmd: string) (args: string) : string option =
     | Success output -> Some output
     | Failure _ -> None
 
-/// `run` with an explicit working directory, for commands that act on another
-/// repository (a consumer's workspace) rather than the one being released.
+/// `run` in the working directory `cwd`.
 let runIn (cwd: string) (cmd: string) (args: string) : CommandResult =
     let psi = ProcessStartInfo(cmd, args)
     psi.WorkingDirectory <- cwd
@@ -69,19 +68,15 @@ let runIn (cwd: string) (cmd: string) (args: string) : CommandResult =
 
         Failure(msg, p.ExitCode)
 
-/// How a logged, time-boxed command ended: with an exit code, or killed once
-/// the budget ran out.
+/// How a time-boxed command ended: exited, or killed when the budget ran out.
 type GateOutcome =
     | Exited of exitCode: int
     | TimedOut of budget: System.TimeSpan
 
-/// Run `command` through `/bin/sh -c` in `cwd`, appending its interleaved
-/// stdout and stderr to the file at `logPath`, and kill the whole process tree
-/// once `timeout` elapses. A consumer's gate is a shell command line (`mise run
-/// ci`, `./build.fsx check`) and its output belongs in a file the refusal can
-/// name, not on this process's console.
+/// Run `command` through `sh -c` in `cwd`, appending stdout and stderr to
+/// `logPath`; kill the whole process tree once `timeout` elapses.
 let runLogged (cwd: string) (command: string) (timeout: System.TimeSpan) (logPath: string) : GateOutcome =
-    let psi = ProcessStartInfo("/bin/sh")
+    let psi = ProcessStartInfo("sh")
     psi.ArgumentList.Add "-c"
     psi.ArgumentList.Add command
     psi.WorkingDirectory <- cwd
@@ -93,14 +88,11 @@ let runLogged (cwd: string) (command: string) (timeout: System.TimeSpan) (logPat
     System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName logPath)
     |> ignore
 
-    // An explicit try/finally rather than `use`, and a synchronized writer
-    // rather than `lock`: both compile to guards (a null check before Dispose, a
-    // lock-taken check before Monitor.Exit) whose other arm cannot be reached.
+    // try/finally and a synchronized writer instead of `use`/`lock`: those add
+    // unreachable branches that the coverage floors would count.
     let file = new System.IO.StreamWriter(logPath, append = true, AutoFlush = true)
 
     try
-        // Both pumps write whole lines through one synchronized writer, so the
-        // log interleaves stdout and stderr line by line.
         let log = System.IO.TextWriter.Synchronized file
         log.WriteLine(sprintf "$ %s   (in %s)" command cwd)
 

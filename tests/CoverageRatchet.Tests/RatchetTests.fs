@@ -111,9 +111,8 @@ let ``ratchet handles files not in overrides`` () =
 
     let result = ratchet config files
 
-    // Foo.fs override should be tightened
     test <@ result.Overrides.["Foo.fs"].Line = 75.0 @>
-    // Bar.fs should NOT get a new override (it wasn't in overrides before)
+    // Bar.fs had no override, so none is added.
     test <@ result.Overrides.ContainsKey("Bar.fs") = false @>
 
 [<Fact>]
@@ -128,7 +127,6 @@ let ``ratchet keeps override unchanged when file not in coverage data`` () =
                         Reason = Some "file removed or not covered"
                         Platform = None } ] }
 
-    // Coverage data has no entry for Missing.fs
     let files = [ makeFile "Other.fs" 100.0 100.0 4 4 ]
     let result = ratchet config files
 
@@ -340,13 +338,13 @@ let ``ratchetRaw preserves entries for other platforms`` () =
                     { Line = 0.0
                       Branch = 0.0
                       Reason = Some "other"
-                      Platform = Some Windows } ] ] }
+                      Platform = Some otherPlatform } ] ] }
 
     let files = [ makeFile "Foo.fs" 80.0 75.0 3 4 ]
     let result = ratchetRaw raw files
     let entries = result.RawOverrides.["Foo.fs"]
     let mine = entries |> List.find (fun o -> o.Platform = Some Platform.current)
-    let other = entries |> List.find (fun o -> o.Platform = Some Windows)
+    let other = entries |> List.find (fun o -> o.Platform = Some otherPlatform)
     test <@ mine.Line = 80.0 @>
     test <@ mine.Branch = 75.0 @>
     test <@ other.Line = 0.0 @>
@@ -368,14 +366,13 @@ let ``ratchetRaw removes current-platform entry when it reaches defaults`` () =
                     { Line = 0.0
                       Branch = 0.0
                       Reason = Some "other"
-                      Platform = Some Windows } ] ] }
+                      Platform = Some otherPlatform } ] ] }
 
     let files = [ makeFile "Foo.fs" 100.0 100.0 4 4 ]
     let result = ratchetRaw raw files
     let entries = result.RawOverrides.["Foo.fs"]
-    // Current platform entry removed, other kept
     test <@ entries.Length = 1 @>
-    test <@ entries.[0].Platform = Some Windows @>
+    test <@ entries.[0].Platform = Some otherPlatform @>
 
 [<Fact>]
 let ``loosenRaw preserves entries for other platforms`` () =
@@ -393,13 +390,13 @@ let ``loosenRaw preserves entries for other platforms`` () =
                     { Line = 0.0
                       Branch = 0.0
                       Reason = Some "other"
-                      Platform = Some Windows } ] ] }
+                      Platform = Some otherPlatform } ] ] }
 
     let files = [ makeFile "Foo.fs" 70.0 60.0 2 4 ]
     let result = loosenRaw raw files
     let entries = result.RawOverrides.["Foo.fs"]
     let mine = entries |> List.find (fun o -> o.Platform = Some Platform.current)
-    let other = entries |> List.find (fun o -> o.Platform = Some Windows)
+    let other = entries |> List.find (fun o -> o.Platform = Some otherPlatform)
     test <@ mine.Line = 70.0 @>
     test <@ other.Line = 0.0 @>
 
@@ -421,7 +418,7 @@ let ``loosenRaw adds platform-agnostic entry for new file`` () =
 
 [<Fact>]
 let ``mergeFromCi - adds ci-platform entry splitting existing non-platform override`` () =
-    let ciPlatform = if Platform.current = MacOS then Linux else Windows
+    let ciPlatform = otherPlatform
 
     let raw: RawConfig =
         { DefaultLine = 100.0
@@ -464,28 +461,21 @@ let ``mergeFromCi - lowers existing linux platform entry toward CI when CI is lo
                       Reason = Some "ci"
                       Platform = Some Linux } ] ] }
 
-    // CI measured below the existing linux floor -> floor lowers to CI.
     let ciResults = Map.ofList [ "Program.fs", { Line = 59.0; Branch = 23.0 } ]
     let result = mergeFromCi raw Linux ciResults
     let entries = result.RawOverrides.["Program.fs"]
     test <@ entries.Length = 2 @>
     let macosEntry = entries |> List.find (fun o -> o.Platform = Some MacOS)
     let linuxEntry = entries |> List.find (fun o -> o.Platform = Some Linux)
-    // macOS section is untouched (platform isolation).
     test <@ macosEntry.Line = 49.0 @>
     test <@ macosEntry.Branch = 31.0 @>
     test <@ linuxEntry.Line = 59.0 @>
     test <@ linuxEntry.Branch = 23.0 @>
-    // The existing reason is preserved when lowering.
     test <@ linuxEntry.Reason = Some "ci" @>
 
 [<Fact>]
 let ``mergeFromCi - never raises an existing platform floor above CI-measured value`` () =
-    // Regression: loosen-from-ci is supposed to reconcile floors DOWN to what CI
-    // measured so CI stops failing. A floor already at/below the CI-measured value
-    // must be left unchanged - raising it above what CI stably measures is
-    // anti-converging and guarantees the next CI run fails. Mirrors the FsHotWatch
-    // Daemon.fs case: floor line=75/branch=72, CI stably measures 75.3/72.6 -> stays.
+    // Raising a floor above what CI measures guarantees the next CI run fails.
     let raw: RawConfig =
         { DefaultLine = 100.0
           DefaultBranch = 100.0
@@ -502,24 +492,20 @@ let ``mergeFromCi - never raises an existing platform floor above CI-measured va
                       Reason = Some "lower coverage on Linux CI"
                       Platform = Some Linux } ] ] }
 
-    // CI measured slightly ABOVE the floor -> floor must NOT be raised.
     let ciResults = Map.ofList [ "Daemon.fs", { Line = 75.3; Branch = 72.6 } ]
     let result = mergeFromCi raw Linux ciResults
     let entries = result.RawOverrides.["Daemon.fs"]
     let linuxEntry = entries |> List.find (fun o -> o.Platform = Some Linux)
     let macosEntry = entries |> List.find (fun o -> o.Platform = Some MacOS)
-    // Linux floor stays put (not raised to 75.3/72.6).
     test <@ linuxEntry.Line = 75.0 @>
     test <@ linuxEntry.Branch = 72.0 @>
     test <@ linuxEntry.Reason = Some "lower coverage on Linux CI" @>
-    // macOS section untouched - no cross-platform contamination.
     test <@ macosEntry.Line = 75.0 @>
     test <@ macosEntry.Branch = 72.0 @>
     test <@ macosEntry.Reason = Some "macos" @>
 
 [<Fact>]
 let ``mergeFromCi - lowers each metric independently and never raises the other`` () =
-    // Line is below the floor (should lower) but branch is above (must not raise).
     let raw: RawConfig =
         { DefaultLine = 100.0
           DefaultBranch = 100.0
@@ -532,7 +518,6 @@ let ``mergeFromCi - lowers each metric independently and never raises the other`
                       Reason = Some "linux"
                       Platform = Some Linux } ] ] }
 
-    // CI: line dropped to 85 (lower -> lower the floor), branch rose to 71 (must stay 64).
     let ciResults = Map.ofList [ "CheckPipeline.fs", { Line = 85.0; Branch = 71.0 } ]
     let result = mergeFromCi raw Linux ciResults
     let linuxEntry = result.RawOverrides.["CheckPipeline.fs"] |> List.exactlyOne
@@ -541,8 +526,6 @@ let ``mergeFromCi - lowers each metric independently and never raises the other`
 
 [<Fact>]
 let ``mergeFromCi - does not cross-write one platform's CI value into another platform`` () =
-    // Only the entry matching the CI platform may change; sibling platform entries
-    // must remain byte-for-byte the same even when the CI value would raise them.
     let raw: RawConfig =
         { DefaultLine = 100.0
           DefaultBranch = 100.0
@@ -559,7 +542,6 @@ let ``mergeFromCi - does not cross-write one platform's CI value into another pl
                       Reason = Some "linux"
                       Platform = Some Linux } ] ] }
 
-    // A linux CI run measuring high values must not bleed into the macOS floor.
     let ciResults = Map.ofList [ "PluginHost.fs", { Line = 99.0; Branch = 99.0 } ]
     let result = mergeFromCi raw Linux ciResults
     let entries = result.RawOverrides.["PluginHost.fs"]
@@ -606,8 +588,6 @@ let ``parseCiThresholds - parses minimal JSON format`` () =
     test <@ results.Count = 2 @>
     test <@ results.["Foo.fs"] = { Line = 59.0; Branch = 23.0 } @>
     test <@ results.["Bar.fs"] = { Line = 81.0; Branch = 66.0 } @>
-
-// --- RatchetStatus.NoChanges tests ---
 
 [<Fact>]
 let ``ratchetRawWithStatus returns NoChanges when thresholds unchanged`` () =
@@ -675,8 +655,6 @@ let ``ratchetRawWithStatus returns Failed when coverage dropped`` () =
             | _ -> false
         @>
 
-// --- mergeFromCi additional branches ---
-
 [<Fact>]
 let ``mergeFromCi - adds new platform entry to existing platform entries`` () =
     let raw: RawConfig =
@@ -699,8 +677,6 @@ let ``mergeFromCi - adds new platform entry to existing platform entries`` () =
     test <@ linuxEntry.Line = 59.0 @>
     test <@ linuxEntry.Branch = 23.0 @>
 
-// --- parseCiThresholds with Platform ---
-
 [<Fact>]
 let ``parseCiThresholds - macos platform`` () =
     let json = """{"platform":"macos","results":{"Foo.fs":{"line":90,"branch":80}}}"""
@@ -722,8 +698,6 @@ let ``parseCiThresholds - unknown platform defaults to current`` () =
 
     let platform, _results = parseCiThresholds json
     test <@ platform = Platform.current @>
-
-// --- mergeRawOverrides branches ---
 
 [<Fact>]
 let ``ratchetRaw removes entry entirely when all platforms reach defaults`` () =
@@ -767,8 +741,6 @@ let ``ratchetRaw updates non-platform entry when no platform-specific entries ex
     test <@ entries.[0].Branch = 60.0 @>
     test <@ entries.[0].Platform = None @>
 
-// --- loosenRaw branches ---
-
 [<Fact>]
 let ``loosenRaw removes current-platform entry when file reaches defaults`` () =
     let raw: RawConfig =
@@ -791,7 +763,6 @@ let ``loosenRaw removes current-platform entry when file reaches defaults`` () =
     let result = loosenRaw raw files
     let entries = result.RawOverrides.["Foo.fs"]
 
-    // Current platform entry removed, other kept
     test <@ entries.Length = 1 @>
     test <@ entries.[0].Platform = Some otherPlatform @>
 
@@ -815,9 +786,7 @@ let ``loosenRaw adds new file with platform-agnostic entry`` () =
 
 [<Fact>]
 let ``loosenRaw preserves other-platform-only entry when adding this platform's entry for same file`` () =
-    // File has only an other-platform entry. Loosen adds an entry for the platform it
-    // measured alongside it — a platform-less entry next to the other platform's would
-    // claim every platform except the one that produced the number.
+    // A platform-less entry here would claim every platform except the measured one.
     let raw: RawConfig =
         { DefaultLine = 100.0
           DefaultBranch = 100.0
@@ -842,8 +811,6 @@ let ``loosenRaw preserves other-platform-only entry when adding this platform's 
 
 [<Fact>]
 let ``loosenRaw preserves other-platform-only entry when current platform meets defaults`` () =
-    // File has only a linux entry. On macOS, file is at 100% — no macOS entry needed,
-    // but the linux entry must survive.
     let raw: RawConfig =
         { DefaultLine = 100.0
           DefaultBranch = 100.0
@@ -906,8 +873,6 @@ let ``loosenRaw removes agnostic entry when file reaches defaults`` () =
 
     test <@ not (result.RawOverrides.ContainsKey("Thresholds.fs")) @>
 
-// --- mergeFromCi additional branches ---
-
 [<Fact>]
 let ``mergeFromCi - skips files at defaults even with existing entries`` () =
     let raw: RawConfig =
@@ -922,11 +887,9 @@ let ``mergeFromCi - skips files at defaults even with existing entries`` () =
                       Reason = Some "local"
                       Platform = Some Platform.current } ] ] }
 
-    // CI says this file is at 100/100 -- should not add a CI entry
     let ciResults = Map.ofList [ "Existing.fs", { Line = 100.0; Branch = 100.0 } ]
     let result = mergeFromCi raw otherPlatform ciResults
 
-    // Existing entry unchanged, no CI entry added
     let entries = result.RawOverrides.["Existing.fs"]
     test <@ entries.Length = 1 @>
     test <@ entries.[0].Platform = Some Platform.current @>
@@ -974,8 +937,6 @@ let ``mergeFromCi - branch below default but line at default still adds entry`` 
 
     test <@ result.RawOverrides.ContainsKey("Half.fs") @>
 
-// --- ratchetRawWithStatus additional branches ---
-
 [<Fact>]
 let ``ratchetRawWithStatus returns Tightened when override removed entirely`` () =
     let raw: RawConfig =
@@ -1000,8 +961,6 @@ let ``ratchetRawWithStatus returns Tightened when override removed entirely`` ()
             | _ -> false
         @>
 
-// --- ratchetRaw with non-platform entry fallback ---
-
 [<Fact>]
 let ``ratchetRaw updates non-platform entry when platform-specific exists for current platform`` () =
     let raw: RawConfig =
@@ -1023,7 +982,7 @@ let ``ratchetRaw updates non-platform entry when platform-specific exists for cu
     let files = [ makeFile "Foo.fs" 80.0 70.0 3 4 ]
     let result = ratchetRaw raw files
     let entries = result.RawOverrides.["Foo.fs"]
-    // The platform-specific entry should be updated, the non-platform one unchanged
+
     let currentEntry =
         entries |> List.find (fun o -> o.Platform = Some Platform.current)
 
@@ -1032,8 +991,6 @@ let ``ratchetRaw updates non-platform entry when platform-specific exists for cu
     test <@ currentEntry.Branch = 70.0 @>
     test <@ allEntry.Line = 50.0 @>
     test <@ allEntry.Branch = 40.0 @>
-
-// --- ratchetRawWithStatus Failed includes file names ---
 
 [<Fact>]
 let ``ratchetRawWithStatus Failed includes failed file names`` () =
@@ -1053,16 +1010,12 @@ let ``ratchetRawWithStatus Failed includes failed file names`` () =
             | _ -> false
         @>
 
-// --- loosen with file already at defaults does not create override ---
-
 [<Fact>]
 let ``loosen does not create override for file at 100 percent with no existing override`` () =
     let files = [ makeFile "Perfect.fs" 100.0 100.0 4 4 ]
     let result = loosen defaultsConfig files
 
     test <@ result.Overrides.ContainsKey("Perfect.fs") = false @>
-
-// --- loosen with existing override and new file ---
 
 [<Fact>]
 let ``loosen updates existing and adds new overrides`` () =
@@ -1086,8 +1039,6 @@ let ``loosen updates existing and adds new overrides`` () =
     test <@ result.Overrides.["New.fs"].Line = 80.0 @>
     test <@ result.Overrides.["New.fs"].Branch = 75.0 @>
 
-// --- loosen floors fractional values ---
-
 [<Fact>]
 let ``loosen floors fractional coverage`` () =
     let files = [ makeFile "Frac.fs" 80.9 75.7 3 4 ]
@@ -1095,8 +1046,6 @@ let ``loosen floors fractional coverage`` () =
 
     test <@ result.Overrides.["Frac.fs"].Line = 80.0 @>
     test <@ result.Overrides.["Frac.fs"].Branch = 75.0 @>
-
-// --- mergeFromCi with existing non-platform entry splits to platform entries ---
 
 [<Fact>]
 let ``mergeFromCi splits non-platform entry into platform entries when CI below defaults`` () =
@@ -1118,15 +1067,12 @@ let ``mergeFromCi splits non-platform entry into platform entries when CI below 
     let result = mergeFromCi raw ciPlatform ciResults
     let entries = result.RawOverrides.["Foo.fs"]
 
-    // Non-platform entry should be promoted to current platform
     test <@ entries.Length = 2 @>
     let local = entries |> List.find (fun o -> o.Platform = Some Platform.current)
     let ci = entries |> List.find (fun o -> o.Platform = Some ciPlatform)
     test <@ local.Line = 70.0 @>
     test <@ ci.Line = 80.0 @>
     test <@ ci.Branch = 50.0 @>
-
-// --- ratchetRaw with new file not in existing overrides ---
 
 [<Fact>]
 let ``ratchetRaw does not add new entries for files not in overrides`` () =
@@ -1141,8 +1087,6 @@ let ``ratchetRaw does not add new entries for files not in overrides`` () =
 
     test <@ result.RawOverrides.ContainsKey("NewFile.fs") = false @>
 
-// --- ratchetWithStatus with empty files ---
-
 [<Fact>]
 let ``ratchetWithStatus with no files and no overrides returns NoChanges`` () =
     let result = ratchetWithStatus defaultsConfig []
@@ -1153,8 +1097,6 @@ let ``ratchetWithStatus with no files and no overrides returns NoChanges`` () =
             | NoChanges -> true
             | _ -> false
         @>
-
-// --- mergeFromCi with empty CI results ---
 
 [<Fact>]
 let ``mergeFromCi with empty CI results leaves raw unchanged`` () =
@@ -1174,16 +1116,12 @@ let ``mergeFromCi with empty CI results leaves raw unchanged`` () =
     let result = mergeFromCi raw otherPlatform ciResults
     test <@ result.RawOverrides = raw.RawOverrides @>
 
-// --- parseCiThresholds with empty results ---
-
 [<Fact>]
 let ``parseCiThresholds with empty results returns empty map`` () =
     let json = """{"platform":"linux","results":{}}"""
     let platform, results = parseCiThresholds json
     test <@ platform = Linux @>
     test <@ results = Map.empty @>
-
-// --- parseCiThresholds error cases ---
 
 [<Fact>]
 let ``parseCiThresholds - empty string raises actionable error`` () =
@@ -1196,8 +1134,6 @@ let ``parseCiThresholds - whitespace-only string raises actionable error`` () =
     let ex = Assert.ThrowsAny<exn>(fun () -> parseCiThresholds "   \n\t  " |> ignore)
     test <@ not (ex :? System.Text.Json.JsonException) @>
     test <@ ex.Message.Contains("empty") @>
-
-// --- count floors: ratchet raises, baseline re-baselines ---
 
 [<Fact>]
 let ``ratchetCountFloors raises a floor toward current counts`` () =
@@ -1212,8 +1148,8 @@ let ``ratchetCountFloors raises a floor toward current counts`` () =
 
 [<Fact>]
 let ``ratchetCountFloors NEVER lowers a floor`` () =
-    // A partial (impact-filtered) run reports fewer covered lines. The floor
-    // must not follow it down, or the ratchet would erase itself.
+    // A partial (impact-filtered) run reports fewer covered lines; following it
+    // down would erase the floor.
     let config =
         { defaultsConfig with
             CountFloors = Map.ofList [ "Foo.fs", countFloor 383 41 ] }
@@ -1254,9 +1190,7 @@ let ``baselineCountFloors enrols every observed file`` () =
 
 [<Fact>]
 let ``baselineCountFloors LOWERS a floor - the legitimate-deletion path`` () =
-    // The refactor case: covered code was deliberately extracted or deleted, so
-    // the count legitimately drops. The tool cannot detect that on its own, so a
-    // human runs this and the lowered floor lands in the config diff for review.
+    // For deliberate deletions; the lowered floor shows up in the config diff.
     let config =
         { defaultsConfig with
             CountFloors = Map.ofList [ "Foo.fs", countFloor 383 41 ] }
@@ -1337,7 +1271,6 @@ let ``ratchetRawWithStatus reports Failed when a count floor is breached`` () =
 
 [<Fact>]
 let ``ratchetRawWithStatus is NoChanges when counts already sit at the floor`` () =
-    // Positive control for the test above: the same shape must be able to pass.
     let raw =
         { DefaultLine = 100.0
           DefaultBranch = 100.0

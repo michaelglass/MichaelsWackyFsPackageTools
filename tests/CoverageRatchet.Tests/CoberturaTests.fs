@@ -266,8 +266,6 @@ let ``parseXml - no classes element`` () =
 
     test <@ result.Length = 0 @>
 
-// --- parseFiles (multi-XML merge) ---
-
 [<Fact>]
 let ``parseFiles - merges line coverage across XMLs for same file`` () =
     let xml1 =
@@ -393,8 +391,6 @@ let ``parseFiles - single XML same as parseXml`` () =
     test <@ single.[0].FileName = multi.[0].FileName @>
     test <@ single.[0].LinePct = multi.[0].LinePct @>
 
-// --- parseFiles (disk-based multi-XML merge) ---
-
 [<Fact>]
 let ``parseFiles - reads and merges multiple XML files from disk`` () =
     let tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
@@ -437,8 +433,6 @@ let ``parseFiles - reads and merges multiple XML files from disk`` () =
         test <@ result.[0].LinePct = 100.0 @>
     finally
         Directory.Delete(tmpDir, true)
-
-// --- buildBranchGaps ---
 
 [<Fact>]
 let ``buildBranchGaps - returns uncovered branches per file`` () =
@@ -572,8 +566,6 @@ let ``buildBranchGaps - sorted by gap count descending`` () =
     test <@ result.[0].FileName = "Many.fs" @>
     test <@ result.[1].FileName = "Few.fs" @>
 
-// --- findCoverageFiles (plural) ---
-
 [<Fact>]
 let ``findCoverageFiles - returns all XMLs in directory`` () =
     let tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
@@ -613,8 +605,6 @@ let ``findCoverageFiles - returns empty list for empty directory`` () =
     finally
         Directory.Delete(tmpDir, true)
 
-// --- findCoverageFile (singular, existing) ---
-
 [<Fact>]
 let ``findCoverageFile - discovers XML in directory`` () =
     let tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
@@ -640,9 +630,7 @@ let ``findCoverageFile - returns None for missing directory`` () =
 
 [<Fact>]
 let ``parseXml - branch dedup keeps better existing ratio`` () =
-    // Two classes for the same file with the same branch line number.
-    // First class has 2/4 (50%) covered, second has 1/4 (25%).
-    // The dedup should keep 2/4 because covered*existingT > existingC*total is false.
+    // Same branch line in two classes: 2/4 then 1/4; the better 2/4 is kept.
     let xml =
         """<?xml version="1.0" encoding="utf-8"?>
         <coverage>
@@ -667,7 +655,6 @@ let ``parseXml - branch dedup keeps better existing ratio`` () =
     let result = parseXml xml
 
     test <@ result.Length = 1 @>
-    // Should keep the better ratio (2/4 = 50%), not replace with 1/4
     test <@ result.[0].BranchesCovered = 2 @>
     test <@ result.[0].BranchesTotal = 4 @>
 
@@ -750,9 +737,7 @@ let ``parseXml - line missing number or hits attribute is skipped`` () =
 
 [<Fact>]
 let ``parseXml - branch dedup new beats existing when better coverage`` () =
-    // Two classes for the same file with the same branch line number.
-    // First class has 1/4 (25%) covered, second has 2/4 (50%).
-    // The dedup should replace with 2/4 because second has better coverage ratio.
+    // Same branch line in two classes: 1/4 then 2/4; the better 2/4 replaces it.
     let xml =
         """<?xml version="1.0" encoding="utf-8"?>
         <coverage>
@@ -777,7 +762,6 @@ let ``parseXml - branch dedup new beats existing when better coverage`` () =
     let result = parseXml xml
 
     test <@ result.Length = 1 @>
-    // Should replace with the better ratio (2/4 = 50%)
     test <@ result.[0].BranchesCovered = 2 @>
     test <@ result.[0].BranchesTotal = 4 @>
 
@@ -795,7 +779,6 @@ let ``findCoverageFile - returns most recent when multiple files exist`` () =
     let newPath = Path.Combine(subDir2, "coverage.cobertura.xml")
     File.WriteAllText(newPath, "<coverage/>")
 
-    // Ensure the first file has an older write time
     File.SetLastWriteTimeUtc(oldPath, DateTime.UtcNow.AddSeconds(-10.0))
 
     try
@@ -912,8 +895,6 @@ let ``parseXml - branch dedup keeps existing when ratios are equal`` () =
     test <@ result.[0].BranchesCovered = 1 @>
     test <@ result.[0].BranchesTotal = 2 @>
 
-// --- parseFile reads from disk ---
-
 [<Fact>]
 let ``parseFile - reads and parses XML from file path`` () =
     let tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
@@ -950,8 +931,6 @@ let ``parseFile - reads and parses XML from file path`` () =
     finally
         Directory.Delete(tmpDir, true)
 
-// --- findCoverageFile returns None for empty directory ---
-
 [<Fact>]
 let ``findCoverageFile - empty directory returns None`` () =
     let tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
@@ -962,8 +941,6 @@ let ``findCoverageFile - empty directory returns None`` () =
         test <@ result.IsNone @>
     finally
         Directory.Delete(tmpDir, true)
-
-// --- parseXml with multiple lines all hit ---
 
 [<Fact>]
 let ``parseXml - all lines hit gives 100 percent`` () =
@@ -989,8 +966,6 @@ let ``parseXml - all lines hit gives 100 percent`` () =
 
     test <@ result.Length = 1 @>
     test <@ result.[0].LinePct = 100.0 @>
-
-// --- parseXml with multiple branches on different lines ---
 
 [<Fact>]
 let ``parseXml - multiple branch lines aggregate correctly`` () =
@@ -1018,8 +993,6 @@ let ``parseXml - multiple branch lines aggregate correctly`` () =
     test <@ result.[0].BranchesCovered = 3 @>
     test <@ result.[0].BranchesTotal = 4 @>
     test <@ result.[0].BranchPct = 75.0 @>
-
-// --- parseXml excludes path-insensitive vendor dirs ---
 
 [<Fact>]
 let ``parseXml - excludes vendor path case insensitively`` () =
@@ -1051,8 +1024,6 @@ let ``parseXml - excludes vendor path case insensitively`` () =
     test <@ result.Length = 1 @>
     test <@ result.[0].FileName = "Real.fs" @>
 
-// --- parseXml line dedup: first miss then hit results in hit ---
-
 [<Fact>]
 let ``parseXml - line dedup first miss then hit counts as hit`` () =
     let xml =
@@ -1080,3 +1051,10 @@ let ``parseXml - line dedup first miss then hit counts as hit`` () =
 
     test <@ result.Length = 1 @>
     test <@ result.[0].LinePct = 100.0 @>
+
+[<Fact>]
+let ``ExclusionReason.describe - names the value that matched`` () =
+    test <@ ExclusionReason.describe (ExcludedByExtension ".cs") = "extension \".cs\" is not read" @>
+    test <@ ExclusionReason.describe (ExcludedByExtension "") = "has no extension" @>
+    test <@ ExclusionReason.describe (ExcludedByFileName "Test") = "name contains \"Test\"" @>
+    test <@ ExclusionReason.describe (ExcludedByPath "vendor") = "under a \"vendor\" path segment" @>
