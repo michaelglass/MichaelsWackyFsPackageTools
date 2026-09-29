@@ -364,137 +364,116 @@ let ``LinesCovered and LinesTotal agree with LinePct`` () =
     test <@ coverage.LinesTotal = 4 @>
     test <@ coverage.LinePct = 50.0 @>
 
-// ── ReaderOptions: which sources the reader is willing to read ────────────────────
+// ── ReaderOptions and readReports ─────────────────────────────────────────────────
+
+let private csharp =
+    { ReaderOptions.defaults with
+        IncludedExtensions = [| ".cs" |] }
+
+let private readNames (options: ReaderOptions) (xmls: string list) =
+    (readReports options xmls).Lines
+    |> buildCoverage
+    |> List.map (fun f -> f.FileName)
+    |> List.sort
+
+let private excludedNames (report: Report) =
+    report.Excluded |> List.map (fun e -> e.FileName)
 
 [<Fact>]
 let ``parseXml - a C# report reads as zero files by default`` () =
-    // The default is F#-only, and stays that way. This is the "before" half of the
-    // issue's reproduction, pinned so widening the reader cannot quietly widen the
-    // default with it.
     let xml = classXml "src/Handler.cs" [ 1, 1; 2, 0 ]
 
     test <@ parseXml xml |> List.isEmpty @>
 
 [<Fact>]
-let ``parseXmlWith - widening the extensions reads the same report`` () =
-    // The issue's reproduction: identical bytes, identical numbers, different
-    // extension. Renaming .cs to .fs inside the XML was enough to make the whole
-    // pipeline work, which is what showed the filter was the only F#-specific thing
-    // in the path.
-    let asCSharp = classXml "src/Handler.cs" [ 1, 1; 2, 0 ]
-    let asFSharp = classXml "src/Handler.fs" [ 1, 1; 2, 0 ]
+let ``readReports - a C# report measures the same as the F# one with the extension renamed`` () =
+    let asCSharp =
+        (readReports csharp [ classXml "src/Handler.cs" [ 1, 1; 2, 0 ] ]).Lines
+        |> buildCoverage
 
-    let options = ReaderOptions.defaults |> ReaderOptions.withExtensions [| ".cs" |]
+    let asFSharp = parseXml (classXml "src/Handler.fs" [ 1, 1; 2, 0 ])
 
-    let widened = parseXmlWith options asCSharp
-    let renamed = parseXml asFSharp
+    test <@ asCSharp |> List.map (fun f -> f.FileName) = [ "Handler.cs" ] @>
 
-    test <@ widened.Length = 1 @>
-    test <@ widened.[0].FileName = "Handler.cs" @>
-    test <@ widened.[0].LinePct = 50.0 @>
-
-    // Same coverage either way — the extension decided whether it was read, not
-    // what it measured.
-    test <@ widened.[0].LinePct = renamed.[0].LinePct @>
-    test <@ widened.[0].LinesCovered = renamed.[0].LinesCovered @>
-    test <@ widened.[0].LinesTotal = renamed.[0].LinesTotal @>
+    test
+        <@
+            asCSharp |> List.map (fun f -> f.LinePct, f.LinesCovered, f.LinesTotal) = (asFSharp
+                                                                                       |> List.map (fun f ->
+                                                                                           f.LinePct,
+                                                                                           f.LinesCovered,
+                                                                                           f.LinesTotal))
+        @>
 
 [<Fact>]
-let ``parseXmlWith - several languages can be read at once`` () =
+let ``readReports - several languages can be read at once`` () =
     let xmls =
         [ classXml "src/Handler.cs" [ 1, 1; 2, 0 ]
           classXml "src/Legacy.vb" [ 1, 1; 2, 1 ]
           classXml "src/Core.fs" [ 1, 0; 2, 0 ] ]
 
     let options =
-        ReaderOptions.defaults |> ReaderOptions.withExtensions [| ".fs"; ".cs"; ".vb" |]
+        { ReaderOptions.defaults with
+            IncludedExtensions = [| ".fs"; ".cs"; ".vb" |] }
 
-    let names =
-        parseXmlsWith options xmls |> List.map (fun f -> f.FileName) |> List.sort
-
-    test <@ names = [ "Core.fs"; "Handler.cs"; "Legacy.vb" ] @>
+    test <@ readNames options xmls = [ "Core.fs"; "Handler.cs"; "Legacy.vb" ] @>
 
 [<Fact>]
-let ``parseXmlWith - widening the extensions does not disable the other filters`` () =
-    // Widening says which languages to read, not which paths and names to trust.
-    // A vendored C# file and a C# file whose name matches the exclusion list are
-    // still dropped, exactly as their F# counterparts are.
+let ``readReports - widening the extensions keeps the name and path filters`` () =
     let xmls =
         [ classXml "src/vendor/ThirdParty.cs" [ 1, 1 ]
           classXml "src/AssemblyInfo.cs" [ 1, 1 ]
           classXml "src/Handler.cs" [ 1, 1 ] ]
 
-    let options = ReaderOptions.defaults |> ReaderOptions.withExtensions [| ".cs" |]
-
-    let names = parseXmlsWith options xmls |> List.map (fun f -> f.FileName)
-
-    test <@ names = [ "Handler.cs" ] @>
+    test <@ readNames csharp xmls = [ "Handler.cs" ] @>
 
 [<Fact>]
-let ``ReaderOptions - the exclusion lists are reachable too`` () =
-    // The extension filter is what issue #2 was about, but all three lists were
-    // private with no hook. A project shipping a production file the default name
-    // list would drop can now say so — see issue #3 for why that came up.
+let ``readReports - the exclusion lists can be overridden`` () =
     let xmls =
         [ classXml "src/TestKit.fs" [ 1, 1; 2, 0 ]
           classXml "src/Real.fs" [ 1, 1; 2, 0 ] ]
 
-    let keepEverything =
+    let keepTestKit =
         { ReaderOptions.defaults with
             ExcludedFileNamePatterns = [||] }
 
-    let defaulted = parseXmls xmls |> List.map (fun f -> f.FileName)
-
-    let widened =
-        parseXmlsWith keepEverything xmls |> List.map (fun f -> f.FileName) |> List.sort
-
-    test <@ defaulted = [ "Real.fs" ] @>
-    test <@ widened = [ "Real.fs"; "TestKit.fs" ] @>
+    test <@ readNames ReaderOptions.defaults xmls = [ "Real.fs" ] @>
+    test <@ readNames keepTestKit xmls = [ "Real.fs"; "TestKit.fs" ] @>
 
 [<Fact>]
-let ``extractRawLines - the parameterless form is the defaults`` () =
-    // Every parameterless entry point delegates to its *With twin rather than
-    // duplicating the pipeline, so this is the one assertion that keeps the two
-    // from drifting apart.
+let ``extractRawLines - is readReports with the defaults`` () =
     let xml = classXml "src/Core.fs" [ 1, 1; 2, 0 ]
 
-    test <@ extractRawLines xml = extractRawLinesWith ReaderOptions.defaults xml @>
-    test <@ parseXml xml = parseXmlWith ReaderOptions.defaults xml @>
-    test <@ parseXmls [ xml ] = parseXmlsWith ReaderOptions.defaults [ xml ] @>
-
-// ── What the reader dropped ───────────────────────────────────────────────────────
+    test <@ extractRawLines xml = (readReports ReaderOptions.defaults [ xml ]).Lines @>
 
 [<Fact>]
-let ``extractExclusions - names a production file caught by the name filter`` () =
-    // The issue's reproduction: four production files with identical coverage, one of
-    // them called TestKit.fs. It is dropped before it can become an obligation, so
-    // nothing downstream can report it missing — which is why the reader has to.
+let ``readReports - names a production file caught by the name filter`` () =
     let xmls =
         [ classXml "MyLib/Harness.fs" [ 1, 1; 2, 0 ]
           classXml "MyLib/TestKit.fs" [ 1, 1; 2, 0 ]
           classXml "MyLib/ProtestBanner.fs" [ 1, 1; 2, 0 ]
           classXml "MyLib/Latest.fs" [ 1, 1; 2, 0 ] ]
 
-    let read = parseXmls xmls |> List.map (fun f -> f.FileName) |> List.sort
-    let dropped = extractExclusionsFromXmls xmls
+    let report = readReports ReaderOptions.defaults xmls
 
-    test <@ read = [ "Harness.fs"; "Latest.fs"; "ProtestBanner.fs" ] @>
-    test <@ dropped |> List.map (fun e -> e.FileName) = [ "TestKit.fs" ] @>
-    test <@ dropped |> List.map (fun e -> e.Reason) = [ ExcludedByFileName "Test" ] @>
+    test <@ readNames ReaderOptions.defaults xmls = [ "Harness.fs"; "Latest.fs"; "ProtestBanner.fs" ] @>
+
+    test
+        <@
+            report.Excluded = [ { FileName = "TestKit.fs"
+                                  Reason = ExcludedByFileName "Test" } ]
+        @>
 
 [<Fact>]
-let ``extractExclusions - Latest and ProtestBanner survive because Contains is case-sensitive`` () =
-    // Not a behaviour anyone designed, but worth pinning while it holds: the filter
-    // catches PascalCase `Test` only, so `Latest.fs` and `ProtestBanner.fs` are read.
-    // If the matching rule is ever tightened, this test is where that shows up.
+let ``readReports - the name filter is case-sensitive, so Latest and ProtestBanner are read`` () =
+    // Pins the current `Contains` rule; tightening it would change this test.
     let xmls =
         [ classXml "MyLib/Latest.fs" [ 1, 1 ]
           classXml "MyLib/ProtestBanner.fs" [ 1, 1 ] ]
 
-    test <@ extractExclusionsFromXmls xmls |> List.isEmpty @>
+    test <@ (readReports ReaderOptions.defaults xmls).Excluded |> List.isEmpty @>
 
 [<Fact>]
-let ``extractExclusions - reports which filter decided`` () =
+let ``readReports - reports which filter decided`` () =
     let xmls =
         [ classXml "MyLib/Handler.cs" [ 1, 1 ]
           classXml "MyLib/AssemblyInfo.fs" [ 1, 1 ]
@@ -502,44 +481,67 @@ let ``extractExclusions - reports which filter decided`` () =
           classXml "MyLib/Real.fs" [ 1, 1 ] ]
 
     let reasons =
-        extractExclusionsFromXmls xmls
+        (readReports ReaderOptions.defaults xmls).Excluded
         |> List.map (fun e -> e.FileName, e.Reason)
-        |> List.sortBy fst
 
     test
         <@
             reasons = [ "AssemblyInfo.fs", ExcludedByFileName "AssemblyInfo"
-                        "Handler.cs", NotASourceExtension
+                        "Handler.cs", ExcludedByExtension ".cs"
                         "ThirdParty.fs", ExcludedByPath "vendor" ]
         @>
 
 [<Fact>]
-let ``extractExclusions - every class is either read or accounted for`` () =
-    // The property that makes "3 files, 1 excluded" trustworthy: the two functions
-    // partition the report rather than each filtering it independently.
+let ``readReports - every class with a filename is either read or excluded`` () =
     let xmls =
         [ classXml "MyLib/Real.fs" [ 1, 1 ]
           classXml "MyLib/TestKit.fs" [ 1, 1 ]
           classXml "MyLib/Handler.cs" [ 1, 1 ]
           classXml "MyLib/node_modules/Dep.fs" [ 1, 1 ] ]
 
-    let read = parseXmls xmls |> List.map (fun f -> f.FileName)
-    let dropped = extractExclusionsFromXmls xmls |> List.map (fun e -> e.FileName)
+    let report = readReports ReaderOptions.defaults xmls
+    let read = report.Lines |> List.map (fun l -> l.FileName) |> List.distinct
 
-    test <@ List.length read + List.length dropped = 4 @>
-    test <@ Set.intersect (Set.ofList read) (Set.ofList dropped) |> Set.isEmpty @>
+    test <@ read = [ "Real.fs" ] @>
+    test <@ excludedNames report = [ "Dep.fs"; "Handler.cs"; "TestKit.fs" ] @>
 
 [<Fact>]
-let ``extractExclusions - a clean report excludes nothing`` () =
+let ``readReports - a clean report excludes nothing`` () =
     let xmls = [ classXml "MyLib/Real.fs" [ 1, 1 ]; classXml "MyLib/Other.fs" [ 1, 0 ] ]
 
-    test <@ extractExclusionsFromXmls xmls |> List.isEmpty @>
+    test <@ (readReports ReaderOptions.defaults xmls).Excluded |> List.isEmpty @>
 
 [<Fact>]
-let ``extractExclusions - one entry per file across several reports`` () =
-    // Same file in two reports is one exclusion, matching the merge parseXmls does
-    // for the files it does read.
+let ``readReports - one exclusion per base name across several reports`` () =
     let runA = classXml "MyLib/TestKit.fs" [ 1, 1 ]
     let runB = classXml "MyLib/TestKit.fs" [ 2, 0 ]
 
-    test <@ (extractExclusionsFromXmls [ runA; runB ]).Length = 1 @>
+    test <@ excludedNames (readReports ReaderOptions.defaults [ runA; runB ]) = [ "TestKit.fs" ] @>
+
+[<Fact>]
+let ``readReports - a base name read in one project and excluded in another is on both sides`` () =
+    // Floors are keyed by base name, so this is one file to the ratchet; the exclusion
+    // list still reports the copy it skipped.
+    let xmls =
+        [ classXml "LibA/Shared.fs" [ 1, 1 ]
+          classXml "LibB/vendor/Shared.fs" [ 1, 0 ] ]
+
+    let report = readReports ReaderOptions.defaults xmls
+
+    test <@ readNames ReaderOptions.defaults xmls = [ "Shared.fs" ] @>
+    test <@ excludedNames report = [ "Shared.fs" ] @>
+
+[<Fact>]
+let ``ExclusionReason.describe - names the value that matched`` () =
+    test <@ ExclusionReason.describe (ExcludedByExtension ".cs") = "extension \".cs\" is not read" @>
+    test <@ ExclusionReason.describe (ExcludedByExtension "") = "has no extension" @>
+    test <@ ExclusionReason.describe (ExcludedByFileName "Test") = "name contains \"Test\"" @>
+    test <@ ExclusionReason.describe (ExcludedByPath "vendor") = "under a \"vendor\" path segment" @>
+
+[<Fact>]
+let ``readReports - with C# options an F# file is excluded by its extension`` () =
+    let report =
+        readReports csharp [ classXml "src/Core.fs" [ 1, 1 ]; classXml "src/Makefile" [ 1, 1 ] ]
+
+    test <@ report.Lines |> List.isEmpty @>
+    test <@ report.Excluded |> List.map (fun e -> e.Reason) = [ ExcludedByExtension ".fs"; ExcludedByExtension "" ] @>

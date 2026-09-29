@@ -66,25 +66,21 @@ let rawLines = extractRawLines xmlContent
 let gaps: FileBranchGaps list = buildBranchGaps rawLines
 ```
 
-Files from paths like `paket-files/`, `vendor/`, `node_modules/`, and `.fable/` are automatically excluded, as are files matching `Test`, `AssemblyInfo`, or `AssemblyAttributes` in their name. Only `.fs` files are included by default.
+By default the reader reads `.fs` files and skips files under `paket-files/`, `vendor/`, `node_modules/` or `.fable/`, and files whose name contains `Test`, `AssemblyInfo` or `AssemblyAttributes`.
 
-#### Reading reports from other languages
+#### Reader options and skipped files
 
-Everything after the reader — `RawLine`, `buildCoverage`, `Thresholds.judge`, `Ratchet.ratchet` — is language-neutral, so a Cobertura report from a C# or VB project only needs the reader told which sources to accept. Every entry point has a `*With` twin that takes a `ReaderOptions`:
+`readReports` reads one or more reports in a single pass with the filters you pass, and returns the lines it read alongside the files it skipped:
 
 <!-- sync:reader-options:start src=src/CoverageRatchet.Core/Cobertura.fs -->
 ```fsharp
-/// Which source files a Cobertura report is read for.
+/// Which `<class>` elements of a Cobertura report the reader reads.
 ///
-/// Everything downstream of the reader — `RawLine`, `buildCoverage`, `Thresholds.judge`,
-/// `Ratchet.ratchet` — is language-neutral. The three filters below were the only part that
-/// was not, and they were private arrays with no hook, so a consumer with a C# or VB report
-/// got zero files back and no way to widen it. They are a record now; `ReaderOptions.defaults`
-/// is exactly what was hard-coded before, so nothing changes for a caller that does not ask.
+/// A file is read when its name ends with one of `IncludedExtensions`, its base name
+/// contains none of `ExcludedFileNamePatterns` (case-sensitive substring), and no path
+/// segment equals one of `ExcludedPathPatterns` (case-insensitive).
 ///
-/// `ExcludedFileNamePatterns` is matched with `Contains` on the base name and
-/// `ExcludedPathPatterns` with an exact, case-insensitive match on a path segment. That
-/// asymmetry is preserved rather than fixed here — see the note on `isIncludedWith`.
+/// To read a C# report: `{ ReaderOptions.defaults with IncludedExtensions = [| ".cs" |] }`.
 type ReaderOptions =
     { IncludedExtensions: string[]
       ExcludedFileNamePatterns: string[]
@@ -92,36 +88,15 @@ type ReaderOptions =
 ```
 <!-- sync:reader-options:end -->
 
-```fsharp
-let options =
-    ReaderOptions.defaults |> ReaderOptions.withExtensions [| ".cs" |]
-
-let files: FileCoverage list = parseFileWith options "/path/to/coverage.cobertura.xml"
-```
-
-`parseXmlWith`, `parseXmlsWith`, `parseFilesWith`, `parseFileWith` and `extractRawLinesWith` all take one. The parameterless forms are exactly `ReaderOptions.defaults`, so nothing changes for a caller that does not ask.
-
-Extensions are matched with `EndsWith` and so include the dot. Widening them says which *languages* to read, not which paths and names to trust: a vendored or `AssemblyInfo` file is still excluded whatever its extension. Both exclusion lists are fields on the record too, so a project shipping a production file the default name list would drop — `TestKit.fs`, say — can override them.
-
-A filtered file is absent from everything downstream — it never reaches `buildCoverage`, so it never gets a floor, so nothing can report it as missing. `extractExclusions` is the counterpart of `extractRawLines`: between them they account for every `<class>` element in the report, so a caller can say "3 files, 1 excluded" instead of "3 files".
-
 <!-- sync:exclusion-reason:start src=src/CoverageRatchet.Core/Cobertura.fs -->
 ```fsharp
-/// Why the reader declined to read a file the Cobertura report does contain.
-///
-/// A filtered file is absent from BOTH sides of "N/N files passed": it never
-/// reaches `buildCoverage`, so it never gets a floor, so `unmeasuredFloors` has
-/// no obligation to report as missing and `Incomplete` cannot fire for it. That
-/// is the same shape `NothingMeasured` exists to prevent, one level down — the
-/// denominator is the filtered evidence rather than the obligation — and it is
-/// why the reason travels with the file instead of the filter just returning
-/// false.
+/// Which `ReaderOptions` filter skipped a file, and the value that matched.
 type ExclusionReason =
-    | NotASourceExtension
+    | ExcludedByExtension of extension: string
     | ExcludedByFileName of pattern: string
     | ExcludedByPath of pattern: string
 
-/// A file present in the report that the reader did not read, and why.
+/// A file in the report that the reader skipped, keyed by base name like `FileCoverage`.
 type ExcludedFile =
     { FileName: string
       Reason: ExclusionReason }
@@ -129,14 +104,17 @@ type ExcludedFile =
 <!-- sync:exclusion-reason:end -->
 
 ```fsharp
-let dropped: ExcludedFile list = extractExclusionsFromFiles [ "/path/to/coverage.cobertura.xml" ]
+let csharp = { ReaderOptions.defaults with IncludedExtensions = [| ".cs" |] }
+let report: Report = readReports csharp [ File.ReadAllText "coverage.cobertura.xml" ]
 
-for e in dropped do
+let files: FileCoverage list = buildCoverage report.Lines
+
+for e in report.Excluded do
     printfn "%s — %s" e.FileName (ExclusionReason.describe e.Reason)
-    // TestKit.fs — name contains "Test"
+    // AssemblyInfo.cs — name contains "AssemblyInfo"
 ```
 
-`extractExclusions` takes one XML string, `extractExclusionsFromXmls` a list of them, and `extractExclusionsFromFiles` a list of paths; the last two deduplicate by file name, the same merge `parseXmls` does for the files it does read.
+The parameterless functions (`parseXml`, `parseFiles`, `extractRawLines`, …) use `ReaderOptions.defaults`.
 
 ### `CoverageRatchet.Thresholds`
 

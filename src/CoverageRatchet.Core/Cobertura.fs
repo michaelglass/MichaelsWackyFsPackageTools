@@ -23,17 +23,13 @@ type FileCoverage =
 // sync:file-coverage:end
 
 // sync:reader-options:start
-/// Which source files a Cobertura report is read for.
+/// Which `<class>` elements of a Cobertura report the reader reads.
 ///
-/// Everything downstream of the reader — `RawLine`, `buildCoverage`, `Thresholds.judge`,
-/// `Ratchet.ratchet` — is language-neutral. The three filters below were the only part that
-/// was not, and they were private arrays with no hook, so a consumer with a C# or VB report
-/// got zero files back and no way to widen it. They are a record now; `ReaderOptions.defaults`
-/// is exactly what was hard-coded before, so nothing changes for a caller that does not ask.
+/// A file is read when its name ends with one of `IncludedExtensions`, its base name
+/// contains none of `ExcludedFileNamePatterns` (case-sensitive substring), and no path
+/// segment equals one of `ExcludedPathPatterns` (case-insensitive).
 ///
-/// `ExcludedFileNamePatterns` is matched with `Contains` on the base name and
-/// `ExcludedPathPatterns` with an exact, case-insensitive match on a path segment. That
-/// asymmetry is preserved rather than fixed here — see the note on `isIncludedWith`.
+/// To read a C# report: `{ ReaderOptions.defaults with IncludedExtensions = [| ".cs" |] }`.
 type ReaderOptions =
     { IncludedExtensions: string[]
       ExcludedFileNamePatterns: string[]
@@ -41,59 +37,41 @@ type ReaderOptions =
 // sync:reader-options:end
 
 module ReaderOptions =
-    /// The filters this reader has always applied: F# sources only, minus the conventional
-    /// generated and vendored paths.
+    /// F# sources, minus test, generated and vendored files.
     let defaults =
         { IncludedExtensions = [| ".fs" |]
           ExcludedFileNamePatterns = [| "Test"; "AssemblyInfo"; "AssemblyAttributes" |]
           ExcludedPathPatterns = [| "paket-files"; "vendor"; "node_modules"; ".fable" |] }
 
-    /// The defaults with a different set of source extensions — the common case, and the
-    /// reason this record exists. Extensions are matched with `EndsWith`, so they include
-    /// the dot: `[| ".cs" |]`, not `[| "cs" |]`.
-    let withExtensions (extensions: string[]) (options: ReaderOptions) =
-        { options with
-            IncludedExtensions = extensions }
-
 let private branchRegex = Regex(@"\((\d+)/(\d+)\)", RegexOptions.Compiled)
 
 // sync:exclusion-reason:start
-/// Why the reader declined to read a file the Cobertura report does contain.
-///
-/// A filtered file is absent from BOTH sides of "N/N files passed": it never
-/// reaches `buildCoverage`, so it never gets a floor, so `unmeasuredFloors` has
-/// no obligation to report as missing and `Incomplete` cannot fire for it. That
-/// is the same shape `NothingMeasured` exists to prevent, one level down — the
-/// denominator is the filtered evidence rather than the obligation — and it is
-/// why the reason travels with the file instead of the filter just returning
-/// false.
+/// Which `ReaderOptions` filter skipped a file, and the value that matched.
 type ExclusionReason =
-    | NotASourceExtension
+    | ExcludedByExtension of extension: string
     | ExcludedByFileName of pattern: string
     | ExcludedByPath of pattern: string
 
-/// A file present in the report that the reader did not read, and why.
+/// A file in the report that the reader skipped, keyed by base name like `FileCoverage`.
 type ExcludedFile =
     { FileName: string
       Reason: ExclusionReason }
 // sync:exclusion-reason:end
 
 module ExclusionReason =
-    /// One clause, for a line that has to say why without sending anyone to a manual.
+    /// e.g. `name contains "Test"`.
     let describe =
         function
-        | NotASourceExtension -> "not an F# source file"
+        | ExcludedByExtension "" -> "has no extension"
+        | ExcludedByExtension extension -> sprintf "extension \"%s\" is not read" extension
         | ExcludedByFileName pattern -> sprintf "name contains \"%s\"" pattern
         | ExcludedByPath pattern -> sprintf "under a \"%s\" path segment" pattern
 
-/// The reason this file was filtered out, or `None` if it was read.
-///
-/// The three checks were an `&&` of three booleans, which is the same verdict but
-/// cannot say which one decided it. Order matters only for the REASON reported, not
-/// for whether the file is read: extension first, then name, then path.
+/// `None` when the file is read. Checked in order extension, name, path, so the first
+/// filter that matches is the reason reported.
 let private classify (options: ReaderOptions) (fileName: string) : ExclusionReason option =
     if not (options.IncludedExtensions |> Array.exists fileName.EndsWith) then
-        Some NotASourceExtension
+        Some(ExcludedByExtension(Path.GetExtension(fileName)))
     else
         let baseName = Path.GetFileName(fileName)
 
@@ -109,8 +87,6 @@ let private classify (options: ReaderOptions) (fileName: string) : ExclusionReas
                 |> Array.tryFind (fun p -> seg.Equals(p, System.StringComparison.OrdinalIgnoreCase)))
             |> Option.map ExcludedByPath
 
-let private isIncludedWith (options: ReaderOptions) (fileName: string) = (classify options fileName).IsNone
-
 /// Raw line data extracted from a Cobertura XML class element.
 type RawLine =
     { FileName: string
@@ -119,99 +95,86 @@ type RawLine =
       BrCovered: int
       BrTotal: int }
 
-/// Extract raw per-class line data from XML content, reading the sources `options` selects.
-let extractRawLinesWith (options: ReaderOptions) (xmlContent: string) =
-    let doc = XDocument.Parse(xmlContent)
-    let ns = doc.Root.Name.Namespace
+/// What the reader made of one or more Cobertura reports: every `<class>` with a
+/// `filename` lands in exactly one of the two lists.
+type Report =
+    { Lines: RawLine list
+      Excluded: ExcludedFile list }
 
-    doc.Root.Descendants(ns + "class")
-    |> Seq.choose (fun classEl ->
-        let fn = classEl.Attribute(XName.Get("filename"))
+let private readClassLines (fileName: string) (classEl: XElement) : RawLine list =
+    let ns = classEl.Name.Namespace
 
-        if isNull fn || not (isIncludedWith options fn.Value) then
-            None
-        else
-            Some(fn.Value, classEl))
-    |> Seq.collect (fun (fileName, classEl) ->
-        let lines =
-            classEl.Descendants(ns + "line")
-            |> Seq.choose (fun line ->
-                let numAttr = line.Attribute(XName.Get("number"))
-                let hitsAttr = line.Attribute(XName.Get("hits"))
+    let lines =
+        classEl.Descendants(ns + "line")
+        |> Seq.choose (fun line ->
+            let numAttr = line.Attribute(XName.Get("number"))
+            let hitsAttr = line.Attribute(XName.Get("hits"))
 
-                if isNull numAttr || isNull hitsAttr then
-                    None
-                else
-                    let cc = line.Attribute(XName.Get("condition-coverage"))
+            if isNull numAttr || isNull hitsAttr then
+                None
+            else
+                let cc = line.Attribute(XName.Get("condition-coverage"))
 
-                    let brCovered, brTotal =
-                        if isNull cc then
-                            0, 0
+                let brCovered, brTotal =
+                    if isNull cc then
+                        0, 0
+                    else
+                        let m = branchRegex.Match(cc.Value)
+
+                        if m.Success then
+                            int m.Groups.[1].Value, int m.Groups.[2].Value
                         else
-                            let m = branchRegex.Match(cc.Value)
+                            0, 0
 
-                            if m.Success then
-                                int m.Groups.[1].Value, int m.Groups.[2].Value
-                            else
-                                0, 0
+                Some
+                    { FileName = Path.GetFileName(fileName)
+                      LineNum = int numAttr.Value
+                      WasHit = int hitsAttr.Value > 0
+                      BrCovered = brCovered
+                      BrTotal = brTotal })
+        |> Seq.toList
 
-                    Some
-                        { FileName = Path.GetFileName(fileName)
-                          LineNum = int numAttr.Value
-                          WasHit = int hitsAttr.Value > 0
-                          BrCovered = brCovered
-                          BrTotal = brTotal })
-            |> Seq.toList
+    if List.isEmpty lines then
+        // Emit a placeholder so buildCoverage knows this file exists (zero-line class).
+        // LineNum = -1 is filtered out by buildCoverage, resulting in 0 totalLines → 100%.
+        [ { FileName = Path.GetFileName(fileName)
+            LineNum = -1
+            WasHit = false
+            BrCovered = 0
+            BrTotal = 0 } ]
+    else
+        lines
 
-        if List.isEmpty lines then
-            // Emit a placeholder so buildCoverage knows this file exists (zero-line class).
-            // LineNum = -1 is filtered out by buildCoverage, resulting in 0 totalLines → 100%.
-            Seq.singleton
-                { FileName = Path.GetFileName(fileName)
-                  LineNum = -1
-                  WasHit = false
-                  BrCovered = 0
-                  BrTotal = 0 }
-        else
-            lines :> seq<_>)
-    |> Seq.toList
+/// Read Cobertura XML reports in one pass, classifying each `<class>` once.
+/// Exclusions are deduplicated by base name and sorted.
+let readReports (options: ReaderOptions) (xmlContents: string list) : Report =
+    let lines, excluded =
+        xmlContents
+        |> List.collect (fun xml ->
+            let doc = XDocument.Parse(xml)
 
+            doc.Root.Descendants(doc.Root.Name.Namespace + "class")
+            |> Seq.choose (fun classEl ->
+                let fn = classEl.Attribute(XName.Get("filename"))
+                if isNull fn then None else Some(fn.Value, classEl))
+            |> Seq.toList)
+        |> List.partitionWith (fun (fileName, classEl) ->
+            match classify options fileName with
+            | None -> Choice1Of2(readClassLines fileName classEl)
+            | Some reason ->
+                Choice2Of2
+                    { FileName = Path.GetFileName(fileName)
+                      Reason = reason })
 
-/// Every file the report contains that the reader did NOT read, and why.
-///
-/// The counterpart of `extractRawLines`: between them they account for every
-/// `<class>` element in the report, which is what lets a caller say "3 files, 1
-/// excluded" rather than "3 files" and leave the reader to wonder.
-let extractExclusions (xmlContent: string) : ExcludedFile list =
-    let doc = XDocument.Parse(xmlContent)
-    let ns = doc.Root.Name.Namespace
+    { Lines = List.concat lines
+      Excluded =
+        excluded
+        |> List.distinctBy (fun e -> e.FileName)
+        |> List.sortBy (fun e -> e.FileName) }
 
-    doc.Root.Descendants(ns + "class")
-    |> Seq.choose (fun classEl ->
-        let fn = classEl.Attribute(XName.Get("filename"))
-
-        if isNull fn then
-            None
-        else
-            classify ReaderOptions.defaults fn.Value
-            |> Option.map (fun reason ->
-                { FileName = Path.GetFileName(fn.Value)
-                  Reason = reason }))
-    |> Seq.distinctBy (fun e -> e.FileName)
-    |> Seq.sortBy (fun e -> e.FileName)
-    |> Seq.toList
-
-/// Exclusions across several reports, deduplicated by file name — the same
-/// merge `parseXmls` does for the files it does read.
-let extractExclusionsFromXmls (xmlContents: string list) : ExcludedFile list =
-    xmlContents
-    |> List.collect extractExclusions
-    |> List.distinctBy (fun e -> e.FileName)
-    |> List.sortBy (fun e -> e.FileName)
-
-/// Exclusions across several report files on disk.
-let extractExclusionsFromFiles (xmlPaths: string list) : ExcludedFile list =
-    xmlPaths |> List.map File.ReadAllText |> extractExclusionsFromXmls
+/// Extract raw per-class line data from XML content, with `ReaderOptions.defaults`.
+let extractRawLines (xmlContent: string) : RawLine list =
+    (readReports ReaderOptions.defaults [ xmlContent ]).Lines
 
 /// Build FileCoverage list from raw line data.
 let buildCoverage (rawLines: RawLine list) : FileCoverage list =
@@ -320,45 +283,23 @@ let buildBranchGaps (rawLines: RawLine list) : FileBranchGaps list =
                   Gaps = gaps })
     |> List.sortByDescending (fun f -> f.Gaps.Length)
 
-/// Extract raw per-class line data from XML content, reading F# sources only.
-let extractRawLines (xmlContent: string) =
-    extractRawLinesWith ReaderOptions.defaults xmlContent
-
-/// Parse Cobertura XML content string into FileCoverage list, reading the sources
-/// `options` selects.
-let parseXmlWith (options: ReaderOptions) (xmlContent: string) : FileCoverage list =
-    extractRawLinesWith options xmlContent |> buildCoverage
-
 /// Parse Cobertura XML content string into FileCoverage list.
 let parseXml (xmlContent: string) : FileCoverage list =
-    parseXmlWith ReaderOptions.defaults xmlContent
-
-/// Parse multiple Cobertura XML content strings and merge coverage across them,
-/// reading the sources `options` selects.
-let parseXmlsWith (options: ReaderOptions) (xmlContents: string list) : FileCoverage list =
-    xmlContents |> List.collect (extractRawLinesWith options) |> buildCoverage
+    extractRawLines xmlContent |> buildCoverage
 
 /// Parse multiple Cobertura XML content strings and merge coverage across them.
 /// Same files appearing in different XMLs have their line/branch data merged.
 let parseXmls (xmlContents: string list) : FileCoverage list =
-    parseXmlsWith ReaderOptions.defaults xmlContents
-
-/// Parse multiple Cobertura XML files from disk and merge coverage across them,
-/// reading the sources `options` selects.
-let parseFilesWith (options: ReaderOptions) (xmlPaths: string list) : FileCoverage list =
-    xmlPaths |> List.map File.ReadAllText |> parseXmlsWith options
+    xmlContents |> List.collect extractRawLines |> buildCoverage
 
 /// Parse multiple Cobertura XML files from disk and merge coverage across them.
 let parseFiles (xmlPaths: string list) : FileCoverage list =
-    parseFilesWith ReaderOptions.defaults xmlPaths
-
-/// Parse Cobertura XML from a file path, reading the sources `options` selects.
-let parseFileWith (options: ReaderOptions) (xmlPath: string) : FileCoverage list =
-    File.ReadAllText(xmlPath) |> parseXmlWith options
+    xmlPaths |> List.map File.ReadAllText |> parseXmls
 
 /// Parse Cobertura XML from a file path.
 let parseFile (xmlPath: string) : FileCoverage list =
-    parseFileWith ReaderOptions.defaults xmlPath
+    let content = File.ReadAllText(xmlPath)
+    parseXml content
 
 let private excludedSearchDirs = Set.singleton ".devenv"
 
