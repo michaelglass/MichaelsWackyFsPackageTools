@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- feat!: **the reader measures C# and VB, and decides by directory instead of file name.** `ReaderOptions.defaults` reads `.fs`, `.cs` and `.vb` (was `.fs` only) and skips a file when a directory in its path is a test project (`tests`, `test`, `*.Tests`, `*.Test`), `obj`, or vendored (`paket-files`, `vendor`, `node_modules`, `.fable`), ignoring case. The file-name rule is gone: it dropped any production file whose name contained `Test` (`TestKit.fs`, `TestDataSeeder.fs`), and `AssemblyInfo`/`AssemblyAttributes` are generated under `obj/`. Expect more files in the report: a C# or VB file, or an F# file with `Test` in its name, is now measured and held to 100%/100% unless it has a floor.
+- feat!: `ReaderOptions` is `{ IncludedExtensions; ExcludedDirectories: DirectoryRule[] }`, where `DirectoryRule` is `Named of string | NameEndsWith of string`. `ExcludedFileNamePatterns` and `ExcludedPathPatterns` are removed, and `ExclusionReason` is `ExcludedByExtension | ExcludedByDirectory of DirectoryRule` (`ExcludedByFileName` and `ExcludedByPath` are removed). Extensions match ignoring case.
+- feat: `ReaderOptions.includingOnly extensions` narrows the defaults to some of `ReaderOptions.sourceExtensions`, and returns an `Error` for an empty list, an extension without its leading `.`, or one the reader does not measure.
+- feat: `Thresholds.loadReaderOptions path` reads the reader options a floor file asks for: the defaults, narrowed by its `"includedExtensions"` list.
+
 ## 0.1.0-alpha.11 - 2026-09-29
 
 - fix: the floor config is written with `\n` line endings on every platform. On Windows it was written with `\r\n`, so every save rewrote each line of a committed LF file.

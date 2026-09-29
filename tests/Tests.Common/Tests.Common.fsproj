@@ -6,6 +6,11 @@
   <ItemGroup>
     <PackageReference Include="xunit.v3.extensibility.core" Version="4.0.1" />
   </ItemGroup>
+  <!-- Test support, not code under test: keep the whole assembly out of every coverage report.
+       A module-level attribute misses the compiler-generated <StartupCode$...> classes. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverageAttribute" />
+  </ItemGroup>
   <ItemGroup>
     <Compile Include="Attributes.fs" />
     <Compile Include="TestHelpers.fs" />

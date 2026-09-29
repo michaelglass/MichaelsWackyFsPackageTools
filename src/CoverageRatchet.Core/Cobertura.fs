@@ -22,39 +22,100 @@ type FileCoverage =
     }
 // sync:file-coverage:end
 
+let private ignoringCase = System.StringComparison.OrdinalIgnoreCase
+
+let private equalsIgnoringCase (a: string) (b: string) = a.Equals(b, ignoringCase)
+
 // sync:reader-options:start
+/// A rule on one directory in a source file's path, compared ignoring case.
+type DirectoryRule =
+    /// The directory is named exactly this, e.g. `obj`.
+    | Named of name: string
+    /// The directory's name ends with this, e.g. `.Tests`.
+    | NameEndsWith of suffix: string
+
 /// Which `<class>` elements of a Cobertura report the reader reads.
 ///
-/// A file is read when its name ends with one of `IncludedExtensions`, its base name
-/// contains none of `ExcludedFileNamePatterns` (case-sensitive substring), and no path
-/// segment equals one of `ExcludedPathPatterns` (case-insensitive).
-///
-/// To read a C# report: `{ ReaderOptions.defaults with IncludedExtensions = [| ".cs" |] }`.
+/// A file is read when its name ends with one of `IncludedExtensions` and no directory
+/// in its path matches one of `ExcludedDirectories`, both ignoring case. The rules see
+/// the path exactly as the report records it, which for an absolute path includes the
+/// directories above the checkout.
 type ReaderOptions =
     {
         IncludedExtensions: string[]
-        ExcludedFileNamePatterns: string[]
-        ExcludedPathPatterns: string[]
+        ExcludedDirectories: DirectoryRule[]
     }
 // sync:reader-options:end
 
 module ReaderOptions =
-    /// F# sources, minus test, generated and vendored files.
+    /// The source languages .NET coverage collectors attribute lines to. Scripts
+    /// (`.fsx`, `.csx`) are not compiled into an assembly under test, and signature
+    /// files (`.fsi`) hold no executable lines.
+    let sourceExtensions = [| ".fs"; ".cs"; ".vb" |]
+
+    // sync:reader-defaults:start
+    /// Every source language, minus test projects, build output and vendored code.
     let defaults =
         {
-            IncludedExtensions = [| ".fs" |]
-            ExcludedFileNamePatterns = [| "Test"; "AssemblyInfo"; "AssemblyAttributes" |]
-            ExcludedPathPatterns = [| "paket-files"; "vendor"; "node_modules"; ".fable" |]
+            IncludedExtensions = Array.copy sourceExtensions
+            ExcludedDirectories =
+                [|
+                    // test projects: tests/, test/, MyLib.Tests/, MyLib.Test/
+                    Named "tests"
+                    Named "test"
+                    NameEndsWith ".Tests"
+                    NameEndsWith ".Test"
+                    // SDK-generated sources (AssemblyInfo, AssemblyAttributes, source generators)
+                    Named "obj"
+                    // vendored code
+                    Named "paket-files"
+                    Named "vendor"
+                    Named "node_modules"
+                    Named ".fable"
+                |]
         }
+    // sync:reader-defaults:end
+
+    /// `defaults` narrowed to `extensions`, each one of `sourceExtensions` (ignoring case).
+    let includingOnly (extensions: string list) : Result<ReaderOptions, string> =
+        let known = sourceExtensions |> String.concat ", "
+
+        let isKnown (extension: string) =
+            Array.exists (equalsIgnoringCase extension) sourceExtensions
+
+        let problem (extension: string) =
+            if not (extension.StartsWith(".")) then
+                Some(sprintf "\"%s\" must start with \".\" (e.g. \".%s\")" extension extension)
+            elif not (isKnown extension) then
+                Some(
+                    sprintf
+                        "\"%s\" is not a source extension the reader measures; name one or more of %s"
+                        extension
+                        known
+                )
+            else
+                None
+
+        if List.isEmpty extensions then
+            Error(sprintf "the extension list is empty; name one or more of %s" known)
+        else
+            match List.tryPick problem extensions with
+            | Some message -> Error message
+            | None ->
+                Ok
+                    { defaults with
+                        IncludedExtensions =
+                            sourceExtensions
+                            |> Array.filter (fun e -> List.exists (equalsIgnoringCase e) extensions)
+                    }
 
 let private branchRegex = Regex(@"\((\d+)/(\d+)\)", RegexOptions.Compiled)
 
 // sync:exclusion-reason:start
-/// Which `ReaderOptions` filter skipped a file, and the value that matched.
+/// Which `ReaderOptions` filter skipped a file, and the rule that matched.
 type ExclusionReason =
     | ExcludedByExtension of extension: string
-    | ExcludedByFileName of pattern: string
-    | ExcludedByPath of pattern: string
+    | ExcludedByDirectory of rule: DirectoryRule
 
 /// A file in the report that the reader skipped, keyed by base name like `FileCoverage`.
 type ExcludedFile =
@@ -65,33 +126,37 @@ type ExcludedFile =
 // sync:exclusion-reason:end
 
 module ExclusionReason =
-    /// e.g. `name contains "Test"`.
+    /// e.g. `in a directory named "obj"`.
     let describe =
         function
         | ExcludedByExtension "" -> "has no extension"
         | ExcludedByExtension extension -> sprintf "extension \"%s\" is not read" extension
-        | ExcludedByFileName pattern -> sprintf "name contains \"%s\"" pattern
-        | ExcludedByPath pattern -> sprintf "under a \"%s\" path segment" pattern
+        | ExcludedByDirectory(Named name) -> sprintf "in a directory named \"%s\"" name
+        | ExcludedByDirectory(NameEndsWith suffix) -> sprintf "in a directory whose name ends with \"%s\"" suffix
 
-/// `None` when the file is read. Checked in order extension, name, path, so the first
-/// filter that matches is the reason reported.
+let private matches (directory: string) =
+    function
+    | Named name -> equalsIgnoringCase directory name
+    | NameEndsWith suffix -> directory.EndsWith(suffix, ignoringCase)
+
+/// `None` when the file is read. The extension is checked first, then each directory
+/// from the root down, so the first rule that matches is the reason reported.
 let private classify (options: ReaderOptions) (fileName: string) : ExclusionReason option =
-    if not (options.IncludedExtensions |> Array.exists fileName.EndsWith) then
+    if
+        not (
+            options.IncludedExtensions
+            |> Array.exists (fun e -> fileName.EndsWith(e, ignoringCase))
+        )
+    then
         Some(ExcludedByExtension(Path.GetExtension(fileName)))
     else
-        let baseName = Path.GetFileName(fileName)
+        let segments =
+            fileName.Split([| '/'; '\\' |], System.StringSplitOptions.RemoveEmptyEntries)
 
-        match options.ExcludedFileNamePatterns |> Array.tryFind baseName.Contains with
-        | Some pattern -> Some(ExcludedByFileName pattern)
-        | None ->
-            let segments =
-                fileName.Split([| '/'; '\\' |], System.StringSplitOptions.RemoveEmptyEntries)
-
-            segments
-            |> Array.tryPick (fun seg ->
-                options.ExcludedPathPatterns
-                |> Array.tryFind (fun p -> seg.Equals(p, System.StringComparison.OrdinalIgnoreCase)))
-            |> Option.map ExcludedByPath
+        segments
+        |> Array.take (segments.Length - 1)
+        |> Array.tryPick (fun directory -> options.ExcludedDirectories |> Array.tryFind (matches directory))
+        |> Option.map ExcludedByDirectory
 
 /// Raw line data extracted from a Cobertura XML class element.
 type RawLine =

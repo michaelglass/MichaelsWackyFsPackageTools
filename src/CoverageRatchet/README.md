@@ -54,7 +54,7 @@ coverageratchet check
 
 | Exit code | Meaning |
 |-----------|---------|
-| 0 | Every configured floor was measured, and every F# file in the report met its threshold |
+| 0 | Every configured floor was measured, and every source file in the report met its threshold |
 | 1 | At least one **measured** file fell below its threshold |
 | 2 | This run cannot answer the question — nothing was measured, or a configured floor has no row in the report |
 
@@ -83,28 +83,37 @@ leaves no name in the config to detect if it is absent. Projects that require
 full-set detection must therefore keep an explicit floor for every expected
 file (a count floor is sufficient).
 
-Exit 2 also covers a report with no F# file in it at all: the wrong
-`--search-dir`, a collector that wrote nothing, a report read mid-write. Zero
-files examined is not zero files failing.
+Exit 2 also covers a report with no file the reader reads: the wrong
+`--search-dir`, a collector that wrote nothing, a report read mid-write, or a
+reader that skipped everything. Zero files examined is not zero files failing.
 
 #### Files the reader skipped
 
-The reader skips generated and vendored files and any file whose name contains
-`Test`. A skipped file never gets a floor, so it is missing from both sides of
-`N/N` — and `Test` matches anywhere in the name, so a production `TestKit.fs` is
-skipped too. `check` says how many were skipped:
+The reader reads every `.fs`, `.cs` and `.vb` file, and skips a file when a
+directory in its path is a test project (`tests`, `test`, `*.Tests`, `*.Test`),
+build output (`obj`) or vendored code (`paket-files`, `vendor`, `node_modules`,
+`.fable`), ignoring case. A file's own name never matters, so a production
+`TestKit.fs` is measured. `includedExtensions` in the config narrows the
+languages (see [Source languages](#source-languages)).
+
+The rules see the path the report records, and `dotnet test --coverage`
+records absolute ones: a checkout under a directory named `tests` reads
+nothing, and `check` exits 2.
+
+A skipped file never gets a floor, so it is missing from both sides of `N/N`.
+`check` says how many were skipped:
 
 ```
 Result: 3/3 files in the report passed (1 more was excluded by the reader; see `targets`)
 ```
 
-and `targets` names them with the filter that matched:
+and `targets` names them with the rule that matched:
 
 ```
   3 files
 
   Not read by the coverage reader:
-    TestKit.fs — name contains "Test"
+    HarnessTests.fs — in a directory named "tests"
 ```
 
 ### Loosen thresholds
@@ -302,7 +311,7 @@ The upstream files never get instrumented, never appear in the Cobertura XML, an
 - Works for any threshold tool, not just CoverageRatchet.
 - Matches what dotnet-coverage natively understands (assembly / module patterns).
 
-CoverageRatchet has **no config-level exclude list** by design — exclusions belong at the instrumentation boundary, not in the threshold checker. The built-in path filters (`paket-files/`, `vendor/`, `node_modules/`, `.fable/`, plus `Test*` / `AssemblyInfo*` / `AssemblyAttributes*` filenames) only exist because they are universal F# OSS conventions, not project-specific exclusions.
+CoverageRatchet has **no config-level exclude list** by design — exclusions belong at the instrumentation boundary, not in the threshold checker. The built-in directory filters (test projects, `obj/`, `paket-files/`, `vendor/`, `node_modules/`, `.fable/`) only exist because they are universal .NET conventions, not project-specific exclusions. The same goes for test-support code in a shared library that is not itself a test project: mark that assembly `[<assembly: ExcludeFromCodeCoverage>]` (in MSBuild: `<AssemblyAttribute Include="System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverageAttribute" />`) so it never reaches the XML.
 
 ### Custom search directory
 
@@ -366,6 +375,7 @@ CoverageRatchet uses a JSON config file (default: `coverage-ratchet.json` in the
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `includedExtensions` | array of strings | Optional: the source languages to read, a non-empty subset of `".fs"`, `".cs"`, `".vb"` (the default is all three) — see [Source languages](#source-languages) |
 | `overrides` | object | Per-file threshold overrides, keyed by filename |
 | `overrides.<file>.line` | number | Minimum line coverage percentage (0-100) |
 | `overrides.<file>.branch` | number | Minimum branch coverage percentage (0-100) |
@@ -382,6 +392,19 @@ Files not listed in `overrides` must have 100% line and branch coverage.
 Files not listed in `countFloors` have **no** count floor — counts are opt-in per file, added by `baseline-lines`.
 
 **A platform-tagged count floor starts by hand.** `baseline-lines` writes a file's first floor platform-less, and there is no `loosen-from-ci` equivalent for counts: the `coverage-thresholds` artifact carries percentages only. This is deliberate — a floor tagged `macos` is invisible to a Linux-only CI, so nothing tags one on your behalf. Once a file carries a platform-tagged floor (say a `linux` count captured from CI), `baseline-lines` keeps the split: it updates the entry for the platform it ran on, adds one tagged with that platform if none exists, and never touches the other platforms' entries. Remember that every platform without an entry then has *no* count floor for that file, and that you are responsible for keeping a number you cannot measure locally up to date.
+
+### Source languages
+
+Every `.fs`, `.cs` and `.vb` file in the report is measured, and each one without an entry must reach 100%/100%. To measure fewer languages — say an F# repo whose report also carries C# from a referenced project — list the ones to keep:
+
+```json
+{
+  "includedExtensions": [".fs"],
+  "overrides": {}
+}
+```
+
+The list is checked before any report is read: an empty list, an extension without its leading `.`, or one outside `.fs`/`.cs`/`.vb` is an error (exit 1) naming the config file. Files of the other languages are listed by `targets` as skipped. Scripts (`.fsx`, `.csx`) are never read — they are not compiled into an assembly under test — and neither are signature files (`.fsi`), which hold no executable lines.
 
 ## Count floors
 

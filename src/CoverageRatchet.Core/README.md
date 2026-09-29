@@ -66,37 +66,86 @@ let rawLines = extractRawLines xmlContent
 let gaps: FileBranchGaps list = buildBranchGaps rawLines
 ```
 
-By default the reader reads `.fs` files and skips files under `paket-files/`, `vendor/`, `node_modules/` or `.fable/`, and files whose name contains `Test`, `AssemblyInfo` or `AssemblyAttributes`.
+<!-- sync:reader-rules:start -->
+By default the reader reads every `.fs`, `.cs` and `.vb` file, and skips a file when a directory in its path is:
+
+- a test project: named `tests` or `test`, or ending in `.Tests` or `.Test` (e.g. `tests/MyLib.Tests/`)
+- build output: `obj`, where the SDK writes `AssemblyInfo`/`AssemblyAttributes` and source-generator output
+- vendored code: `paket-files`, `vendor`, `node_modules` or `.fable`
+
+Every comparison ignores case, and a file's own name never matters: a production `TestKit.fs` is read. Scripts (`.fsx`, `.csx`) are not read because they are not compiled into an assembly under test; signature files (`.fsi`) hold no executable lines.
+
+The rules see the path exactly as the report records it. `dotnet test --coverage` records absolute paths, so the directories above your checkout count too: a checkout under a directory named `tests` reads nothing, which the CLI reports as nothing measured (exit 2) and `targets` explains.
+
+Test-support code compiled into a library that is not itself a test project (a shared `Tests.Common`, say) reaches the report from wherever it lives. Keep it out of every consumer of the report at once with an assembly-level attribute in that project:
+
+```xml
+<ItemGroup>
+  <AssemblyAttribute Include="System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverageAttribute" />
+</ItemGroup>
+```
+
+An attribute on a module is not enough in F#: the module's top-level values are initialised by a compiler-generated `<StartupCode$…>` class, which carries no attribute.
+<!-- sync:reader-rules:end -->
+
+<!-- sync:reader-defaults:start src=src/CoverageRatchet.Core/Cobertura.fs -->
+```fsharp
+/// Every source language, minus test projects, build output and vendored code.
+let defaults =
+    {
+        IncludedExtensions = Array.copy sourceExtensions
+        ExcludedDirectories =
+            [|
+                // test projects: tests/, test/, MyLib.Tests/, MyLib.Test/
+                Named "tests"
+                Named "test"
+                NameEndsWith ".Tests"
+                NameEndsWith ".Test"
+                // SDK-generated sources (AssemblyInfo, AssemblyAttributes, source generators)
+                Named "obj"
+                // vendored code
+                Named "paket-files"
+                Named "vendor"
+                Named "node_modules"
+                Named ".fable"
+            |]
+    }
+```
+<!-- sync:reader-defaults:end -->
 
 #### Reader options and skipped files
 
-`readReports` reads one or more reports in a single pass with the filters you pass, and returns the lines it read alongside the files it skipped:
+`readReports` reads one or more reports in a single pass with the options you pass, and returns the lines it read alongside the files it skipped:
 
 <!-- sync:reader-options:start src=src/CoverageRatchet.Core/Cobertura.fs -->
 ```fsharp
+/// A rule on one directory in a source file's path, compared ignoring case.
+type DirectoryRule =
+    /// The directory is named exactly this, e.g. `obj`.
+    | Named of name: string
+    /// The directory's name ends with this, e.g. `.Tests`.
+    | NameEndsWith of suffix: string
+
 /// Which `<class>` elements of a Cobertura report the reader reads.
 ///
-/// A file is read when its name ends with one of `IncludedExtensions`, its base name
-/// contains none of `ExcludedFileNamePatterns` (case-sensitive substring), and no path
-/// segment equals one of `ExcludedPathPatterns` (case-insensitive).
-///
-/// To read a C# report: `{ ReaderOptions.defaults with IncludedExtensions = [| ".cs" |] }`.
+/// A file is read when its name ends with one of `IncludedExtensions` and no directory
+/// in its path matches one of `ExcludedDirectories`, both ignoring case. The rules see
+/// the path exactly as the report records it, which for an absolute path includes the
+/// directories above the checkout.
 type ReaderOptions =
     {
         IncludedExtensions: string[]
-        ExcludedFileNamePatterns: string[]
-        ExcludedPathPatterns: string[]
+        ExcludedDirectories: DirectoryRule[]
     }
 ```
 <!-- sync:reader-options:end -->
 
 <!-- sync:exclusion-reason:start src=src/CoverageRatchet.Core/Cobertura.fs -->
 ```fsharp
-/// Which `ReaderOptions` filter skipped a file, and the value that matched.
+/// Which `ReaderOptions` filter skipped a file, and the rule that matched.
 type ExclusionReason =
     | ExcludedByExtension of extension: string
-    | ExcludedByFileName of pattern: string
-    | ExcludedByPath of pattern: string
+    | ExcludedByDirectory of rule: DirectoryRule
 
 /// A file in the report that the reader skipped, keyed by base name like `FileCoverage`.
 type ExcludedFile =
@@ -107,18 +156,27 @@ type ExcludedFile =
 ```
 <!-- sync:exclusion-reason:end -->
 
+`ReaderOptions.includingOnly` narrows the defaults to some of the source languages, and rejects an empty list, an extension without its leading `.`, and an extension the reader does not measure:
+
 ```fsharp
-let csharp = { ReaderOptions.defaults with IncludedExtensions = [| ".cs" |] }
-let report: Report = readReports csharp [ File.ReadAllText "coverage.cobertura.xml" ]
+let fsOnly =
+    match ReaderOptions.includingOnly [ ".fs" ] with
+    | Ok options -> options
+    | Error message -> failwith message
+
+let report: Report = readReports fsOnly [ File.ReadAllText "coverage.cobertura.xml" ]
 
 let files: FileCoverage list = buildCoverage report.Lines
 
 for e in report.Excluded do
     printfn "%s — %s" e.FileName (ExclusionReason.describe e.Reason)
-    // AssemblyInfo.cs — name contains "AssemblyInfo"
+    // Handler.cs — extension ".cs" is not read
+    // HandlerTests.fs — in a directory named "tests"
 ```
 
-The parameterless functions (`parseXml`, `parseFiles`, `extractRawLines`, …) use `ReaderOptions.defaults`.
+To read a language outside the defaults, or to change the directory rules, build the record yourself: `{ ReaderOptions.defaults with IncludedExtensions = [| ".razor" |] }`.
+
+The parameterless functions (`parseXml`, `parseFiles`, `extractRawLines`, …) use `ReaderOptions.defaults`. The CLI reads its options from the floor file with `Thresholds.loadReaderOptions path`: `ReaderOptions.defaults`, narrowed by the file's `"includedExtensions"` list when it has one, or an `Error` naming the file and what is wrong with the list.
 
 ### `CoverageRatchet.Thresholds`
 

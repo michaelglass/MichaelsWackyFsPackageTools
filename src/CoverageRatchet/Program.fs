@@ -109,13 +109,15 @@ let private reportCountFailures (configPath: string) (failed: CountResult list) 
 
 /// A report with no readable file is a broken run, not a pass.
 let private reportNothingMeasured () =
-    printfn "NOTHING MEASURED: no F# source file appears in the coverage report(s)."
+    printfn "NOTHING MEASURED: no source file the reader reads appears in the coverage report(s)."
     printfn ""
     printfn "This is not a pass. `check` examined zero files, so it has learned nothing"
     printfn "about coverage and cannot certify anything. Exit code 2 says so."
     printfn ""
     printfn "What puts a run here:"
-    printfn "  - --search-dir names a directory whose coverage.cobertura.xml has no F# class"
+    printfn "  - --search-dir names a directory whose coverage.cobertura.xml has no source class"
+    printfn "  - the reader skipped every file (`targets` says why): the report's language is"
+    printfn "    not in \"includedExtensions\", or the paths pass through a tests/ or obj/ directory"
     printfn "  - the test run collected no coverage (collector off, or the run crashed)"
     printfn "  - the report was read while it was still being written"
 
@@ -762,11 +764,11 @@ let runScoped
 
             let xmlPaths = findCoverageFiles searchDir
 
-            if List.isEmpty xmlPaths then
-                Error "No coverage.cobertura.xml found"
-            else
-                let report =
-                    xmlPaths |> List.map File.ReadAllText |> readReports ReaderOptions.defaults
+            match loadReaderOptions configPath with
+            | Error message -> Error message
+            | Ok _ when List.isEmpty xmlPaths -> Error "No coverage.cobertura.xml found"
+            | Ok readerOptions ->
+                let report = xmlPaths |> List.map File.ReadAllText |> readReports readerOptions
 
                 let result = runWithCoverageFiles cmd configPath report
 
@@ -815,7 +817,7 @@ let private subcommandExtras (path: string list) : string option =
     | [ "ratchet" ] ->
         Some
             """
-For each F# file under --search-dir, raise [config]'s line+branch
+For each source file under --search-dir, raise [config]'s line+branch
 threshold to the current coverage. Coverage can only go up. Files
 not listed in [config] must hit 100%/100% (which is also the default
 for newly-encountered files).
@@ -823,11 +825,11 @@ for newly-encountered files).
     | [ "check" ] ->
         Some
             """
-Exit 0 = every configured floor was measured, and every F# file in the
+Exit 0 = every configured floor was measured, and every source file in the
          report met its line+branch threshold.
 Exit 1 = at least one MEASURED file fell below a floor.
 Exit 2 = this run cannot answer the question. Either the report holds
-         no F# file at all, or [config] records a floor for a file that
+         no source file at all, or [config] records a floor for a file that
          has no row in the report — so that floor was never checked.
          Neither is a pass, and both used to be reported as one.
 
@@ -889,7 +891,7 @@ can merge results from other platforms back in.
     | [ "targets" ] ->
         Some
             """
-Lists every F# file with line and branch percentages, lowest first.
+Lists every source file with line and branch percentages, lowest first.
 Read-only; never modifies [config]. Use to find what to test next.
 """
     | [ "gaps" ] ->
@@ -968,6 +970,7 @@ Global flags (can appear anywhere):
 
 Config file format (default: coverage-ratchet.json):
   {
+    "includedExtensions": [".fs"],
     "overrides": {
       "Program.fs": {
         "line": 85.5,
@@ -996,6 +999,9 @@ Config file format (default: coverage-ratchet.json):
     Use an array of entries when coverage differs per platform; a
     platform-less entry serves as fallback.
   - "reason" is free-form prose explaining the floor.
+  - "includedExtensions" is optional and narrows the source languages read
+    (default: .fs, .cs and .vb). Files under a tests/, test/, *.Tests/,
+    *.Test/ or obj/ directory are never read.
 
 Examples:
   coverageratchet                         # ratchet using ./coverage-ratchet.json
