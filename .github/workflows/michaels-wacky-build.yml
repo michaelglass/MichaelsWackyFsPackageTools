@@ -53,18 +53,8 @@ on:
         default: ''
       test-windows:
         description: >-
-          Also build and run the tests on windows-latest, as a SEPARATE job. Off by
-          default, so a repo that has not opted in is completely unaffected.
-
-          Deliberately not a matrix over the `build` job. Giving that job a matrix
-          renames its check from `build` to `build (ubuntu-latest)`, which silently
-          breaks any branch protection rule requiring `build` in the repos that
-          consume this workflow. A second job adds a check rather than renaming one.
-
-          The Windows job runs build + tests only. Coverage stays on Linux: floors
-          are per-platform and no repo here has windows entries, so the ratchet would
-          fall back to the 100%/100% default and fail on the first file. Format, lint
-          and docs are platform-independent and are not worth paying for twice.
+          Also build and test on windows-latest in a separate `test-windows` job
+          (build + tests only; format, lint, docs and coverage stay on Linux).
         type: boolean
         default: false
       failure-artifacts:
@@ -321,16 +311,8 @@ jobs:
             dotnet build "$proj" --warnaserror
           done
 
-  # Build and test on Windows. Opt-in via the test-windows input; skipped entirely
-  # otherwise, so consumers that have not asked for it see no change beyond one
-  # skipped check.
-  #
-  # What this catches is the class of defect that is invisible to a Linux-only CI:
-  # code and tests that assume POSIX semantics. The three found when this repo was
-  # first run on Windows were a recursive delete refusing git's read-only loose
-  # objects (POSIX takes unlink permission from the parent directory, Windows from
-  # the file's own attribute), a fixture that used `Windows` as "some other
-  # platform", and path comparisons that assumed `/`.
+  # A separate job rather than a matrix on `build`: the Linux-only steps need no OS
+  # guards and the `build` check keeps its name. No coverage: no windows floors.
   test-windows:
     if: inputs.test-windows
     runs-on: windows-latest
@@ -359,10 +341,7 @@ jobs:
       - name: Test
         shell: bash
         run: |
-          # shell: bash explicitly — GitHub's Windows runners default to pwsh, where
-          # this loop is a parse error. Git Bash ships on the image.
-          #
-          # No coverage collection here by design; see the test-windows input.
+          # Windows runners default to pwsh; this loop needs bash.
           for proj in $(find tests -name '*.Tests.fsproj' | sort); do
             echo "::group::$proj"
             dotnet test --project "$proj" --no-build --no-restore ${{ inputs.test-extra-args }}

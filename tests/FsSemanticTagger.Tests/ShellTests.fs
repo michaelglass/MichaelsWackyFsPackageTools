@@ -40,13 +40,7 @@ let ``runSilent - returns None for failing command`` () =
 
 [<Fact>]
 let ``run - returns stdout in Failure when stderr is empty`` () =
-    // `sh`, not `bash`, and the difference matters only on Windows. GitHub's Windows
-    // runners ship Git Bash on PATH, but the System32 directory comes earlier and holds
-    // its own bash.exe — the WSL launcher. On a runner with no distro installed that prints
-    // "Windows Subsystem for Linux has no installed distributions" in UTF-16 and exits
-    // non-zero, so the assertion compared that against "stdout-only-error". `sh` has no
-    // System32 twin and resolves to Git Bash, which is what the next test already relies
-    // on. Nothing about the behaviour under test needs bash specifically.
+    // `sh`, not `bash`: on Windows `bash` resolves to System32's WSL launcher.
     match run "sh" "-c \"printf 'stdout-only-error'; exit 1\"" with
     | Failure(msg, _) -> test <@ msg = "stdout-only-error" @>
     | Success _ -> failwith "Expected Failure"
