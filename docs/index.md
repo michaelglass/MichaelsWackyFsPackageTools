@@ -5,11 +5,12 @@ A collection of dotnet CLI tools (and one MSBuild package) that aim to make main
 
 | Tool | What it does |
 |------|-------------|
-| [CoverageRatchet](https://github.com/michaelglass/CoverageRatchet) | Enforces per-file code coverage thresholds that automatically ratchet upward -- coverage can improve but shouldn't regress. Now lives in its own repository |
 | [FsSemanticTagger](src/FsSemanticTagger/) | Detects API changes in your compiled DLL and determines the correct semantic version bump |
 | [SyncDocs](src/SyncDocs/) | Helps keep sections of your README in sync with your docs site |
 | [FsProjLint](src/FsProjLint/) | Validates repo and project structure for NuGet-publishable F# projects (fsproj metadata, SourceLink, LICENSE, and more) |
 | [RefStamp](src/RefStamp/) | MSBuild guard that derives local `dotnet pack` versions from the jj/git source ref -- a dev machine cannot produce a release-shaped version |
+
+CoverageRatchet, formerly part of this collection, now lives at [michaelglass/CoverageRatchet](https://github.com/michaelglass/CoverageRatchet).
 <!-- sync:intro:end -->
 
 <!-- sync:getting-started -->
@@ -24,9 +25,6 @@ A collection of dotnet CLI tools (and one MSBuild package) that aim to make main
 Each tool is a standalone dotnet tool. Install only the ones you need:
 
 ```bash
-# Per-file coverage enforcement
-dotnet tool install -g CoverageRatchet
-
 # Semantic versioning with API change detection
 dotnet tool install -g FsSemanticTagger
 
@@ -42,7 +40,6 @@ dotnet tool install -g FsProjLint
 After installing, verify each tool works:
 
 ```bash
-coverageratchet --help
 fssemantictagger --help
 syncdocs --help
 fsprojlint --help
@@ -51,10 +48,6 @@ fsprojlint --help
 
 <!-- sync:tool-overviews -->
 ## Tool Overviews
-
-### CoverageRatchet
-
-CoverageRatchet reads Cobertura XML coverage reports and enforces per-file thresholds that only go **up**. It has moved to its own repository: see [michaelglass/CoverageRatchet](https://github.com/michaelglass/CoverageRatchet) for usage, configuration, and releases.
 
 ### FsSemanticTagger
 
