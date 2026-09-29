@@ -37,12 +37,15 @@ type ArgSpec =
       IsList: bool
       TypeName: string }
 
-/// A named flag in the realized grammar.
+/// A named flag in the realized grammar. `IsRepeatable` mirrors
+/// `[<CmdFlag(Repeatable = true)>]`: the flag may occur more than once, each
+/// occurrence appending a value (a non-repeatable flag rejects a duplicate).
 type FlagSpec =
     { LongName: string
       ShortName: string option
       Arity: FlagArity
-      TypeName: string }
+      TypeName: string
+      IsRepeatable: bool }
 
 /// One node of the realized command tree. Descriptions/examples are intentionally
 /// NOT modelled: they are cosmetic and must not influence the bump.
@@ -118,16 +121,22 @@ module Grammar =
     /// Diff one matched flag (same long name). Any arity or value-type change is
     /// breaking (a flag that used to consume its next token, or take an inline-only
     /// value, changes the meaning of old invocations). A dropped/changed short
-    /// alias breaks `-x` callers; a newly-added short alias is additive.
+    /// alias breaks `-x` callers; a newly-added short alias is additive. Making a
+    /// flag repeatable is additive (a repeated flag, previously refused, now
+    /// parses); making it single-occurrence breaks callers who repeated it.
     let private compareFlag (prev: FlagSpec) (curr: FlagSpec) : GrammarChange =
         if prev.Arity <> curr.Arity then
             GBreaking
         elif prev.TypeName <> curr.TypeName then
             GBreaking
+        elif prev.IsRepeatable && not curr.IsRepeatable then
+            GBreaking
         elif prev.ShortName <> curr.ShortName then
             match prev.ShortName, curr.ShortName with
             | None, Some _ -> GAddition
             | _ -> GBreaking
+        elif not prev.IsRepeatable && curr.IsRepeatable then
+            GAddition
         else
             GNoChange
 
@@ -409,18 +418,29 @@ module Grammar =
                 else
                     None))
 
+    /// Value of a bool-typed named argument on a specific attribute, e.g. the
+    /// `Repeatable` of `[<CmdFlag(Repeatable = true)>]`; `false` when absent.
+    let private namedBool (attrFullName: string) (memberName: string) (attrs: CustomAttributeData list) : bool =
+        attrs
+        |> List.tryFind (fun a -> a.AttributeType.FullName = attrFullName)
+        |> Option.exists (fun a ->
+            a.NamedArguments
+            |> Seq.exists (fun n -> n.MemberName = memberName && n.TypedValue.Value = box true))
+
     /// Command name: `[<Cmd(Name = ...)>]` override, else kebab-case of the case name.
     let private commandName (caseName: string) (attrs: CustomAttributeData list) : string =
         namedString "CommandTree.CmdAttribute" "Name" attrs
         |> Option.defaultValue (toKebabCase caseName)
 
     /// Positional args from case fields — arg names are help-only (kebab of the
-    /// field name), so `[<CmdArg>]` descriptions are irrelevant to the grammar.
+    /// field name), so `[<CmdArg>]` descriptions are irrelevant to the grammar. A
+    /// list field is optional as well as a list: CommandTree (0.9+) binds zero
+    /// trailing values to the empty list.
     let private argInfos (fields: (string * Type) list) : ArgSpec list =
         fields
         |> List.map (fun (name, t) ->
             { Name = toKebabCase name
-              IsOptional = isOptionType t
+              IsOptional = isOptionType t || isListType t
               IsList = isListType t
               TypeName = getTypeName t })
 
@@ -458,17 +478,18 @@ module Grammar =
                     |> Option.defaultValue (toKebabCase caseName)
 
                 let explicitShort = namedString "CommandTree.CmdFlagAttribute" "Short" attrs
+                let isRepeatable = namedBool "CommandTree.CmdFlagAttribute" "Repeatable" attrs
 
                 let typeName =
                     match fields with
                     | [] -> "bool"
                     | (_, t) :: _ -> getTypeName t
 
-                longName, explicitShort, arity, typeName)
+                longName, explicitShort, arity, typeName, isRepeatable)
 
         let autoShortCounts =
             data
-            |> List.choose (fun (longName, explicitShort, _, _) ->
+            |> List.choose (fun (longName, explicitShort, _, _, _) ->
                 match explicitShort with
                 | Some _ -> None
                 | None -> Some(string longName.[0]))
@@ -476,7 +497,7 @@ module Grammar =
             |> Map.ofList
 
         data
-        |> List.map (fun (longName, explicitShort, arity, typeName) ->
+        |> List.map (fun (longName, explicitShort, arity, typeName, isRepeatable) ->
             let shortName =
                 match explicitShort with
                 | Some s -> Some s
@@ -490,7 +511,8 @@ module Grammar =
             { LongName = longName
               ShortName = shortName
               Arity = arity
-              TypeName = typeName })
+              TypeName = typeName
+              IsRepeatable = isRepeatable })
 
     /// Walk one command union into its command forest, mirroring the branch order of
     /// CommandReflection.buildUnionTree exactly:

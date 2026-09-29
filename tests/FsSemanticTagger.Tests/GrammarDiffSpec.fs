@@ -42,15 +42,22 @@ module Fixtures =
         | [<CmdFlag(Description = "Verbose debug output")>] Debug
         | [<CmdFlag(Short = "k", Description = "Config path")>] Config of string
 
+    /// A flag DU with a repeatable value flag (`--include a --include b`) beside an
+    /// ordinary nullary one (CommandTree 0.9+ `[<CmdFlag(Repeatable = true)>]`).
+    type IncludeFlag =
+        | [<CmdFlag(Repeatable = true, Description = "Path to include")>] Include of string
+        | [<CmdFlag(Description = "Quiet")>] Quiet
+
     /// Record-typed argument: expands to positional args (a bool field reads as optional).
     type BuildArgs =
         { Source: string
           Output: string option
           Force: bool }
 
-    /// Round-trip fixture: only shapes whose production extraction equals 0.7.0's
-    /// runtime fromUnion — nullary, required arg, optional arg, list arg, record-arg
-    /// leaf, nested group, SOLE-field flag DU, and a [<Cmd(Name = ...)>] rename.
+    /// Round-trip fixture: shapes whose production extraction must equal the runtime
+    /// fromUnion — nullary, required arg, optional arg, list arg, record-arg leaf,
+    /// nested group, SOLE-field flag DU, a [<Cmd(Name = ...)>] rename, a positional
+    /// prefix + zero-or-more trailing list, and a flag DU with a repeatable flag.
     type Fixture =
         | [<Cmd("Initialize")>] Init
         | [<Cmd("Extract API"); CmdArg("the dll")>] Extract of dll: string
@@ -60,6 +67,8 @@ module Fixtures =
         | [<Cmd("Database group")>] Db of SubCommand
         | [<Cmd("Release it")>] Release of SimpleFlag list
         | [<Cmd(Name = "old-name")>] Renameable
+        | [<Cmd("Tag files")>] Tag of label: string * files: string list
+        | [<Cmd("Collect paths")>] Collect of IncludeFlag list
 
     /// Newer-than-0.7.0 shapes, exercised by the metadata walk only (never 0.7.0's
     /// fromUnion): an optional-value flag with a Name override.
@@ -100,10 +109,10 @@ module Fixtures =
         | [<Cmd(Name = "check")>] Inspect
         | [<Cmd("A brand new command")>] Extra // added command (Addition)
 
-    /// Convert a runtime CommandTree (0.8.0) node to the production Grammar model —
-    /// the ground truth the metadata-only walk is checked against. CommandTree 0.8.0
-    /// exposes a real `FlagInfo.Arity` (Nullary | Required | Optional) that maps 1:1
-    /// onto the production FlagArity.
+    /// Convert a runtime CommandTree node to the production Grammar model — the
+    /// ground truth the metadata-only walk is checked against. `FlagInfo.Arity`
+    /// (Nullary | Required | Optional) maps 1:1 onto the production FlagArity, and
+    /// `FlagInfo.IsRepeatable` (0.9+) onto `FlagSpec.IsRepeatable`.
     let rec private toNode (node: CommandTree<'Cmd>) : FsSemanticTagger.CommandNode =
         match node with
         | Leaf leaf ->
@@ -124,7 +133,8 @@ module Fixtures =
                         | Nullary -> FsSemanticTagger.FlagArity.Nullary
                         | Required -> FsSemanticTagger.FlagArity.RequiredValue
                         | Optional -> FsSemanticTagger.FlagArity.OptionalValue
-                      TypeName = f.TypeName })
+                      TypeName = f.TypeName
+                      IsRepeatable = f.IsRepeatable })
             )
         | Group g -> FsSemanticTagger.CommandNode.Group(g.Name, g.Children |> List.map toNode)
 
@@ -155,7 +165,8 @@ let private flag long arity =
     { LongName = long
       ShortName = None
       Arity = arity
-      TypeName = "bool" }
+      TypeName = "bool"
+      IsRepeatable = false }
 
 let private leaf name args flags = Leaf(name, args, flags)
 let private grammar roots = { Roots = roots }
@@ -309,6 +320,23 @@ let ``scalar->list positional arg is Addition; list->scalar is Breaking`` () =
     test <@ Grammar.compare asList scalar = GBreaking @>
 
 [<Fact>]
+let ``flag made repeatable is Addition; made single-occurrence is Breaking`` () =
+    let single = grammar [ leaf "collect" [] [ flag "include" RequiredValue ] ]
+
+    let repeatable =
+        grammar
+            [ leaf
+                  "collect"
+                  []
+                  [ { flag "include" RequiredValue with
+                        IsRepeatable = true } ] ]
+
+    // `--include a --include b` was refused and now parses; every old call is unchanged.
+    test <@ Grammar.compare single repeatable = GAddition @>
+    // callers that repeated the flag are now refused.
+    test <@ Grammar.compare repeatable single = GBreaking @>
+
+[<Fact>]
 let ``removing a trailing positional arg is Breaking (old value now errors)`` () =
     let before = grammar [ leaf "extract" [ arg "dll"; optArg "out" ] [] ]
     let after = grammar [ leaf "extract" [ arg "dll" ] [] ]
@@ -384,9 +412,10 @@ let ``extractGrammarFromAssembly recovers FsSemanticTagger's own realized gramma
     test <@ extracted = expected @>
 
 [<Fact>]
-let ``extractGrammarForType recovers every 0.7.0-supported command shape faithfully`` () =
+let ``extractGrammarForType recovers every round-trip command shape faithfully`` () =
     // A fixture DU covering nullary / required-arg / optional-arg / record-arg /
-    // list-arg / nested-group / sole-field-flags / Cmd(Name)-override cases. The
+    // list-arg / nested-group / sole-field-flags / Cmd(Name)-override /
+    // prefix + trailing-list / repeatable-flag cases. The
     // metadata-only walk must equal CommandTree's runtime fromUnion tree for ALL.
     let dll = typeof<Fixtures.Fixture>.Assembly.Location
     let extracted = Grammar.extractGrammarForType dll typeof<Fixtures.Fixture>.FullName
