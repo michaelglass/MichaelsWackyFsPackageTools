@@ -18,6 +18,8 @@ permissions:
 jobs:
   docs:
     uses: ./.github/workflows/michaels-wacky-docs.yml
+    with:
+      dotnet-version: '10.0.4xx'
     permissions:
       contents: read
       pages: write
