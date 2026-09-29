@@ -1189,7 +1189,23 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
 
         let currentGrammar =
             {
-                Roots = [ Leaf("diff-api", [], []) ]
+                Roots =
+                    [
+                        Leaf(
+                            "diff-api",
+                            [],
+                            [
+                                {
+                                    LongName = "wait"
+                                    ShortName = None
+                                    Arity = Nullary
+                                    TypeName = "bool"
+                                    IsRepeatable = false
+                                    Env = Some(EnvVarUnknownPrefix "WAIT")
+                                }
+                            ]
+                        )
+                    ]
                 GlobalFlags = []
             }
 
@@ -1212,32 +1228,34 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
                 RootDir = dir
             }
 
-        let result =
-            release
-                {
-                    Run = fakeRun
-                    Config = config
-                    Command = Auto
-                    Mode = PushTags
-                    TargetPackages = []
-                    ExtractPreviousApi = (fun _ _ -> Found api)
-                    ExtractCurrentApi = (fun _ -> api)
-                    ExtractPreviousGrammar = (fun _ _ -> Some previousGrammar)
-                    ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
-                    CiPollIntervalMs = 0
-                    CiWait = CiWaitTests.fixedCiWait 0 10
-                    TagPush = immediateTagPush
-                    CheckFeedPresence = (fun _ _ -> OnFeed)
-                    CheckRestorable = (fun _ _ _ -> OnFeed)
-                    WaitForNuGet = false
-                    NuGetPollIntervalMs = 0
-                    NuGetMaxAttempts = 1
-                    Push = false
-                    Check = false
-                    Canary = noCanary
-                }
+        let output, result =
+            withCapturedConsole (fun () ->
+                release
+                    {
+                        Run = fakeRun
+                        Config = config
+                        Command = Auto
+                        Mode = PushTags
+                        TargetPackages = []
+                        ExtractPreviousApi = (fun _ _ -> Found api)
+                        ExtractCurrentApi = (fun _ -> api)
+                        ExtractPreviousGrammar = (fun _ _ -> Some previousGrammar)
+                        ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
+                        CiPollIntervalMs = 0
+                        CiWait = CiWaitTests.fixedCiWait 0 10
+                        TagPush = immediateTagPush
+                        CheckFeedPresence = (fun _ _ -> OnFeed)
+                        CheckRestorable = (fun _ _ _ -> OnFeed)
+                        WaitForNuGet = false
+                        NuGetPollIntervalMs = 0
+                        NuGetMaxAttempts = 1
+                        Push = false
+                        Check = false
+                        Canary = noCanary
+                    })
 
         test <@ result = 0 @>
+        test <@ output.Contains "note: MyLib: the CLI's env-var prefix is not a string literal" @>
         test <@ (File.ReadAllText fsproj).Contains("<Version>2.0.0</Version>") @>
     finally
         try
@@ -5601,7 +5619,23 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
 
         let currentGrammar =
             {
-                Roots = [ Leaf("diff-api", [], []) ]
+                Roots =
+                    [
+                        Leaf(
+                            "diff-api",
+                            [],
+                            [
+                                {
+                                    LongName = "wait"
+                                    ShortName = None
+                                    Arity = Nullary
+                                    TypeName = "bool"
+                                    IsRepeatable = false
+                                    Env = Some(EnvVarUnknownPrefix "WAIT")
+                                }
+                            ]
+                        )
+                    ]
                 GlobalFlags = []
             }
 
@@ -5624,35 +5658,37 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
                 RootDir = dir
             }
 
-        let result =
-            release
-                {
-                    Run = fakeRun
-                    Config = config
-                    Command = Auto
-                    Mode = PushTags
-                    TargetPackages = []
-                    // Constructing an API probe for a PackAsTool package raises NU1212.
-                    ExtractPreviousApi =
-                        (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package (NU1212)")
-                    ExtractCurrentApi =
-                        (fun _ -> failwith "API probe must not be constructed for a PackAsTool package (NU1212)")
-                    ExtractPreviousGrammar = (fun _ _ -> Some previousGrammar)
-                    ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
-                    CiPollIntervalMs = 0
-                    CiWait = CiWaitTests.fixedCiWait 0 10
-                    TagPush = immediateTagPush
-                    CheckFeedPresence = (fun _ _ -> OnFeed)
-                    CheckRestorable = (fun _ _ _ -> OnFeed)
-                    WaitForNuGet = false
-                    NuGetPollIntervalMs = 0
-                    NuGetMaxAttempts = 1
-                    Push = false
-                    Check = false
-                    Canary = noCanary
-                }
+        let output, result =
+            withCapturedConsole (fun () ->
+                release
+                    {
+                        Run = fakeRun
+                        Config = config
+                        Command = Auto
+                        Mode = PushTags
+                        TargetPackages = []
+                        // Constructing an API probe for a PackAsTool package raises NU1212.
+                        ExtractPreviousApi =
+                            (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package (NU1212)")
+                        ExtractCurrentApi =
+                            (fun _ -> failwith "API probe must not be constructed for a PackAsTool package (NU1212)")
+                        ExtractPreviousGrammar = (fun _ _ -> Some previousGrammar)
+                        ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
+                        CiPollIntervalMs = 0
+                        CiWait = CiWaitTests.fixedCiWait 0 10
+                        TagPush = immediateTagPush
+                        CheckFeedPresence = (fun _ _ -> OnFeed)
+                        CheckRestorable = (fun _ _ _ -> OnFeed)
+                        WaitForNuGet = false
+                        NuGetPollIntervalMs = 0
+                        NuGetMaxAttempts = 1
+                        Push = false
+                        Check = false
+                        Canary = noCanary
+                    })
 
         test <@ result = 0 @>
+        test <@ output.Contains "note: MyTool: the CLI's env-var prefix is not a string literal" @>
         test <@ (File.ReadAllText fsproj).Contains("<Version>2.0.0</Version>") @>
     finally
         try

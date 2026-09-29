@@ -190,6 +190,48 @@ module Fixtures =
 
         Imposter<int>.fromUnionWithGlobals<GCmdImposter, GlobalFlagV1>() |> ignore
 
+    // --- env bindings: CommandTree reads a flag from `<prefix>_<suffix>` (the
+    // prefix passed to an `*Env` entry point), or from a `[<CmdEnvRaw>]` name ---
+
+    /// `[<CmdEnv>]` overrides the suffix, `[<CmdEnvRaw>]` the whole name; `DryRun`
+    /// takes the SCREAMING_SNAKE case name.
+    type EnvFlag =
+        | [<CmdEnv("LVL")>] LogLevel of string
+        | [<CmdEnvRaw("NO_CACHE")>] NoCache
+        | DryRun
+
+    type EnvGlobal =
+        | Verbose
+        | [<CmdEnvRaw("CI")>] Ci
+
+    type ECmdLiteral = | [<Cmd("Run")>] Run of EnvFlag list
+    type ECmdTree = | [<Cmd("Run")>] Run of EnvFlag list
+    type ECmdRenamed = | [<Cmd("Run")>] Run of EnvFlag list
+    type ECmdPlain = | [<Cmd("Run")>] Run of EnvFlag list
+    type ECmdComputed = | [<Cmd("Run")>] Run of EnvFlag list
+    type ECmdConflict = | [<Cmd("Run")>] Run of EnvFlag list
+    type ECmdGlobalsNoEnv = | [<Cmd("Run")>] Run of EnvFlag list
+
+    let envLiteral () =
+        CommandReflection.fromUnionWithGlobalsAndEnv<ECmdLiteral, EnvGlobal> "literal" "MYAPP"
+
+    let envTree () =
+        CommandReflection.fromUnionWithEnv<ECmdTree> "tree" "TOOL"
+
+    let envRenamed () =
+        CommandReflection.tryFromUnionWithEnv<ECmdRenamed> "renamed" "OTHER"
+
+    /// Never run: the extractor reads these call sites from IL only.
+    let envUnreadable (prefix: string) =
+        CommandReflection.tryFromUnionWithGlobalsAndEnv<ECmdComputed, EnvGlobal> "computed" (prefix.ToUpperInvariant())
+        |> ignore
+
+        CommandReflection.fromUnionWithEnv<ECmdConflict> "first" "ONE" |> ignore
+        CommandReflection.fromUnionWithEnv<ECmdConflict> "second" "TWO" |> ignore
+
+        CommandReflection.fromUnionWithGlobals<ECmdGlobalsNoEnv, EnvGlobal> "no env"
+        |> ignore
+
     /// Convert a runtime CommandTree flag to the production model.
     let private toFlag (f: FlagInfo) : FsSemanticTagger.FlagSpec =
         {
@@ -202,6 +244,7 @@ module Fixtures =
                 | Optional -> FsSemanticTagger.FlagArity.OptionalValue
             TypeName = f.TypeName
             IsRepeatable = f.IsRepeatable
+            Env = f.EnvVar |> Option.map (fun e -> FsSemanticTagger.EnvBinding.EnvVar e.VarName)
         }
 
     /// Convert a runtime CommandTree node to the production Grammar model — the
@@ -281,6 +324,7 @@ let private flag long arity =
         Arity = arity
         TypeName = "bool"
         IsRepeatable = false
+        Env = None
     }
 
 let private leaf name args flags = Leaf(name, args, flags)
@@ -847,3 +891,167 @@ let ``a call site that does not name one local union beside the root gives no gl
     test <@ globalsOf typeof<Fixtures.GCmdForeign> = Some [] @>
     test <@ globalsOf typeof<Fixtures.GCmdTwice> = Some [] @>
     test <@ globalsOf typeof<Fixtures.GCmdImposter> = Some [] @>
+
+// ---- env bindings (CommandReflection.*WithEnv / *AndEnv, CmdEnv, CmdEnvRaw) --
+
+let private withEnv env (f: FlagSpec) = { f with Env = env }
+
+let private envGrammar env =
+    grammar [ leaf "run" [] [ flag "dry-run" Nullary |> withEnv env ] ]
+
+[<Fact>]
+let ``a new env binding is Addition; a removed one is Breaking`` () =
+    let bound = envGrammar (Some(EnvVar "APP_DRY_RUN"))
+    test <@ Grammar.compare (envGrammar None) bound = GAddition @>
+    test <@ Grammar.compare bound (envGrammar None) = GBreaking @>
+
+[<Fact>]
+let ``a renamed env var is Breaking`` () =
+    let before = envGrammar (Some(EnvVar "APP_DRY_RUN"))
+    test <@ Grammar.compare before (envGrammar (Some(EnvVar "TOOL_DRY_RUN"))) = GBreaking @>
+    test <@ Grammar.compare before (envGrammar (Some(EnvVar "DRY"))) = GBreaking @>
+
+[<Fact>]
+let ``a global flag's env binding follows the same rules`` () =
+    let bound =
+        globals [ flag "verbose" Nullary |> withEnv (Some(EnvVar "APP_VERBOSE")) ]
+
+    test <@ Grammar.compare (globals [ flag "verbose" Nullary ]) bound = GAddition @>
+    test <@ Grammar.compare bound (globals [ flag "verbose" Nullary ]) = GBreaking @>
+
+[<Fact>]
+let ``an unknown prefix compares the suffix only`` () =
+    let unknown = envGrammar (Some(EnvVarUnknownPrefix "DRY_RUN"))
+    test <@ Grammar.compare unknown unknown = GNoChange @>
+    test <@ Grammar.compare (envGrammar (Some(EnvVar "APP_DRY_RUN"))) unknown = GNoChange @>
+    test <@ Grammar.compare unknown (envGrammar (Some(EnvVar "APP_DRY_RUN"))) = GNoChange @>
+    test <@ Grammar.compare unknown (envGrammar (Some(EnvVarUnknownPrefix "DRY"))) = GBreaking @>
+    test <@ Grammar.compare unknown (envGrammar (Some(EnvVar "APP_DRY"))) = GBreaking @>
+
+[<Fact>]
+let ``caveats name the flags whose env prefix is unknown`` () =
+    let known = envGrammar (Some(EnvVar "APP_DRY_RUN"))
+    test <@ List.isEmpty (Grammar.caveats known known) @>
+
+    let unknown =
+        {
+            Roots =
+                [
+                    leaf "run" [] [ flag "dry-run" Nullary |> withEnv (Some(EnvVarUnknownPrefix "DRY_RUN")) ]
+                ]
+            GlobalFlags = [ flag "verbose" Nullary |> withEnv (Some(EnvVarUnknownPrefix "VERBOSE")) ]
+        }
+
+    test
+        <@
+            Grammar.caveats
+                known
+                { unknown with
+                    Roots = [ Group("db", unknown.Roots) ]
+                }
+                =
+                [
+                    "the CLI's env-var prefix is not a string literal where it is passed to CommandTree, so the env vars of --verbose, --dry-run are compared by suffix only; a change to the prefix is not detected"
+                ]
+        @>
+
+let private extractEnv (root: System.Type) =
+    Grammar.extractGrammarForType typeof<Fixtures.EnvFlag>.Assembly.Location root.FullName
+
+let private flagEnvs (grammar: Grammar option) : (string * EnvBinding option) list =
+    let rec nodeFlags =
+        function
+        | Leaf(_, _, flags) -> flags
+        | Group(_, children) -> List.collect nodeFlags children
+
+    match grammar with
+    | Some g ->
+        g.GlobalFlags @ List.collect nodeFlags g.Roots
+        |> List.map (fun f -> f.LongName, f.Env)
+    | None -> []
+
+[<Fact>]
+let ``extraction reads a literal prefix and the CmdEnv and CmdEnvRaw names as CommandTree does`` () =
+    // Ground truth: the GlobalSpec CommandTree builds at runtime from the same call.
+    let extracted = extractEnv typeof<Fixtures.ECmdLiteral>
+    test <@ extracted = Some(Fixtures.grammarOfGlobalSpec (Fixtures.envLiteral ())) @>
+
+    test
+        <@
+            flagEnvs extracted =
+                [
+                    "verbose", Some(EnvVar "MYAPP_VERBOSE")
+                    "ci", Some(EnvVar "CI")
+                    "log-level", Some(EnvVar "MYAPP_LVL")
+                    "no-cache", Some(EnvVar "NO_CACHE")
+                    "dry-run", Some(EnvVar "MYAPP_DRY_RUN")
+                ]
+        @>
+
+[<Fact>]
+let ``extraction reads the prefix passed to fromUnionWithEnv`` () =
+    test
+        <@
+            flagEnvs (extractEnv typeof<Fixtures.ECmdTree>) =
+                [
+                    "log-level", Some(EnvVar "TOOL_LVL")
+                    "no-cache", Some(EnvVar "NO_CACHE")
+                    "dry-run", Some(EnvVar "TOOL_DRY_RUN")
+                ]
+        @>
+
+[<Fact>]
+let ``without an Env entry point only a command flag's CmdEnvRaw name is bound`` () =
+    // CommandTree resolves a command's flag env vars on every parse, but a global
+    // flag's only under a prefix.
+    let expected =
+        [
+            "verbose", None
+            "ci", None
+            "log-level", None
+            "no-cache", Some(EnvVar "NO_CACHE")
+            "dry-run", None
+        ]
+
+    test <@ flagEnvs (extractEnv typeof<Fixtures.ECmdGlobalsNoEnv>) = expected @>
+
+    test
+        <@
+            flagEnvs (extractEnv typeof<Fixtures.ECmdPlain>) =
+                [ "log-level", None; "no-cache", Some(EnvVar "NO_CACHE"); "dry-run", None ]
+        @>
+
+[<Fact>]
+let ``a prefix that is not one string literal is recorded as unknown, not guessed`` () =
+    let unknown =
+        [
+            "log-level", Some(EnvVarUnknownPrefix "LVL")
+            "no-cache", Some(EnvVar "NO_CACHE")
+            "dry-run", Some(EnvVarUnknownPrefix "DRY_RUN")
+        ]
+
+    // A computed argument.
+    test
+        <@
+            flagEnvs (extractEnv typeof<Fixtures.ECmdComputed>) =
+                [
+                    "verbose", Some(EnvVarUnknownPrefix "VERBOSE")
+                    "ci", Some(EnvVar "CI")
+                    yield! unknown
+                ]
+        @>
+
+    // Two call sites passing different literals.
+    test <@ flagEnvs (extractEnv typeof<Fixtures.ECmdConflict>) = unknown @>
+
+[<Fact>]
+let ``extraction + diff end-to-end: env bindings bump`` () =
+    let diff (before: System.Type) (after: System.Type) =
+        match extractEnv before, extractEnv after with
+        | Some a, Some b -> Some(Grammar.compare a b)
+        | _ -> None
+
+    test <@ diff typeof<Fixtures.ECmdPlain> typeof<Fixtures.ECmdTree> = Some GAddition @>
+    test <@ diff typeof<Fixtures.ECmdTree> typeof<Fixtures.ECmdPlain> = Some GBreaking @>
+    test <@ diff typeof<Fixtures.ECmdTree> typeof<Fixtures.ECmdRenamed> = Some GBreaking @>
+    test <@ diff typeof<Fixtures.ECmdTree> typeof<Fixtures.ECmdConflict> = Some GNoChange @>
