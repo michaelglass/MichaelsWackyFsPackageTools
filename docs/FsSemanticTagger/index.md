@@ -222,7 +222,7 @@ A repo's own gate runs its own suite on its own tree; a regression that only app
   "consumers": [
     {
       "package": "FsHotWatch.Cli",
-      "repo": "~/Developer/work/private-app",
+      "repo": "~/src/my-app",
       "pin": ".config/dotnet-tools.json",
       "gate": "./build.fsx check",
       "timeoutMinutes": 90

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix: the consumer-canary gate runs its command through `sh` from `PATH` instead of `/bin/sh`, so it also works on Windows.
 - fix: **the "no workflow run yet" message prints a check command that works.** It said `gh run list --branch <tag>`. From a jj checkout with no colocated `.git`, `gh` could not find the repository and answered "failed to determine base repo". The command also listed runs of every workflow on the tag, not only the publish workflow the poll had asked about.
   - The message now prints the poll's own query for each tag and publish workflow, followed by the repository from the `origin` remote: `gh run list --branch <tag> --workflow <path> --repo <owner/repo>`. `--repo` is omitted when `origin` is not a GitHub URL.
   - The "MISSING TRIGGER … Re-push one at a time" error comes from 0.14.0-alpha.7 and earlier, which asked GitHub once, three seconds after the push. A repo that still prints it needs a newer pin of this tool.
