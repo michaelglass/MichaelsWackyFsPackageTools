@@ -116,7 +116,8 @@ let ``tag confirmation output keeps a missing trigger distinct from a failed pus
                 [ TagConfirmationFailure.WorkflowTriggerMissing(
                       "fssemantictagger-v0.14.0-alpha.8",
                       System.TimeSpan.FromSeconds 300.0,
-                      true
+                      true,
+                      [ "gh run list --repo example/repo --branch fssemantictagger-v0.14.0-alpha.8 --workflow .github/workflows/release.yml" ]
                   ) ])
 
     // Exit 2, not 1. "No run has appeared yet" is not "the release failed",
@@ -139,14 +140,23 @@ let ``a release whose tag has no run yet must never be told to delete and re-pus
                 [ TagConfirmationFailure.WorkflowTriggerMissing(
                       "fssemantictagger-v0.14.0-alpha.8",
                       System.TimeSpan.FromSeconds 300.0,
-                      true
+                      true,
+                      [ "gh run list --repo example/repo --branch fssemantictagger-v0.14.0-alpha.8 --workflow .github/workflows/release.yml" ]
                   ) ])
 
     test <@ not (output.Contains(":refs/tags/")) @>
     test <@ not (output.Contains("Re-push")) @>
     test <@ output.Contains("Do NOT delete and re-push") @>
-    // ... and it must still say what to look at instead.
-    test <@ output.Contains("gh run list --branch") @>
+    // ... and it must still say what to look at instead: the exact question the poll
+    // asked, runnable as printed, rather than a template with a `<tag>` to fill in.
+    test
+        <@
+            output.Contains(
+                "  gh run list --repo example/repo --branch fssemantictagger-v0.14.0-alpha.8 --workflow .github/workflows/release.yml"
+            )
+        @>
+
+    test <@ not (output.Contains("<tag>")) @>
 
 [<Fact>]
 let ``the reported wait is the one actually performed, not the budget`` () =
@@ -159,7 +169,8 @@ let ``the reported wait is the one actually performed, not the budget`` () =
                 [ TagConfirmationFailure.WorkflowTriggerMissing(
                       "fssemantictagger-v0.14.0-alpha.8",
                       System.TimeSpan.FromSeconds 7.0,
-                      true
+                      true,
+                      [ "gh run list --repo example/repo --branch fssemantictagger-v0.14.0-alpha.8 --workflow .github/workflows/release.yml" ]
                   ) ])
 
     test <@ output.Contains("asked for 7s") @>
@@ -172,7 +183,8 @@ let ``an unaskable gh is not reported as GitHub saying there is no run`` () =
                 [ TagConfirmationFailure.WorkflowTriggerMissing(
                       "fssemantictagger-v0.14.0-alpha.8",
                       System.TimeSpan.FromSeconds 300.0,
-                      false
+                      false,
+                      [ "gh run list --repo example/repo --branch fssemantictagger-v0.14.0-alpha.8 --workflow .github/workflows/release.yml" ]
                   ) ])
 
     test <@ output.Contains("could not be asked") @>

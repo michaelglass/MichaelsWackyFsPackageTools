@@ -862,8 +862,40 @@ type internal TagConfirmationFailure =
     | WorkflowRunFailed of tag: string * runs: TagRunState list
     /// The tag reached the remote and, after `waited`, GitHub still reports no run of
     /// any publish workflow.
-    /// `everAnswered` is false when `gh` could not be asked at all.
-    | WorkflowTriggerMissing of tag: string * waited: System.TimeSpan * everAnswered: bool
+    /// `everAnswered` is false when `gh` could not be asked at all. `checkCommands` are
+    /// the questions the poll asked, one per publish workflow, written so an operator
+    /// can ask them again from any directory (`tagRunCheckCommand`).
+    | WorkflowTriggerMissing of tag: string * waited: System.TimeSpan * everAnswered: bool * checkCommands: string list
+
+/// `owner/repo` for a GitHub remote URL (`git@github.com:o/r.git`,
+/// `ssh://git@github.com/o/r.git`, `https://[user@]github.com/o/r[.git]`), or `None`
+/// for any other host or shape.
+let internal githubRepoSlug (remoteUrl: string) : string option =
+    let m =
+        System.Text.RegularExpressions.Regex.Match(
+            remoteUrl.Trim(),
+            "^(?:git@github\\.com:|(?:ssh|https?)://(?:[^/@]+@)?github\\.com/)([^/]+)/([^/]+?)(?:\\.git)?/?$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+        )
+
+    if m.Success then
+        Some(sprintf "%s/%s" m.Groups.[1].Value m.Groups.[2].Value)
+    else
+        None
+
+/// The `gh` question the post-push poll asks about one publish workflow, as a command
+/// an operator can paste. `--repo` is included whenever the remote is a GitHub URL:
+/// without it `gh` has to find the repository from the working directory, and in a jj
+/// checkout with no colocated `.git` it cannot ("failed to determine base repo").
+let internal tagRunCheckCommand (repo: string option) (workflow: PublishWorkflow) (tag: string) : string =
+    let (PublishWorkflow path) = workflow
+
+    let repoArg =
+        match repo with
+        | Some slug -> sprintf " --repo %s" slug
+        | None -> ""
+
+    sprintf "gh run list%s --branch %s --workflow %s" repoArg tag path
 
 let internal pushTagsAndConfirmDetailed
     (run: string -> string -> CommandResult)
@@ -872,6 +904,14 @@ let internal pushTagsAndConfirmDetailed
     (tags: string list)
     : TagConfirmationFailure list =
     runOrFail run "jj" "git export" |> ignore
+
+    // Only read when a run is missing, so a healthy release asks nothing extra.
+    let repoSlug =
+        lazy
+            (withJjGitDir (fun () ->
+                match run "git" "remote get-url origin" with
+                | Success url -> githubRepoSlug url
+                | Failure _ -> None))
 
     // A tag that never reached the remote is a DIFFERENT failure from one that
     // reached it and triggered nothing, and the operator's next move differs too:
@@ -898,7 +938,12 @@ let internal pushTagsAndConfirmDetailed
             match waitForRunForRef run publishWorkflows policy.RunPollIntervalMs policy.RunPollAttempts tag with
             | TagRunPresent -> None
             | TagRunFailed runs -> Some(WorkflowRunFailed(tag, runs))
-            | TagRunAbsent(waited, everAnswered) -> Some(WorkflowTriggerMissing(tag, waited, everAnswered)))
+            | TagRunAbsent(waited, everAnswered) ->
+                let checks =
+                    publishWorkflows
+                    |> List.map (fun workflow -> tagRunCheckCommand repoSlug.Value workflow tag)
+
+                Some(WorkflowTriggerMissing(tag, waited, everAnswered, checks)))
 
 /// Compatibility surface for callers that only need the tag names. Release uses
 /// the detailed result so it cannot tell an operator that a failed push landed, or
@@ -915,4 +960,4 @@ let pushTagsAndConfirm
             eprintfn "  %s" reason
             tag
         | WorkflowRunFailed(tag, _) -> tag
-        | WorkflowTriggerMissing(tag, _, _) -> tag)
+        | WorkflowTriggerMissing(tag, _, _, _) -> tag)

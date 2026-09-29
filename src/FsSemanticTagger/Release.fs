@@ -324,7 +324,7 @@ let internal reportTagConfirmationFailures (failures: TagConfirmationFailure lis
     let missingTriggers =
         failures
         |> List.choose (function
-            | WorkflowTriggerMissing(tag, waited, everAnswered) -> Some(tag, waited, everAnswered)
+            | WorkflowTriggerMissing(tag, waited, everAnswered, checks) -> Some(tag, waited, everAnswered, checks)
             | PushFailed _
             | WorkflowRunFailed _ -> None)
 
@@ -376,7 +376,7 @@ let internal reportTagConfirmationFailures (failures: TagConfirmationFailure lis
     if not missingTriggers.IsEmpty then
         printfn "Warning: %d pushed tag(s) have no workflow run YET:" missingTriggers.Length
 
-        for tag, waited, everAnswered in missingTriggers do
+        for tag, waited, everAnswered, _ in missingTriggers do
             printfn
                 "  %s — asked for %.0fs; %s"
                 tag
@@ -392,9 +392,13 @@ let internal reportTagConfirmationFailures (failures: TagConfirmationFailure lis
         printfn "this poll can outrun it (raise FSST_RUN_POLL_ATTEMPTS / FSST_RUN_POLL_DELAY_MS to wait longer)."
         printfn ""
         printfn "Do NOT delete and re-push the tag. If the run had merely not registered yet, that publishes twice."
-        printfn "Check first, one of:"
-        printfn "  gh run list --branch <tag>"
-        printfn "  the repository's Actions tab, filtered to the tag"
+        printfn "Check first, by asking GitHub the same question again:"
+
+        for _, _, _, checks in missingTriggers do
+            for check in checks do
+                printfn "  %s" check
+
+        printfn "or look at the repository's Actions tab, filtered to the tag."
         printfn ""
 
         printfn "If, after checking, there is genuinely no run, the tag is an ORPHAN: leave it alone and run the same"
