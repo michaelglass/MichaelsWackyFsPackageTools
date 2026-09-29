@@ -90,6 +90,15 @@ let private runRelease run config cmd mode prev cur poll max =
 let private runAutoOnFeed run config prev cur checkFeedPresence =
     runReleaseOnFeed run config Auto PushTags prev cur 0 10 false checkFeedPresence
 
+/// A tag whose run never appeared, with the check command the poll would print.
+let private missingRun (waited: System.TimeSpan) (everAnswered: bool) =
+    TagConfirmationFailure.WorkflowTriggerMissing(
+        "fssemantictagger-v0.14.0-alpha.8",
+        waited,
+        everAnswered,
+        [ "gh run list --branch fssemantictagger-v0.14.0-alpha.8 --workflow .github/workflows/release.yml --repo example/repo" ]
+    )
+
 [<Fact>]
 let ``tag confirmation output does not claim a failed push reached the remote`` () =
     let output, result =
@@ -112,13 +121,7 @@ let ``tag confirmation output does not claim a failed push reached the remote`` 
 let ``tag confirmation output keeps a missing trigger distinct from a failed push`` () =
     let output, result =
         withCapturedConsole (fun () ->
-            reportTagConfirmationFailures
-                [ TagConfirmationFailure.WorkflowTriggerMissing(
-                      "fssemantictagger-v0.14.0-alpha.8",
-                      System.TimeSpan.FromSeconds 300.0,
-                      true,
-                      [ "gh run list --repo example/repo --branch fssemantictagger-v0.14.0-alpha.8 --workflow .github/workflows/release.yml" ]
-                  ) ])
+            reportTagConfirmationFailures [ missingRun (System.TimeSpan.FromSeconds 300.0) true ])
 
     // Exit 2, not 1. "No run has appeared yet" is not "the release failed",
     // and this used to exit 1 — which is how three healthy FsHotWatch releases on
@@ -136,13 +139,7 @@ let ``a release whose tag has no run yet must never be told to delete and re-pus
     // this branch may suggest removing or re-pushing the tag.
     let output, _ =
         withCapturedConsole (fun () ->
-            reportTagConfirmationFailures
-                [ TagConfirmationFailure.WorkflowTriggerMissing(
-                      "fssemantictagger-v0.14.0-alpha.8",
-                      System.TimeSpan.FromSeconds 300.0,
-                      true,
-                      [ "gh run list --repo example/repo --branch fssemantictagger-v0.14.0-alpha.8 --workflow .github/workflows/release.yml" ]
-                  ) ])
+            reportTagConfirmationFailures [ missingRun (System.TimeSpan.FromSeconds 300.0) true ])
 
     test <@ not (output.Contains(":refs/tags/")) @>
     test <@ not (output.Contains("Re-push")) @>
@@ -152,7 +149,7 @@ let ``a release whose tag has no run yet must never be told to delete and re-pus
     test
         <@
             output.Contains(
-                "  gh run list --repo example/repo --branch fssemantictagger-v0.14.0-alpha.8 --workflow .github/workflows/release.yml"
+                "  gh run list --branch fssemantictagger-v0.14.0-alpha.8 --workflow .github/workflows/release.yml --repo example/repo"
             )
         @>
 
@@ -165,13 +162,7 @@ let ``the reported wait is the one actually performed, not the budget`` () =
     // number in the message has to come from the clock.
     let output, _ =
         withCapturedConsole (fun () ->
-            reportTagConfirmationFailures
-                [ TagConfirmationFailure.WorkflowTriggerMissing(
-                      "fssemantictagger-v0.14.0-alpha.8",
-                      System.TimeSpan.FromSeconds 7.0,
-                      true,
-                      [ "gh run list --repo example/repo --branch fssemantictagger-v0.14.0-alpha.8 --workflow .github/workflows/release.yml" ]
-                  ) ])
+            reportTagConfirmationFailures [ missingRun (System.TimeSpan.FromSeconds 7.0) true ])
 
     test <@ output.Contains("asked for 7s") @>
 
@@ -179,13 +170,7 @@ let ``the reported wait is the one actually performed, not the budget`` () =
 let ``an unaskable gh is not reported as GitHub saying there is no run`` () =
     let output, _ =
         withCapturedConsole (fun () ->
-            reportTagConfirmationFailures
-                [ TagConfirmationFailure.WorkflowTriggerMissing(
-                      "fssemantictagger-v0.14.0-alpha.8",
-                      System.TimeSpan.FromSeconds 300.0,
-                      false,
-                      [ "gh run list --repo example/repo --branch fssemantictagger-v0.14.0-alpha.8 --workflow .github/workflows/release.yml" ]
-                  ) ])
+            reportTagConfirmationFailures [ missingRun (System.TimeSpan.FromSeconds 300.0) false ])
 
     test <@ output.Contains("could not be asked") @>
     test <@ output.Contains("NOT evidence of a missing run") @>

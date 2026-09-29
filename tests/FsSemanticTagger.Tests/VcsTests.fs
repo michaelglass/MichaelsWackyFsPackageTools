@@ -1872,44 +1872,16 @@ let ``githubRepoSlug - a remote that is not GitHub has no slug`` () =
     test <@ githubRepoSlug "https://github.com/owner" = None @>
     test <@ githubRepoSlug "" = None @>
 
-[<Fact>]
-let ``pushTagsAndConfirmDetailed - a missing run carries a check command that names the repo and the workflow`` () =
-    // Observed on 2026-09-28: the advice was `gh run list --branch <tag>`, run from a
-    // jj checkout with no colocated `.git`, and `gh` answered "failed to determine base
-    // repo" instead of listing the run. It also listed every workflow on the tag, not
-    // the publish workflow this poll asked about. The printed command must be the
-    // question the poll asked, runnable from anywhere.
+/// The check commands reported for `tag` when no run ever appears and
+/// `git remote get-url origin` answers `remote`.
+let private checksForAbsentRun (remote: CommandResult) (tag: string) =
     let gh = ghRunListAnswers [ "[]" ]
 
     let run (cmd: string) (args: string) =
         match cmd, args with
         | "jj", "git export" -> Success ""
         | "jj", a when a.StartsWith("git push --tag") -> Success ""
-        | "git", "remote get-url origin" -> Success "git@github.com:owner/SqlHydra.Query.Pgvector.git\n"
-        | _ -> gh cmd args
-
-    let policy =
-        { PushAttempts = 1
-          PushRetryDelayMs = 0
-          RunPollIntervalMs = 0
-          RunPollAttempts = 2 }
-
-    match pushTagsAndConfirmDetailed run releaseOnly policy [ "v0.1.0-alpha.8" ] with
-    | [ WorkflowTriggerMissing("v0.1.0-alpha.8", _, true, checks) ] ->
-        test
-            <@
-                checks = [ "gh run list --repo owner/SqlHydra.Query.Pgvector --branch v0.1.0-alpha.8 --workflow .github/workflows/release.yml" ]
-            @>
-    | other -> failwithf "Expected one WorkflowTriggerMissing, got %A" other
-
-[<Fact>]
-let ``pushTagsAndConfirmDetailed - an unreadable remote still yields a check command, without --repo`` () =
-    let gh = ghRunListAnswers [ "[]" ]
-
-    let run (cmd: string) (args: string) =
-        match cmd, args with
-        | "jj", "git export" -> Success ""
-        | "jj", a when a.StartsWith("git push --tag") -> Success ""
+        | "git", "remote get-url origin" -> remote
         | _ -> gh cmd args
 
     let policy =
@@ -1918,10 +1890,23 @@ let ``pushTagsAndConfirmDetailed - an unreadable remote still yields a check com
           RunPollIntervalMs = 0
           RunPollAttempts = 1 }
 
-    match pushTagsAndConfirmDetailed run releaseOnly policy [ "v1.0.0" ] with
-    | [ WorkflowTriggerMissing("v1.0.0", _, true, checks) ] ->
-        test <@ checks = [ "gh run list --branch v1.0.0 --workflow .github/workflows/release.yml" ] @>
+    match pushTagsAndConfirmDetailed run releaseOnly policy [ tag ] with
+    | [ WorkflowTriggerMissing(t, _, true, checks) ] when t = tag -> checks
     | other -> failwithf "Expected one WorkflowTriggerMissing, got %A" other
+
+[<Fact>]
+let ``pushTagsAndConfirmDetailed - a missing run carries a check command that names the repo and the workflow`` () =
+    // `gh run list --branch <tag>` alone fails in a jj checkout with no colocated .git.
+    let checks =
+        checksForAbsentRun (Success "git@github.com:owner/Repo.git\n") "v0.1.0-alpha.8"
+
+    test
+        <@ checks = [ "gh run list --branch v0.1.0-alpha.8 --workflow .github/workflows/release.yml --repo owner/Repo" ] @>
+
+[<Fact>]
+let ``pushTagsAndConfirmDetailed - an unreadable remote still yields a check command, without --repo`` () =
+    let checks = checksForAbsentRun (Failure("not a git repository", 128)) "v1.0.0"
+    test <@ checks = [ "gh run list --branch v1.0.0 --workflow .github/workflows/release.yml" ] @>
 
 [<Fact>]
 let ``tagPushPolicyFromEnv - the default run-poll window is at least ten minutes and the env can change it`` () =
