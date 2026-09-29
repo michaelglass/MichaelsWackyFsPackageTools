@@ -6,10 +6,10 @@
     <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="xunit.v3" Version="4.0.0" />
-    <PackageReference Include="xunit.v3.mtp-v2" Version="4.0.0" />
+    <PackageReference Include="xunit.v3" Version="4.0.1" />
+    <PackageReference Include="xunit.v3.mtp-v2" Version="4.0.1" />
     <PackageReference Include="Unquote" Version="7.0.1" />
-    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.9.0" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.11.2" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/SyncDocs/SyncDocs.fsproj" />
@@ -17,8 +17,10 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="AttributesTests.fs" />
+    <Compile Include="TestHelpersTests.fs" />
     <Compile Include="SyncTests.fs" />
     <Compile Include="CodeRegionTests.fs" />
+    <Compile Include="LineEndingTests.fs" />
     <Compile Include="ProgramTests.fs" />
   </ItemGroup>
   <ItemGroup>

@@ -352,7 +352,8 @@ let ``LinesCovered and LinesTotal agree with LinePct`` () =
 
 let private csharp =
     { ReaderOptions.defaults with
-        IncludedExtensions = [| ".cs" |] }
+        IncludedExtensions = [| ".cs" |]
+    }
 
 let private readNames (options: ReaderOptions) (xmls: string list) =
     (readReports options xmls).Lines
@@ -381,44 +382,49 @@ let ``readReports - a C# report measures the same as the F# one with the extensi
 
     test
         <@
-            asCSharp |> List.map (fun f -> f.LinePct, f.LinesCovered, f.LinesTotal) = (asFSharp
-                                                                                       |> List.map (fun f ->
-                                                                                           f.LinePct,
-                                                                                           f.LinesCovered,
-                                                                                           f.LinesTotal))
+            asCSharp |> List.map (fun f -> f.LinePct, f.LinesCovered, f.LinesTotal) =
+                (asFSharp |> List.map (fun f -> f.LinePct, f.LinesCovered, f.LinesTotal))
         @>
 
 [<Fact>]
 let ``readReports - several languages can be read at once`` () =
     let xmls =
-        [ classXml "src/Handler.cs" [ 1, 1; 2, 0 ]
-          classXml "src/Legacy.vb" [ 1, 1; 2, 1 ]
-          classXml "src/Core.fs" [ 1, 0; 2, 0 ] ]
+        [
+            classXml "src/Handler.cs" [ 1, 1; 2, 0 ]
+            classXml "src/Legacy.vb" [ 1, 1; 2, 1 ]
+            classXml "src/Core.fs" [ 1, 0; 2, 0 ]
+        ]
 
     let options =
         { ReaderOptions.defaults with
-            IncludedExtensions = [| ".fs"; ".cs"; ".vb" |] }
+            IncludedExtensions = [| ".fs"; ".cs"; ".vb" |]
+        }
 
     test <@ readNames options xmls = [ "Core.fs"; "Handler.cs"; "Legacy.vb" ] @>
 
 [<Fact>]
 let ``readReports - widening the extensions keeps the name and path filters`` () =
     let xmls =
-        [ classXml "src/vendor/ThirdParty.cs" [ 1, 1 ]
-          classXml "src/AssemblyInfo.cs" [ 1, 1 ]
-          classXml "src/Handler.cs" [ 1, 1 ] ]
+        [
+            classXml "src/vendor/ThirdParty.cs" [ 1, 1 ]
+            classXml "src/AssemblyInfo.cs" [ 1, 1 ]
+            classXml "src/Handler.cs" [ 1, 1 ]
+        ]
 
     test <@ readNames csharp xmls = [ "Handler.cs" ] @>
 
 [<Fact>]
 let ``readReports - the exclusion lists can be overridden`` () =
     let xmls =
-        [ classXml "src/TestKit.fs" [ 1, 1; 2, 0 ]
-          classXml "src/Real.fs" [ 1, 1; 2, 0 ] ]
+        [
+            classXml "src/TestKit.fs" [ 1, 1; 2, 0 ]
+            classXml "src/Real.fs" [ 1, 1; 2, 0 ]
+        ]
 
     let keepTestKit =
         { ReaderOptions.defaults with
-            ExcludedFileNamePatterns = [||] }
+            ExcludedFileNamePatterns = [||]
+        }
 
     test <@ readNames ReaderOptions.defaults xmls = [ "Real.fs" ] @>
     test <@ readNames keepTestKit xmls = [ "Real.fs"; "TestKit.fs" ] @>
@@ -432,10 +438,12 @@ let ``extractRawLines - is readReports with the defaults`` () =
 [<Fact>]
 let ``readReports - names a production file caught by the name filter`` () =
     let xmls =
-        [ classXml "MyLib/Harness.fs" [ 1, 1; 2, 0 ]
-          classXml "MyLib/TestKit.fs" [ 1, 1; 2, 0 ]
-          classXml "MyLib/ProtestBanner.fs" [ 1, 1; 2, 0 ]
-          classXml "MyLib/Latest.fs" [ 1, 1; 2, 0 ] ]
+        [
+            classXml "MyLib/Harness.fs" [ 1, 1; 2, 0 ]
+            classXml "MyLib/TestKit.fs" [ 1, 1; 2, 0 ]
+            classXml "MyLib/ProtestBanner.fs" [ 1, 1; 2, 0 ]
+            classXml "MyLib/Latest.fs" [ 1, 1; 2, 0 ]
+        ]
 
     let report = readReports ReaderOptions.defaults xmls
 
@@ -443,26 +451,35 @@ let ``readReports - names a production file caught by the name filter`` () =
 
     test
         <@
-            report.Excluded = [ { FileName = "TestKit.fs"
-                                  Reason = ExcludedByFileName "Test" } ]
+            report.Excluded =
+                [
+                    {
+                        FileName = "TestKit.fs"
+                        Reason = ExcludedByFileName "Test"
+                    }
+                ]
         @>
 
 [<Fact>]
 let ``readReports - the name filter is case-sensitive, so Latest and ProtestBanner are read`` () =
     // Pins the current `Contains` rule; tightening it would change this test.
     let xmls =
-        [ classXml "MyLib/Latest.fs" [ 1, 1 ]
-          classXml "MyLib/ProtestBanner.fs" [ 1, 1 ] ]
+        [
+            classXml "MyLib/Latest.fs" [ 1, 1 ]
+            classXml "MyLib/ProtestBanner.fs" [ 1, 1 ]
+        ]
 
     test <@ (readReports ReaderOptions.defaults xmls).Excluded |> List.isEmpty @>
 
 [<Fact>]
 let ``readReports - reports which filter decided`` () =
     let xmls =
-        [ classXml "MyLib/Handler.cs" [ 1, 1 ]
-          classXml "MyLib/AssemblyInfo.fs" [ 1, 1 ]
-          classXml "MyLib/vendor/ThirdParty.fs" [ 1, 1 ]
-          classXml "MyLib/Real.fs" [ 1, 1 ] ]
+        [
+            classXml "MyLib/Handler.cs" [ 1, 1 ]
+            classXml "MyLib/AssemblyInfo.fs" [ 1, 1 ]
+            classXml "MyLib/vendor/ThirdParty.fs" [ 1, 1 ]
+            classXml "MyLib/Real.fs" [ 1, 1 ]
+        ]
 
     let reasons =
         (readReports ReaderOptions.defaults xmls).Excluded
@@ -470,18 +487,23 @@ let ``readReports - reports which filter decided`` () =
 
     test
         <@
-            reasons = [ "AssemblyInfo.fs", ExcludedByFileName "AssemblyInfo"
-                        "Handler.cs", ExcludedByExtension ".cs"
-                        "ThirdParty.fs", ExcludedByPath "vendor" ]
+            reasons =
+                [
+                    "AssemblyInfo.fs", ExcludedByFileName "AssemblyInfo"
+                    "Handler.cs", ExcludedByExtension ".cs"
+                    "ThirdParty.fs", ExcludedByPath "vendor"
+                ]
         @>
 
 [<Fact>]
 let ``readReports - every class with a filename is either read or excluded`` () =
     let xmls =
-        [ classXml "MyLib/Real.fs" [ 1, 1 ]
-          classXml "MyLib/TestKit.fs" [ 1, 1 ]
-          classXml "MyLib/Handler.cs" [ 1, 1 ]
-          classXml "MyLib/node_modules/Dep.fs" [ 1, 1 ] ]
+        [
+            classXml "MyLib/Real.fs" [ 1, 1 ]
+            classXml "MyLib/TestKit.fs" [ 1, 1 ]
+            classXml "MyLib/Handler.cs" [ 1, 1 ]
+            classXml "MyLib/node_modules/Dep.fs" [ 1, 1 ]
+        ]
 
     let report = readReports ReaderOptions.defaults xmls
     let read = report.Lines |> List.map (fun l -> l.FileName) |> List.distinct
@@ -506,8 +528,10 @@ let ``readReports - one exclusion per base name across several reports`` () =
 let ``readReports - a base name read in one project and excluded in another is on both sides`` () =
     // Floors are keyed by base name, so the skipped copy is still listed.
     let xmls =
-        [ classXml "LibA/Shared.fs" [ 1, 1 ]
-          classXml "LibB/vendor/Shared.fs" [ 1, 0 ] ]
+        [
+            classXml "LibA/Shared.fs" [ 1, 1 ]
+            classXml "LibB/vendor/Shared.fs" [ 1, 0 ]
+        ]
 
     let report = readReports ReaderOptions.defaults xmls
 

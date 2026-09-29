@@ -9,40 +9,52 @@ open FsSemanticTagger.Version
 let ``parse stable version`` () =
     test
         <@
-            parse "1.2.3" = { Major = 1
-                              Minor = 2
-                              Patch = 3
-                              Stage = Stable }
+            parse "1.2.3" =
+                {
+                    Major = 1
+                    Minor = 2
+                    Patch = 3
+                    Stage = Stable
+                }
         @>
 
 [<Fact>]
 let ``parse alpha pre-release`` () =
     test
         <@
-            parse "0.1.0-alpha.1" = { Major = 0
-                                      Minor = 1
-                                      Patch = 0
-                                      Stage = PreRelease(Alpha 1) }
+            parse "0.1.0-alpha.1" =
+                {
+                    Major = 0
+                    Minor = 1
+                    Patch = 0
+                    Stage = PreRelease(Alpha 1)
+                }
         @>
 
 [<Fact>]
 let ``parse beta pre-release`` () =
     test
         <@
-            parse "1.0.0-beta.2" = { Major = 1
-                                     Minor = 0
-                                     Patch = 0
-                                     Stage = PreRelease(Beta 2) }
+            parse "1.0.0-beta.2" =
+                {
+                    Major = 1
+                    Minor = 0
+                    Patch = 0
+                    Stage = PreRelease(Beta 2)
+                }
         @>
 
 [<Fact>]
 let ``parse rc pre-release`` () =
     test
         <@
-            parse "2.0.0-rc.1" = { Major = 2
-                                   Minor = 0
-                                   Patch = 0
-                                   Stage = PreRelease(RC 1) }
+            parse "2.0.0-rc.1" =
+                {
+                    Major = 2
+                    Minor = 0
+                    Patch = 0
+                    Stage = PreRelease(RC 1)
+                }
         @>
 
 [<Fact>]
@@ -67,10 +79,14 @@ let ``toTag with simple prefix`` () =
         <@
             toTag
                 "v"
-                { Major = 1
-                  Minor = 2
-                  Patch = 3
-                  Stage = Stable } = "v1.2.3"
+                {
+                    Major = 1
+                    Minor = 2
+                    Patch = 3
+                    Stage = Stable
+                }
+                =
+                "v1.2.3"
         @>
 
 [<Fact>]
@@ -79,10 +95,14 @@ let ``toTag with compound prefix and pre-release`` () =
         <@
             toTag
                 "core-v"
-                { Major = 0
-                  Minor = 1
-                  Patch = 0
-                  Stage = PreRelease(Alpha 1) } = "core-v0.1.0-alpha.1"
+                {
+                    Major = 0
+                    Minor = 1
+                    Patch = 0
+                    Stage = PreRelease(Alpha 1)
+                }
+                =
+                "core-v0.1.0-alpha.1"
         @>
 
 [<Fact>]
@@ -90,13 +110,19 @@ let ``bumpPatch increments patch`` () =
     test
         <@
             bumpPatch
-                { Major = 1
-                  Minor = 2
-                  Patch = 3
-                  Stage = Stable } = { Major = 1
-                                       Minor = 2
-                                       Patch = 4
-                                       Stage = Stable }
+                {
+                    Major = 1
+                    Minor = 2
+                    Patch = 3
+                    Stage = Stable
+                }
+                =
+                {
+                    Major = 1
+                    Minor = 2
+                    Patch = 4
+                    Stage = Stable
+                }
         @>
 
 [<Fact>]
@@ -104,13 +130,19 @@ let ``bumpMinor increments minor and resets patch`` () =
     test
         <@
             bumpMinor
-                { Major = 1
-                  Minor = 2
-                  Patch = 3
-                  Stage = Stable } = { Major = 1
-                                       Minor = 3
-                                       Patch = 0
-                                       Stage = Stable }
+                {
+                    Major = 1
+                    Minor = 2
+                    Patch = 3
+                    Stage = Stable
+                }
+                =
+                {
+                    Major = 1
+                    Minor = 3
+                    Patch = 0
+                    Stage = Stable
+                }
         @>
 
 [<Fact>]
@@ -118,13 +150,19 @@ let ``bumpMajor increments major and resets minor and patch`` () =
     test
         <@
             bumpMajor
-                { Major = 1
-                  Minor = 2
-                  Patch = 3
-                  Stage = Stable } = { Major = 2
-                                       Minor = 0
-                                       Patch = 0
-                                       Stage = Stable }
+                {
+                    Major = 1
+                    Minor = 2
+                    Patch = 3
+                    Stage = Stable
+                }
+                =
+                {
+                    Major = 2
+                    Minor = 0
+                    Patch = 0
+                    Stage = Stable
+                }
         @>
 
 [<Fact>]
@@ -143,42 +181,54 @@ let ``nextAlphaCycle bumps minor and starts alpha.1`` () =
     test
         <@
             nextAlphaCycle
-                { Major = 0
-                  Minor = 1
-                  Patch = 3
-                  Stage = Stable } = { Major = 0
-                                       Minor = 2
-                                       Patch = 0
-                                       Stage = PreRelease(Alpha 1) }
+                {
+                    Major = 0
+                    Minor = 1
+                    Patch = 3
+                    Stage = Stable
+                }
+                =
+                {
+                    Major = 0
+                    Minor = 2
+                    Patch = 0
+                    Stage = PreRelease(Alpha 1)
+                }
         @>
 
 [<Fact>]
 let ``toBeta sets stage to Beta 1`` () =
     let v =
-        { Major = 1
-          Minor = 0
-          Patch = 0
-          Stage = PreRelease(Alpha 3) }
+        {
+            Major = 1
+            Minor = 0
+            Patch = 0
+            Stage = PreRelease(Alpha 3)
+        }
 
     test <@ toBeta v = { v with Stage = PreRelease(Beta 1) } @>
 
 [<Fact>]
 let ``toRC sets stage to RC 1`` () =
     let v =
-        { Major = 1
-          Minor = 0
-          Patch = 0
-          Stage = PreRelease(Beta 2) }
+        {
+            Major = 1
+            Minor = 0
+            Patch = 0
+            Stage = PreRelease(Beta 2)
+        }
 
     test <@ toRC v = { v with Stage = PreRelease(RC 1) } @>
 
 [<Fact>]
 let ``toStable removes pre-release stage`` () =
     let v =
-        { Major = 1
-          Minor = 0
-          Patch = 0
-          Stage = PreRelease(RC 1) }
+        {
+            Major = 1
+            Minor = 0
+            Patch = 0
+            Stage = PreRelease(RC 1)
+        }
 
     test <@ toStable v = { v with Stage = Stable } @>
 
@@ -186,10 +236,13 @@ let ``toStable removes pre-release stage`` () =
 let ``firstAlpha is 0.1.0-alpha.1`` () =
     test
         <@
-            firstAlpha = { Major = 0
-                           Minor = 1
-                           Patch = 0
-                           Stage = PreRelease(Alpha 1) }
+            firstAlpha =
+                {
+                    Major = 0
+                    Minor = 1
+                    Patch = 0
+                    Stage = PreRelease(Alpha 1)
+                }
         @>
 
 [<Fact>]
@@ -226,44 +279,56 @@ let ``sortKey rc less than stable`` () =
 let ``tryParse valid stable version returns Ok`` () =
     test
         <@
-            tryParse "1.2.3" = Ok
-                { Major = 1
-                  Minor = 2
-                  Patch = 3
-                  Stage = Stable }
+            tryParse "1.2.3" =
+                Ok
+                    {
+                        Major = 1
+                        Minor = 2
+                        Patch = 3
+                        Stage = Stable
+                    }
         @>
 
 [<Fact>]
 let ``tryParse valid alpha returns Ok`` () =
     test
         <@
-            tryParse "0.1.0-alpha.1" = Ok
-                { Major = 0
-                  Minor = 1
-                  Patch = 0
-                  Stage = PreRelease(Alpha 1) }
+            tryParse "0.1.0-alpha.1" =
+                Ok
+                    {
+                        Major = 0
+                        Minor = 1
+                        Patch = 0
+                        Stage = PreRelease(Alpha 1)
+                    }
         @>
 
 [<Fact>]
 let ``tryParse valid beta returns Ok`` () =
     test
         <@
-            tryParse "1.0.0-beta.2" = Ok
-                { Major = 1
-                  Minor = 0
-                  Patch = 0
-                  Stage = PreRelease(Beta 2) }
+            tryParse "1.0.0-beta.2" =
+                Ok
+                    {
+                        Major = 1
+                        Minor = 0
+                        Patch = 0
+                        Stage = PreRelease(Beta 2)
+                    }
         @>
 
 [<Fact>]
 let ``tryParse valid rc returns Ok`` () =
     test
         <@
-            tryParse "2.0.0-rc.1" = Ok
-                { Major = 2
-                  Minor = 0
-                  Patch = 0
-                  Stage = PreRelease(RC 1) }
+            tryParse "2.0.0-rc.1" =
+                Ok
+                    {
+                        Major = 2
+                        Minor = 0
+                        Patch = 0
+                        Stage = PreRelease(RC 1)
+                    }
         @>
 
 [<Fact>]
@@ -385,9 +450,11 @@ let ``sortKey pre-release before stable same version`` () =
 [<Fact>]
 let ``format stable with zeros`` () =
     let v =
-        { Major = 0
-          Minor = 0
-          Patch = 0
-          Stage = Stable }
+        {
+            Major = 0
+            Minor = 0
+            Patch = 0
+            Stage = Stable
+        }
 
     test <@ format v = "0.0.0" @>

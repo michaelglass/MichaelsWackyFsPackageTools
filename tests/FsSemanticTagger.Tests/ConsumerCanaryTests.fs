@@ -29,11 +29,13 @@ let private validJson =
 """
 
 let private pkg (name: string) : PackageConfig =
-    { Name = name
-      Fsproj = sprintf "src/%s/%s.fsproj" name name
-      DllPath = sprintf "src/%s/bin/Release/net10.0/%s.dll" name name
-      TagPrefix = name.ToLowerInvariant() + "-v"
-      FsProjsSharingSameTag = [] }
+    {
+        Name = name
+        Fsproj = sprintf "src/%s/%s.fsproj" name name
+        DllPath = sprintf "src/%s/bin/Release/net10.0/%s.dll" name name
+        TagPrefix = name.ToLowerInvariant() + "-v"
+        FsProjsSharingSameTag = []
+    }
 
 let private v (s: string) : Version = parse s
 
@@ -124,17 +126,21 @@ let ``selectConsumers - pairs each planned package with its consumers, case-inse
         | Error e -> failwith e
 
     let plan =
-        [ pkg "TestPrune.Core", v "12.0.0"
-          pkg "fshotwatch.cli", v "0.15.0-alpha.1"
-          pkg "TestPrune.Sql", v "1.0.0" ]
+        [
+            pkg "TestPrune.Core", v "12.0.0"
+            pkg "fshotwatch.cli", v "0.15.0-alpha.1"
+            pkg "TestPrune.Sql", v "1.0.0"
+        ]
 
     let selected =
         selectConsumers config plan
         |> List.map (fun (p, version, c) -> p.Name, format version, c.Repo)
 
     let expected =
-        [ "TestPrune.Core", "12.0.0", "/repos/FsHotWatch"
-          "fshotwatch.cli", "0.15.0-alpha.1", "/repos/private-app" ]
+        [
+            "TestPrune.Core", "12.0.0", "/repos/FsHotWatch"
+            "fshotwatch.cli", "0.15.0-alpha.1", "/repos/private-app"
+        ]
 
     test <@ selected = expected @>
 
@@ -268,22 +274,24 @@ let private copyTree (source: string) (target: string) =
 /// add` populates the workspace from the checkout, and the gate is answered by
 /// `gate`.
 let private fakeOps (commands: ResizeArray<string>) (gate: string -> GateOutcome) : Ops =
-    { RunIn =
-        fun cwd cmd args ->
-            commands.Add(sprintf "%s: %s %s" cwd cmd args)
+    {
+        RunIn =
+            fun cwd cmd args ->
+                commands.Add(sprintf "%s: %s %s" cwd cmd args)
 
-            if cmd = "git" && args.StartsWith "worktree add --detach " then
-                copyTree cwd (args.Split(' ')[3])
+                if cmd = "git" && args.StartsWith "worktree add --detach " then
+                    copyTree cwd (args.Split(' ')[3])
 
-            if cmd = "jj" && args.StartsWith "workspace add " then
-                copyTree cwd (Array.last (args.Split ' '))
+                if cmd = "jj" && args.StartsWith "workspace add " then
+                    copyTree cwd (Array.last (args.Split ' '))
 
-            Success ""
-      RunGate =
-        fun cwd command _timeout logPath ->
-            commands.Add(sprintf "%s: sh -c %s -> %s" cwd command logPath)
-            File.AppendAllText(logPath, command + "\n")
-            gate command }
+                Success ""
+        RunGate =
+            fun cwd command _timeout logPath ->
+                commands.Add(sprintf "%s: sh -c %s -> %s" cwd command logPath)
+                File.AppendAllText(logPath, command + "\n")
+                gate command
+    }
 
 /// A consumer repo with a `.git` marker and a PackageReference pin, and a
 /// root dir with a feed and log dir beside it.
@@ -296,21 +304,29 @@ let private scaffold (dir: string) (gate: string -> GateOutcome) (commands: Resi
     Directory.CreateDirectory root |> ignore
 
     let settings =
-        { ConfigPath = Path.Combine(dir, ".fssemantictagger.json")
-          Skip = false
-          LogDir = Path.Combine(root, "artifacts", "consumer-canary")
-          PackagesCache = Path.Combine(dir, "cache")
-          Ops = fakeOps commands gate }
+        {
+            ConfigPath = Path.Combine(dir, ".fssemantictagger.json")
+            Skip = false
+            LogDir = Path.Combine(root, "artifacts", "consumer-canary")
+            PackagesCache = Path.Combine(dir, "cache")
+            Ops = fakeOps commands gate
+        }
 
     let config =
-        { LocalFeed = Path.Combine(dir, "feed")
-          Consumers =
-            [ { Package = "TestPrune.Core"
-                Repo = repo
-                Pin = "src/C.fsproj"
-                Gate = "mise run ci"
-                Timeout = TimeSpan.FromMinutes 1.0
-                Revision = "main" } ] }
+        {
+            LocalFeed = Path.Combine(dir, "feed")
+            Consumers =
+                [
+                    {
+                        Package = "TestPrune.Core"
+                        Repo = repo
+                        Pin = "src/C.fsproj"
+                        Gate = "mise run ci"
+                        Timeout = TimeSpan.FromMinutes 1.0
+                        Revision = "main"
+                    }
+                ]
+        }
 
     root, repo, settings, config
 
@@ -508,19 +524,21 @@ let private IntegrationTimeoutMs = 120_000
 /// Real workspace creation and a real shell gate; only `dotnet` is answered
 /// without running, since the fixture has nothing to pack or restore.
 let private integrationOps: Ops =
-    { RunIn =
-        fun cwd cmd args ->
-            if cmd = "dotnet" then
-                Success ""
-            else
-                Shell.runIn cwd cmd args
-      RunGate =
-        fun cwd command timeout logPath ->
-            if command.StartsWith "dotnet " then
-                File.AppendAllText(logPath, command + "\n")
-                Exited 0
-            else
-                Shell.runLogged cwd command timeout logPath }
+    {
+        RunIn =
+            fun cwd cmd args ->
+                if cmd = "dotnet" then
+                    Success ""
+                else
+                    Shell.runIn cwd cmd args
+        RunGate =
+            fun cwd command timeout logPath ->
+                if command.StartsWith "dotnet " then
+                    File.AppendAllText(logPath, command + "\n")
+                    Exited 0
+                else
+                    Shell.runLogged cwd command timeout logPath
+    }
 
 /// A committed git consumer at `<dir>/consumer`; a repeat call returns the
 /// existing one so a second canary run sees the leftover worktree.
@@ -537,9 +555,11 @@ let private gitRepoWithGate (dir: string) (gateExit: int) : string =
         )
 
         for args in
-            [ "init -q -b main"
-              "-c user.email=t@example.com -c user.name=t add ."
-              "-c user.email=t@example.com -c user.name=t commit -q -m init" ] do
+            [
+                "init -q -b main"
+                "-c user.email=t@example.com -c user.name=t add ."
+                "-c user.email=t@example.com -c user.name=t commit -q -m init"
+            ] do
             Shell.runOrFail "git" (sprintf "-C %s %s" repo args) |> ignore
 
     repo
@@ -550,21 +570,29 @@ let private integrationRun (dir: string) (gateExit: int) =
     Directory.CreateDirectory root |> ignore
 
     let settings =
-        { ConfigPath = Path.Combine(dir, ".fssemantictagger.json")
-          Skip = false
-          LogDir = Path.Combine(root, "artifacts", "consumer-canary")
-          PackagesCache = Path.Combine(dir, "cache")
-          Ops = integrationOps }
+        {
+            ConfigPath = Path.Combine(dir, ".fssemantictagger.json")
+            Skip = false
+            LogDir = Path.Combine(root, "artifacts", "consumer-canary")
+            PackagesCache = Path.Combine(dir, "cache")
+            Ops = integrationOps
+        }
 
     let config =
-        { LocalFeed = Path.Combine(dir, "feed")
-          Consumers =
-            [ { Package = "TestPrune.Core"
-                Repo = repo
-                Pin = "src/C.fsproj"
-                Gate = "sh gate.sh"
-                Timeout = TimeSpan.FromMinutes 1.0
-                Revision = "main" } ] }
+        {
+            LocalFeed = Path.Combine(dir, "feed")
+            Consumers =
+                [
+                    {
+                        Package = "TestPrune.Core"
+                        Repo = repo
+                        Pin = "src/C.fsproj"
+                        Gate = "sh gate.sh"
+                        Timeout = TimeSpan.FromMinutes 1.0
+                        Revision = "main"
+                    }
+                ]
+        }
 
     repo, settings, run settings root config [ pkg "TestPrune.Core", v "12.0.0" ]
 
@@ -647,45 +675,55 @@ let private releaseWithVersion (fsprojVersion: string) (dir: string) (canary: Se
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config: ToolConfig =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = fsproj
-                DllPath = "bin/Release/net10.0/MyLib.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = dir }
+        {
+            Packages =
+                [
+                    {
+                        Name = "MyLib"
+                        Fsproj = fsproj
+                        DllPath = "bin/Release/net10.0/MyLib.dll"
+                        TagPrefix = "v"
+                        FsProjsSharingSameTag = []
+                    }
+                ]
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = dir
+        }
 
     let output, code =
         withCapturedConsole (fun () ->
             Release.release
-                { Run = fakeRun
-                  Config = config
-                  Command = Release.StartAlpha
-                  Mode = mode
-                  TargetPackages = []
-                  ExtractPreviousApi = fun _ _ -> Api.FetchError "none"
-                  ExtractCurrentApi = fun _ -> []
-                  ExtractPreviousGrammar = fun _ _ -> None
-                  ExtractCurrentGrammar = fun _ -> None
-                  CiPollIntervalMs = 0
-                  CiWait = CiWaitTests.fixedCiWait 0 10
-                  TagPush =
-                    { PushAttempts = 1
-                      PushRetryDelayMs = 0
-                      RunPollIntervalMs = 0
-                      RunPollAttempts = 1 }
-                  CheckFeedPresence = fun _ _ -> Api.OnFeed
-                  CheckRestorable = fun _ _ _ -> Api.OnFeed
-                  WaitForNuGet = false
-                  NuGetPollIntervalMs = 0
-                  NuGetMaxAttempts = 1
-                  Push = false
-                  Check = false
-                  Canary = canary })
+                {
+                    Run = fakeRun
+                    Config = config
+                    Command = Release.StartAlpha
+                    Mode = mode
+                    TargetPackages = []
+                    ExtractPreviousApi = fun _ _ -> Api.FetchError "none"
+                    ExtractCurrentApi = fun _ -> []
+                    ExtractPreviousGrammar = fun _ _ -> None
+                    ExtractCurrentGrammar = fun _ -> None
+                    CiPollIntervalMs = 0
+                    CiWait = CiWaitTests.fixedCiWait 0 10
+                    TagPush =
+                        {
+                            PushAttempts = 1
+                            PushRetryDelayMs = 0
+                            RunPollIntervalMs = 0
+                            RunPollAttempts = 1
+                        }
+                    CheckFeedPresence = fun _ _ -> Api.OnFeed
+                    CheckRestorable = fun _ _ _ -> Api.OnFeed
+                    WaitForNuGet = false
+                    NuGetPollIntervalMs = 0
+                    NuGetMaxAttempts = 1
+                    Push = false
+                    Check = false
+                    Canary = canary
+                })
 
     code, output, List.ofSeq calls, fsproj
 
@@ -700,23 +738,31 @@ let private canaryFor (dir: string) (gate: string -> GateOutcome) (commands: Res
     File.WriteAllText(Path.Combine(repo, "src", "C.fsproj"), fsproj.Replace("TestPrune.Core", "MyLib"))
 
     let config =
-        { LocalFeed = Path.Combine(dir, "feed")
-          Consumers =
-            [ { Package = "MyLib"
-                Repo = repo
-                Pin = "src/C.fsproj"
-                Gate = "mise run ci"
-                Timeout = TimeSpan.FromMinutes 1.0
-                Revision = "main" } ] }
+        {
+            LocalFeed = Path.Combine(dir, "feed")
+            Consumers =
+                [
+                    {
+                        Package = "MyLib"
+                        Repo = repo
+                        Pin = "src/C.fsproj"
+                        Gate = "mise run ci"
+                        Timeout = TimeSpan.FromMinutes 1.0
+                        Revision = "main"
+                    }
+                ]
+        }
 
     let configPath = Path.Combine(dir, ".fssemantictagger.json")
     File.WriteAllText(configPath, toJson config)
 
-    { ConfigPath = configPath
-      Skip = false
-      LogDir = Path.Combine(dir, "logs")
-      PackagesCache = Path.Combine(dir, "cache")
-      Ops = fakeOps commands gate }
+    {
+        ConfigPath = configPath
+        Skip = false
+        LogDir = Path.Combine(dir, "logs")
+        PackagesCache = Path.Combine(dir, "cache")
+        Ops = fakeOps commands gate
+    }
 
 [<Fact>]
 let ``release - a red consumer gate refuses before any write, tag or push`` () =
@@ -758,7 +804,8 @@ let ``release - break-glass skips the canary loudly and the output records it`` 
 
         let canary =
             { canaryFor dir (fun _ -> Exited 2) commands with
-                Skip = true }
+                Skip = true
+            }
 
         let code, output, calls, _ = releaseWith dir canary Release.PushTags
         test <@ code = 0 @>
@@ -814,20 +861,27 @@ let ``release - dry run with break-glass says so and a dry run with no consumer 
 
         let canary =
             { canaryFor dir (fun _ -> Exited 2) commands with
-                Skip = true }
+                Skip = true
+            }
 
         let _, output, _, _ = releaseWith dir canary Release.DryRun
         test <@ output.Contains "SKIPPED by --skip-consumer-canary" @>
 
         let unrelated =
-            { LocalFeed = Path.Combine(dir, "feed")
-              Consumers =
-                [ { Package = "Other"
-                    Repo = dir
-                    Pin = "x.fsproj"
-                    Gate = "true"
-                    Timeout = TimeSpan.FromMinutes 1.0
-                    Revision = "main" } ] }
+            {
+                LocalFeed = Path.Combine(dir, "feed")
+                Consumers =
+                    [
+                        {
+                            Package = "Other"
+                            Repo = dir
+                            Pin = "x.fsproj"
+                            Gate = "true"
+                            Timeout = TimeSpan.FromMinutes 1.0
+                            Revision = "main"
+                        }
+                    ]
+            }
 
         File.WriteAllText(canary.ConfigPath, toJson unrelated)
         let _, output, _, _ = releaseWith dir { canary with Skip = false } Release.DryRun
@@ -845,14 +899,20 @@ let ``release - a config naming no consumer of the plan skips with a note`` () =
         let canary = canaryFor dir (fun _ -> Exited 2) commands
 
         let unrelated =
-            { LocalFeed = Path.Combine(dir, "feed")
-              Consumers =
-                [ { Package = "Other"
-                    Repo = dir
-                    Pin = "x.fsproj"
-                    Gate = "true"
-                    Timeout = TimeSpan.FromMinutes 1.0
-                    Revision = "main" } ] }
+            {
+                LocalFeed = Path.Combine(dir, "feed")
+                Consumers =
+                    [
+                        {
+                            Package = "Other"
+                            Repo = dir
+                            Pin = "x.fsproj"
+                            Gate = "true"
+                            Timeout = TimeSpan.FromMinutes 1.0
+                            Revision = "main"
+                        }
+                    ]
+            }
 
         File.WriteAllText(canary.ConfigPath, toJson unrelated)
         let code, output, _, _ = releaseWith dir canary Release.PushTags
@@ -911,27 +971,33 @@ let ``withLocalFeed - a config without packageSources gains the section`` () =
 [<Fact>]
 let ``formatRefusal - every reason reads as a sentence with the consumer and package`` () =
     let refusal reason =
-        { Package = pkg "P"
-          Version = v "1.0.0"
-          Consumer =
-            { Package = "P"
-              Repo = "/repos/c"
-              Pin = "p.fsproj"
-              Gate = "mise run ci"
-              Timeout = TimeSpan.FromMinutes 1.0
-              Revision = "main" }
-          Reason = reason
-          LogPath = None
-          Workspace = None }
+        {
+            Package = pkg "P"
+            Version = v "1.0.0"
+            Consumer =
+                {
+                    Package = "P"
+                    Repo = "/repos/c"
+                    Pin = "p.fsproj"
+                    Gate = "mise run ci"
+                    Timeout = TimeSpan.FromMinutes 1.0
+                    Revision = "main"
+                }
+            Reason = reason
+            LogPath = None
+            Workspace = None
+        }
 
     let expectations =
-        [ PackFailed "boom", "packing the candidate failed: boom"
-          WorkspaceFailed "no", "creating the workspace failed: no"
-          PinFailed "bad", "pinning the candidate failed: bad"
-          RestoreFailed 2, "restoring the candidate exited 2"
-          RestoreTimedOut(TimeSpan.FromSeconds 90.0), "restoring the candidate exceeded its 1m30s budget"
-          GateFailed 3, "gate `mise run ci` exited 3"
-          GateTimedOut(TimeSpan.FromMinutes 2.0), "gate `mise run ci` exceeded its 2m0s budget" ]
+        [
+            PackFailed "boom", "packing the candidate failed: boom"
+            WorkspaceFailed "no", "creating the workspace failed: no"
+            PinFailed "bad", "pinning the candidate failed: bad"
+            RestoreFailed 2, "restoring the candidate exited 2"
+            RestoreTimedOut(TimeSpan.FromSeconds 90.0), "restoring the candidate exceeded its 1m30s budget"
+            GateFailed 3, "gate `mise run ci` exited 3"
+            GateTimedOut(TimeSpan.FromMinutes 2.0), "gate `mise run ci` exceeded its 2m0s budget"
+        ]
 
     for (reason, phrase) in expectations do
         let text = formatRefusal (refusal reason)
@@ -995,8 +1061,12 @@ let ``run - a consumer that is neither jj nor git, or does not exist, refuses`` 
         let missing =
             { config with
                 Consumers =
-                    [ { config.Consumers[0] with
-                          Repo = Path.Combine(dir, "nowhere") } ] }
+                    [
+                        { config.Consumers[0] with
+                            Repo = Path.Combine(dir, "nowhere")
+                        }
+                    ]
+            }
 
         match run settings root missing [ pkg "TestPrune.Core", v "12.0.0" ] with
         | Error { Reason = WorkspaceFailed msg } -> test <@ msg.Contains "does not exist" @>
@@ -1017,7 +1087,9 @@ let ``run - a failed pack refuses before any workspace is made`` () =
                                 if cmd = "dotnet" then
                                     Failure("NU1", 7)
                                 else
-                                    settings.Ops.RunIn cwd cmd args } }
+                                    settings.Ops.RunIn cwd cmd args
+                    }
+            }
 
         match run settings root config [ pkg "TestPrune.Core", v "12.0.0" ] with
         | Error refusal ->
@@ -1051,8 +1123,12 @@ let ``run - a pin missing from the workspace, a restore timeout, and an existing
         let absent =
             { config with
                 Consumers =
-                    [ { config.Consumers[0] with
-                          Pin = "src/Missing.fsproj" } ] }
+                    [
+                        { config.Consumers[0] with
+                            Pin = "src/Missing.fsproj"
+                        }
+                    ]
+            }
 
         match run settings root absent [ pkg "TestPrune.Core", v "12.0.0" ] with
         | Error { Reason = PinFailed msg } -> test <@ msg.Contains "src/Missing.fsproj" @>
@@ -1071,8 +1147,12 @@ let ``run - a pin missing from the workspace, a restore timeout, and an existing
         let manifest =
             { config with
                 Consumers =
-                    [ { config.Consumers[0] with
-                          Pin = "dotnet-tools.json" } ] }
+                    [
+                        { config.Consumers[0] with
+                            Pin = "dotnet-tools.json"
+                        }
+                    ]
+            }
 
         match run settings root manifest [ pkg "TestPrune.Core", v "12.0.0" ] with
         | Error { Reason = RestoreTimedOut _ } -> ()

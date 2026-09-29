@@ -253,17 +253,21 @@ let ``deriveUnreleasedBullets groups by conventional prefix, drops bodies + bump
     // The tool's own "Bump versions: ..." commit is noise and must be dropped.
     // An un-prefixed commit is kept verbatim under "other" (never lost).
     let descriptions =
-        [ "feat: add --check mode\n\nLong body that must be dropped for readability."
-          "fix: handle empty Unreleased section\nsecond summary-body line dropped"
-          "chore: bump CommandTree 0.6.2 -> 0.6.3"
-          "Bump versions: FsSemanticTagger 0.13.0-alpha.18"
-          "tidy up without a conventional prefix" ]
+        [
+            "feat: add --check mode\n\nLong body that must be dropped for readability."
+            "fix: handle empty Unreleased section\nsecond summary-body line dropped"
+            "chore: bump CommandTree 0.6.2 -> 0.6.3"
+            "Bump versions: FsSemanticTagger 0.13.0-alpha.18"
+            "tidy up without a conventional prefix"
+        ]
 
     let expected =
-        [ "- feat: add --check mode"
-          "- fix: handle empty Unreleased section"
-          "- chore: bump CommandTree 0.6.2 -> 0.6.3"
-          "- tidy up without a conventional prefix" ]
+        [
+            "- feat: add --check mode"
+            "- fix: handle empty Unreleased section"
+            "- chore: bump CommandTree 0.6.2 -> 0.6.3"
+            "- tidy up without a conventional prefix"
+        ]
 
     test <@ deriveUnreleasedBullets descriptions = expected @>
 
@@ -372,9 +376,12 @@ let ``diffPackageReferences reports bumps, additions and removals, sorted by id`
 
     test
         <@
-            diffPackageReferences before after = [ Added("Arrived", "3.0.0")
-                                                   Removed("Gone", "2.0.0")
-                                                   Bumped("SqlHydra.Query", "4.1.0-beta.2", "4.1.0-beta.3") ]
+            diffPackageReferences before after =
+                [
+                    Added("Arrived", "3.0.0")
+                    Removed("Gone", "2.0.0")
+                    Bumped("SqlHydra.Query", "4.1.0-beta.2", "4.1.0-beta.3")
+                ]
         @>
 
 [<Fact>]
@@ -386,7 +393,8 @@ let ``diffPackageReferences is empty when nothing a consumer sees changed`` () =
 let ``dependencyBullet names the package and both versions`` () =
     test
         <@
-            dependencyBullet (Bumped("SqlHydra.Query", "4.1.0-beta.2", "4.1.0-beta.3")) = "- build(deps): bump SqlHydra.Query from 4.1.0-beta.2 to 4.1.0-beta.3"
+            dependencyBullet (Bumped("SqlHydra.Query", "4.1.0-beta.2", "4.1.0-beta.3")) =
+                "- build(deps): bump SqlHydra.Query from 4.1.0-beta.2 to 4.1.0-beta.3"
         @>
 
     test <@ dependencyBullet (Added("Npgsql", "8.0.0")) = "- build(deps): add Npgsql 8.0.0" @>
@@ -438,9 +446,12 @@ let ``planPromotion promotes an authored section as written and never merges com
 
         test
             <@
-                planPromotion path [ "docs: trim comments"; "chore: tooling" ] [] = Ok
-                    { Source = Authored
-                      DependencyBullets = [] }
+                planPromotion path [ "docs: trim comments"; "chore: tooling" ] [] =
+                    Ok
+                        {
+                            Source = Authored
+                            DependencyBullets = []
+                        }
             @>)
 
 [<Fact>]
@@ -451,9 +462,12 @@ let ``planPromotion adds a dependency bump the authored section does not mention
 
         test
             <@
-                planPromotion path [] [ sqlHydraBump ] = Ok
-                    { Source = Authored
-                      DependencyBullets = [ sqlHydraBullet ] }
+                planPromotion path [] [ sqlHydraBump ] =
+                    Ok
+                        {
+                            Source = Authored
+                            DependencyBullets = [ sqlHydraBullet ]
+                        }
             @>)
 
 [<Fact>]
@@ -473,9 +487,12 @@ let ``planPromotion leaves out a dependency change the authored section already 
         // does not count.
         test
             <@
-                plan = Ok
-                    { Source = Authored
-                      DependencyBullets = [ "- build(deps): add Npgsql 8.0.0" ] }
+                plan =
+                    Ok
+                        {
+                            Source = Authored
+                            DependencyBullets = [ "- build(deps): add Npgsql 8.0.0" ]
+                        }
             @>)
 
 [<Fact>]
@@ -486,9 +503,12 @@ let ``planPromotion still adds a bump when the section names the package but not
 
         test
             <@
-                planPromotion path [] [ sqlHydraBump ] = Ok
-                    { Source = Authored
-                      DependencyBullets = [ sqlHydraBullet ] }
+                planPromotion path [] [ sqlHydraBump ] =
+                    Ok
+                        {
+                            Source = Authored
+                            DependencyBullets = [ sqlHydraBullet ]
+                        }
             @>)
 
 [<Fact>]
@@ -505,12 +525,17 @@ let ``planPromotion derives an empty section from commit summaries plus unmentio
 
         test
             <@
-                plan = Ok
-                    { Source =
-                        Derived
-                            [ "- fix: a bug"
-                              "- chore(deps): update deps (incl. SqlHydra.Query 4.1.0-beta.3)" ]
-                      DependencyBullets = [ "- build(deps): add Npgsql 8.0.0" ] }
+                plan =
+                    Ok
+                        {
+                            Source =
+                                Derived
+                                    [
+                                        "- fix: a bug"
+                                        "- chore(deps): update deps (incl. SqlHydra.Query 4.1.0-beta.3)"
+                                    ]
+                            DependencyBullets = [ "- build(deps): add Npgsql 8.0.0" ]
+                        }
             @>)
 
 [<Fact>]
@@ -521,9 +546,12 @@ let ``planPromotion derives from dependency changes alone when commits give noth
 
         test
             <@
-                planPromotion path [ "Bump versions: X 1.0.0" ] [ sqlHydraBump ] = Ok
-                    { Source = Derived []
-                      DependencyBullets = [ sqlHydraBullet ] }
+                planPromotion path [ "Bump versions: X 1.0.0" ] [ sqlHydraBump ] =
+                    Ok
+                        {
+                            Source = Derived []
+                            DependencyBullets = [ sqlHydraBullet ]
+                        }
             @>)
 
 [<Fact>]
@@ -556,8 +584,10 @@ let ``applyPromotion of an authored plan with no dependency changes promotes unc
             viaPlan
             (v "0.2.0")
             sampleDate
-            { Source = Authored
-              DependencyBullets = [] }
+            {
+                Source = Authored
+                DependencyBullets = []
+            }
 
         promoteUnreleased viaPromote (v "0.2.0") sampleDate
         test <@ File.ReadAllText viaPlan = File.ReadAllText viaPromote @>)
@@ -576,25 +606,29 @@ let ``applyPromotion appends dependency bullets after the authored entries, insi
             path
             (v "0.2.0")
             sampleDate
-            { Source = Authored
-              DependencyBullets = [ sqlHydraBullet ] }
+            {
+                Source = Authored
+                DependencyBullets = [ sqlHydraBullet ]
+            }
 
         let expected =
-            [| "# Changelog"
-               ""
-               "## Unreleased"
-               ""
-               "## 0.2.0 - 2026-04-22"
-               ""
-               "> ### Read this first"
-               ""
-               "- chore: package metadata"
-               sqlHydraBullet
-               ""
-               ""
-               "## 0.1.0 - 2026-01-01"
-               ""
-               "- old" |]
+            [|
+                "# Changelog"
+                ""
+                "## Unreleased"
+                ""
+                "## 0.2.0 - 2026-04-22"
+                ""
+                "> ### Read this first"
+                ""
+                "- chore: package metadata"
+                sqlHydraBullet
+                ""
+                ""
+                "## 0.1.0 - 2026-01-01"
+                ""
+                "- old"
+            |]
 
         test <@ File.ReadAllLines path = expected @>)
 
@@ -608,19 +642,24 @@ let ``applyPromotion appends dependency bullets when the authored section is the
             path
             (v "0.2.0")
             sampleDate
-            { Source = Authored
-              DependencyBullets = [ sqlHydraBullet ] }
+            {
+                Source = Authored
+                DependencyBullets = [ sqlHydraBullet ]
+            }
 
         test
             <@
-                File.ReadAllLines path = [| "# Changelog"
-                                            ""
-                                            "## Unreleased"
-                                            ""
-                                            "## 0.2.0 - 2026-04-22"
-                                            ""
-                                            "- chore: note"
-                                            sqlHydraBullet |]
+                File.ReadAllLines path =
+                    [|
+                        "# Changelog"
+                        ""
+                        "## Unreleased"
+                        ""
+                        "## 0.2.0 - 2026-04-22"
+                        ""
+                        "- chore: note"
+                        sqlHydraBullet
+                    |]
             @>)
 
 [<Fact>]
@@ -633,8 +672,10 @@ let ``applyPromotion writes derived bullets followed by dependency bullets`` () 
             path
             (v "0.1.1")
             sampleDate
-            { Source = Derived [ "- feat: derived feature" ]
-              DependencyBullets = [ sqlHydraBullet ] }
+            {
+                Source = Derived [ "- feat: derived feature" ]
+                DependencyBullets = [ sqlHydraBullet ]
+            }
 
         let updated = File.ReadAllText path
         test <@ updated.Contains "## 0.1.1 - 2026-04-22" @>
@@ -654,8 +695,10 @@ let ``applyPromotion inserts a derived section when there is no Unreleased headi
             path
             (v "0.1.1")
             sampleDate
-            { Source = Derived [ "- feat: brand new" ]
-              DependencyBullets = [] }
+            {
+                Source = Derived [ "- feat: brand new" ]
+                DependencyBullets = []
+            }
 
         let updated = File.ReadAllText path
         test <@ updated.Contains "## 0.1.1 - 2026-04-22" @>
@@ -703,9 +746,8 @@ let ``callout order - entries prepended above the callout fail`` () =
 
         test
             <@
-                validateCalloutOrder path = Error(
-                    CalloutNotFirst(path, "Read this first if you run fshw in CI or from a script", 8)
-                )
+                validateCalloutOrder path =
+                    Error(CalloutNotFirst(path, "Read this first if you run fshw in CI or from a script", 8))
             @>)
 
 // POSITIVE CONTROL: the rule must not be "reject every section with a blockquote".
@@ -827,13 +869,15 @@ let ``formatError - CalloutNotFirst names the callout, the line and the fix`` ()
     let expected =
         String.concat
             "\n"
-            [ "x.md: the '## Unreleased' callout is buried — it is not the first thing in the section."
-              "    Callout: \"Read this first\" (line 42)."
-              "    A callout — a blockquote opening with a heading ('> ### ...') or an alert ('> [!WARNING]') —"
-              "    exists to be read FIRST, so it must be the first content under '## Unreleased'."
-              "    Fix: move the whole '> ...' block back to directly under the '## Unreleased' heading, above"
-              "    every entry. The usual cause is a merge that prepended its entries above it."
-              "    If this blockquote is not a callout, drop its leading heading or alert marker — a plain"
-              "    '> quote' is ignored by this check." ]
+            [
+                "x.md: the '## Unreleased' callout is buried — it is not the first thing in the section."
+                "    Callout: \"Read this first\" (line 42)."
+                "    A callout — a blockquote opening with a heading ('> ### ...') or an alert ('> [!WARNING]') —"
+                "    exists to be read FIRST, so it must be the first content under '## Unreleased'."
+                "    Fix: move the whole '> ...' block back to directly under the '## Unreleased' heading, above"
+                "    every entry. The usual cause is a merge that prepended its entries above it."
+                "    If this blockquote is not a callout, drop its leading heading or alert marker — a plain"
+                "    '> quote' is ignored by this check."
+            ]
 
     test <@ text = expected @>

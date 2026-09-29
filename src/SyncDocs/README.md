@@ -93,6 +93,10 @@ You can have as many synced sections as you like in a single file. Content betwe
 
 If your README has **no** sync markers at all, SyncDocs copies the entire file content to the target. This is useful for per-project READMEs that should be mirrored exactly in docs.
 
+### Line endings
+
+Every file SyncDocs writes keeps its own line endings: synced content is written with the target's line ending (CRLF if most of its lines end in CRLF, otherwise LF), whatever the source uses, and lines outside a replaced section are left untouched. A line-ending-only difference is never reported as out of sync.
+
 ## Code-Sourced Blocks (drift-proof snippets)
 
 A README code block can be sourced from a region of a real, compiled `.fs`/`.fsx` file. The snippet then can't reference a non-existent API without breaking your build, and `syncdocs check` fails CI the moment the rendered snippet stops matching the code.

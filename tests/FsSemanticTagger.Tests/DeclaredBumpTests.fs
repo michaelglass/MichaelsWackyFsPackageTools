@@ -54,22 +54,27 @@ let ``declare keeps the strongest marker and the first entry that declared it`` 
 
     test
         <@
-            declare "CHANGELOG.md" lines = Some
-                { Level = DeclaresBreaking
-                  Source = "CHANGELOG.md"
-                  Entry = "- feat!: b" }
+            declare "CHANGELOG.md" lines =
+                Some
+                    {
+                        Level = DeclaresBreaking
+                        Source = "CHANGELOG.md"
+                        Entry = "- feat!: b"
+                    }
         @>
 
 [<Fact>]
 let ``declare ignores markers inside fenced code`` () =
     let lines =
-        [ "- fix: document the syntax"
-          "```"
-          "- feat!: an example, not an entry"
-          "```"
-          "~~~"
-          "feat: also an example"
-          "~~~" ]
+        [
+            "- fix: document the syntax"
+            "```"
+            "- feat!: an example, not an entry"
+            "```"
+            "~~~"
+            "feat: also an example"
+            "~~~"
+        ]
 
     test <@ (declare "c" lines |> Option.map _.Level) = Some DeclaresPatch @>
 
@@ -83,28 +88,36 @@ let ``declare returns None when no line carries a marker`` () =
 [<Fact>]
 let ``strongest picks the strongest declaration, and the first on a tie`` () =
     let d level source =
-        { Level = level
-          Source = source
-          Entry = "- e" }
+        {
+            Level = level
+            Source = source
+            Entry = "- e"
+        }
 
     test <@ strongest [] = None @>
 
     test
         <@
             strongest
-                [ d DeclaresPatch "a"
-                  d DeclaresBreaking "b"
-                  d DeclaresFeature "c"
-                  d DeclaresBreaking "d" ] = Some(d DeclaresBreaking "b")
+                [
+                    d DeclaresPatch "a"
+                    d DeclaresBreaking "b"
+                    d DeclaresFeature "c"
+                    d DeclaresBreaking "d"
+                ]
+                =
+                Some(d DeclaresBreaking "b")
         @>
 
 // floor: declared intent is a lower bound, and every disagreement is reported
 
 let private declared level =
     Some
-        { Level = level
-          Source = "src/TestPrune.Core/CHANGELOG.md"
-          Entry = "- feat!: SchemaVersion 9 -> 10" }
+        {
+            Level = level
+            Source = "src/TestPrune.Core/CHANGELOG.md"
+            Entry = "- feat!: SchemaVersion 9 -> 10"
+        }
 
 let private breaking = Breaking(ApiSignature "  Foo::Bar(): String", [])
 let private addition = Addition(ApiSignature "  Foo::Baz(): String", [])

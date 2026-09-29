@@ -27,7 +27,8 @@ let ratchet (config: Config) (files: FileCoverage list) : Config =
                         name,
                         { ovr with
                             Line = newLine
-                            Branch = newBranch }
+                            Branch = newBranch
+                        }
                     ))
         |> Map.ofList
 
@@ -134,21 +135,25 @@ let private mergeOverrideSection =
     mergeRawSection (fun (o: Override) -> o.Platform) (fun p o -> { o with Platform = p }) (fun src tgt ->
         { tgt with
             Line = src.Line
-            Branch = src.Branch })
+            Branch = src.Branch
+        })
 
 let private mergeCountFloorSection =
     mergeRawSection (fun (f: CountFloor) -> f.Platform) (fun p f -> { f with Platform = p }) (fun src tgt ->
         { tgt with
             CoveredLines = src.CoveredLines
-            CoveredBranches = src.CoveredBranches })
+            CoveredBranches = src.CoveredBranches
+        })
 
 let private mergeRawOverrides (raw: RawConfig) (resolvedBefore: Config) (resolvedAfter: Config) : RawConfig =
     { raw with
-        RawOverrides = mergeOverrideSection raw.RawOverrides resolvedBefore.Overrides resolvedAfter.Overrides }
+        RawOverrides = mergeOverrideSection raw.RawOverrides resolvedBefore.Overrides resolvedAfter.Overrides
+    }
 
 let private mergeRawCountFloors (raw: RawConfig) (resolvedBefore: Config) (resolvedAfter: Config) : RawConfig =
     { raw with
-        RawCountFloors = mergeCountFloorSection raw.RawCountFloors resolvedBefore.CountFloors resolvedAfter.CountFloors }
+        RawCountFloors = mergeCountFloorSection raw.RawCountFloors resolvedBefore.CountFloors resolvedAfter.CountFloors
+    }
 
 // ---------------------------------------------------------------------------
 // Count floors
@@ -183,7 +188,8 @@ let ratchetCountFloors (config: Config) (files: FileCoverage list) : Config =
             | Some file ->
                 { floor with
                     CoveredLines = max floor.CoveredLines file.LinesCovered
-                    CoveredBranches = max floor.CoveredBranches file.BranchesCovered })
+                    CoveredBranches = max floor.CoveredBranches file.BranchesCovered
+                })
 
     { config with CountFloors = newFloors }
 
@@ -202,10 +208,12 @@ let baselineCountFloors (config: Config) (files: FileCoverage list) : Config =
 
                 Map.add
                     file.FileName
-                    { CoveredLines = file.LinesCovered
-                      CoveredBranches = file.BranchesCovered
-                      Reason = reason
-                      Platform = None }
+                    {
+                        CoveredLines = file.LinesCovered
+                        CoveredBranches = file.BranchesCovered
+                        Reason = reason
+                        Platform = None
+                    }
                     acc)
             config.CountFloors
 
@@ -275,7 +283,8 @@ let loosen (config: Config) (files: FileCoverage list) : Config =
                         name,
                         { ovr with
                             Line = toThreshold file.LinePct
-                            Branch = toThreshold file.BranchPct }
+                            Branch = toThreshold file.BranchPct
+                        }
                     ))
         |> Map.ofList
 
@@ -290,10 +299,12 @@ let loosen (config: Config) (files: FileCoverage list) : Config =
                 else
                     Map.add
                         file.FileName
-                        { Line = toThreshold file.LinePct
-                          Branch = toThreshold file.BranchPct
-                          Reason = Some "loosened automatically"
-                          Platform = None }
+                        {
+                            Line = toThreshold file.LinePct
+                            Branch = toThreshold file.BranchPct
+                            Reason = Some "loosened automatically"
+                            Platform = None
+                        }
                         acc)
             updatedOverrides
 
@@ -316,10 +327,12 @@ let mergeFromCi (raw: RawConfig) (ciPlatform: Platform) (ciResults: Map<string, 
             let existingEntries = Map.tryFind fileName result |> Option.defaultValue []
 
             let ciEntry =
-                { Line = ciLine
-                  Branch = ciBranch
-                  Reason = None
-                  Platform = Some ciPlatform }
+                {
+                    Line = ciLine
+                    Branch = ciBranch
+                    Reason = None
+                    Platform = Some ciPlatform
+                }
 
             let hasPlatformEntries = existingEntries |> List.exists (fun e -> e.Platform.IsSome)
 
@@ -345,7 +358,8 @@ let mergeFromCi (raw: RawConfig) (ciPlatform: Platform) (ciResults: Map<string, 
                             if e.Platform = Some ciPlatform then
                                 { e with
                                     Line = min e.Line ciLine
-                                    Branch = min e.Branch ciBranch }
+                                    Branch = min e.Branch ciBranch
+                                }
                             else
                                 e)
                     else
@@ -355,7 +369,8 @@ let mergeFromCi (raw: RawConfig) (ciPlatform: Platform) (ciResults: Map<string, 
                         existingEntries
                         |> List.map (fun e ->
                             { e with
-                                Platform = Some Platform.current })
+                                Platform = Some Platform.current
+                            })
 
                     localEntries @ [ ciEntry ]
                 else

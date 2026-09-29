@@ -11,13 +11,15 @@ open System.Text.RegularExpressions
 /// JIT-compiled); `*Covered` counts are stable for unchanged code, which is why
 /// count floors gate on them.
 type FileCoverage =
-    { FileName: string
-      LinePct: float
-      BranchPct: float
-      LinesCovered: int
-      LinesTotal: int
-      BranchesCovered: int
-      BranchesTotal: int }
+    {
+        FileName: string
+        LinePct: float
+        BranchPct: float
+        LinesCovered: int
+        LinesTotal: int
+        BranchesCovered: int
+        BranchesTotal: int
+    }
 // sync:file-coverage:end
 
 // sync:reader-options:start
@@ -29,17 +31,21 @@ type FileCoverage =
 ///
 /// To read a C# report: `{ ReaderOptions.defaults with IncludedExtensions = [| ".cs" |] }`.
 type ReaderOptions =
-    { IncludedExtensions: string[]
-      ExcludedFileNamePatterns: string[]
-      ExcludedPathPatterns: string[] }
+    {
+        IncludedExtensions: string[]
+        ExcludedFileNamePatterns: string[]
+        ExcludedPathPatterns: string[]
+    }
 // sync:reader-options:end
 
 module ReaderOptions =
     /// F# sources, minus test, generated and vendored files.
     let defaults =
-        { IncludedExtensions = [| ".fs" |]
-          ExcludedFileNamePatterns = [| "Test"; "AssemblyInfo"; "AssemblyAttributes" |]
-          ExcludedPathPatterns = [| "paket-files"; "vendor"; "node_modules"; ".fable" |] }
+        {
+            IncludedExtensions = [| ".fs" |]
+            ExcludedFileNamePatterns = [| "Test"; "AssemblyInfo"; "AssemblyAttributes" |]
+            ExcludedPathPatterns = [| "paket-files"; "vendor"; "node_modules"; ".fable" |]
+        }
 
 let private branchRegex = Regex(@"\((\d+)/(\d+)\)", RegexOptions.Compiled)
 
@@ -52,8 +58,10 @@ type ExclusionReason =
 
 /// A file in the report that the reader skipped, keyed by base name like `FileCoverage`.
 type ExcludedFile =
-    { FileName: string
-      Reason: ExclusionReason }
+    {
+        FileName: string
+        Reason: ExclusionReason
+    }
 // sync:exclusion-reason:end
 
 module ExclusionReason =
@@ -87,17 +95,21 @@ let private classify (options: ReaderOptions) (fileName: string) : ExclusionReas
 
 /// Raw line data extracted from a Cobertura XML class element.
 type RawLine =
-    { FileName: string
-      LineNum: int
-      WasHit: bool
-      BrCovered: int
-      BrTotal: int }
+    {
+        FileName: string
+        LineNum: int
+        WasHit: bool
+        BrCovered: int
+        BrTotal: int
+    }
 
 /// What the reader made of one or more Cobertura reports: every `<class>` with a
 /// `filename` lands in exactly one of the two lists.
 type Report =
-    { Lines: RawLine list
-      Excluded: ExcludedFile list }
+    {
+        Lines: RawLine list
+        Excluded: ExcludedFile list
+    }
 
 let private readClassLines (fileName: string) (classEl: XElement) : RawLine list =
     let ns = classEl.Name.Namespace
@@ -125,20 +137,26 @@ let private readClassLines (fileName: string) (classEl: XElement) : RawLine list
                             0, 0
 
                 Some
-                    { FileName = Path.GetFileName(fileName)
-                      LineNum = int numAttr.Value
-                      WasHit = int hitsAttr.Value > 0
-                      BrCovered = brCovered
-                      BrTotal = brTotal })
+                    {
+                        FileName = Path.GetFileName(fileName)
+                        LineNum = int numAttr.Value
+                        WasHit = int hitsAttr.Value > 0
+                        BrCovered = brCovered
+                        BrTotal = brTotal
+                    })
         |> Seq.toList
 
     if List.isEmpty lines then
         // Placeholder so a zero-line class still appears (as 100%); buildCoverage drops LineNum -1.
-        [ { FileName = Path.GetFileName(fileName)
-            LineNum = -1
-            WasHit = false
-            BrCovered = 0
-            BrTotal = 0 } ]
+        [
+            {
+                FileName = Path.GetFileName(fileName)
+                LineNum = -1
+                WasHit = false
+                BrCovered = 0
+                BrTotal = 0
+            }
+        ]
     else
         lines
 
@@ -160,14 +178,18 @@ let readReports (options: ReaderOptions) (xmlContents: string list) : Report =
             | None -> Choice1Of2(readClassLines fileName classEl)
             | Some reason ->
                 Choice2Of2
-                    { FileName = Path.GetFileName(fileName)
-                      Reason = reason })
+                    {
+                        FileName = Path.GetFileName(fileName)
+                        Reason = reason
+                    })
 
-    { Lines = List.concat lines
-      Excluded =
-        excluded
-        |> List.distinctBy (fun e -> e.FileName)
-        |> List.sortBy (fun e -> e.FileName) }
+    {
+        Lines = List.concat lines
+        Excluded =
+            excluded
+            |> List.distinctBy (fun e -> e.FileName)
+            |> List.sortBy (fun e -> e.FileName)
+    }
 
 /// Extract raw per-class line data from XML content, with `ReaderOptions.defaults`.
 let extractRawLines (xmlContent: string) : RawLine list =
@@ -211,23 +233,27 @@ let buildCoverage (rawLines: RawLine list) : FileCoverage list =
             else
                 100.0
 
-        { FileName = fileName
-          LinePct = linePct
-          BranchPct = branchPct
-          LinesCovered = coveredLines
-          LinesTotal = totalLines
-          BranchesCovered = coveredBranches
-          BranchesTotal = totalBranches })
+        {
+            FileName = fileName
+            LinePct = linePct
+            BranchPct = branchPct
+            LinesCovered = coveredLines
+            LinesTotal = totalLines
+            BranchesCovered = coveredBranches
+            BranchesTotal = totalBranches
+        })
 
 /// A single uncovered branch point on a specific line.
 type BranchGap = { Line: int; Covered: int; Total: int }
 
 /// Branch coverage gaps for a file.
 type FileBranchGaps =
-    { FileName: string
-      BranchPct: float
-      TotalBranches: int
-      Gaps: BranchGap list }
+    {
+        FileName: string
+        BranchPct: float
+        TotalBranches: int
+        Gaps: BranchGap list
+    }
 
 /// Build per-file branch gap data from raw line data.
 /// Returns only files that have at least one uncovered branch, sorted by gap count descending.
@@ -253,9 +279,11 @@ let buildBranchGaps (rawLines: RawLine list) : FileBranchGaps list =
 
                 if covered < total then
                     Some
-                        { Line = kv.Key
-                          Covered = covered
-                          Total = total }
+                        {
+                            Line = kv.Key
+                            Covered = covered
+                            Total = total
+                        }
                 else
                     None)
             |> Seq.sortBy (fun g -> g.Line)
@@ -274,10 +302,12 @@ let buildBranchGaps (rawLines: RawLine list) : FileBranchGaps list =
                     100.0
 
             Some
-                { FileName = fileName
-                  BranchPct = branchPct
-                  TotalBranches = totalBranches
-                  Gaps = gaps })
+                {
+                    FileName = fileName
+                    BranchPct = branchPct
+                    TotalBranches = totalBranches
+                    Gaps = gaps
+                })
     |> List.sortByDescending (fun f -> f.Gaps.Length)
 
 /// Parse Cobertura XML content string into FileCoverage list.

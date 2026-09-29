@@ -21,21 +21,27 @@ open FsSemanticTagger.Release
 open Tests.Common.TestHelpers
 
 let private noCanary: ConsumerCanary.Settings =
-    { ConfigPath = Path.Combine(Path.GetTempPath(), "no-such-fssemantictagger.json")
-      Skip = false
-      LogDir = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-logs")
-      PackagesCache = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-cache")
-      Ops =
-        { RunIn = fun _ cmd _ -> failwithf "unexpected canary process: %s" cmd
-          RunGate = fun _ command _ _ -> failwithf "unexpected canary gate: %s" command } }
+    {
+        ConfigPath = Path.Combine(Path.GetTempPath(), "no-such-fssemantictagger.json")
+        Skip = false
+        LogDir = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-logs")
+        PackagesCache = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-cache")
+        Ops =
+            {
+                RunIn = fun _ cmd _ -> failwithf "unexpected canary process: %s" cmd
+                RunGate = fun _ command _ _ -> failwithf "unexpected canary gate: %s" command
+            }
+    }
 
 /// One package of the fixture repo: its name, the packages it references, the version
 /// its fsproj declares, and its tag prefix.
 type private Pkg =
-    { Name: string
-      Refs: string list
-      Declared: string
-      Prefix: string }
+    {
+        Name: string
+        Refs: string list
+        Declared: string
+        Prefix: string
+    }
 
 /// The repository state a release run observes.
 type private World =
@@ -49,22 +55,28 @@ type private World =
     }
 
 let private core =
-    { Name = "Core"
-      Refs = []
-      Declared = "0.10.0-alpha.55"
-      Prefix = "core-v" }
+    {
+        Name = "Core"
+        Refs = []
+        Declared = "0.10.0-alpha.55"
+        Prefix = "core-v"
+    }
 
 let private cli =
-    { Name = "Cli"
-      Refs = [ "Core"; "TestPrune" ]
-      Declared = "0.14.0-alpha.73"
-      Prefix = "cli-v" }
+    {
+        Name = "Cli"
+        Refs = [ "Core"; "TestPrune" ]
+        Declared = "0.14.0-alpha.73"
+        Prefix = "cli-v"
+    }
 
 let private testPrune =
-    { Name = "TestPrune"
-      Refs = [ "Core" ]
-      Declared = "0.13.0-alpha.54"
-      Prefix = "testprune-v" }
+    {
+        Name = "TestPrune"
+        Refs = [ "Core" ]
+        Declared = "0.13.0-alpha.54"
+        Prefix = "testprune-v"
+    }
 
 /// Listed as FsHotWatch lists them: core, then the CLI, then the plugin.
 let private packages = [ core; cli; testPrune ]
@@ -88,11 +100,13 @@ let private writePackage (root: string) (pkg: Pkg) : PackageConfig =
 
     File.WriteAllText(Path.Combine(dir, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n- feat: a change\n")
 
-    { Name = pkg.Name
-      Fsproj = Path.Combine(dir, pkg.Name + ".fsproj")
-      DllPath = Path.Combine(dir, "bin", pkg.Name + ".dll")
-      TagPrefix = pkg.Prefix
-      FsProjsSharingSameTag = [] }
+    {
+        Name = pkg.Name
+        Fsproj = Path.Combine(dir, pkg.Name + ".fsproj")
+        DllPath = Path.Combine(dir, "bin", pkg.Name + ".dll")
+        TagPrefix = pkg.Prefix
+        FsProjsSharingSameTag = []
+    }
 
 /// A remote on which CI is green and every pushed tag has a green publish run. Tag
 /// pushes and writes land on the timeline; tags come from `world`.
@@ -153,42 +167,48 @@ let private run
     : string * int * string list =
     withTempDir (fun root ->
         let config =
-            { Packages = packages |> List.map (writePackage root)
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = root }
+            {
+                Packages = packages |> List.map (writePackage root)
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = root
+            }
 
         let timeline = ResizeArray<string>()
 
         let output, result =
             withCapturedConsole (fun () ->
                 release
-                    { Run = fakeRun root world timeline
-                      Config = config
-                      Command = command
-                      Mode = PushTags
-                      TargetPackages = targets
-                      ExtractPreviousApi = fun _ _ -> FetchError "not used"
-                      ExtractCurrentApi = fun _ -> []
-                      ExtractPreviousGrammar = fun _ _ -> None
-                      ExtractCurrentGrammar = fun _ -> None
-                      CiPollIntervalMs = 0
-                      CiWait = CiWaitTests.fixedCiWait 0 10
-                      TagPush =
-                        { PushAttempts = 1
-                          PushRetryDelayMs = 0
-                          RunPollIntervalMs = 0
-                          RunPollAttempts = 1 }
-                      CheckFeedPresence = checkFeed
-                      CheckRestorable = fun _ _ _ -> OnFeed
-                      WaitForNuGet = false
-                      NuGetPollIntervalMs = 0
-                      NuGetMaxAttempts = 1
-                      Push = false
-                      Check = false
-                      Canary = noCanary })
+                    {
+                        Run = fakeRun root world timeline
+                        Config = config
+                        Command = command
+                        Mode = PushTags
+                        TargetPackages = targets
+                        ExtractPreviousApi = fun _ _ -> FetchError "not used"
+                        ExtractCurrentApi = fun _ -> []
+                        ExtractPreviousGrammar = fun _ _ -> None
+                        ExtractCurrentGrammar = fun _ -> None
+                        CiPollIntervalMs = 0
+                        CiWait = CiWaitTests.fixedCiWait 0 10
+                        TagPush =
+                            {
+                                PushAttempts = 1
+                                PushRetryDelayMs = 0
+                                RunPollIntervalMs = 0
+                                RunPollAttempts = 1
+                            }
+                        CheckFeedPresence = checkFeed
+                        CheckRestorable = fun _ _ _ -> OnFeed
+                        WaitForNuGet = false
+                        NuGetPollIntervalMs = 0
+                        NuGetMaxAttempts = 1
+                        Push = false
+                        Check = false
+                        Canary = noCanary
+                    })
 
         output, result, List.ofSeq timeline)
 
@@ -196,9 +216,11 @@ let private tagOf (pkg: Pkg) = pkg.Prefix + pkg.Declared
 
 /// The tags each package had before the release being resumed.
 let private previousTags =
-    [ "core-v0.10.0-alpha.54"
-      "cli-v0.14.0-alpha.72"
-      "testprune-v0.13.0-alpha.53" ]
+    [
+        "core-v0.10.0-alpha.54"
+        "cli-v0.14.0-alpha.72"
+        "testprune-v0.13.0-alpha.53"
+    ]
 
 let private pushes (timeline: string list) =
     timeline |> List.filter (fun e -> e.StartsWith "push ")
@@ -227,9 +249,11 @@ let ``resuming a release whose tags were never pushed pushes the bumped dependen
         | _ -> FeedUnknown "The operation has timed out."
 
     let world =
-        { LocalTags = previousTags @ (packages |> List.map tagOf)
-          RemoteTags = Some previousTags
-          Changed = [] }
+        {
+            LocalTags = previousTags @ (packages |> List.map tagOf)
+            RemoteTags = Some previousTags
+            Changed = []
+        }
 
     let output, result, timeline = run world Auto [] (feedSaying coreAnswer)
 
@@ -237,9 +261,12 @@ let ``resuming a release whose tags were never pushed pushes the bumped dependen
 
     test
         <@
-            pushes timeline = [ "push core-v0.10.0-alpha.55"
-                                "push testprune-v0.13.0-alpha.54"
-                                "push cli-v0.14.0-alpha.73" ]
+            pushes timeline =
+                [
+                    "push core-v0.10.0-alpha.55"
+                    "push testprune-v0.13.0-alpha.54"
+                    "push cli-v0.14.0-alpha.73"
+                ]
         @>
 
     test <@ output.Contains "core-v0.10.0-alpha.55 exists locally but was never pushed" @>
@@ -251,9 +278,11 @@ let ``a finished release with every tag pushed and published does nothing`` () =
     let tags = previousTags @ (packages |> List.map tagOf)
 
     let world =
-        { LocalTags = tags
-          RemoteTags = Some tags
-          Changed = [] }
+        {
+            LocalTags = tags
+            RemoteTags = Some tags
+            Changed = []
+        }
 
     let output, result, timeline = run world Auto [] (fun _ _ -> OnFeed)
 
@@ -276,22 +305,28 @@ let ``a declared version an earlier release never published refuses the release 
         match shape with
         | "tag never pushed" ->
             // The next release after the incident: core changed since its local tag.
-            { LocalTags = previousTags @ (packages |> List.map tagOf)
-              RemoteTags = Some(previousTags @ [ tagOf cli; tagOf testPrune ])
-              Changed = [ "Core" ] },
+            {
+                LocalTags = previousTags @ (packages |> List.map tagOf)
+                RemoteTags = Some(previousTags @ [ tagOf cli; tagOf testPrune ])
+                Changed = [ "Core" ]
+            },
             (fun _ _ -> OnFeed)
         | "never tagged" ->
             // The bump commit exists but core's tag was never created; releasing only
             // the plugin must not pass over it.
-            { LocalTags = previousTags @ [ tagOf cli; tagOf testPrune ]
-              RemoteTags = Some(previousTags @ [ tagOf cli; tagOf testPrune ])
-              Changed = [ "TestPrune" ] },
+            {
+                LocalTags = previousTags @ [ tagOf cli; tagOf testPrune ]
+                RemoteTags = Some(previousTags @ [ tagOf cli; tagOf testPrune ])
+                Changed = [ "TestPrune" ]
+            },
             (fun _ _ -> OnFeed)
         | _ ->
             // The tag reached the remote but its publish never landed.
-            { LocalTags = previousTags @ (packages |> List.map tagOf)
-              RemoteTags = Some(previousTags @ (packages |> List.map tagOf))
-              Changed = [ "Core" ] },
+            {
+                LocalTags = previousTags @ (packages |> List.map tagOf)
+                RemoteTags = Some(previousTags @ (packages |> List.map tagOf))
+                Changed = [ "Core" ]
+            },
             (fun id version ->
                 if id = "Core" && version = core.Declared then
                     NotOnFeed
@@ -316,9 +351,11 @@ let ``an unpublished version nothing depends on is warned about, not refused`` (
     let tags = previousTags @ (packages |> List.map tagOf)
 
     let world =
-        { LocalTags = tags
-          RemoteTags = Some tags
-          Changed = [ "Cli" ] }
+        {
+            LocalTags = tags
+            RemoteTags = Some tags
+            Changed = [ "Cli" ]
+        }
 
     let feed id version =
         if id = "Cli" && version = cli.Declared then

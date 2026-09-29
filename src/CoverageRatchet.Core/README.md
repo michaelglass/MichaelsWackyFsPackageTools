@@ -45,13 +45,15 @@ let latest: string option = findCoverageFile "/path/to/search"
 /// JIT-compiled); `*Covered` counts are stable for unchanged code, which is why
 /// count floors gate on them.
 type FileCoverage =
-    { FileName: string
-      LinePct: float
-      BranchPct: float
-      LinesCovered: int
-      LinesTotal: int
-      BranchesCovered: int
-      BranchesTotal: int }
+    {
+        FileName: string
+        LinePct: float
+        BranchPct: float
+        LinesCovered: int
+        LinesTotal: int
+        BranchesCovered: int
+        BranchesTotal: int
+    }
 ```
 <!-- sync:file-coverage:end -->
 
@@ -80,9 +82,11 @@ By default the reader reads `.fs` files and skips files under `paket-files/`, `v
 ///
 /// To read a C# report: `{ ReaderOptions.defaults with IncludedExtensions = [| ".cs" |] }`.
 type ReaderOptions =
-    { IncludedExtensions: string[]
-      ExcludedFileNamePatterns: string[]
-      ExcludedPathPatterns: string[] }
+    {
+        IncludedExtensions: string[]
+        ExcludedFileNamePatterns: string[]
+        ExcludedPathPatterns: string[]
+    }
 ```
 <!-- sync:reader-options:end -->
 
@@ -96,8 +100,10 @@ type ExclusionReason =
 
 /// A file in the report that the reader skipped, keyed by base name like `FileCoverage`.
 type ExcludedFile =
-    { FileName: string
-      Reason: ExclusionReason }
+    {
+        FileName: string
+        Reason: ExclusionReason
+    }
 ```
 <!-- sync:exclusion-reason:end -->
 
@@ -141,10 +147,12 @@ let results: FileResult list = buildFileResults config files
 ```fsharp
 /// A per-file PERCENTAGE floor. `Line` and `Branch` are percentages (0-100).
 type Override =
-    { Line: float
-      Branch: float
-      Reason: string option
-      Platform: Platform option }
+    {
+        Line: float
+        Branch: float
+        Reason: string option
+        Platform: Platform option
+    }
 
 /// A per-file floor on the absolute COUNT of covered lines / covered branches.
 ///
@@ -159,16 +167,20 @@ type Override =
 /// JIT-compiles, so the percentage denominator wobbles between runs while the
 /// numerator does not (ADR 0019). Counts gate on the stable quantity.
 type CountFloor =
-    { CoveredLines: int
-      CoveredBranches: int
-      Reason: string option
-      Platform: Platform option }
+    {
+        CoveredLines: int
+        CoveredBranches: int
+        Reason: string option
+        Platform: Platform option
+    }
 
 type Config =
-    { DefaultLine: float
-      DefaultBranch: float
-      Overrides: Map<string, Override>
-      CountFloors: Map<string, CountFloor> }
+    {
+        DefaultLine: float
+        DefaultBranch: float
+        Overrides: Map<string, Override>
+        CountFloors: Map<string, CountFloor>
+    }
 ```
 <!-- sync:threshold-types:end -->
 

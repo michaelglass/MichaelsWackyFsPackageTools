@@ -41,13 +41,8 @@ let ``parseJson with single package`` () =
     // Path.Combine keeps the first segment's `/`; the library's directory is normalised.
     test
         <@
-            config.Packages[0].DllPath = Path.Combine(
-                Path.GetDirectoryName("src/MyLib/MyLib.fsproj"),
-                "bin",
-                "Release",
-                "net10.0",
-                "MyLib.dll"
-            )
+            config.Packages[0].DllPath =
+                Path.Combine(Path.GetDirectoryName("src/MyLib/MyLib.fsproj"), "bin", "Release", "net10.0", "MyLib.dll")
         @>
 
     test <@ config.Packages[0].FsProjsSharingSameTag |> List.isEmpty @>
@@ -133,8 +128,11 @@ let ``parseJson reads publishWorkflows as typed paths`` () =
 
     test
         <@
-            config.PublishWorkflows = [ PublishWorkflow ".github/workflows/release.yml"
-                                        PublishWorkflow ".github/workflows/publish-docs-package.yml" ]
+            config.PublishWorkflows =
+                [
+                    PublishWorkflow ".github/workflows/release.yml"
+                    PublishWorkflow ".github/workflows/publish-docs-package.yml"
+                ]
         @>
 
 [<Fact>]
@@ -179,12 +177,14 @@ let ``parseJson refuses a ciTimeoutMinutes that is not a positive number`` () =
 [<Fact>]
 let ``toJson roundtrips a configured ciTimeoutMinutes and omits an unset one`` () =
     let custom =
-        { Packages = []
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = defaultPublishWorkflows
-          CiTimeout = Some(System.TimeSpan.FromMinutes 45.0)
-          RootDir = "" }
+        {
+            Packages = []
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = defaultPublishWorkflows
+            CiTimeout = Some(System.TimeSpan.FromMinutes 45.0)
+            RootDir = ""
+        }
 
     test <@ (parseJson (toJson custom)).CiTimeout = custom.CiTimeout @>
     test <@ not ((toJson { custom with CiTimeout = None }).Contains("ciTimeoutMinutes")) @>
@@ -192,18 +192,21 @@ let ``toJson roundtrips a configured ciTimeoutMinutes and omits an unset one`` (
 [<Fact>]
 let ``toJson roundtrips a non-default publishWorkflows and omits the default`` () =
     let custom =
-        { Packages = []
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = [ PublishWorkflow ".github/workflows/ship.yml" ]
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages = []
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = [ PublishWorkflow ".github/workflows/ship.yml" ]
+            CiTimeout = None
+            RootDir = ""
+        }
 
     test <@ (parseJson (toJson custom)).PublishWorkflows = custom.PublishWorkflows @>
 
     let plain =
         { custom with
-            PublishWorkflows = defaultPublishWorkflows }
+            PublishWorkflows = defaultPublishWorkflows
+        }
 
     test <@ not ((toJson plain).Contains("publishWorkflows")) @>
 
@@ -521,17 +524,23 @@ let ``findPackableProjects excludes example exe without PackAsTool but keeps too
 [<Fact>]
 let ``toJson roundtrips through parseJson`` () =
     let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = "src/MyLib/MyLib.fsproj"
-                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                TagPrefix = "mylib-v"
-                FsProjsSharingSameTag = [ "src/Shared/Shared.fsproj" ] } ]
-          ReservedVersions = set [ "1.0.0" ]
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages =
+                [
+                    {
+                        Name = "MyLib"
+                        Fsproj = "src/MyLib/MyLib.fsproj"
+                        DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                        TagPrefix = "mylib-v"
+                        FsProjsSharingSameTag = [ "src/Shared/Shared.fsproj" ]
+                    }
+                ]
+            ReservedVersions = set [ "1.0.0" ]
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let json = toJson config
     let roundtripped = parseJson json
@@ -566,17 +575,23 @@ let ``load keeps dllPath from JSON when fsproj missing on disk`` () =
 [<Fact>]
 let ``toJson includes preBuildCmds when not empty`` () =
     let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = "src/MyLib/MyLib.fsproj"
-                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = [ "dotnet tool restore" ]
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages =
+                [
+                    {
+                        Name = "MyLib"
+                        Fsproj = "src/MyLib/MyLib.fsproj"
+                        DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                        TagPrefix = "v"
+                        FsProjsSharingSameTag = []
+                    }
+                ]
+            ReservedVersions = Set.empty
+            PreBuildCmds = [ "dotnet tool restore" ]
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let json = toJson config
     test <@ json.Contains "preBuildCmds" @>
@@ -585,17 +600,23 @@ let ``toJson includes preBuildCmds when not empty`` () =
 [<Fact>]
 let ``toJson omits empty preBuildCmds`` () =
     let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = "src/MyLib/MyLib.fsproj"
-                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages =
+                [
+                    {
+                        Name = "MyLib"
+                        Fsproj = "src/MyLib/MyLib.fsproj"
+                        DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                        TagPrefix = "v"
+                        FsProjsSharingSameTag = []
+                    }
+                ]
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let json = toJson config
     test <@ not (json.Contains "preBuildCmds") @>
@@ -603,17 +624,23 @@ let ``toJson omits empty preBuildCmds`` () =
 [<Fact>]
 let ``toJson omits empty fsProjsSharingSameTag`` () =
     let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = "src/MyLib/MyLib.fsproj"
-                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages =
+                [
+                    {
+                        Name = "MyLib"
+                        Fsproj = "src/MyLib/MyLib.fsproj"
+                        DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                        TagPrefix = "v"
+                        FsProjsSharingSameTag = []
+                    }
+                ]
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let json = toJson config
     test <@ not (json.Contains "fsProjsSharingSameTag") @>
@@ -621,17 +648,23 @@ let ``toJson omits empty fsProjsSharingSameTag`` () =
 [<Fact>]
 let ``toJson includes reservedVersions when not empty`` () =
     let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = "src/MyLib/MyLib.fsproj"
-                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = set [ "1.0.0"; "2.0.0" ]
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages =
+                [
+                    {
+                        Name = "MyLib"
+                        Fsproj = "src/MyLib/MyLib.fsproj"
+                        DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                        TagPrefix = "v"
+                        FsProjsSharingSameTag = []
+                    }
+                ]
+            ReservedVersions = set [ "1.0.0"; "2.0.0" ]
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let json = toJson config
     test <@ json.Contains "reservedVersions" @>
@@ -722,17 +755,23 @@ let ``discover returns Error with multiple packable fsprojs`` () =
 [<Fact>]
 let ``toJson omits empty reservedVersions`` () =
     let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = "src/MyLib/MyLib.fsproj"
-                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages =
+                [
+                    {
+                        Name = "MyLib"
+                        Fsproj = "src/MyLib/MyLib.fsproj"
+                        DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                        TagPrefix = "v"
+                        FsProjsSharingSameTag = []
+                    }
+                ]
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let json = toJson config
     test <@ not (json.Contains "reservedVersions") @>
@@ -859,17 +898,23 @@ let ``parseJson with empty fsProjsSharingSameTag array`` () =
 [<Fact>]
 let ``toJson roundtrips with preBuildCmds`` () =
     let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = "src/MyLib/MyLib.fsproj"
-                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = [ "dotnet tool restore"; "dotnet build" ]
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages =
+                [
+                    {
+                        Name = "MyLib"
+                        Fsproj = "src/MyLib/MyLib.fsproj"
+                        DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                        TagPrefix = "v"
+                        FsProjsSharingSameTag = []
+                    }
+                ]
+            ReservedVersions = Set.empty
+            PreBuildCmds = [ "dotnet tool restore"; "dotnet build" ]
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let json = toJson config
     let roundtripped = parseJson json
@@ -878,17 +923,23 @@ let ``toJson roundtrips with preBuildCmds`` () =
 [<Fact>]
 let ``toJson roundtrips with empty collections`` () =
     let config =
-        { Packages =
-            [ { Name = "MyLib"
-                Fsproj = "src/MyLib/MyLib.fsproj"
-                DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
-                TagPrefix = "v"
-                FsProjsSharingSameTag = [] } ]
-          ReservedVersions = Set.empty
-          PreBuildCmds = []
-          PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-          CiTimeout = None
-          RootDir = "" }
+        {
+            Packages =
+                [
+                    {
+                        Name = "MyLib"
+                        Fsproj = "src/MyLib/MyLib.fsproj"
+                        DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                        TagPrefix = "v"
+                        FsProjsSharingSameTag = []
+                    }
+                ]
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
 
     let json = toJson config
     let roundtripped = parseJson json

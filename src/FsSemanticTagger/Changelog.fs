@@ -18,14 +18,16 @@ let formatError (err: ChangelogError) : string =
     | CalloutNotFirst(p, title, line) ->
         String.concat
             "\n"
-            [ sprintf "%s: the '## Unreleased' callout is buried — it is not the first thing in the section." p
-              sprintf "    Callout: \"%s\" (line %d)." title line
-              "    A callout — a blockquote opening with a heading ('> ### ...') or an alert ('> [!WARNING]') —"
-              "    exists to be read FIRST, so it must be the first content under '## Unreleased'."
-              "    Fix: move the whole '> ...' block back to directly under the '## Unreleased' heading, above"
-              "    every entry. The usual cause is a merge that prepended its entries above it."
-              "    If this blockquote is not a callout, drop its leading heading or alert marker — a plain"
-              "    '> quote' is ignored by this check." ]
+            [
+                sprintf "%s: the '## Unreleased' callout is buried — it is not the first thing in the section." p
+                sprintf "    Callout: \"%s\" (line %d)." title line
+                "    A callout — a blockquote opening with a heading ('> ### ...') or an alert ('> [!WARNING]') —"
+                "    exists to be read FIRST, so it must be the first content under '## Unreleased'."
+                "    Fix: move the whole '> ...' block back to directly under the '## Unreleased' heading, above"
+                "    every entry. The usual cause is a merge that prepended its entries above it."
+                "    If this blockquote is not a callout, drop its leading heading or alert marker — a plain"
+                "    '> quote' is ignored by this check."
+            ]
 
 let internal isUnreleasedHeading (line: string) : bool =
     let trimmed = line.TrimEnd()
@@ -116,10 +118,12 @@ type private SectionScan =
 
 let private scanSection (body: (int * string)[]) : SectionScan =
     let start =
-        { InFence = false
-          InQuoteBlock = false
-          FirstContent = None
-          Callout = None }
+        {
+            InFence = false
+            InQuoteBlock = false
+            FirstContent = None
+            Callout = None
+        }
 
     (start, body)
     ||> Array.fold (fun state (i, line) ->
@@ -129,7 +133,8 @@ let private scanSection (body: (int * string)[]) : SectionScan =
             { state with
                 InFence = not state.InFence
                 InQuoteBlock = false
-                FirstContent = firstContent }
+                FirstContent = firstContent
+            }
         elif state.InFence then
             state
         elif String.IsNullOrWhiteSpace line then
@@ -144,11 +149,13 @@ let private scanSection (body: (int * string)[]) : SectionScan =
             { state with
                 InQuoteBlock = true
                 FirstContent = firstContent
-                Callout = callout }
+                Callout = callout
+            }
         else
             { state with
                 InQuoteBlock = false
-                FirstContent = firstContent })
+                FirstContent = firstContent
+            })
 
 /// A callout — the "read this first" banner — must be the FIRST content of the
 /// `## Unreleased` section. Its whole job is to be read before the entries, and
@@ -191,17 +198,19 @@ let validateCalloutOrder (changelogPath: string) : Result<unit, ChangelogError> 
 /// prefix (or no prefix) falls into the "other" group and is kept verbatim.
 let internal conventionalTypes =
     set
-        [ "feat"
-          "fix"
-          "chore"
-          "docs"
-          "refactor"
-          "perf"
-          "test"
-          "build"
-          "ci"
-          "style"
-          "revert" ]
+        [
+            "feat"
+            "fix"
+            "chore"
+            "docs"
+            "refactor"
+            "perf"
+            "test"
+            "build"
+            "ci"
+            "style"
+            "revert"
+        ]
 
 /// Matches a conventional-commit prefix at the start of a summary line:
 /// `<type>` (letters), an optional `(scope)`, an optional `!` breaking marker,
@@ -261,10 +270,12 @@ let deriveUnreleasedBullets (descriptions: string list) : string list =
         |> List.mapi (fun i s ->
             let rank, ty = classify s
 
-            {| Index = i
-               Rank = rank
-               Type = ty
-               Bullet = "- " + s |})
+            {|
+                Index = i
+                Rank = rank
+                Type = ty
+                Bullet = "- " + s
+            |})
         // Keep the first occurrence of each identical bullet.
         |> List.distinctBy (fun r -> r.Bullet)
 
@@ -364,15 +375,19 @@ let internal promoteOrInsertLines
 
         let freshBlock =
             Array.concat
-                [ [| ""; "## Unreleased"; ""; versionHeader; "" |]
-                  List.toArray bodyLines
-                  [| "" |] ]
+                [
+                    [| ""; "## Unreleased"; ""; versionHeader; "" |]
+                    List.toArray bodyLines
+                    [| "" |]
+                ]
 
         let rebuilt =
             Array.concat
-                [ withoutEmptyUnreleased |> Array.take insertAt
-                  freshBlock
-                  withoutEmptyUnreleased |> Array.skip insertAt ]
+                [
+                    withoutEmptyUnreleased |> Array.take insertAt
+                    freshBlock
+                    withoutEmptyUnreleased |> Array.skip insertAt
+                ]
 
         File.WriteAllLines(changelogPath, rebuilt)
 
@@ -526,8 +541,10 @@ let planPromotion
             String.Join("\n", unreleasedEntries (File.ReadAllLines changelogPath) |> Seq.map snd)
 
         Ok
-            { Source = Authored
-              DependencyBullets = unmentioned body }
+            {
+                Source = Authored
+                DependencyBullets = unmentioned body
+            }
     | Error err ->
         let bullets = deriveUnreleasedBullets descriptions
         let dependencyBullets = unmentioned (String.concat "\n" bullets)
@@ -536,8 +553,10 @@ let planPromotion
             Error err
         else
             Ok
-                { Source = Derived bullets
-                  DependencyBullets = dependencyBullets }
+                {
+                    Source = Derived bullets
+                    DependencyBullets = dependencyBullets
+                }
 
 /// Write `plan` (from `planPromotion` on the same file) as the `version` section.
 /// An authored section keeps its text and order; dependency bullets follow its
@@ -553,9 +572,11 @@ let applyPromotion (changelogPath: string) (version: Version) (today: DateTime) 
 
             let withDependencies =
                 Array.concat
-                    [ lines |> Array.take (lastEntry + 1)
-                      List.toArray plan.DependencyBullets
-                      lines |> Array.skip (lastEntry + 1) ]
+                    [
+                        lines |> Array.take (lastEntry + 1)
+                        List.toArray plan.DependencyBullets
+                        lines |> Array.skip (lastEntry + 1)
+                    ]
 
             File.WriteAllLines(changelogPath, withDependencies)
 

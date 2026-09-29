@@ -113,9 +113,11 @@ let ``resolveGitDir - walks up from a nested subdir and stops at a native git ro
 [<Fact>]
 let ``formatFileResult - passing file at 100 percent`` () =
     let r =
-        { File = makeFile "Foo.fs" 100.0 100.0 4 4
-          LineThreshold = 100.0
-          BranchThreshold = 100.0 }
+        {
+            File = makeFile "Foo.fs" 100.0 100.0 4 4
+            LineThreshold = 100.0
+            BranchThreshold = 100.0
+        }
 
     let result = formatFileResult r
 
@@ -126,9 +128,11 @@ let ``formatFileResult - passing file at 100 percent`` () =
 [<Fact>]
 let ``formatFileResult - failing file with thresholds shows one decimal`` () =
     let r =
-        { File = makeFile "Bar.fs" 60.5 50.3 1 4
-          LineThreshold = 80.2
-          BranchThreshold = 70.9 }
+        {
+            File = makeFile "Bar.fs" 60.5 50.3 1 4
+            LineThreshold = 80.2
+            BranchThreshold = 70.9
+        }
 
     let result = formatFileResult r
 
@@ -141,9 +145,11 @@ let ``formatFileResult - failing file with thresholds shows one decimal`` () =
 [<Fact>]
 let ``formatFileResult - file with no branches`` () =
     let r =
-        { File = makeFile "Simple.fs" 90.0 100.0 0 0
-          LineThreshold = 80.0
-          BranchThreshold = 100.0 }
+        {
+            File = makeFile "Simple.fs" 90.0 100.0 0 0
+            LineThreshold = 80.0
+            BranchThreshold = 100.0
+        }
 
     let result = formatFileResult r
 
@@ -156,7 +162,9 @@ let private makeCoverageXml (linePct: int) =
 
     let lines =
         [ for i in 1..hitLines -> sprintf """<line number="%d" hits="1" />""" i ]
-        @ [ for i in (hitLines + 1) .. (hitLines + missLines) -> sprintf """<line number="%d" hits="0" />""" i ]
+        @ [
+            for i in (hitLines + 1) .. (hitLines + missLines) -> sprintf """<line number="%d" hits="0" />""" i
+        ]
 
     sprintf
         """<?xml version="1.0" encoding="utf-8"?>
@@ -214,16 +222,22 @@ let ``run - ratchet with no changes returns Ok 0`` () =
         let configPath = Path.Combine(tmpDir, "config.json")
 
         let config =
-            { DefaultLine = 100.0
-              DefaultBranch = 100.0
-              CountFloors = Map.empty
-              Overrides =
-                Map.ofList
-                    [ "Foo.fs",
-                      { Line = 50.0
-                        Branch = 100.0
-                        Reason = Some "test"
-                        Platform = None } ] }
+            {
+                DefaultLine = 100.0
+                DefaultBranch = 100.0
+                CountFloors = Map.empty
+                Overrides =
+                    Map.ofList
+                        [
+                            "Foo.fs",
+                            {
+                                Line = 50.0
+                                Branch = 100.0
+                                Reason = Some "test"
+                                Platform = None
+                            }
+                        ]
+            }
 
         saveConfig configPath config
 
@@ -241,16 +255,22 @@ let ``run - ratchet with tightened config returns Ok 1`` () =
 
         // Override below actual coverage, so ratchet tightens it.
         let config =
-            { DefaultLine = 100.0
-              DefaultBranch = 100.0
-              CountFloors = Map.empty
-              Overrides =
-                Map.ofList
-                    [ "Foo.fs",
-                      { Line = 30.0
-                        Branch = 100.0
-                        Reason = Some "test"
-                        Platform = None } ] }
+            {
+                DefaultLine = 100.0
+                DefaultBranch = 100.0
+                CountFloors = Map.empty
+                Overrides =
+                    Map.ofList
+                        [
+                            "Foo.fs",
+                            {
+                                Line = 30.0
+                                Branch = 100.0
+                                Reason = Some "test"
+                                Platform = None
+                            }
+                        ]
+            }
 
         saveConfig configPath config
 
@@ -403,16 +423,22 @@ let ``run - ratchet with new file in coverage only counts existing overrides as 
 
         // Config starts with override for ONLY Foo.fs at line=30
         let config =
-            { DefaultLine = 100.0
-              DefaultBranch = 100.0
-              CountFloors = Map.empty
-              Overrides =
-                Map.ofList
-                    [ "Foo.fs",
-                      { Line = 30.0
-                        Branch = 100.0
-                        Reason = Some "test"
-                        Platform = None } ] }
+            {
+                DefaultLine = 100.0
+                DefaultBranch = 100.0
+                CountFloors = Map.empty
+                Overrides =
+                    Map.ofList
+                        [
+                            "Foo.fs",
+                            {
+                                Line = 30.0
+                                Branch = 100.0
+                                Reason = Some "test"
+                                Platform = None
+                            }
+                        ]
+            }
 
         saveConfig configPath config
 
@@ -740,9 +766,11 @@ let ``main with no args and no coverage file returns 1`` () =
 [<Fact>]
 let ``formatFileResult - passing with override shows thresholds`` () =
     let r =
-        { File = makeFile "Foo.fs" 85.0 75.0 3 4
-          LineThreshold = 80.0
-          BranchThreshold = 70.0 }
+        {
+            File = makeFile "Foo.fs" 85.0 75.0 3 4
+            LineThreshold = 80.0
+            BranchThreshold = 70.0
+        }
 
     let result = formatFileResult r
 
@@ -753,9 +781,11 @@ let ``formatFileResult - passing with override shows thresholds`` () =
 [<Fact>]
 let ``formatFileResult - failing with no branches`` () =
     let r =
-        { File = makeFile "Foo.fs" 50.0 100.0 0 0
-          LineThreshold = 100.0
-          BranchThreshold = 100.0 }
+        {
+            File = makeFile "Foo.fs" 50.0 100.0 0 0
+            LineThreshold = 100.0
+            BranchThreshold = 100.0
+        }
 
     let result = formatFileResult r
 
@@ -801,9 +831,11 @@ let ``run - check-json with no coverage file returns Error`` () =
 [<Fact>]
 let ``formatFileResult - failing file at default thresholds shows no min`` () =
     let r =
-        { File = makeFile "Fail.fs" 50.0 40.0 2 5
-          LineThreshold = 100.0
-          BranchThreshold = 100.0 }
+        {
+            File = makeFile "Fail.fs" 50.0 40.0 2 5
+            LineThreshold = 100.0
+            BranchThreshold = 100.0
+        }
 
     let result = formatFileResult r
 
@@ -814,9 +846,11 @@ let ``formatFileResult - failing file at default thresholds shows no min`` () =
 [<Fact>]
 let ``formatFileResult - passing with only line below 100 shows threshold`` () =
     let r =
-        { File = makeFile "Half.fs" 85.0 100.0 0 0
-          LineThreshold = 80.0
-          BranchThreshold = 100.0 }
+        {
+            File = makeFile "Half.fs" 85.0 100.0 0 0
+            LineThreshold = 80.0
+            BranchThreshold = 100.0
+        }
 
     let result = formatFileResult r
 
@@ -826,9 +860,11 @@ let ``formatFileResult - passing with only line below 100 shows threshold`` () =
 [<Fact>]
 let ``formatFileResult - passing with only branch below 100 shows threshold`` () =
     let r =
-        { File = makeFile "Half.fs" 100.0 75.0 3 4
-          LineThreshold = 100.0
-          BranchThreshold = 70.0 }
+        {
+            File = makeFile "Half.fs" 100.0 75.0 3 4
+            LineThreshold = 100.0
+            BranchThreshold = 70.0
+        }
 
     let result = formatFileResult r
 
@@ -890,16 +926,22 @@ let ``run - ratchet removes override when file reaches 100 percent`` () =
 
         // Override that will be removed because coverage is now at 100%
         let config =
-            { DefaultLine = 100.0
-              DefaultBranch = 100.0
-              CountFloors = Map.empty
-              Overrides =
-                Map.ofList
-                    [ "Foo.fs",
-                      { Line = 90.0
-                        Branch = 100.0
-                        Reason = Some "was low"
-                        Platform = None } ] }
+            {
+                DefaultLine = 100.0
+                DefaultBranch = 100.0
+                CountFloors = Map.empty
+                Overrides =
+                    Map.ofList
+                        [
+                            "Foo.fs",
+                            {
+                                Line = 90.0
+                                Branch = 100.0
+                                Reason = Some "was low"
+                                Platform = None
+                            }
+                        ]
+            }
 
         saveConfig configPath config
 
@@ -1068,21 +1110,29 @@ let ``run - ratchet tightens some overrides and removes others`` () =
 
         // Foo.fs at line=20 (will be tightened to 40), Bar.fs at line=90 (will be removed at 100%)
         let config =
-            { DefaultLine = 100.0
-              DefaultBranch = 100.0
-              CountFloors = Map.empty
-              Overrides =
-                Map.ofList
-                    [ "Foo.fs",
-                      { Line = 20.0
-                        Branch = 100.0
-                        Reason = Some "low"
-                        Platform = None }
-                      "Bar.fs",
-                      { Line = 90.0
-                        Branch = 100.0
-                        Reason = Some "almost"
-                        Platform = None } ] }
+            {
+                DefaultLine = 100.0
+                DefaultBranch = 100.0
+                CountFloors = Map.empty
+                Overrides =
+                    Map.ofList
+                        [
+                            "Foo.fs",
+                            {
+                                Line = 20.0
+                                Branch = 100.0
+                                Reason = Some "low"
+                                Platform = None
+                            }
+                            "Bar.fs",
+                            {
+                                Line = 90.0
+                                Branch = 100.0
+                                Reason = Some "almost"
+                                Platform = None
+                            }
+                        ]
+            }
 
         saveConfig configPath config
 
@@ -1249,8 +1299,10 @@ let ``pollCi - skipped and neutral runs without a success return CiOtherFailure 
 let ``pollCi - empty runs array retries then fails`` () =
     let run =
         fakeRun
-            [ ("gh", "", CoverageRatchet.Shell.Success "[]")
-              ("gh", "", CoverageRatchet.Shell.Success "[]") ]
+            [
+                ("gh", "", CoverageRatchet.Shell.Success "[]")
+                ("gh", "", CoverageRatchet.Shell.Success "[]")
+            ]
 
     let result = pollCi run "abc123" 0 2
 
@@ -1264,8 +1316,10 @@ let ``pollCi - in progress then completed returns CiPassed`` () =
 
     let run =
         fakeRun
-            [ ("gh", "", CoverageRatchet.Shell.Success inProgress)
-              ("gh", "", CoverageRatchet.Shell.Success completed) ]
+            [
+                ("gh", "", CoverageRatchet.Shell.Success inProgress)
+                ("gh", "", CoverageRatchet.Shell.Success completed)
+            ]
 
     let result = pollCi run "abc123" 0 2
 
@@ -1277,8 +1331,10 @@ let ``pollCi - failed run with successful artifact download returns CiCoverageFa
 
     let run =
         fakeRun
-            [ ("gh", "", CoverageRatchet.Shell.Success json)
-              ("gh", "", CoverageRatchet.Shell.Success "downloaded") ]
+            [
+                ("gh", "", CoverageRatchet.Shell.Success json)
+                ("gh", "", CoverageRatchet.Shell.Success "downloaded")
+            ]
 
     let result = pollCi run "abc123" 0 1
 
@@ -1295,8 +1351,10 @@ let ``pollCi - failed run with artifact download failure returns CiOtherFailure`
 
     let run =
         fakeRun
-            [ ("gh", "", CoverageRatchet.Shell.Success json)
-              ("gh", "", CoverageRatchet.Shell.Failure("not found", 1)) ]
+            [
+                ("gh", "", CoverageRatchet.Shell.Success json)
+                ("gh", "", CoverageRatchet.Shell.Failure("not found", 1))
+            ]
 
     let result = pollCi run "abc123" 0 1
 
@@ -1332,8 +1390,10 @@ let ``pollCi - timeout returns CiOtherFailure`` () =
 
     let run =
         fakeRun
-            [ ("gh", "", CoverageRatchet.Shell.Success inProgress)
-              ("gh", "", CoverageRatchet.Shell.Success inProgress) ]
+            [
+                ("gh", "", CoverageRatchet.Shell.Success inProgress)
+                ("gh", "", CoverageRatchet.Shell.Success inProgress)
+            ]
 
     let result = pollCi run "abc123" 0 1
 
@@ -1350,8 +1410,10 @@ let ``getVcsSha - jj succeeds returns trimmed sha`` () =
 let ``getVcsSha - jj fails git succeeds returns trimmed sha`` () =
     let run =
         fakeRun
-            [ ("jj", "", CoverageRatchet.Shell.Failure("no jj", 1))
-              ("git", "", CoverageRatchet.Shell.Success "  def456  ") ]
+            [
+                ("jj", "", CoverageRatchet.Shell.Failure("no jj", 1))
+                ("git", "", CoverageRatchet.Shell.Success "  def456  ")
+            ]
 
     let result = getVcsSha run
 
@@ -1361,8 +1423,10 @@ let ``getVcsSha - jj fails git succeeds returns trimmed sha`` () =
 let ``getVcsSha - both fail throws`` () =
     let run =
         fakeRun
-            [ ("jj", "", CoverageRatchet.Shell.Failure("no jj", 1))
-              ("git", "", CoverageRatchet.Shell.Failure("no git", 1)) ]
+            [
+                ("jj", "", CoverageRatchet.Shell.Failure("no jj", 1))
+                ("git", "", CoverageRatchet.Shell.Failure("no git", 1))
+            ]
 
     Assert.ThrowsAny<exn>(fun () -> getVcsSha run |> ignore) |> ignore
 
@@ -1542,9 +1606,11 @@ let ``runLoosenFromCi - CI passes returns 0`` () =
 
     let run =
         fakeRun
-            [ ("jj", "git push", CoverageRatchet.Shell.Success "")
-              ("jj", "log", CoverageRatchet.Shell.Success "abc123")
-              ("gh", "run list", CoverageRatchet.Shell.Success passJson) ]
+            [
+                ("jj", "git push", CoverageRatchet.Shell.Success "")
+                ("jj", "log", CoverageRatchet.Shell.Success "abc123")
+                ("gh", "run list", CoverageRatchet.Shell.Success passJson)
+            ]
 
     let result = runLoosenFromCi run "coverage-ratchet.json"
     test <@ result = 0 @>
@@ -1553,9 +1619,11 @@ let ``runLoosenFromCi - CI passes returns 0`` () =
 let ``runLoosenFromCi - CI other failure returns 1`` () =
     let run =
         fakeRun
-            [ ("jj", "git push", CoverageRatchet.Shell.Success "")
-              ("jj", "log", CoverageRatchet.Shell.Success "abc123")
-              ("gh", "run list", CoverageRatchet.Shell.Failure("gh exploded", 1)) ]
+            [
+                ("jj", "git push", CoverageRatchet.Shell.Success "")
+                ("jj", "log", CoverageRatchet.Shell.Success "abc123")
+                ("gh", "run list", CoverageRatchet.Shell.Failure("gh exploded", 1))
+            ]
 
     let result = runLoosenFromCi run "coverage-ratchet.json"
     test <@ result = 1 @>
@@ -1583,16 +1651,18 @@ let ``runLoosenFromCi - CI coverage failure with valid artifact writes config an
 
         let run =
             fakeRun
-                [ ("jj", "git push", CoverageRatchet.Shell.Success "")
-                  ("jj", "log", CoverageRatchet.Shell.Success "oldsha")
-                  ("gh", "run list", CoverageRatchet.Shell.Success failedJson)
-                  ("gh", "run download", CoverageRatchet.Shell.Success "")
-                  ("jj", "describe", CoverageRatchet.Shell.Success "")
-                  ("jj", "bookmark set main -r @", CoverageRatchet.Shell.Success "")
-                  ("jj", "new", CoverageRatchet.Shell.Success "")
-                  ("jj", "git push --bookmark main", CoverageRatchet.Shell.Success "")
-                  ("jj", "log", CoverageRatchet.Shell.Success "newsha")
-                  ("gh", "run list", CoverageRatchet.Shell.Success passedJson) ]
+                [
+                    ("jj", "git push", CoverageRatchet.Shell.Success "")
+                    ("jj", "log", CoverageRatchet.Shell.Success "oldsha")
+                    ("gh", "run list", CoverageRatchet.Shell.Success failedJson)
+                    ("gh", "run download", CoverageRatchet.Shell.Success "")
+                    ("jj", "describe", CoverageRatchet.Shell.Success "")
+                    ("jj", "bookmark set main -r @", CoverageRatchet.Shell.Success "")
+                    ("jj", "new", CoverageRatchet.Shell.Success "")
+                    ("jj", "git push --bookmark main", CoverageRatchet.Shell.Success "")
+                    ("jj", "log", CoverageRatchet.Shell.Success "newsha")
+                    ("gh", "run list", CoverageRatchet.Shell.Success passedJson)
+                ]
 
         let result = runLoosenFromCi run configPath
         test <@ result = 0 @>
@@ -1617,10 +1687,12 @@ let ``runLoosenFromCi - CI coverage failure with empty artifact returns 1`` () =
 
     let run =
         fakeRun
-            [ ("jj", "git push", CoverageRatchet.Shell.Success "")
-              ("jj", "log", CoverageRatchet.Shell.Success "abc123")
-              ("gh", "run list", CoverageRatchet.Shell.Success failedJson)
-              ("gh", "run download", CoverageRatchet.Shell.Success "") ]
+            [
+                ("jj", "git push", CoverageRatchet.Shell.Success "")
+                ("jj", "log", CoverageRatchet.Shell.Success "abc123")
+                ("gh", "run list", CoverageRatchet.Shell.Success failedJson)
+                ("gh", "run download", CoverageRatchet.Shell.Success "")
+            ]
 
     let result = runLoosenFromCi run "coverage-ratchet.json"
     test <@ result = 1 @>
@@ -1800,9 +1872,11 @@ let ``run - Merge command writes output and returns Ok 0`` () =
         let result =
             run
                 (Merge
-                    { Baseline = baselinePath
-                      Partial = partialPath
-                      Output = outputPath })
+                    {
+                        Baseline = baselinePath
+                        Partial = partialPath
+                        Output = outputPath
+                    })
                 tmpDir
                 false
 
@@ -2161,7 +2235,9 @@ let private makeCountCoverageXml (files: (string * int * int) list) =
         |> List.map (fun (name, covered, total) ->
             let lines =
                 [ for i in 1..covered -> sprintf """<line number="%d" hits="1" />""" i ]
-                @ [ for i in (covered + 1) .. total -> sprintf """<line number="%d" hits="0" />""" i ]
+                @ [
+                    for i in (covered + 1) .. total -> sprintf """<line number="%d" hits="0" />""" i
+                ]
 
             sprintf
                 """        <class filename="/src/%s">

@@ -12,11 +12,16 @@ let ``ratchet tightens override when coverage improves`` () =
         { defaultsConfig with
             Overrides =
                 Map.ofList
-                    [ "Foo.fs",
-                      { Line = 70.0
-                        Branch = 65.0
-                        Reason = Some "legacy"
-                        Platform = None } ] }
+                    [
+                        "Foo.fs",
+                        {
+                            Line = 70.0
+                            Branch = 65.0
+                            Reason = Some "legacy"
+                            Platform = None
+                        }
+                    ]
+        }
 
     let files = [ makeFile "Foo.fs" 80.0 75.0 3 4 ]
     let result = ratchet config files
@@ -30,11 +35,16 @@ let ``ratchet floors fractional coverage to integer thresholds`` () =
         { defaultsConfig with
             Overrides =
                 Map.ofList
-                    [ "Foo.fs",
-                      { Line = 70.0
-                        Branch = 65.0
-                        Reason = Some "legacy"
-                        Platform = None } ] }
+                    [
+                        "Foo.fs",
+                        {
+                            Line = 70.0
+                            Branch = 65.0
+                            Reason = Some "legacy"
+                            Platform = None
+                        }
+                    ]
+        }
 
     let files = [ makeFile "Foo.fs" 80.3 75.7 3 4 ]
     let result = ratchet config files
@@ -48,11 +58,16 @@ let ``ratchet removes override when file reaches defaults`` () =
         { defaultsConfig with
             Overrides =
                 Map.ofList
-                    [ "Foo.fs",
-                      { Line = 90.0
-                        Branch = 95.0
-                        Reason = Some "almost there"
-                        Platform = None } ] }
+                    [
+                        "Foo.fs",
+                        {
+                            Line = 90.0
+                            Branch = 95.0
+                            Reason = Some "almost there"
+                            Platform = None
+                        }
+                    ]
+        }
 
     let files = [ makeFile "Foo.fs" 100.0 100.0 4 4 ]
     let result = ratchet config files
@@ -65,11 +80,16 @@ let ``ratchet never lowers thresholds`` () =
         { defaultsConfig with
             Overrides =
                 Map.ofList
-                    [ "Foo.fs",
-                      { Line = 80.0
-                        Branch = 70.0
-                        Reason = Some "legacy"
-                        Platform = None } ] }
+                    [
+                        "Foo.fs",
+                        {
+                            Line = 80.0
+                            Branch = 70.0
+                            Reason = Some "legacy"
+                            Platform = None
+                        }
+                    ]
+        }
 
     let files = [ makeFile "Foo.fs" 60.0 50.0 1 4 ]
     let result = ratchet config files
@@ -83,11 +103,16 @@ let ``ratchetWithStatus returns NoChanges when all thresholds met and unchanged`
         { defaultsConfig with
             Overrides =
                 Map.ofList
-                    [ "Foo.fs",
-                      { Line = 80.0
-                        Branch = 70.0
-                        Reason = Some "legacy"
-                        Platform = None } ] }
+                    [
+                        "Foo.fs",
+                        {
+                            Line = 80.0
+                            Branch = 70.0
+                            Reason = Some "legacy"
+                            Platform = None
+                        }
+                    ]
+        }
 
     let files = [ makeFile "Foo.fs" 80.0 70.0 3 4 ]
 
@@ -104,11 +129,16 @@ let ``ratchetWithStatus returns Tightened when coverage improved`` () =
         { defaultsConfig with
             Overrides =
                 Map.ofList
-                    [ "Foo.fs",
-                      { Line = 70.0
-                        Branch = 65.0
-                        Reason = Some "legacy"
-                        Platform = None } ] }
+                    [
+                        "Foo.fs",
+                        {
+                            Line = 70.0
+                            Branch = 65.0
+                            Reason = Some "legacy"
+                            Platform = None
+                        }
+                    ]
+        }
 
     let files = [ makeFile "Foo.fs" 85.0 80.0 3 4 ]
 
@@ -125,11 +155,16 @@ let ``ratchetWithStatus returns Failed when coverage dropped below threshold`` (
         { defaultsConfig with
             Overrides =
                 Map.ofList
-                    [ "Foo.fs",
-                      { Line = 80.0
-                        Branch = 70.0
-                        Reason = Some "legacy"
-                        Platform = None } ] }
+                    [
+                        "Foo.fs",
+                        {
+                            Line = 80.0
+                            Branch = 70.0
+                            Reason = Some "legacy"
+                            Platform = None
+                        }
+                    ]
+        }
 
     let files = [ makeFile "Foo.fs" 60.0 50.0 1 4 ]
 
@@ -146,11 +181,16 @@ let ``loosen sets thresholds to actual coverage`` () =
         { defaultsConfig with
             Overrides =
                 Map.ofList
-                    [ "Foo.fs",
-                      { Line = 90.0
-                        Branch = 85.0
-                        Reason = Some "legacy"
-                        Platform = None } ] }
+                    [
+                        "Foo.fs",
+                        {
+                            Line = 90.0
+                            Branch = 85.0
+                            Reason = Some "legacy"
+                            Platform = None
+                        }
+                    ]
+        }
 
     let files = [ makeFile "Foo.fs" 70.0 60.0 2 4 ]
     let result = loosen config files
@@ -173,11 +213,16 @@ let ``loosen removes override for file at 100 percent`` () =
         { defaultsConfig with
             Overrides =
                 Map.ofList
-                    [ "Foo.fs",
-                      { Line = 90.0
-                        Branch = 85.0
-                        Reason = Some "was low"
-                        Platform = None } ] }
+                    [
+                        "Foo.fs",
+                        {
+                            Line = 90.0
+                            Branch = 85.0
+                            Reason = Some "was low"
+                            Platform = None
+                        }
+                    ]
+        }
 
     let files = [ makeFile "Foo.fs" 100.0 100.0 4 4 ]
     let result = loosen config files
@@ -187,16 +232,24 @@ let ``loosen removes override for file at 100 percent`` () =
 [<Fact>]
 let ``ratchetRaw updates non-platform entry when no platform-specific entries exist`` () =
     let raw: RawConfig =
-        { DefaultLine = 100.0
-          DefaultBranch = 100.0
-          RawCountFloors = Map.empty
-          RawOverrides =
-            Map.ofList
-                [ "Foo.fs",
-                  [ { Line = 50.0
-                      Branch = 40.0
-                      Reason = Some "legacy"
-                      Platform = None } ] ] }
+        {
+            DefaultLine = 100.0
+            DefaultBranch = 100.0
+            RawCountFloors = Map.empty
+            RawOverrides =
+                Map.ofList
+                    [
+                        "Foo.fs",
+                        [
+                            {
+                                Line = 50.0
+                                Branch = 40.0
+                                Reason = Some "legacy"
+                                Platform = None
+                            }
+                        ]
+                    ]
+        }
 
     let files = [ makeFile "Foo.fs" 70.0 60.0 3 4 ]
     let result = ratchetRaw raw files
@@ -210,10 +263,12 @@ let ``ratchetRaw updates non-platform entry when no platform-specific entries ex
 [<Fact>]
 let ``loosenRaw adds platform-agnostic entry for new file`` () =
     let raw: RawConfig =
-        { DefaultLine = 100.0
-          DefaultBranch = 100.0
-          RawCountFloors = Map.empty
-          RawOverrides = Map.empty }
+        {
+            DefaultLine = 100.0
+            DefaultBranch = 100.0
+            RawCountFloors = Map.empty
+            RawOverrides = Map.empty
+        }
 
     let files = [ makeFile "New.fs" 80.0 75.0 3 4 ]
     let result = loosenRaw raw files
@@ -239,10 +294,12 @@ let ``parseCiThresholds - empty string raises actionable error`` () =
 [<Fact>]
 let ``mergeFromCi - adds new file override when CI has file below defaults`` () =
     let raw: RawConfig =
-        { DefaultLine = 100.0
-          DefaultBranch = 100.0
-          RawCountFloors = Map.empty
-          RawOverrides = Map.empty }
+        {
+            DefaultLine = 100.0
+            DefaultBranch = 100.0
+            RawCountFloors = Map.empty
+            RawOverrides = Map.empty
+        }
 
     let ciResults = Map.ofList [ "NewFile.fs", { Line = 80.0; Branch = 60.0 } ]
     let result = mergeFromCi raw Linux ciResults
@@ -255,10 +312,12 @@ let ``mergeFromCi - adds new file override when CI has file below defaults`` () 
 [<Fact>]
 let ``mergeFromCi - skips files at or above defaults`` () =
     let raw: RawConfig =
-        { DefaultLine = 100.0
-          DefaultBranch = 100.0
-          RawCountFloors = Map.empty
-          RawOverrides = Map.empty }
+        {
+            DefaultLine = 100.0
+            DefaultBranch = 100.0
+            RawCountFloors = Map.empty
+            RawOverrides = Map.empty
+        }
 
     let ciResults = Map.ofList [ "Perfect.fs", { Line = 100.0; Branch = 100.0 } ]
     let result = mergeFromCi raw Linux ciResults
@@ -270,7 +329,8 @@ let ``mergeFromCi - skips files at or above defaults`` () =
 let ``ratchetCountFloors raises a floor toward current counts`` () =
     let config =
         { defaultsConfig with
-            CountFloors = Map.ofList [ "Foo.fs", countFloor 300 10 ] }
+            CountFloors = Map.ofList [ "Foo.fs", countFloor 300 10 ]
+        }
 
     let result = ratchetCountFloors config [ makeFileWithCounts "Foo.fs" 383 400 41 60 ]
 
@@ -283,7 +343,8 @@ let ``ratchetCountFloors NEVER lowers a floor`` () =
     // must not follow it down, or the ratchet would erase itself.
     let config =
         { defaultsConfig with
-            CountFloors = Map.ofList [ "Foo.fs", countFloor 383 41 ] }
+            CountFloors = Map.ofList [ "Foo.fs", countFloor 383 41 ]
+        }
 
     let result = ratchetCountFloors config [ makeFileWithCounts "Foo.fs" 12 400 2 60 ]
 
@@ -301,7 +362,8 @@ let ``ratchetCountFloors does not enrol files that have no floor`` () =
 let ``ratchetCountFloors leaves a floor alone when its file is absent from the run`` () =
     let config =
         { defaultsConfig with
-            CountFloors = Map.ofList [ "Absent.fs", countFloor 383 41 ] }
+            CountFloors = Map.ofList [ "Absent.fs", countFloor 383 41 ]
+        }
 
     let result = ratchetCountFloors config [ makeFileWithCounts "Other.fs" 10 10 0 0 ]
 
@@ -310,8 +372,10 @@ let ``ratchetCountFloors leaves a floor alone when its file is absent from the r
 [<Fact>]
 let ``baselineCountFloors enrols every observed file`` () =
     let files =
-        [ makeFileWithCounts "Foo.fs" 383 400 41 60
-          makeFileWithCounts "Bar.fs" 12 12 0 0 ]
+        [
+            makeFileWithCounts "Foo.fs" 383 400 41 60
+            makeFileWithCounts "Bar.fs" 12 12 0 0
+        ]
 
     let result = baselineCountFloors defaultsConfig files
 
@@ -326,7 +390,8 @@ let ``baselineCountFloors LOWERS a floor - the legitimate-deletion path`` () =
     // human runs this and the lowered floor lands in the config diff for review.
     let config =
         { defaultsConfig with
-            CountFloors = Map.ofList [ "Foo.fs", countFloor 383 41 ] }
+            CountFloors = Map.ofList [ "Foo.fs", countFloor 383 41 ]
+        }
 
     let result = baselineCountFloors config [ makeFileWithCounts "Foo.fs" 120 130 8 10 ]
 
@@ -339,11 +404,16 @@ let ``baselineCountFloors preserves an existing recorded reason`` () =
         { defaultsConfig with
             CountFloors =
                 Map.ofList
-                    [ "Foo.fs",
-                      { CoveredLines = 383
-                        CoveredBranches = 41
-                        Reason = Some "logic lives in Shared.fs"
-                        Platform = None } ] }
+                    [
+                        "Foo.fs",
+                        {
+                            CoveredLines = 383
+                            CoveredBranches = 41
+                            Reason = Some "logic lives in Shared.fs"
+                            Platform = None
+                        }
+                    ]
+        }
 
     let result = baselineCountFloors config [ makeFileWithCounts "Foo.fs" 120 130 8 10 ]
 
@@ -353,7 +423,8 @@ let ``baselineCountFloors preserves an existing recorded reason`` () =
 let ``baselineCountFloors leaves a floor alone when its file is absent from the run`` () =
     let config =
         { defaultsConfig with
-            CountFloors = Map.ofList [ "Absent.fs", countFloor 383 41 ] }
+            CountFloors = Map.ofList [ "Absent.fs", countFloor 383 41 ]
+        }
 
     let result = baselineCountFloors config [ makeFileWithCounts "Other.fs" 10 10 0 0 ]
 
@@ -362,20 +433,30 @@ let ``baselineCountFloors leaves a floor alone when its file is absent from the 
 [<Fact>]
 let ``baselineCountFloorsRaw keeps other platforms' floors untouched`` () =
     let raw =
-        { DefaultLine = 100.0
-          DefaultBranch = 100.0
-          RawOverrides = Map.empty
-          RawCountFloors =
-            Map.ofList
-                [ "Foo.fs",
-                  [ { CoveredLines = 100
-                      CoveredBranches = 10
-                      Reason = None
-                      Platform = Some Platform.current }
-                    { CoveredLines = 999
-                      CoveredBranches = 99
-                      Reason = None
-                      Platform = Some otherPlatform } ] ] }
+        {
+            DefaultLine = 100.0
+            DefaultBranch = 100.0
+            RawOverrides = Map.empty
+            RawCountFloors =
+                Map.ofList
+                    [
+                        "Foo.fs",
+                        [
+                            {
+                                CoveredLines = 100
+                                CoveredBranches = 10
+                                Reason = None
+                                Platform = Some Platform.current
+                            }
+                            {
+                                CoveredLines = 999
+                                CoveredBranches = 99
+                                Reason = None
+                                Platform = Some otherPlatform
+                            }
+                        ]
+                    ]
+        }
 
     let result = baselineCountFloorsRaw raw [ makeFileWithCounts "Foo.fs" 55 60 5 6 ]
 
@@ -390,10 +471,12 @@ let ``baselineCountFloorsRaw keeps other platforms' floors untouched`` () =
 [<Fact>]
 let ``ratchetRawWithStatus reports Failed when a count floor is breached`` () =
     let raw =
-        { DefaultLine = 100.0
-          DefaultBranch = 100.0
-          RawOverrides = Map.empty
-          RawCountFloors = Map.ofList [ "Foo.fs", [ countFloor 383 0 ] ] }
+        {
+            DefaultLine = 100.0
+            DefaultBranch = 100.0
+            RawOverrides = Map.empty
+            RawCountFloors = Map.ofList [ "Foo.fs", [ countFloor 383 0 ] ]
+        }
 
     // 100% line coverage, so no percentage floor can fire — only the count can.
     let result = ratchetRawWithStatus raw [ makeFileWithCounts "Foo.fs" 300 300 0 0 ]
@@ -406,10 +489,12 @@ let ``ratchetRawWithStatus reports Failed when a count floor is breached`` () =
 let ``ratchetRawWithStatus is NoChanges when counts already sit at the floor`` () =
     // Positive control for the test above: the same shape must be able to pass.
     let raw =
-        { DefaultLine = 100.0
-          DefaultBranch = 100.0
-          RawOverrides = Map.empty
-          RawCountFloors = Map.ofList [ "Foo.fs", [ countFloor 300 0 ] ] }
+        {
+            DefaultLine = 100.0
+            DefaultBranch = 100.0
+            RawOverrides = Map.empty
+            RawCountFloors = Map.ofList [ "Foo.fs", [ countFloor 300 0 ] ]
+        }
 
     let result = ratchetRawWithStatus raw [ makeFileWithCounts "Foo.fs" 300 300 0 0 ]
 
@@ -422,16 +507,20 @@ let ``baselineCountFloorsRaw beside another platform's floor records only the me
     // entry next to a Linux one would claim every platform except the one that was
     // actually measured.
     let theirs =
-        { CoveredLines = 999
-          CoveredBranches = 99
-          Reason = Some "from CI"
-          Platform = Some otherPlatform }
+        {
+            CoveredLines = 999
+            CoveredBranches = 99
+            Reason = Some "from CI"
+            Platform = Some otherPlatform
+        }
 
     let raw =
-        { DefaultLine = 100.0
-          DefaultBranch = 100.0
-          RawOverrides = Map.empty
-          RawCountFloors = Map.ofList [ "Foo.fs", [ theirs ] ] }
+        {
+            DefaultLine = 100.0
+            DefaultBranch = 100.0
+            RawOverrides = Map.empty
+            RawCountFloors = Map.ofList [ "Foo.fs", [ theirs ] ]
+        }
 
     let result = baselineCountFloorsRaw raw [ makeFileWithCounts "Foo.fs" 55 60 5 6 ]
 
@@ -448,10 +537,12 @@ let ``baselineCountFloorsRaw on a file with no floor at all still writes it plat
     // Positive control for the test above: the platform tag is earned by the presence
     // of other platforms' entries, never applied by default.
     let raw =
-        { DefaultLine = 100.0
-          DefaultBranch = 100.0
-          RawOverrides = Map.empty
-          RawCountFloors = Map.empty }
+        {
+            DefaultLine = 100.0
+            DefaultBranch = 100.0
+            RawOverrides = Map.empty
+            RawCountFloors = Map.empty
+        }
 
     let result = baselineCountFloorsRaw raw [ makeFileWithCounts "Foo.fs" 55 60 5 6 ]
 

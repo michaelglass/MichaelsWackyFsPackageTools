@@ -6,11 +6,13 @@ open System.Text.RegularExpressions
 open System.Xml.Linq
 
 type PackageConfig =
-    { Name: string
-      Fsproj: string
-      DllPath: string
-      TagPrefix: string
-      FsProjsSharingSameTag: string list }
+    {
+        Name: string
+        Fsproj: string
+        DllPath: string
+        TagPrefix: string
+        FsProjsSharingSameTag: string list
+    }
 
 /// A workflow whose run PUBLISHES a package, named by its path under the repo
 /// (`.github/workflows/release.yml`). The path is the stable identity: display
@@ -265,17 +267,23 @@ let discover (rootDir: string) : Result<ToolConfig, string> =
         let fsproj = Path.Combine(rootDir, relativePath)
 
         Ok
-            { Packages =
-                [ { Name = name
-                    Fsproj = relativePath
-                    DllPath = Path.GetRelativePath(rootDir, deriveDllPath fsproj)
-                    TagPrefix = "v"
-                    FsProjsSharingSameTag = [] } ]
-              ReservedVersions = Set.empty
-              PreBuildCmds = []
-              PublishWorkflows = defaultPublishWorkflows
-              CiTimeout = None
-              RootDir = rootDir }
+            {
+                Packages =
+                    [
+                        {
+                            Name = name
+                            Fsproj = relativePath
+                            DllPath = Path.GetRelativePath(rootDir, deriveDllPath fsproj)
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = rootDir
+            }
     | n -> Error $"Found {n} packable .fsproj files; create a semantic-tagger.json to configure multi-package release"
 
 let private tryGet (name: string) (el: JsonElement) =
@@ -292,59 +300,71 @@ let parseJson (json: string) : ToolConfig =
         root
         |> tryGet "reservedVersions"
         |> Option.map (fun prop ->
-            [ for item in prop.EnumerateArray() do
-                  yield item.GetString() ]
+            [
+                for item in prop.EnumerateArray() do
+                    yield item.GetString()
+            ]
             |> Set.ofList)
         |> Option.defaultValue Set.empty
 
     let packages =
         let pkgs = root.GetProperty("packages")
 
-        [ for pkg in pkgs.EnumerateArray() do
-              let name = pkg.GetProperty("name").GetString()
-              let fsproj = pkg.GetProperty("fsproj").GetString()
+        [
+            for pkg in pkgs.EnumerateArray() do
+                let name = pkg.GetProperty("name").GetString()
+                let fsproj = pkg.GetProperty("fsproj").GetString()
 
-              let tagPrefix =
-                  pkg |> tryGet "tagPrefix" |> Option.map _.GetString() |> Option.defaultValue "v"
+                let tagPrefix =
+                    pkg |> tryGet "tagPrefix" |> Option.map _.GetString() |> Option.defaultValue "v"
 
-              let fsProjsSharingSameTag =
-                  pkg
-                  |> tryGet "fsProjsSharingSameTag"
-                  |> Option.map (fun arr ->
-                      [ for item in arr.EnumerateArray() do
-                            yield item.GetString() ])
-                  |> Option.defaultValue []
+                let fsProjsSharingSameTag =
+                    pkg
+                    |> tryGet "fsProjsSharingSameTag"
+                    |> Option.map (fun arr ->
+                        [
+                            for item in arr.EnumerateArray() do
+                                yield item.GetString()
+                        ])
+                    |> Option.defaultValue []
 
-              let dllPath =
-                  pkg
-                  |> tryGet "dllPath"
-                  |> Option.map _.GetString()
-                  |> Option.defaultWith (fun () ->
-                      let dir = Path.GetDirectoryName(fsproj)
-                      let name = Path.GetFileNameWithoutExtension(fsproj)
-                      Path.Combine(dir, "bin", "Release", "net10.0", name + ".dll"))
+                let dllPath =
+                    pkg
+                    |> tryGet "dllPath"
+                    |> Option.map _.GetString()
+                    |> Option.defaultWith (fun () ->
+                        let dir = Path.GetDirectoryName(fsproj)
+                        let name = Path.GetFileNameWithoutExtension(fsproj)
+                        Path.Combine(dir, "bin", "Release", "net10.0", name + ".dll"))
 
-              yield
-                  { Name = name
-                    Fsproj = fsproj
-                    DllPath = dllPath
-                    TagPrefix = tagPrefix
-                    FsProjsSharingSameTag = fsProjsSharingSameTag } ]
+                yield
+                    {
+                        Name = name
+                        Fsproj = fsproj
+                        DllPath = dllPath
+                        TagPrefix = tagPrefix
+                        FsProjsSharingSameTag = fsProjsSharingSameTag
+                    }
+        ]
 
     let preBuildCmds =
         root
         |> tryGet "preBuildCmds"
         |> Option.map (fun prop ->
-            [ for item in prop.EnumerateArray() do
-                  yield item.GetString() ])
+            [
+                for item in prop.EnumerateArray() do
+                    yield item.GetString()
+            ])
         |> Option.defaultValue []
 
     let publishWorkflows =
         root
         |> tryGet "publishWorkflows"
         |> Option.map (fun prop ->
-            [ for item in prop.EnumerateArray() do
-                  yield PublishWorkflow(item.GetString()) ])
+            [
+                for item in prop.EnumerateArray() do
+                    yield PublishWorkflow(item.GetString())
+            ])
         |> Option.defaultValue defaultPublishWorkflows
 
     // An empty set would make every tag unconfirmable — no workflow to ask about, so
@@ -364,12 +384,14 @@ let parseJson (json: string) : ToolConfig =
             | JsonValueKind.Number when prop.GetDouble() > 0.0 -> System.TimeSpan.FromMinutes(prop.GetDouble())
             | _ -> invalidArg "json" "semantic-tagger.json: `ciTimeoutMinutes` must be a positive number of minutes")
 
-    { Packages = packages
-      ReservedVersions = reservedVersions
-      PreBuildCmds = preBuildCmds
-      PublishWorkflows = publishWorkflows
-      CiTimeout = ciTimeout
-      RootDir = "" }
+    {
+        Packages = packages
+        ReservedVersions = reservedVersions
+        PreBuildCmds = preBuildCmds
+        PublishWorkflows = publishWorkflows
+        CiTimeout = ciTimeout
+        RootDir = ""
+    }
 
 /// Serialize a ToolConfig to JSON string
 let toJson (config: ToolConfig) : string =
@@ -453,8 +475,10 @@ let load (rootDir: string) : Result<ToolConfig, string> =
 
                         if File.Exists fsprojFull then
                             { pkg with
-                                DllPath = Path.GetRelativePath(rootDir, deriveDllPath fsprojFull) }
+                                DllPath = Path.GetRelativePath(rootDir, deriveDllPath fsprojFull)
+                            }
                         else
-                            pkg) }
+                            pkg)
+            }
     else
         discover rootDir

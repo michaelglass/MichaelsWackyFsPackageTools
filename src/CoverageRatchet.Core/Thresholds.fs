@@ -39,10 +39,12 @@ module Platform =
 // sync:threshold-types:start
 /// A per-file PERCENTAGE floor. `Line` and `Branch` are percentages (0-100).
 type Override =
-    { Line: float
-      Branch: float
-      Reason: string option
-      Platform: Platform option }
+    {
+        Line: float
+        Branch: float
+        Reason: string option
+        Platform: Platform option
+    }
 
 /// A per-file floor on the absolute COUNT of covered lines / covered branches.
 ///
@@ -57,31 +59,39 @@ type Override =
 /// JIT-compiles, so the percentage denominator wobbles between runs while the
 /// numerator does not (ADR 0019). Counts gate on the stable quantity.
 type CountFloor =
-    { CoveredLines: int
-      CoveredBranches: int
-      Reason: string option
-      Platform: Platform option }
+    {
+        CoveredLines: int
+        CoveredBranches: int
+        Reason: string option
+        Platform: Platform option
+    }
 
 type Config =
-    { DefaultLine: float
-      DefaultBranch: float
-      Overrides: Map<string, Override>
-      CountFloors: Map<string, CountFloor> }
+    {
+        DefaultLine: float
+        DefaultBranch: float
+        Overrides: Map<string, Override>
+        CountFloors: Map<string, CountFloor>
+    }
 // sync:threshold-types:end
 
 type RawConfig =
-    { DefaultLine: float
-      DefaultBranch: float
-      RawOverrides: Map<string, Override list>
-      RawCountFloors: Map<string, CountFloor list> }
+    {
+        DefaultLine: float
+        DefaultBranch: float
+        RawOverrides: Map<string, Override list>
+        RawCountFloors: Map<string, CountFloor list>
+    }
 
 let private defaultLineThreshold = 100.0
 let private defaultBranchThreshold = 100.0
 
 type FileResult =
-    { File: FileCoverage
-      LineThreshold: float
-      BranchThreshold: float }
+    {
+        File: FileCoverage
+        LineThreshold: float
+        BranchThreshold: float
+    }
 
 module FileResult =
     let linePassed (r: FileResult) = r.File.LinePct >= r.LineThreshold
@@ -97,8 +107,10 @@ type CheckResult =
 /// A file paired with the count floor it must clear.
 /// Only files that HAVE a floor produce one of these.
 type CountResult =
-    { File: FileCoverage
-      Floor: CountFloor }
+    {
+        File: FileCoverage
+        Floor: CountFloor
+    }
 
 module CountResult =
     let linesPassed (r: CountResult) =
@@ -116,10 +128,12 @@ type CountCheckResult =
     | CountsFailed of CountResult list
 
 let private defaultConfig =
-    { DefaultLine = defaultLineThreshold
-      DefaultBranch = defaultBranchThreshold
-      Overrides = Map.empty
-      CountFloors = Map.empty }
+    {
+        DefaultLine = defaultLineThreshold
+        DefaultBranch = defaultBranchThreshold
+        Overrides = Map.empty
+        CountFloors = Map.empty
+    }
 
 /// The single options value both write paths share (`saveRawConfig` here and the
 /// coverage-thresholds artifact in `CoverageRatchet/Program.fs`), so the two outputs
@@ -155,9 +169,11 @@ let buildFileResults (config: Config) (files: FileCoverage list) : FileResult li
             | Some ovr -> ovr.Line, ovr.Branch
             | None -> config.DefaultLine, config.DefaultBranch
 
-        { File = f
-          LineThreshold = lineThreshold
-          BranchThreshold = branchThreshold })
+        {
+            File = f
+            LineThreshold = lineThreshold
+            BranchThreshold = branchThreshold
+        })
 
 let check (config: Config) (files: FileCoverage list) : CheckResult =
     let results = buildFileResults config files
@@ -200,9 +216,11 @@ let configuredFloors (config: Config) : Set<string> =
 /// report failed to speak to. A caller that handled only percentages would
 /// leave the identical hole open for counts.
 type UnmeasuredFloor =
-    { File: string
-      HasPercentageFloor: bool
-      HasCountFloor: bool }
+    {
+        File: string
+        HasPercentageFloor: bool
+        HasCountFloor: bool
+    }
 
 /// PURE: every configured floor this report cannot speak to.
 ///
@@ -219,9 +237,11 @@ let unmeasuredFloors (config: Config) (files: FileCoverage list) : UnmeasuredFlo
     |> Set.toList
     |> List.filter (fun name -> not (Set.contains name measured))
     |> List.map (fun name ->
-        { File = name
-          HasPercentageFloor = Map.containsKey name config.Overrides
-          HasCountFloor = Map.containsKey name config.CountFloors })
+        {
+            File = name
+            HasPercentageFloor = Map.containsKey name config.Overrides
+            HasCountFloor = Map.containsKey name config.CountFloors
+        })
 
 /// What one `check` run is ENTITLED to conclude.
 ///
@@ -302,10 +322,12 @@ let exitCodeOf (verdict: Verdict) : int =
     | Incomplete _ -> 2
 
 let private defaultRawConfig =
-    { DefaultLine = defaultLineThreshold
-      DefaultBranch = defaultBranchThreshold
-      RawOverrides = Map.empty
-      RawCountFloors = Map.empty }
+    {
+        DefaultLine = defaultLineThreshold
+        DefaultBranch = defaultBranchThreshold
+        RawOverrides = Map.empty
+        RawCountFloors = Map.empty
+    }
 
 /// Read the reason/platform pair shared by both floor kinds.
 let private parseReason (el: JsonElement) =
@@ -339,10 +361,12 @@ let private parseOverrideElement (el: JsonElement) : Override =
         else
             defaultBranchThreshold
 
-    { Line = line
-      Branch = branch
-      Reason = parseReason el
-      Platform = parsePlatform el }
+    {
+        Line = line
+        Branch = branch
+        Reason = parseReason el
+        Platform = parsePlatform el
+    }
 
 /// Count floors use the keys "coveredLines"/"coveredBranches" — deliberately
 /// NOT "line"/"branch", so a percentage entry can never be misread as a count.
@@ -354,10 +378,12 @@ let private parseCountFloorElement (el: JsonElement) : CountFloor =
         | true, v -> v.GetInt32()
         | false, _ -> 0
 
-    { CoveredLines = readInt "coveredLines"
-      CoveredBranches = readInt "coveredBranches"
-      Reason = parseReason el
-      Platform = parsePlatform el }
+    {
+        CoveredLines = readInt "coveredLines"
+        CoveredBranches = readInt "coveredBranches"
+        Reason = parseReason el
+        Platform = parsePlatform el
+    }
 
 let private parseSection (parseElement: JsonElement -> 'a) (root: JsonElement) (name: string) : Map<string, 'a list> =
     match root.TryGetProperty(name) with
@@ -388,7 +414,8 @@ let loadRawConfig (path: string) : RawConfig =
 
             { defaultRawConfig with
                 RawOverrides = parseSection parseOverrideElement root "overrides"
-                RawCountFloors = parseSection parseCountFloorElement root "countFloors" }
+                RawCountFloors = parseSection parseCountFloorElement root "countFloors"
+            }
 
 /// Pick the entry for the running platform, falling back to a platform-less one.
 /// A file whose only entries name OTHER platforms resolves to nothing and is
@@ -417,10 +444,12 @@ let private resolveForPlatform
 /// The floors `platform` would enforce — what a CI runner on that platform checks,
 /// whichever machine is reading the file.
 let resolveConfigFor (platform: Platform) (raw: RawConfig) : Config =
-    { DefaultLine = raw.DefaultLine
-      DefaultBranch = raw.DefaultBranch
-      Overrides = resolveForPlatform platform (fun (o: Override) -> o.Platform) raw.RawOverrides
-      CountFloors = resolveForPlatform platform (fun (f: CountFloor) -> f.Platform) raw.RawCountFloors }
+    {
+        DefaultLine = raw.DefaultLine
+        DefaultBranch = raw.DefaultBranch
+        Overrides = resolveForPlatform platform (fun (o: Override) -> o.Platform) raw.RawOverrides
+        CountFloors = resolveForPlatform platform (fun (f: CountFloor) -> f.Platform) raw.RawCountFloors
+    }
 
 /// The floors the running platform enforces.
 let resolveConfig (raw: RawConfig) : Config = resolveConfigFor Platform.current raw
@@ -433,10 +462,12 @@ let loadConfig (path: string) : Config = loadRawConfig path |> resolveConfig
 /// discards the other platforms' entries, and this cannot invent them back. Use
 /// the `*Raw` merge functions when those entries must survive.
 let toRawConfig (config: Config) : RawConfig =
-    { DefaultLine = config.DefaultLine
-      DefaultBranch = config.DefaultBranch
-      RawOverrides = config.Overrides |> Map.map (fun _ ovr -> [ ovr ])
-      RawCountFloors = config.CountFloors |> Map.map (fun _ floor -> [ floor ]) }
+    {
+        DefaultLine = config.DefaultLine
+        DefaultBranch = config.DefaultBranch
+        RawOverrides = config.Overrides |> Map.map (fun _ ovr -> [ ovr ])
+        RawCountFloors = config.CountFloors |> Map.map (fun _ floor -> [ floor ])
+    }
 
 let private addReasonAndPlatform
     (reason: string option)

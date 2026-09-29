@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- chore(deps): CommandTree 0.8.1 -> 0.11.3. An unknown command that is a near-miss of a real one now ends with a suggestion, e.g. `Unknown command 'chek'. Did you mean 'fsprojlint check'?`; commands, flags and help text are otherwise unchanged.
+
 ## 0.10.0-alpha.17 - 2026-09-15
 
 - Finish: update SourceLink to patched 10.0.303

@@ -552,31 +552,42 @@ let ``run - check keeps a docs page with no README as a warning, not a failure``
 [<Fact>]
 let ``summarizePairs - count and verdict fold from the same outcomes`` () =
     let outcomes =
-        [ Compared InSync
-          Compared Updated
-          Compared OutOfSync
-          TargetMissing("LibA", "docs/LibA/index.md")
-          SourceMissing("LibB", "src/LibB/README.md") ]
+        [
+            Compared InSync
+            Compared Updated
+            Compared OutOfSync
+            TargetMissing("LibA", "docs/LibA/index.md")
+            SourceMissing("LibB", "src/LibB/README.md")
+        ]
 
     test
         <@
-            summarizePairs outcomes = { Compared = 3
-                                        Total = 5
-                                        Failed = true }
+            summarizePairs outcomes =
+                {
+                    Compared = 3
+                    Total = 5
+                    Failed = true
+                }
         @>
 
     test
         <@
-            summarizePairs [ Compared InSync; Compared Updated ] = { Compared = 2
-                                                                     Total = 2
-                                                                     Failed = false }
+            summarizePairs [ Compared InSync; Compared Updated ] =
+                {
+                    Compared = 2
+                    Total = 2
+                    Failed = false
+                }
         @>
 
     test
         <@
-            summarizePairs [] = { Compared = 0
-                                  Total = 0
-                                  Failed = false }
+            summarizePairs [] =
+                {
+                    Compared = 0
+                    Total = 0
+                    Failed = false
+                }
         @>
 
 [<Fact>]
@@ -586,14 +597,14 @@ let ``describePairOutcome - only uncompared outcomes render an error line`` () =
 
     test
         <@
-            describePairOutcome (TargetMissing("LibA", "docs/LibA/index.md")) = Some
-                "ERROR: docs target missing for LibA, looked for docs/LibA/index.md"
+            describePairOutcome (TargetMissing("LibA", "docs/LibA/index.md")) =
+                Some "ERROR: docs target missing for LibA, looked for docs/LibA/index.md"
         @>
 
     test
         <@
-            describePairOutcome (SourceMissing("LibB", "src/LibB/README.md")) = Some
-                "ERROR: README source missing for LibB, looked for src/LibB/README.md"
+            describePairOutcome (SourceMissing("LibB", "src/LibB/README.md")) =
+                Some "ERROR: README source missing for LibB, looked for src/LibB/README.md"
         @>
 
 [<Fact>]

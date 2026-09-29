@@ -90,9 +90,11 @@ let declare (source: string) (lines: string list) : Declaration option =
                 let found =
                     match markerLevel line with
                     | Some level ->
-                        { Level = level
-                          Source = source
-                          Entry = line.Trim() }
+                        {
+                            Level = level
+                            Source = source
+                            Entry = line.Trim()
+                        }
                         :: found
                     | None -> found
 

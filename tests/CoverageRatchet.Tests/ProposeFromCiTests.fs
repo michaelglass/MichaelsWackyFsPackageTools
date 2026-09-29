@@ -16,11 +16,13 @@ let private artifactFile name =
     Path.Combine(fixtureDir, "artifact", name)
 
 let private evidence =
-    { RunId = "36309004650"
-      HeadSha = "a58a09c365dbc7f9c18b27a22da7e8fad30636be"
-      Conclusion = "failure"
-      WorkflowName = "CI"
-      Url = "https://github.com/owner/repo/actions/runs/36309004650" }
+    {
+        RunId = "36309004650"
+        HeadSha = "a58a09c365dbc7f9c18b27a22da7e8fad30636be"
+        Conclusion = "failure"
+        WorkflowName = "CI"
+        Url = "https://github.com/owner/repo/actions/runs/36309004650"
+    }
 
 let private viewJson =
     """{"conclusion":"failure","headSha":"a58a09c365dbc7f9c18b27a22da7e8fad30636be","url":"https://github.com/owner/repo/actions/runs/36309004650","workflowName":"CI"}"""
@@ -98,14 +100,16 @@ let ``parseRunEvidence reads gh run view output and tolerates missing fields`` (
 [<Fact>]
 let ``draftReason keeps a short commit id whole`` () =
     let shortfall =
-        { File = "A.fs"
-          Measured = { Line = 90.0; Branch = 80.0 }
-          FloorLine = 95.0
-          FloorBranch = 80.0
-          Source = DefaultFloor
-          PreviousReason = None
-          Determined = true
-          Proposed = [] }
+        {
+            File = "A.fs"
+            Measured = { Line = 90.0; Branch = 80.0 }
+            FloorLine = 95.0
+            FloorBranch = 80.0
+            Source = DefaultFloor
+            PreviousReason = None
+            Determined = true
+            Proposed = []
+        }
 
     let reason = draftReason { evidence with HeadSha = "abc" } MacOS shortfall 90.0 80.0
 
@@ -114,22 +118,26 @@ let ``draftReason keeps a short commit id whole`` () =
 [<Fact>]
 let ``renderProposal with only undetermined files drafts nothing`` () =
     let s =
-        { File = "A.fs"
-          Measured = { Line = 69.0; Branch = 62.0 }
-          FloorLine = 69.1
-          FloorBranch = 62.0
-          Source = SharedEntry
-          PreviousReason = None
-          Determined = false
-          Proposed = [] }
+        {
+            File = "A.fs"
+            Measured = { Line = 69.0; Branch = 62.0 }
+            FloorLine = 69.1
+            FloorBranch = 62.0
+            Source = SharedEntry
+            PreviousReason = None
+            Determined = false
+            Proposed = []
+        }
 
     let project =
-        { Project = "P"
-          ConfigPath = "coverage-ratchet-P.json"
-          ConfigFound = true
-          Platform = Linux
-          FilesMeasured = 1
-          Shortfalls = [ s ] }
+        {
+            Project = "P"
+            ConfigPath = "coverage-ratchet-P.json"
+            ConfigFound = true
+            Platform = Linux
+            FilesMeasured = 1
+            Shortfalls = [ s ]
+        }
 
     let text = renderProposal evidence [ project ]
     test <@ text.Contains("0 file(s) below their floor across 0 project(s); 1 more undetermined.") @>
@@ -164,16 +172,24 @@ let ``every file below its floor is found across both fixture projects`` () =
 let ``floors are those of the artifact's platform, not the machine reading them`` () =
     // A macOS-only floor is invisible to Linux CI: Linux falls back to 100/100.
     let raw =
-        { DefaultLine = 100.0
-          DefaultBranch = 100.0
-          RawOverrides =
-            Map.ofList
-                [ "Os.fs",
-                  [ { Line = 50.0
-                      Branch = 50.0
-                      Reason = None
-                      Platform = Some MacOS } ] ]
-          RawCountFloors = Map.empty }
+        {
+            DefaultLine = 100.0
+            DefaultBranch = 100.0
+            RawOverrides =
+                Map.ofList
+                    [
+                        "Os.fs",
+                        [
+                            {
+                                Line = 50.0
+                                Branch = 50.0
+                                Reason = None
+                                Platform = Some MacOS
+                            }
+                        ]
+                    ]
+            RawCountFloors = Map.empty
+        }
 
     let results = Map.ofList [ "Os.fs", { Line = 60.0; Branch = 60.0 } ]
 
@@ -186,16 +202,20 @@ let ``floors are those of the artifact's platform, not the machine reading them`
 [<Fact>]
 let ``a shared floor that fell gets a platform entry beside it, lowered only where it fell`` () =
     let shared =
-        { Line = 85.0
-          Branch = 70.0
-          Reason = Some "probe timeouts"
-          Platform = None }
+        {
+            Line = 85.0
+            Branch = 70.0
+            Reason = Some "probe timeouts"
+            Platform = None
+        }
 
     let raw =
-        { DefaultLine = 100.0
-          DefaultBranch = 100.0
-          RawOverrides = Map.ofList [ "Probe.fs", [ shared ] ]
-          RawCountFloors = Map.empty }
+        {
+            DefaultLine = 100.0
+            DefaultBranch = 100.0
+            RawOverrides = Map.ofList [ "Probe.fs", [ shared ] ]
+            RawCountFloors = Map.empty
+        }
 
     let results = Map.ofList [ "Probe.fs", { Line = 80.6; Branch = 75.0 } ]
 
@@ -213,26 +233,36 @@ let ``a shared floor that fell gets a platform entry beside it, lowered only whe
 [<Fact>]
 let ``a whole-number measurement against a fractional floor is undetermined, not drafted`` () =
     let floorOf line branch =
-        [ { Line = line
-            Branch = branch
-            Reason = None
-            Platform = None } ]
+        [
+            {
+                Line = line
+                Branch = branch
+                Reason = None
+                Platform = None
+            }
+        ]
 
     let raw =
-        { DefaultLine = 100.0
-          DefaultBranch = 100.0
-          RawOverrides =
-            Map.ofList
-                [ "Rounded.fs", floorOf 69.1 62.0
-                  "Fell.fs", floorOf 70.0 62.0
-                  "Exact.fs", floorOf 69.1 62.0 ]
-          RawCountFloors = Map.empty }
+        {
+            DefaultLine = 100.0
+            DefaultBranch = 100.0
+            RawOverrides =
+                Map.ofList
+                    [
+                        "Rounded.fs", floorOf 69.1 62.0
+                        "Fell.fs", floorOf 70.0 62.0
+                        "Exact.fs", floorOf 69.1 62.0
+                    ]
+            RawCountFloors = Map.empty
+        }
 
     let results =
         Map.ofList
-            [ "Rounded.fs", { Line = 69.0; Branch = 62.0 }
-              "Fell.fs", { Line = 69.0; Branch = 62.0 }
-              "Exact.fs", { Line = 69.05; Branch = 62.0 } ]
+            [
+                "Rounded.fs", { Line = 69.0; Branch = 62.0 }
+                "Fell.fs", { Line = 69.0; Branch = 62.0 }
+                "Exact.fs", { Line = 69.05; Branch = 62.0 }
+            ]
 
     let found =
         findShortfalls evidence Linux raw results
@@ -241,12 +271,14 @@ let ``a whole-number measurement against a fractional floor is undetermined, not
     test <@ found = [ "Exact.fs", true, 2; "Fell.fs", true, 2; "Rounded.fs", false, 0 ] @>
 
     let project =
-        { Project = "P"
-          ConfigPath = "coverage-ratchet-P.json"
-          ConfigFound = true
-          Platform = Linux
-          FilesMeasured = 3
-          Shortfalls = findShortfalls evidence Linux raw results }
+        {
+            Project = "P"
+            ConfigPath = "coverage-ratchet-P.json"
+            ConfigFound = true
+            Platform = Linux
+            FilesMeasured = 3
+            Shortfalls = findShortfalls evidence Linux raw results
+        }
 
     let text = renderProposal evidence [ project ]
     test <@ text.Contains("2 file(s) below their floor across 1 project(s); 1 more undetermined.") @>
@@ -272,10 +304,11 @@ let ``the drafted entry replaces only the platform entry and cites run, commit a
 
             test
                 <@
-                    linux.Reason = Some(
-                        "linux CI run 36309004650 (commit a58a09c3) measured line 91%, branch 82% "
-                        + "against a floor of line 91%, branch 84%; floor set to the measured value, rounded down."
-                    )
+                    linux.Reason =
+                        Some(
+                            "linux CI run 36309004650 (commit a58a09c3) measured line 91%, branch 82% "
+                            + "against a floor of line 91%, branch 84%; floor set to the measured value, rounded down."
+                        )
                 @>
         | other -> failwithf "expected the macos and linux entries, got %A" other)
 
@@ -318,12 +351,14 @@ let ``renderProposal lists every shortfall with its evidence and a paste-ready e
 let ``renderProposal says so when nothing fell and flags a missing floor file`` () =
     withTempDir (fun dir ->
         let clean =
-            { Project = "Alpha"
-              ConfigPath = Path.Combine(dir, "coverage-ratchet-Alpha.json")
-              ConfigFound = false
-              Platform = Linux
-              FilesMeasured = 4
-              Shortfalls = [] }
+            {
+                Project = "Alpha"
+                ConfigPath = Path.Combine(dir, "coverage-ratchet-Alpha.json")
+                ConfigFound = false
+                Platform = Linux
+                FilesMeasured = 4
+                Shortfalls = []
+            }
 
         let text = renderProposal evidence [ clean ]
 

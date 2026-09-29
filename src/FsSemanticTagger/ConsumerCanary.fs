@@ -57,8 +57,10 @@ type PinFile =
 /// bounded. Everything else the canary does is file edits.
 [<NoEquality; NoComparison>]
 type Ops =
-    { RunIn: string -> string -> string -> CommandResult
-      RunGate: string -> string -> TimeSpan -> string -> GateOutcome }
+    {
+        RunIn: string -> string -> string -> CommandResult
+        RunGate: string -> string -> TimeSpan -> string -> GateOutcome
+    }
 
 [<NoEquality; NoComparison>]
 type Settings =
@@ -84,12 +86,14 @@ type RefusalReason =
     | GateTimedOut of budget: TimeSpan
 
 type Refusal =
-    { Package: PackageConfig
-      Version: Version
-      Consumer: Consumer
-      Reason: RefusalReason
-      LogPath: string option
-      Workspace: string option }
+    {
+        Package: PackageConfig
+        Version: Version
+        Consumer: Consumer
+        Reason: RefusalReason
+        LogPath: string option
+        Workspace: string option
+    }
 
 type SkipReason =
     | NoConsumerConfig of path: string
@@ -163,12 +167,14 @@ let parseConfig (path: string) (json: string) : Result<CanaryConfig, string> =
                         |> Result.bind (fun timeout ->
                             optionalStr "revision" "main" el
                             |> Result.map (fun revision ->
-                                { Package = package
-                                  Repo = expandHome repo
-                                  Pin = pin
-                                  Gate = gate
-                                  Timeout = timeout
-                                  Revision = revision }))))))
+                                {
+                                    Package = package
+                                    Repo = expandHome repo
+                                    Pin = pin
+                                    Gate = gate
+                                    Timeout = timeout
+                                    Revision = revision
+                                }))))))
 
     let parsed =
         try
@@ -197,8 +203,10 @@ let parseConfig (path: string) (json: string) : Result<CanaryConfig, string> =
                             | _, Error e -> Error e)
                         (Ok [])
                     |> Result.map (fun consumers ->
-                        { LocalFeed = expandHome feed
-                          Consumers = List.rev consumers }))))
+                        {
+                            LocalFeed = expandHome feed
+                            Consumers = List.rev consumers
+                        }))))
 
 let loadConfig (path: string) : Result<ConfigOutcome, string> =
     if File.Exists path then
@@ -211,16 +219,20 @@ let toJson (config: CanaryConfig) : string =
     let consumers =
         config.Consumers
         |> List.map (fun c ->
-            {| package = c.Package
-               repo = c.Repo
-               pin = c.Pin
-               gate = c.Gate
-               timeoutMinutes = c.Timeout.TotalMinutes
-               revision = c.Revision |})
+            {|
+                package = c.Package
+                repo = c.Repo
+                pin = c.Pin
+                gate = c.Gate
+                timeoutMinutes = c.Timeout.TotalMinutes
+                revision = c.Revision
+            |})
 
     JsonSerializer.Serialize(
-        {| localFeed = config.LocalFeed
-           consumers = consumers |},
+        {|
+            localFeed = config.LocalFeed
+            consumers = consumers
+        |},
         JsonSerializerOptions(WriteIndented = true, NewLine = "\n")
     )
 
@@ -307,13 +319,15 @@ let withLocalFeed (existing: string option) (feed: string) : string =
     | None ->
         String.concat
             "\n"
-            [ "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
-              "<configuration>"
-              "  <packageSources>"
-              add
-              "  </packageSources>"
-              "</configuration>"
-              "" ]
+            [
+                "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+                "<configuration>"
+                "  <packageSources>"
+                add
+                "  </packageSources>"
+                "</configuration>"
+                ""
+            ]
     | Some content ->
         let closing =
             content.IndexOf("</packageSources>", StringComparison.OrdinalIgnoreCase)
@@ -483,12 +497,14 @@ let run
 
     let refuse pkg version consumer reason logPath workspace =
         Error
-            { Package = pkg
-              Version = version
-              Consumer = consumer
-              Reason = reason
-              LogPath = logPath
-              Workspace = workspace }
+            {
+                Package = pkg
+                Version = version
+                Consumer = consumer
+                Reason = reason
+                LogPath = logPath
+                Workspace = workspace
+            }
 
     let packed =
         selected
@@ -556,23 +572,25 @@ let formatRefusal (refusal: Refusal) : string =
         | GateFailed code -> sprintf "gate `%s` exited %d" refusal.Consumer.Gate code
         | GateTimedOut budget -> sprintf "gate `%s` exceeded its %s budget" refusal.Consumer.Gate (formatBudget budget)
 
-    [ yield
-          sprintf
-              "Consumer canary REFUSED the release: %s (%s %s): %s"
-              refusal.Consumer.Repo
-              refusal.Package.Name
-              (format refusal.Version)
-              what
-      match refusal.LogPath with
-      | Some path -> yield sprintf "  log: %s" path
-      | None -> ()
-      match refusal.Workspace with
-      | Some path -> yield sprintf "  workspace: %s (left for inspection)" path
-      | None -> ()
-      yield "  Nothing was tagged or pushed."
-      yield
-          "  If the consumer's main is red on its own, confirm with its gate on an unpinned workspace, \
-           then re-run with --skip-consumer-canary." ]
+    [
+        yield
+            sprintf
+                "Consumer canary REFUSED the release: %s (%s %s): %s"
+                refusal.Consumer.Repo
+                refusal.Package.Name
+                (format refusal.Version)
+                what
+        match refusal.LogPath with
+        | Some path -> yield sprintf "  log: %s" path
+        | None -> ()
+        match refusal.Workspace with
+        | Some path -> yield sprintf "  workspace: %s (left for inspection)" path
+        | None -> ()
+        yield "  Nothing was tagged or pushed."
+        yield
+            "  If the consumer's main is red on its own, confirm with its gate on an unpinned workspace, \
+           then re-run with --skip-consumer-canary."
+    ]
     |> String.concat "\n"
 
 let formatVerdict (verdict: Verdict) : string =
@@ -627,8 +645,10 @@ let decide (settings: Settings) (rootDir: string) (plan: (PackageConfig * Versio
 
 /// The production seam: real processes, the user's config and NuGet cache.
 let defaultSettings (skip: bool) (rootDir: string) : Settings =
-    { ConfigPath = defaultConfigPath
-      Skip = skip
-      LogDir = Path.Combine(rootDir, "artifacts", "consumer-canary")
-      PackagesCache = defaultPackagesCache
-      Ops = { RunIn = runIn; RunGate = runLogged } }
+    {
+        ConfigPath = defaultConfigPath
+        Skip = skip
+        LogDir = Path.Combine(rootDir, "artifacts", "consumer-canary")
+        PackagesCache = defaultPackagesCache
+        Ops = { RunIn = runIn; RunGate = runLogged }
+    }

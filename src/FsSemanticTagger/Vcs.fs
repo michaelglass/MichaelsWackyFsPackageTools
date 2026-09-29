@@ -206,15 +206,17 @@ module RunConclusion =
         | other -> OtherConclusion other
 
 type CiRunInfo =
-    { RunId: string
-      RunIdOrdinal: int64
-      Attempt: int
-      CreatedAt: System.DateTimeOffset
-      WorkflowId: int64 option
-      Name: string
-      Url: string
-      Status: RunStatus
-      Conclusion: RunConclusion }
+    {
+        RunId: string
+        RunIdOrdinal: int64
+        Attempt: int
+        CreatedAt: System.DateTimeOffset
+        WorkflowId: int64 option
+        Name: string
+        Url: string
+        Status: RunStatus
+        Conclusion: RunConclusion
+    }
 
 type CiStatus =
     | Passed
@@ -226,49 +228,53 @@ type CiStatus =
 let parseCiRuns (json: string) : CiRunInfo list =
     let doc = System.Text.Json.JsonDocument.Parse(json)
 
-    [ for elem in doc.RootElement.EnumerateArray() do
-          let conclusionStr =
-              let prop = elem.GetProperty("conclusion")
+    [
+        for elem in doc.RootElement.EnumerateArray() do
+            let conclusionStr =
+                let prop = elem.GetProperty("conclusion")
 
-              if prop.ValueKind = System.Text.Json.JsonValueKind.Null then
-                  ""
-              else
-                  prop.GetString()
+                if prop.ValueKind = System.Text.Json.JsonValueKind.Null then
+                    ""
+                else
+                    prop.GetString()
 
-          let runId =
-              match elem.TryGetProperty("databaseId") with
-              | true, value -> value.ToString()
-              | false, _ -> "unknown"
+            let runId =
+                match elem.TryGetProperty("databaseId") with
+                | true, value -> value.ToString()
+                | false, _ -> "unknown"
 
-          let runIdOrdinal =
-              match elem.TryGetProperty("databaseId") with
-              | true, value -> value.GetInt64()
-              | false, _ -> 0L
+            let runIdOrdinal =
+                match elem.TryGetProperty("databaseId") with
+                | true, value -> value.GetInt64()
+                | false, _ -> 0L
 
-          let attempt =
-              match elem.TryGetProperty("attempt") with
-              | true, value -> value.GetInt32()
-              | false, _ -> 1
+            let attempt =
+                match elem.TryGetProperty("attempt") with
+                | true, value -> value.GetInt32()
+                | false, _ -> 1
 
-          let createdAt =
-              match elem.TryGetProperty("createdAt") with
-              | true, value -> System.DateTimeOffset.Parse(value.GetString())
-              | false, _ -> System.DateTimeOffset.MinValue
+            let createdAt =
+                match elem.TryGetProperty("createdAt") with
+                | true, value -> System.DateTimeOffset.Parse(value.GetString())
+                | false, _ -> System.DateTimeOffset.MinValue
 
-          let workflowId =
-              match elem.TryGetProperty("workflowDatabaseId") with
-              | true, value -> Some(value.GetInt64())
-              | false, _ -> None
+            let workflowId =
+                match elem.TryGetProperty("workflowDatabaseId") with
+                | true, value -> Some(value.GetInt64())
+                | false, _ -> None
 
-          { RunId = runId
-            RunIdOrdinal = runIdOrdinal
-            Attempt = attempt
-            CreatedAt = createdAt
-            WorkflowId = workflowId
-            Name = elem.GetProperty("name").GetString()
-            Url = elem.GetProperty("url").GetString()
-            Status = RunStatus.ofString (elem.GetProperty("status").GetString())
-            Conclusion = RunConclusion.ofString conclusionStr } ]
+            {
+                RunId = runId
+                RunIdOrdinal = runIdOrdinal
+                Attempt = attempt
+                CreatedAt = createdAt
+                WorkflowId = workflowId
+                Name = elem.GetProperty("name").GetString()
+                Url = elem.GetProperty("url").GetString()
+                Status = RunStatus.ofString (elem.GetProperty("status").GetString())
+                Conclusion = RunConclusion.ofString conclusionStr
+            }
+    ]
 
 let checkCiStatusForSha (run: string -> string -> CommandResult) (sha: string) : CiStatus =
     let args =
@@ -374,17 +380,19 @@ let successfulRunDurations
             try
                 use doc = System.Text.Json.JsonDocument.Parse(output)
 
-                [ for elem in doc.RootElement.EnumerateArray() do
-                      let at (name: string) =
-                          System.DateTimeOffset.Parse(
-                              elem.GetProperty(name).GetString(),
-                              System.Globalization.CultureInfo.InvariantCulture
-                          )
+                [
+                    for elem in doc.RootElement.EnumerateArray() do
+                        let at (name: string) =
+                            System.DateTimeOffset.Parse(
+                                elem.GetProperty(name).GetString(),
+                                System.Globalization.CultureInfo.InvariantCulture
+                            )
 
-                      let duration = at "updatedAt" - at "startedAt"
+                        let duration = at "updatedAt" - at "startedAt"
 
-                      if duration > System.TimeSpan.Zero then
-                          yield duration ]
+                        if duration > System.TimeSpan.Zero then
+                            yield duration
+                ]
                 |> Ok
             with ex ->
                 Error(sprintf "unreadable `gh run list` answer: %s" ex.Message))
@@ -503,12 +511,14 @@ let pushMain (run: string -> string -> CommandResult) : unit = runOrFail run "jj
 /// record as unparseable would turn "the release is happening" into "no run appeared",
 /// which is the exact confusion this poll was rewritten to remove.
 type internal TagRunState =
-    { Workflow: PublishWorkflow
-      Name: string
-      Url: string
-      RunId: string
-      Status: RunStatus
-      Conclusion: RunConclusion }
+    {
+        Workflow: PublishWorkflow
+        Name: string
+        Url: string
+        RunId: string
+        Status: RunStatus
+        Conclusion: RunConclusion
+    }
 
 /// The runs of ONE publish workflow that GitHub has for `gitRef`. A TAG name is a
 /// valid ref here: a tag-triggered run reports the tag as its head branch. The
@@ -539,21 +549,25 @@ let private runStatesForWorkflow
 
             if doc.RootElement.ValueKind = System.Text.Json.JsonValueKind.Array then
                 Some
-                    [ for elem in doc.RootElement.EnumerateArray() do
-                          let text (field: string) =
-                              match elem.TryGetProperty(field) with
-                              | true, value when value.ValueKind = System.Text.Json.JsonValueKind.String ->
-                                  value.GetString()
-                              | true, value when value.ValueKind = System.Text.Json.JsonValueKind.Number ->
-                                  value.ToString()
-                              | _ -> ""
+                    [
+                        for elem in doc.RootElement.EnumerateArray() do
+                            let text (field: string) =
+                                match elem.TryGetProperty(field) with
+                                | true, value when value.ValueKind = System.Text.Json.JsonValueKind.String ->
+                                    value.GetString()
+                                | true, value when value.ValueKind = System.Text.Json.JsonValueKind.Number ->
+                                    value.ToString()
+                                | _ -> ""
 
-                          { Workflow = workflow
-                            Name = text "name"
-                            Url = text "url"
-                            RunId = text "databaseId"
-                            Status = RunStatus.ofString (text "status")
-                            Conclusion = RunConclusion.ofString (text "conclusion") } ]
+                            {
+                                Workflow = workflow
+                                Name = text "name"
+                                Url = text "url"
+                                RunId = text "databaseId"
+                                Status = RunStatus.ofString (text "status")
+                                Conclusion = RunConclusion.ofString (text "conclusion")
+                            }
+                    ]
             else
                 None
         with _ ->
@@ -854,10 +868,12 @@ let internal envIntOrDefault (getEnv: string -> string option) (name: string) (f
 /// tag — pushed, and genuinely never picked up — is still reported rather than
 /// waited on forever.
 let tagPushPolicyFromEnv (getEnv: string -> string option) : TagPushPolicy =
-    { PushAttempts = 3
-      PushRetryDelayMs = 3000
-      RunPollIntervalMs = envIntOrDefault getEnv "FSST_RUN_POLL_DELAY_MS" 5000
-      RunPollAttempts = envIntOrDefault getEnv "FSST_RUN_POLL_ATTEMPTS" 121 }
+    {
+        PushAttempts = 3
+        PushRetryDelayMs = 3000
+        RunPollIntervalMs = envIntOrDefault getEnv "FSST_RUN_POLL_DELAY_MS" 5000
+        RunPollAttempts = envIntOrDefault getEnv "FSST_RUN_POLL_ATTEMPTS" 121
+    }
 
 /// The three answers this function can give about ONE tag, and they are three because
 /// the operator's next move differs for each. Only `WorkflowRunFailed` is a
