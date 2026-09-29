@@ -116,7 +116,7 @@ let internal runReleaseWith
     (run: string -> string -> Shell.CommandResult)
     (extractPreviousApi: string -> string -> Api.PreviousApiResult)
     (extractCurrentApi: string -> Api.ApiSignature list)
-    (extractPreviousGrammar: string -> string -> Grammar option)
+    (extractPreviousGrammar: string -> string -> GrammarRead)
     (extractCurrentGrammar: string -> Grammar option)
     (releaseCmd: Release.ReleaseCommand)
     (flags: ReleaseFlag list)
@@ -168,7 +168,7 @@ let private runRelease (releaseCmd: Release.ReleaseCommand) (flags: ReleaseFlag 
         (Shell.runWithGitDir (Vcs.resolveGitDir cwd))
         (Api.extractPreviousFromNuGetResult Shell.run)
         Api.extractFromAssembly
-        Grammar.extractPreviousGrammarFromNuGet
+        Grammar.readPreviousGrammarFromNuGet
         Grammar.extractGrammarFromAssembly
         releaseCmd
         flags
@@ -209,8 +209,15 @@ let internal runCommandWith
         // are CommandTree consumers, so a command/flag rename or arity change — invisible
         // to the assembly-signature diff — is surfaced by check-api too.
         let change =
-            match Grammar.extractGrammarFromAssembly oldDll, Grammar.extractGrammarFromAssembly newDll with
-            | Some oldGrammar, Some newGrammar -> Grammar.foldDiffIntoApi None apiChange oldGrammar newGrammar
+            match Grammar.readGrammar oldDll, Grammar.readGrammar newDll with
+            | GrammarModelled oldGrammar, GrammarModelled newGrammar ->
+                Grammar.foldDiffIntoApi None apiChange oldGrammar newGrammar
+            | oldGrammar, GrammarModelled _ ->
+                Grammar.noGrammarNote oldDll oldGrammar |> Option.iter (printfn "note: %s")
+                apiChange
+            | GrammarModelled _, newGrammar ->
+                Grammar.noGrammarNote newDll newGrammar |> Option.iter (printfn "note: %s")
+                apiChange
             | _ -> apiChange
 
         match change with

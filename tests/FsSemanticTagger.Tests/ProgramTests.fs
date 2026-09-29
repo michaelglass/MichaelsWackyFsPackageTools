@@ -237,6 +237,31 @@ let ``runCommand - CheckApi with Addition returns Ok 1`` () =
     test <@ result = Ok 2 @>
 
 [<Fact>]
+let ``runCommand - CheckApi notes a side whose CLI grammar cannot be modelled`` () =
+    // The test assembly has many candidate root command unions; the tagger has one.
+    let testDll = System.Reflection.Assembly.GetExecutingAssembly().Location
+
+    let tagDll =
+        System.IO.Path.Combine(System.IO.Path.GetDirectoryName(testDll), "FsSemanticTagger.dll")
+
+    let asOld, _ =
+        withCapturedConsole (fun () -> runCommand (CheckApi(testDll, tagDll)))
+
+    let asNew, _ =
+        withCapturedConsole (fun () -> runCommand (CheckApi(tagDll, testDll)))
+
+    let bothModelled, _ =
+        withCapturedConsole (fun () -> runCommand (CheckApi(tagDll, tagDll)))
+
+    let note (dll: string) =
+        sprintf "note: the CLI grammar of %s could not be modelled (it has " dll
+
+    test <@ asOld.Contains(note testDll) @>
+    test <@ asOld.Contains "candidate root command unions" @>
+    test <@ asNew.Contains(note testDll) @>
+    test <@ not (bothModelled.Contains "note:") @>
+
+[<Fact>]
 let ``run - subcommand help request returns Ok 0`` () =
     // Trigger HelpRequested error path via subcommand help
     let result = run [| "extract-api"; "--help" |]
@@ -444,7 +469,7 @@ let ``runReleaseWith - returns Error when config missing`` () =
                 fakeRun
                 fakeExtractPrev
                 fakeExtractCur
-                (fun _ _ -> None)
+                (fun _ _ -> GrammarUnreadable "not cached")
                 (fun _ -> None)
                 Release.Auto
                 []
@@ -556,7 +581,15 @@ let ``runReleaseWith - returns Ok 0 for empty-package config when CI passes`` ()
         let extractCur _ = []
 
         let result =
-            runReleaseWith tmpDir fakeRun extractPrev extractCur (fun _ _ -> None) (fun _ -> None) Release.Auto []
+            runReleaseWith
+                tmpDir
+                fakeRun
+                extractPrev
+                extractCur
+                (fun _ _ -> GrammarUnreadable "not cached")
+                (fun _ -> None)
+                Release.Auto
+                []
 
         test <@ result = Ok 0 @>)
 
@@ -584,7 +617,7 @@ let ``runReleaseWith - returns Ok when config loads (release aborts on uncommitt
                 fakeRun
                 fakeExtractPrev
                 fakeExtractCur
-                (fun _ _ -> None)
+                (fun _ _ -> GrammarUnreadable "not cached")
                 (fun _ -> None)
                 Release.Auto
                 [ Publish ]

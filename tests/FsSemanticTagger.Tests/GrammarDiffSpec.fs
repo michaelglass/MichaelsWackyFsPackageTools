@@ -696,6 +696,23 @@ let ``an assembly with several root command unions is ambiguous => None`` () =
     let dll = typeof<Fixtures.MiniV1>.Assembly.Location
     test <@ Grammar.extractGrammarFromAssembly dll = None @>
 
+    // Read, but not modellable — distinct from a DLL that could not be read — and
+    // the reason names the candidates.
+    test
+        <@
+            match Grammar.readGrammar dll with
+            | GrammarNotModellable reason ->
+                reason.Contains "candidate root command unions ("
+                && reason.Contains typeof<Fixtures.MiniV1>.FullName
+            | GrammarModelled _
+            | GrammarUnreadable _ -> false
+        @>
+
+[<Fact>]
+let ``an assembly that is not a CommandTree consumer is read but not modellable`` () =
+    let nonConsumer = typeof<Map<int, int>>.Assembly.Location
+    test <@ Grammar.readGrammar nonConsumer = GrammarNotModellable "it is not a CommandTree consumer" @>
+
 [<Fact>]
 let ``extractGrammarForType on a non-union type is None`` () =
     let dll = typeof<Fixtures.BuildArgs>.Assembly.Location
@@ -710,13 +727,32 @@ let ``extraction of an unreadable path is None (never throws)`` () =
     test <@ Grammar.extractGrammarFromAssembly bogus = None @>
     test <@ Grammar.extractGrammarForType bogus "Whatever" = None @>
 
+    test
+        <@
+            match Grammar.readGrammar bogus with
+            | GrammarUnreadable reason -> reason.StartsWith("could not load " + bogus + ": ")
+            | GrammarModelled _
+            | GrammarNotModellable _ -> false
+        @>
+
 [<Fact>]
-let ``grammar cache extractors return None for an absent package`` () =
+let ``grammar cache readers report an absent package as unreadable`` () =
     let bogusRoot =
         System.IO.Path.Combine(System.IO.Path.GetTempPath(), "no-such-cache-root")
 
-    test <@ Grammar.extractGrammarFromCacheRoot bogusRoot "FsSemanticTagger" "1.0.0" = None @>
-    test <@ Grammar.extractPreviousGrammarFromNuGet "no-such-package-xyzzy" "9.9.9" = None @>
+    test
+        <@
+            Grammar.readGrammarFromCacheRoot bogusRoot "FsSemanticTagger" "1.0.0" =
+                GrammarUnreadable("FsSemanticTagger 1.0.0 is not in the NuGet cache at " + bogusRoot)
+        @>
+
+    test
+        <@
+            match Grammar.readPreviousGrammarFromNuGet "no-such-package-xyzzy" "9.9.9" with
+            | GrammarUnreadable reason -> reason.Contains "is not in the NuGet cache"
+            | GrammarModelled _
+            | GrammarNotModellable _ -> false
+        @>
 
     // Cache layout present but the package DLL is absent from it => None.
     let emptyRoot =
@@ -726,7 +762,12 @@ let ``grammar cache extractors return None for an absent package`` () =
     |> ignore
 
     try
-        test <@ Grammar.extractGrammarFromCacheRoot emptyRoot "Pkg" "1.0.0" = None @>
+        test
+            <@
+                Grammar.readGrammarFromCacheRoot emptyRoot "Pkg" "1.0.0" =
+                    GrammarUnreadable
+                        "Pkg 1.0.0 is in the NuGet cache but ships no Pkg.dll under lib/, tools/ or analyzers/"
+            @>
     finally
         try
             System.IO.Directory.Delete(emptyRoot, true)
@@ -734,7 +775,7 @@ let ``grammar cache extractors return None for an absent package`` () =
             ()
 
 [<Fact>]
-let ``extractGrammarFromCacheRoot reads a consumer from a cache layout`` () =
+let ``readGrammarFromCacheRoot reads a consumer from a cache layout`` () =
     let binDir =
         System.IO.Path.GetDirectoryName(typeof<FsSemanticTagger.Program.Command>.Assembly.Location)
 
@@ -754,9 +795,9 @@ let ``extractGrammarFromCacheRoot reads a consumer from a cache layout`` () =
             System.IO.File.Copy(dll, System.IO.Path.Combine(pkgLib, System.IO.Path.GetFileName dll), true)
 
         let extracted =
-            Grammar.extractGrammarFromCacheRoot cacheRoot "FsSemanticTagger" "1.0.0"
+            Grammar.readGrammarFromCacheRoot cacheRoot "FsSemanticTagger" "1.0.0"
 
-        test <@ extracted = Some(Fixtures.expectedGrammar<FsSemanticTagger.Program.Command>()) @>
+        test <@ extracted = GrammarModelled(Fixtures.expectedGrammar<FsSemanticTagger.Program.Command>()) @>
     finally
         try
             System.IO.Directory.Delete(cacheRoot, true)
@@ -1095,3 +1136,29 @@ let ``folding a diff prints its caveat as a note, about the subject when there i
     test <@ plain.Trim() = "note: " + note @>
     test <@ aboutPkg.Trim() = "note: Pkg: " + note @>
     test <@ quiet = "" @>
+
+[<Fact>]
+let ``noGrammarNote says why a read gives no grammar, and nothing for a modelled one`` () =
+    test <@ Grammar.noGrammarNote "old.dll" (GrammarModelled { Roots = []; GlobalFlags = [] }) = None @>
+
+    test
+        <@
+            Grammar.noGrammarNote "old.dll" (GrammarUnreadable "gone") =
+                Some "the CLI grammar of old.dll could not be read (gone), so the API diff alone decides the bump"
+        @>
+
+[<Fact>]
+let ``readGrammarFromCacheRoot reports a cached DLL that will not load`` () =
+    Tests.Common.TestHelpers.withTempDir (fun cacheRoot ->
+        let lib = System.IO.Path.Combine(cacheRoot, "pkg", "1.0.0", "lib", "net10.0")
+        System.IO.Directory.CreateDirectory lib |> ignore
+        let dll = System.IO.Path.Combine(lib, "Pkg.dll")
+        System.IO.File.WriteAllText(dll, "not an assembly")
+
+        test
+            <@
+                match Grammar.readGrammarFromCacheRoot cacheRoot "Pkg" "1.0.0" with
+                | GrammarUnreadable reason -> reason.StartsWith("could not load " + dll + ": ")
+                | GrammarModelled _
+                | GrammarNotModellable _ -> false
+            @>)

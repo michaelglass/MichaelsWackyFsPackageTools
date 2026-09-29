@@ -90,6 +90,16 @@ type GrammarChange =
     | GAddition
     | GBreaking
 
+/// What reading an assembly's CLI grammar found.
+type GrammarRead =
+    /// The assembly's realized CLI grammar.
+    | GrammarModelled of Grammar
+    /// The assembly was read, but has no grammar to model: it is not a
+    /// CommandTree consumer, or has no single root command union. Carries why.
+    | GrammarNotModellable of reason: string
+    /// There was no assembly to read, or it would not load. Carries why.
+    | GrammarUnreadable of reason: string
+
 /// A grammar comparison: the verdict, and what the comparison could not see (a
 /// sentence to print beside the verdict), if anything.
 type GrammarDiff =
@@ -712,7 +722,7 @@ module Grammar =
     /// The single root command union of an assembly: a command union not referenced
     /// as a nested group by any other command union. `None` (never a guess) when
     /// there is no such union or the choice is ambiguous.
-    let private findRootCommandUnion (types: Type[]) : Type option =
+    let private findRootCommandUnion (types: Type[]) : Result<Type, string> =
         let commandUnions = types |> Array.filter isCommandUnion |> Array.toList
 
         let referenced =
@@ -722,8 +732,15 @@ module Grammar =
             |> Set.ofList
 
         match commandUnions |> List.filter (fun u -> not (referenced.Contains u.FullName)) with
-        | [ single ] -> Some single
-        | _ -> None
+        | [ single ] -> Ok single
+        | [] -> Error "it has no root command union"
+        | candidates ->
+            Error(
+                sprintf
+                    "it has %d candidate root command unions (%s), so which one is the CLI cannot be told"
+                    candidates.Length
+                    (candidates |> List.map (fun t -> t.FullName) |> String.concat ", ")
+            )
 
     /// Is this assembly a CommandTree consumer? It must reference the CommandTree
     /// assembly AND carry at least one union with a CommandTree attribute on a case.
@@ -1058,41 +1075,88 @@ module Grammar =
         with _ ->
             None
 
-    /// Recover the realized CLI grammar of a CommandTree consumer assembly, or
-    /// `None` when the assembly is not a consumer, has no unambiguous root command
-    /// union, or can't be read. NEVER fabricates a grammar — the API diff still
-    /// governs the bump when this yields `None`.
-    let extractGrammarFromAssembly (dllPath: string) : Grammar option =
+    /// Read the realized CLI grammar of a CommandTree consumer assembly. NEVER
+    /// fabricates a grammar: an assembly that is not a consumer, or has no single
+    /// root command union, is `GrammarNotModellable`, and one that cannot be read
+    /// is `GrammarUnreadable`, each saying why.
+    let readGrammar (dllPath: string) : GrammarRead =
         try
             readAssembly dllPath (fun asm pe ->
                 let types = safeGetTypes asm
 
                 if not (isCommandTreeConsumer asm types) then
-                    None
+                    GrammarNotModellable "it is not a CommandTree consumer"
                 else
-                    findRootCommandUnion types |> Option.map (grammarOf pe asm))
-        with _ ->
-            None
+                    match findRootCommandUnion types with
+                    | Ok root -> GrammarModelled(grammarOf pe asm root)
+                    | Error reason -> GrammarNotModellable reason)
+        with ex ->
+            GrammarUnreadable(sprintf "could not load %s: %s" dllPath ex.Message)
 
-    /// Grammar counterpart of `Api.extractFromCacheRoot`: recover a previously
-    /// published package's grammar from an arbitrary cache root. Looks in exactly
-    /// the same directories the API extractor does (`Api.packageCacheSearch`).
-    let extractGrammarFromCacheRoot (cacheRoot: string) (packageId: string) (version: string) : Grammar option =
+    /// `readGrammar`'s grammar, if it modelled one. The API diff governs the bump
+    /// when this is `None`.
+    let extractGrammarFromAssembly (dllPath: string) : Grammar option =
+        match readGrammar dllPath with
+        | GrammarModelled grammar -> Some grammar
+        | GrammarNotModellable _
+        | GrammarUnreadable _ -> None
+
+    /// Grammar counterpart of `Api.extractFromCacheRoot`: read a previously
+    /// published package's grammar from an arbitrary cache root, looking in exactly
+    /// the directories the API extractor does (`Api.packageCacheSearch`). The first
+    /// assembly that loads decides; a load failure is reported only when none does.
+    let readGrammarFromCacheRoot (cacheRoot: string) (packageId: string) (version: string) : GrammarRead =
         match packageCacheSearch cacheRoot packageId version with
-        | None -> None
+        | None -> GrammarUnreadable(sprintf "%s %s is not in the NuGet cache at %s" packageId version cacheRoot)
         | Some(searchDirs, dllName) ->
-            searchDirs
-            |> List.tryPick (fun dir ->
-                let dllPath = Path.Combine(dir, dllName)
+            let reads =
+                searchDirs
+                |> List.map (fun dir -> Path.Combine(dir, dllName))
+                |> List.filter File.Exists
+                |> List.map readGrammar
 
-                if File.Exists(dllPath) then
-                    extractGrammarFromAssembly dllPath
-                else
-                    None)
+            let loaded =
+                reads
+                |> List.tryFind (function
+                    | GrammarUnreadable _ -> false
+                    | GrammarModelled _
+                    | GrammarNotModellable _ -> true)
+
+            match loaded, reads with
+            | Some read, _ -> read
+            | None, firstFailure :: _ -> firstFailure
+            | None, [] ->
+                GrammarUnreadable(
+                    sprintf
+                        "%s %s is in the NuGet cache but ships no %s under lib/, tools/ or analyzers/"
+                        packageId
+                        version
+                        dllName
+                )
 
     /// Grammar counterpart of `Api.extractPreviousFromNuGet`: read a prior release's
-    /// grammar from the user-local NuGet cache. Cache-only by design — the release
-    /// flow has already downloaded the package while extracting its API, so a miss
-    /// here simply means "no grammar to diff" and the API diff governs the bump.
-    let extractPreviousGrammarFromNuGet (packageId: string) (version: string) : Grammar option =
-        extractGrammarFromCacheRoot (nugetCacheRoot ()) packageId version
+    /// grammar from the user-local NuGet cache. Cache-only: the release flow has
+    /// already downloaded a library while extracting its API; a PackAsTool package
+    /// is never downloaded, so a cold cache reads as `GrammarUnreadable`.
+    let readPreviousGrammarFromNuGet (packageId: string) (version: string) : GrammarRead =
+        readGrammarFromCacheRoot (nugetCacheRoot ()) packageId version
+
+    /// Why `read` of `what` leaves no grammar to diff, as a note to print, or
+    /// `None` when it modelled one.
+    let noGrammarNote (what: string) (read: GrammarRead) : string option =
+        match read with
+        | GrammarModelled _ -> None
+        | GrammarNotModellable reason ->
+            Some(
+                sprintf
+                    "the CLI grammar of %s could not be modelled (%s), so the API diff alone decides the bump"
+                    what
+                    reason
+            )
+        | GrammarUnreadable reason ->
+            Some(
+                sprintf
+                    "the CLI grammar of %s could not be read (%s), so the API diff alone decides the bump"
+                    what
+                    reason
+            )

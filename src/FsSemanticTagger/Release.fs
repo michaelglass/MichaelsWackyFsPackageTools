@@ -34,13 +34,14 @@ type ReleaseInput =
         /// aborts rather than under-bumps.
         ExtractPreviousApi: string -> string -> PreviousApiResult
         ExtractCurrentApi: string -> ApiSignature list
-        /// Recover a prior release's realized CLI grammar by (packageName, version),
+        /// Read a prior release's realized CLI grammar by (packageName, version),
         /// and the current build's grammar by DLL path. When BOTH sides yield a
         /// `Grammar`, the grammar diff is folded into the API diff (stronger bump
         /// wins) before `determineBump`, so a `[<Cmd(Name)>]` rename or a flag arity
-        /// change bumps even though the assembly signature is unchanged. Either seam
-        /// returning `None` leaves the API diff in sole charge of the bump.
-        ExtractPreviousGrammar: string -> string -> Grammar option
+        /// change bumps even though the assembly signature is unchanged. Otherwise
+        /// the API diff is in sole charge of the bump, except for a PackAsTool
+        /// package whose previous release could not be read at all.
+        ExtractPreviousGrammar: string -> string -> GrammarRead
         ExtractCurrentGrammar: string -> Grammar option
         CiPollIntervalMs: int
         /// The budget for a wait on CI, asked for when a wait starts. Production
@@ -1266,13 +1267,26 @@ let private decideBump
                     // independent: the grammar extractor reads a prior release straight
                     // out of the NuGet cache and constructs no PackageReference probe,
                     // so it cannot raise NU1212. Walk the tags newest-first for the
-                    // first whose grammar is readable, mirroring `resolveBaselineApi`.
-                    let previousGrammar =
+                    // first whose package could be read, mirroring `resolveBaselineApi`.
+                    let previousGrammars =
                         sortedTags
-                        |> List.tryPick (fun (_, version) -> input.ExtractPreviousGrammar pkg.Name (format version))
+                        |> Seq.map (fun (_, version) -> version, input.ExtractPreviousGrammar pkg.Name (format version))
+                        |> Seq.cache
+
+                    let previousVersion, previousGrammar =
+                        previousGrammars
+                        |> Seq.tryFind (fun (_, read) ->
+                            match read with
+                            | GrammarUnreadable _ -> false
+                            | GrammarModelled _
+                            | GrammarNotModellable _ -> true)
+                        |> Option.orElseWith (fun () -> Seq.tryHead previousGrammars)
+                        |> Option.defaultValue (currentVersion, GrammarUnreadable "no release tag to read it from")
+
+                    let previousTag = toTag pkg.TagPrefix previousVersion
 
                     match previousGrammar, input.ExtractCurrentGrammar pkg.DllPath with
-                    | Some previousGrammar, Some currentGrammar ->
+                    | GrammarModelled previousGrammar, Some currentGrammar ->
                         // Folded against a `NoChange` API baseline — a tool has no library
                         // API, so the grammar alone decides. Reusing `foldDiffIntoApi` keeps
                         // one translation from GrammarChange to ApiChange, not two.
@@ -1285,9 +1299,38 @@ let private decideBump
                             tag
 
                         ownChangeBump change
-                    | None, Some _ ->
+                    | GrammarNotModellable _, Some _ ->
+                        // The previous release was read, but its CLI has no grammar to
+                        // model (not yet a CommandTree consumer, or no single root
+                        // union). There is nothing to diff the grammar against, so the
+                        // public API decides, as for a library. Its assembly loaded
+                        // from the cache just now, so its API reads from there too.
+                        Grammar.noGrammarNote (sprintf "the previous release %s" previousTag) previousGrammar
+                        |> Option.iter (printfn "note: %s: %s" pkg.Name)
+
+                        match input.ExtractPreviousApi pkg.Name (format previousVersion) with
+                        | Found previousApi ->
+                            printfn
+                                "Bumping %s: own change to a PackAsTool package — public API diffed since %s"
+                                pkg.Name
+                                previousTag
+
+                            ownChangeBump (compare previousApi (input.ExtractCurrentApi pkg.DllPath))
+                        | Unreadable reason
+                        | NotRestorable reason
+                        | FetchError reason ->
+                            Some(
+                                CannotDetermine(
+                                    pkg,
+                                    sprintf
+                                        "the CLI grammar of the previous release %s could not be modelled, and its public API could not be read either (%s). Refusing to guess the version bump — a breaking CLI change would otherwise ship as a patch. Use an explicit alpha/beta/rc/stable command."
+                                        previousTag
+                                        reason
+                                )
+                            )
+                    | GrammarUnreadable reason, Some _ ->
                         // FAIL CLOSED. This package HAS a CLI grammar, but the previous
-                        // release's could not be read — the extractor is cache-only and
+                        // release could not be read — the extractor is cache-only and
                         // this path skips the API download that would have populated the
                         // cache, so a cold cache lands here. Bumping NoChange would
                         // release a possibly-breaking CLI change as a patch, so refuse to
@@ -1297,12 +1340,13 @@ let private decideBump
                             CannotDetermine(
                                 pkg,
                                 sprintf
-                                    "could not read the CLI grammar of the previous release %s: the package is not in the local NuGet cache, and a PackAsTool package is deliberately not API-probed (NU1212), so nothing populates it. Refusing to guess the version bump — a breaking CLI change would otherwise ship as a patch. Fix: restore/populate the cache for %s %s (e.g. `dotnet tool install --tool-path <tmp> %s --version %s`), then re-run; or use an explicit alpha/beta/rc/stable command."
-                                    tag
+                                    "could not read the CLI grammar of the previous release %s: %s. A PackAsTool package is deliberately not API-probed (a PackageReference to a tool fails NU1212), so nothing else puts it in the cache. Refusing to guess the version bump — a breaking CLI change would otherwise ship as a patch. Fix: put %s %s in the NuGet cache (e.g. `dotnet tool install --tool-path <tmp> %s --version %s`), then re-run; or use an explicit alpha/beta/rc/stable command."
+                                    previousTag
+                                    reason
                                     pkg.Name
-                                    tag
+                                    (format previousVersion)
                                     pkg.Name
-                                    tag
+                                    (format previousVersion)
                             )
                         )
                     | _, None ->
@@ -1378,9 +1422,16 @@ let private decideBump
                                 input.ExtractPreviousGrammar pkg.Name (format baselineVersion),
                                 input.ExtractCurrentGrammar pkg.DllPath
                             with
-                            | Some previousGrammar, Some currentGrammar ->
+                            | GrammarModelled previousGrammar, Some currentGrammar ->
                                 Grammar.foldDiffIntoApi (Some pkg.Name) apiChange previousGrammar currentGrammar
-                            | _ -> apiChange
+                            | previousGrammar, Some _ ->
+                                let previousTag = toTag pkg.TagPrefix baselineVersion
+
+                                Grammar.noGrammarNote (sprintf "the previous release %s" previousTag) previousGrammar
+                                |> Option.iter (printfn "note: %s: %s" pkg.Name)
+
+                                apiChange
+                            | _, None -> apiChange
 
                         ownChangeBump change
                 | _ -> explicitBump OwnChange

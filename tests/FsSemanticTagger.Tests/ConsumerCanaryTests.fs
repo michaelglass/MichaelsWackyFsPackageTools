@@ -704,7 +704,7 @@ let private releaseWithVersion (fsprojVersion: string) (dir: string) (canary: Se
                     TargetPackages = []
                     ExtractPreviousApi = fun _ _ -> Api.FetchError "none"
                     ExtractCurrentApi = fun _ -> []
-                    ExtractPreviousGrammar = fun _ _ -> None
+                    ExtractPreviousGrammar = fun _ _ -> GrammarUnreadable "not cached"
                     ExtractCurrentGrammar = fun _ -> None
                     CiPollIntervalMs = 0
                     CiWait = CiWaitTests.fixedCiWait 0 10
