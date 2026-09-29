@@ -55,6 +55,19 @@ type Command =
         runId: string *
         output: string option
 
+/// Flags accepted before or after the command.
+[<RequireQualifiedAccess>]
+type GlobalFlag =
+    | [<CmdFlag(Repeatable = true, Description = "(baseline-lines only) re-baseline only this file's count floor")>] File of
+        name: string
+
+/// Parses argv into the `--file` scope and the command.
+let cliSpec =
+    CommandReflection.fromUnionWithGlobals<Command, GlobalFlag> "Per-file coverage enforcement that only goes up"
+
+let fileScopeOf (globals: GlobalFlag list) : string list =
+    globals |> List.map (fun (GlobalFlag.File name) -> name)
+
 let formatFileResult (r: FileResult) =
     let branchStr =
         if r.File.BranchesTotal > 0 then
@@ -109,13 +122,15 @@ let private reportCountFailures (configPath: string) (failed: CountResult list) 
 
 /// A report with no readable file is a broken run, not a pass.
 let private reportNothingMeasured () =
-    printfn "NOTHING MEASURED: no F# source file appears in the coverage report(s)."
+    printfn "NOTHING MEASURED: no source file the reader reads appears in the coverage report(s)."
     printfn ""
     printfn "This is not a pass. `check` examined zero files, so it has learned nothing"
     printfn "about coverage and cannot certify anything. Exit code 2 says so."
     printfn ""
     printfn "What puts a run here:"
-    printfn "  - --search-dir names a directory whose coverage.cobertura.xml has no F# class"
+    printfn "  - --search-dir names a directory whose coverage.cobertura.xml has no source class"
+    printfn "  - the reader skipped every file (`targets` says why): the report's language is"
+    printfn "    not in \"includedExtensions\", or the paths pass through a tests/ or obj/ directory"
     printfn "  - the test run collected no coverage (collector off, or the run crashed)"
     printfn "  - the report was read while it was still being written"
 
@@ -379,21 +394,10 @@ type CiResult =
     | CiCoverageFailure of artifactDir: string
 
 // Shared/GitDir.fs (linked, also used by FsSemanticTagger): walks up to the repo root.
+// The runner for the `gh` CI queries is built from it (`Shell.runWithGitDir`), so a jj
+// checkout with no colocated `.git` reaches its store without GIT_DIR ever being set
+// on this process.
 let internal resolveGitDir (startDir: string) : string option = Shared.GitDir.resolveGitDir startDir
-
-let private withJjGitDir (f: unit -> 'a) : 'a =
-    let gitDir = resolveGitDir (Directory.GetCurrentDirectory())
-
-    match gitDir with
-    | Some dir -> System.Environment.SetEnvironmentVariable("GIT_DIR", dir)
-    | None -> ()
-
-    try
-        f ()
-    finally
-        match gitDir with
-        | Some _ -> System.Environment.SetEnvironmentVariable("GIT_DIR", null)
-        | None -> ()
 
 let internal pollCi
     (run: string -> string -> CommandResult)
@@ -407,8 +411,7 @@ let internal pollCi
             CiOtherFailure
         else
             let result =
-                withJjGitDir (fun () ->
-                    run "gh" (sprintf "run list --commit %s --json status,conclusion,databaseId" sha))
+                run "gh" (sprintf "run list --commit %s --json status,conclusion,databaseId" sha)
 
             match result with
             | Failure(msg, _) ->
@@ -453,10 +456,7 @@ let internal pollCi
                             let tmpDir = Path.Combine(Path.GetTempPath(), sprintf "coverage-%d" runId)
 
                             let dlResult =
-                                withJjGitDir (fun () ->
-                                    run
-                                        "gh"
-                                        (sprintf "run download %d -n %s -D %s" runId ProposeFromCi.ArtifactName tmpDir))
+                                run "gh" (sprintf "run download %d -n %s -D %s" runId ProposeFromCi.ArtifactName tmpDir)
 
                             match dlResult with
                             | Success _ -> CiCoverageFailure tmpDir
@@ -538,12 +538,19 @@ let internal vcsCommitAndPush (run: string -> string -> CommandResult) (configPa
         mustRun "git" "commit -m \"fix: update coverage thresholds from CI\""
         mustRun "git" "push"
 
-let internal runLoosenFromCi (runShell: string -> string -> CommandResult) (configPath: string) : int =
+/// `runShell` makes and pushes the commits; `runCi` asks `gh` about CI. They are
+/// separate because only the `gh` queries may be pointed at the git store: the
+/// plain-git commit fallback must not be.
+let internal runLoosenFromCi
+    (runShell: string -> string -> CommandResult)
+    (runCi: string -> string -> CommandResult)
+    (configPath: string)
+    : int =
     vcsPush runShell
     let sha = getVcsSha runShell
     printfn "Polling CI for commit %s..." sha
 
-    match pollCi runShell sha 30000 60 with
+    match pollCi runCi sha 30000 60 with
     | CiPassed ->
         printfn "CI passed, no coverage loosening needed."
         0
@@ -650,7 +657,7 @@ let internal runLoosenFromCi (runShell: string -> string -> CommandResult) (conf
             let newSha = getVcsSha runShell
             printfn "Re-polling CI for commit %s..." newSha
 
-            match pollCi runShell newSha 30000 60 with
+            match pollCi runCi newSha 30000 60 with
             | CiPassed ->
                 printfn "CI passed after threshold update."
                 0
@@ -711,14 +718,13 @@ let runScoped
         Merge.refreshBaselines searchDir
         Ok 0
     | ProposeFromCi(runId, output) ->
-        let runInRepo cmd args =
-            withJjGitDir (fun () -> Shell.run cmd args)
+        let cwd = Directory.GetCurrentDirectory()
 
         Ok(
             ProposeFromCi.runProposeFromCi
-                runInRepo
+                (Shell.runWithGitDir (resolveGitDir cwd))
                 (printfn "%s")
-                (Directory.GetCurrentDirectory())
+                cwd
                 defaultConfigPath
                 runId
                 output
@@ -753,7 +759,9 @@ let runScoped
             | ProposeFromCi _ -> None
 
         match coverageFileCmd with
-        | None -> Ok(runLoosenFromCi Shell.run configPath)
+        | None ->
+            let runCi = Shell.runWithGitDir (resolveGitDir (Directory.GetCurrentDirectory()))
+            Ok(runLoosenFromCi Shell.run runCi configPath)
         | Some cmd ->
             // --merge-baselines: layer each report onto its per-project baseline so a
             // partial (impact-filtered) run can't lower the ratchet.
@@ -762,11 +770,11 @@ let runScoped
 
             let xmlPaths = findCoverageFiles searchDir
 
-            if List.isEmpty xmlPaths then
-                Error "No coverage.cobertura.xml found"
-            else
-                let report =
-                    xmlPaths |> List.map File.ReadAllText |> readReports ReaderOptions.defaults
+            match loadReaderOptions configPath with
+            | Error message -> Error message
+            | Ok _ when List.isEmpty xmlPaths -> Error "No coverage.cobertura.xml found"
+            | Ok readerOptions ->
+                let report = xmlPaths |> List.map File.ReadAllText |> readReports readerOptions
 
                 let result = runWithCoverageFiles cmd configPath report
 
@@ -783,19 +791,6 @@ let runScoped
 
 let run (command: Command) (searchDir: string) (mergeBaselines: bool) : Result<int, string> =
     runScoped [] command searchDir mergeBaselines
-
-/// Pull every `--file <name>` out of argv before the command parser sees it. A
-/// trailing `--file` with no value is left in place for the parser to reject.
-let extractFileScope (argv: string array) : string list * string array =
-    let rec loop i files remaining =
-        if i >= argv.Length then
-            List.rev files, Array.ofList (List.rev remaining)
-        elif argv.[i] = "--file" && i + 1 < argv.Length then
-            loop (i + 2) (argv.[i + 1] :: files) remaining
-        else
-            loop (i + 1) files (argv.[i] :: remaining)
-
-    loop 0 [] []
 
 let extractFlags (argv: string array) : string * bool * string array =
     let rec loop i searchDir mergeBaselines remaining =
@@ -815,7 +810,7 @@ let private subcommandExtras (path: string list) : string option =
     | [ "ratchet" ] ->
         Some
             """
-For each F# file under --search-dir, raise [config]'s line+branch
+For each source file under --search-dir, raise [config]'s line+branch
 threshold to the current coverage. Coverage can only go up. Files
 not listed in [config] must hit 100%/100% (which is also the default
 for newly-encountered files).
@@ -823,11 +818,11 @@ for newly-encountered files).
     | [ "check" ] ->
         Some
             """
-Exit 0 = every configured floor was measured, and every F# file in the
+Exit 0 = every configured floor was measured, and every source file in the
          report met its line+branch threshold.
 Exit 1 = at least one MEASURED file fell below a floor.
 Exit 2 = this run cannot answer the question. Either the report holds
-         no F# file at all, or [config] records a floor for a file that
+         no source file at all, or [config] records a floor for a file that
          has no row in the report — so that floor was never checked.
          Neither is a pass, and both used to be reported as one.
 
@@ -889,7 +884,7 @@ can merge results from other platforms back in.
     | [ "targets" ] ->
         Some
             """
-Lists every F# file with line and branch percentages, lowest first.
+Lists every source file with line and branch percentages, lowest first.
 Read-only; never modifies [config]. Use to find what to test next.
 """
     | [ "gaps" ] ->
@@ -963,11 +958,10 @@ Global flags (can appear anywhere):
                         coverage.baseline.xml (max hits per line) so
                         partial test runs cannot lower the ratchet.
                         Bootstraps a baseline on first use.
-  --file <name>         (baseline-lines only; repeatable) re-baseline
-                        only this file's count floor.
 
 Config file format (default: coverage-ratchet.json):
   {
+    "includedExtensions": [".fs"],
     "overrides": {
       "Program.fs": {
         "line": 85.5,
@@ -996,6 +990,9 @@ Config file format (default: coverage-ratchet.json):
     Use an array of entries when coverage differs per platform; a
     platform-less entry serves as fallback.
   - "reason" is free-form prose explaining the floor.
+  - "includedExtensions" is optional and narrows the source languages read
+    (default: .fs, .cs and .vb). Files under a tests/, test/, *.Tests/,
+    *.Test/ or obj/ directory are never read.
 
 Examples:
   coverageratchet                         # ratchet using ./coverage-ratchet.json
@@ -1014,35 +1011,31 @@ let private normalizeHelpFlags (argv: string array) : string array =
 let main argv =
     let argv = normalizeHelpFlags argv
     let searchDir, mergeBaselines, argv = extractFlags argv
-    let fileScope, argv = extractFileScope argv
-
-    let tree =
-        CommandReflection.fromUnion<Command> "Per-file coverage enforcement that only goes up"
+    let tree = cliSpec.Tree
 
     let printHelp (path: string list) =
-        printfn "%s" (CommandTree.helpForPath tree path "coverageratchet")
-
         if List.isEmpty path then
+            printfn "%s" (CommandTree.helpWithGlobals tree cliSpec.GlobalFlags "coverageratchet")
             printfn "%s" rootHelpExtras
         else
+            printfn "%s" (CommandTree.helpForPath tree path "coverageratchet")
+
             match subcommandExtras path with
             | Some extras -> printfn "%s" extras
             | None -> ()
 
-    if Array.isEmpty argv then
-        match runScoped fileScope (Ratchet None) searchDir mergeBaselines with
+    let runOrReport fileScope cmd =
+        match runScoped fileScope cmd searchDir mergeBaselines with
         | Ok exitCode -> exitCode
         | Error msg ->
             eprintfn "Error: %s" msg
             1
+
+    if Array.isEmpty argv then
+        runOrReport [] (Ratchet None)
     else
-        match CommandTree.parse tree argv with
-        | Ok cmd ->
-            match runScoped fileScope cmd searchDir mergeBaselines with
-            | Ok exitCode -> exitCode
-            | Error msg ->
-                eprintfn "Error: %s" msg
-                1
+        match cliSpec.Parse argv with
+        | Ok(globals, cmd) -> runOrReport (fileScopeOf globals) cmd
         | Error(HelpRequested path) ->
             printHelp path
             0

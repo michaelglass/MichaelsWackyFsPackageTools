@@ -1,1 +1,1 @@
-{ "parallelizeAssembly": false, "parallelizeTestCollections": false }
+{ "parallelizeAssembly": false, "parallelizeTestCollections": true }

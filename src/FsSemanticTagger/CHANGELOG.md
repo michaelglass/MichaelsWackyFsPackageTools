@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: `release` no longer sets `GIT_DIR` on its own process while it asks git and `gh` about the remote. A git started elsewhere in the process meanwhile inherited it and failed with `this operation must be run in a work tree`. The git store now goes to each `git` and `gh` process the release starts, through the new `Shell.runWithGitDir`; in a jj checkout without a colocated `.git` that includes the local git fallbacks, which before could only answer `not a git repository`.
+
 ## 0.14.0-alpha.18 - 2026-09-29
 
 - fix: JSON the tool writes (its config and the consumer-canary config) uses `\n` line endings on every platform, not `\r\n` on Windows.

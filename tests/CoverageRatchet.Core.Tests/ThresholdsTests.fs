@@ -3,6 +3,7 @@ module CoverageRatchet.Core.Tests.ThresholdsTests
 open System.IO
 open Xunit
 open Swensen.Unquote
+open CoverageRatchet.Cobertura
 open CoverageRatchet.Thresholds
 open CoverageRatchet.Core.Tests.TestHelpers
 
@@ -916,3 +917,96 @@ let ``overrideEntriesToJson - renders entries the way the config writer does`` (
             overrideEntriesToJson tagged =
                 "[\n  {\n    \"line\": 90,\n    \"branch\": 80,\n    \"reason\": \"why — on linux\",\n    \"platform\": \"linux\"\n  }\n]"
         @>
+
+// --- reader options from the floor file ---
+
+let private withConfigText (text: string option) (action: string -> unit) =
+    let path = Path.GetTempFileName()
+
+    try
+        match text with
+        | Some t -> File.WriteAllText(path, t)
+        | None -> File.Delete(path)
+
+        action path
+    finally
+        File.Delete(path)
+
+let private readerOptionsFrom (text: string) =
+    let mutable result = Error "not run"
+
+    withConfigText (Some text) (fun path ->
+        result <- loadReaderOptions path |> Result.mapError (fun e -> e.Replace(path, "<config>")))
+
+    result
+
+[<Fact>]
+let ``loadReaderOptions - a missing file reads every source language`` () =
+    withConfigText None (fun path -> test <@ loadReaderOptions path = Ok ReaderOptions.defaults @>)
+
+[<Fact>]
+let ``loadReaderOptions - a file without includedExtensions reads every source language`` () =
+    test <@ readerOptionsFrom """{ "overrides": {} }""" = Ok ReaderOptions.defaults @>
+    test <@ readerOptionsFrom "{}" = Ok ReaderOptions.defaults @>
+    test <@ readerOptionsFrom "" = Ok ReaderOptions.defaults @>
+
+[<Fact>]
+let ``loadReaderOptions - includedExtensions narrows the languages read`` () =
+    test
+        <@
+            readerOptionsFrom """{ "includedExtensions": [".fs"], "overrides": {} }""" =
+                Ok
+                    { ReaderOptions.defaults with
+                        IncludedExtensions = [| ".fs" |]
+                    }
+        @>
+
+[<Fact>]
+let ``loadReaderOptions - an invalid list names the file and the key`` () =
+    test
+        <@
+            readerOptionsFrom """{ "includedExtensions": [] }""" =
+                Error "<config>: \"includedExtensions\": the extension list is empty; name one or more of .fs, .cs, .vb"
+        @>
+
+    test
+        <@
+            readerOptionsFrom """{ "includedExtensions": ["fs"] }""" =
+                Error "<config>: \"includedExtensions\": \"fs\" must start with \".\" (e.g. \".fs\")"
+        @>
+
+    test
+        <@
+            readerOptionsFrom """{ "includedExtensions": [".razor"] }""" =
+                Error
+                    "<config>: \"includedExtensions\": \".razor\" is not a source extension the reader measures; name one or more of .fs, .cs, .vb"
+        @>
+
+[<Fact>]
+let ``loadReaderOptions - includedExtensions must be a list of strings`` () =
+    let expected: Result<ReaderOptions, string> =
+        Error "<config>: \"includedExtensions\" must be a list of extensions, e.g. [\".fs\"]"
+
+    test <@ readerOptionsFrom """{ "includedExtensions": ".fs" }""" = expected @>
+    test <@ readerOptionsFrom """{ "includedExtensions": [".fs", 1] }""" = expected @>
+    test <@ readerOptionsFrom """{ "includedExtensions": null }""" = expected @>
+
+[<Fact>]
+let ``saveRawConfig - keeps includedExtensions`` () =
+    withConfigText (Some """{ "includedExtensions": [".fs"], "overrides": {} }""") (fun path ->
+        let raw = loadRawConfig path
+
+        saveRawConfig
+            path
+            { raw with
+                RawOverrides = Map.ofList [ "Foo.fs", [ percentageFloor 90.0 80.0 ] ]
+            }
+
+        test
+            <@
+                loadReaderOptions path =
+                    Ok
+                        { ReaderOptions.defaults with
+                            IncludedExtensions = [| ".fs" |]
+                        }
+            @>)

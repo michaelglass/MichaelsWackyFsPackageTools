@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- feat!: **every `.fs`, `.cs` and `.vb` file in the report is measured, and test code is recognised by its directory, not its name.** Files under a `tests`, `test`, `*.Tests`, `*.Test` or `obj` directory are skipped; the rule that skipped any file whose name contained `Test` is gone, so a production `TestKit.fs` is now measured. Expect more files in `check`: each C#/VB file, and each F# file with `Test` in its name, must reach 100%/100% unless it has a floor; `loosen` records floors at their current coverage, or `includedExtensions` narrows the languages. A checkout that itself sits under a directory named `tests` reads nothing, and `check` exits 2.
+- feat: `"includedExtensions": [".fs"]` in the config narrows the languages read. An empty list, an extension without its leading `.`, or one outside `.fs`/`.cs`/`.vb` is an error naming the config file, before any report is read.
+- fix: `--file` is now parsed by CommandTree as a repeatable global flag, so `--help` lists it under Global options (with the short form `-f` and `--file=<name>`). A `--file` with no value is now rejected with `Flag '--file' requires a value`; before, it was silently read as the config path.
+- fix: `loosen-from-ci` and `propose-from-ci` no longer set `GIT_DIR` on their own process for their `gh` queries. Each `gh` process gets it through the new `Shell.runWithGitDir`; the plain-git commit fallback of `loosen-from-ci` still runs without it.
+
 ## 0.15.0-alpha.18 - 2026-09-29
 
 - fix: `ratchet`, `loosen` and the other config-writing commands keep `\n` line endings on Windows instead of rewriting the whole file with `\r\n`.

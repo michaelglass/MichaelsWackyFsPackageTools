@@ -120,21 +120,22 @@ let internal nuspecClosureDirsFor (cacheRoot: string) (dllPath: string) : string
             walk rootPkgDir
             List.ofSeq dirs
 
-let private getDotnetRoot (runtimeDir: string) =
-    let envRoot = Environment.GetEnvironmentVariable("DOTNET_ROOT")
-
-    if not (String.IsNullOrEmpty(envRoot)) then
-        envRoot
-    else
+let private getDotnetRoot (dotnetRootVar: string option) (runtimeDir: string) =
+    match dotnetRootVar with
+    | Some envRoot when envRoot <> "" -> envRoot
+    | _ ->
         let runtimeParent = Path.GetDirectoryName(runtimeDir)
         // runtime dir is like <dotnet>/shared/Microsoft.NETCore.App/10.0.0/
         // go up 3 levels to dotnet root
         Path.GetDirectoryName(Path.GetDirectoryName(runtimeParent))
 
-let getAssemblySearchPaths (dllPath: string) : string list =
+/// `getAssemblySearchPaths` with the DOTNET_ROOT value passed in rather than read
+/// from this process's environment, so a test can vary it without changing the
+/// environment every concurrently started `dotnet` inherits.
+let internal assemblySearchPathsFor (dotnetRootVar: string option) (dllPath: string) : string list =
     let dllDir = Path.GetDirectoryName(Path.GetFullPath(dllPath))
     let runtimeDir = RuntimeEnvironment.GetRuntimeDirectory()
-    let dotnetRoot = getDotnetRoot runtimeDir
+    let dotnetRoot = getDotnetRoot dotnetRootVar runtimeDir
 
     let sdkDirs =
         let sdkBase = Path.Combine(dotnetRoot, "sdk")
@@ -219,6 +220,9 @@ let getAssemblySearchPaths (dllPath: string) : string list =
     @ nugetDirs
     @ depsJsonDirs
     @ nuspecClosureDirs
+
+let getAssemblySearchPaths (dllPath: string) : string list =
+    assemblySearchPathsFor (Option.ofObj (Environment.GetEnvironmentVariable "DOTNET_ROOT")) dllPath
 
 let createResolver (dllPath: string) : MetadataAssemblyResolver =
     let searchPaths = getAssemblySearchPaths dllPath

@@ -91,7 +91,7 @@ let ``parseXml - multiple classes for same file dedup lines by number`` () =
     test <@ Math.Round(result.[0].LinePct, 1) = 66.7 @>
 
 [<Fact>]
-let ``parseXml - only fs files included`` () =
+let ``parseXml - source files included, others not`` () =
     let xml =
         """<?xml version="1.0" encoding="utf-8"?>
         <coverage>
@@ -120,24 +120,23 @@ let ``parseXml - only fs files included`` () =
 
     let result = parseXml xml
 
-    test <@ result.Length = 1 @>
-    test <@ result.[0].FileName = "Foo.fs" @>
+    test <@ result |> List.map (fun f -> f.FileName) |> List.sort = [ "Bar.cs"; "Foo.fs" ] @>
 
 [<Fact>]
-let ``parseXml - exclude Test AssemblyInfo AssemblyAttributes`` () =
+let ``parseXml - excludes test projects and generated obj sources`` () =
     let xml =
         """<?xml version="1.0" encoding="utf-8"?>
         <coverage>
           <packages>
             <package>
               <classes>
-                <class filename="/src/MyTest.fs">
+                <class filename="/repo/tests/MyLib.Tests/MyTest.fs">
                   <lines><line number="1" hits="1" /></lines>
                 </class>
-                <class filename="/src/AssemblyInfo.fs">
+                <class filename="/src/obj/Release/net10.0/MyLib.AssemblyInfo.fs">
                   <lines><line number="1" hits="1" /></lines>
                 </class>
-                <class filename="/src/AssemblyAttributes.fs">
+                <class filename="/src/obj/Release/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.fs">
                   <lines><line number="1" hits="1" /></lines>
                 </class>
                 <class filename="/src/Real.fs">
@@ -187,7 +186,7 @@ let ``parseXml - excludes vendor paths (paket-files, vendor, node_modules, .fabl
     test <@ result.[0].FileName = "MyCode.fs" @>
 
 [<Fact>]
-let ``parseXml - excludes by filename not directory path`` () =
+let ``parseXml - excludes by directory, not by file name`` () =
     let xml =
         """<?xml version="1.0" encoding="utf-8"?>
         <coverage>
@@ -195,6 +194,9 @@ let ``parseXml - excludes by filename not directory path`` () =
             <package>
               <classes>
                 <class filename="/src/TestPrune/Analyzer.fs">
+                  <lines><line number="1" hits="1" /></lines>
+                </class>
+                <class filename="/src/TestPrune/TestKit.fs">
                   <lines><line number="1" hits="1" /></lines>
                 </class>
                 <class filename="/src/TestPrune/Tests/MyTest.fs">
@@ -207,8 +209,7 @@ let ``parseXml - excludes by filename not directory path`` () =
 
     let result = parseXml xml
 
-    test <@ result.Length = 1 @>
-    test <@ result.[0].FileName = "Analyzer.fs" @>
+    test <@ result |> List.map (fun f -> f.FileName) = [ "Analyzer.fs"; "TestKit.fs" ] @>
 
 [<Fact>]
 let ``parseXml - no branches means 100 percent branch coverage`` () =
@@ -1054,7 +1055,6 @@ let ``parseXml - line dedup first miss then hit counts as hit`` () =
 
 [<Fact>]
 let ``ExclusionReason.describe - names the value that matched`` () =
-    test <@ ExclusionReason.describe (ExcludedByExtension ".cs") = "extension \".cs\" is not read" @>
+    test <@ ExclusionReason.describe (ExcludedByExtension ".js") = "extension \".js\" is not read" @>
     test <@ ExclusionReason.describe (ExcludedByExtension "") = "has no extension" @>
-    test <@ ExclusionReason.describe (ExcludedByFileName "Test") = "name contains \"Test\"" @>
-    test <@ ExclusionReason.describe (ExcludedByPath "vendor") = "under a \"vendor\" path segment" @>
+    test <@ ExclusionReason.describe (ExcludedByDirectory(Named "vendor")) = "in a directory named \"vendor\"" @>
