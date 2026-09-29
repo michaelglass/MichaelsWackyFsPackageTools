@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix: **reading a DLL no longer lists every DLL of the .NET installation.** The resolver found a DLL's references in a list of every DLL on its search paths, including every SDK and shared-framework version, built once per process. On a cold GitHub Windows runner that listing ran past 10s, so whichever read came first stalled (two tests were cancelled at their 10s budget). The resolver now probes each search path for `<name>.dll` only when a reference asks for it, in the same order, and applies `PathAssemblyResolver`'s public-key-token rule. The .NET installation's directories are still listed once per process.
 - fix: **every package in the release plan has one line saying why it is there.** A library bumped by its own change printed none, so FsHotWatch.Coverage, whose only change was a CoverageRatchet.Core bump and a CHANGELOG entry, appeared in the plan unexplained. Neither did a bump when no prior release reached the feed, an explicit `alpha`/`beta`/`rc`/`stable` bump of a changed package or of a first release, nor a resumed release whose `<Version>` was bumped but never tagged. They now print, for example:
   - `Bumping FsHotWatch.Coverage: own change since coverage-v0.1.0-alpha.5 — public API diffed: no public API change` (or `… against <tag>, the newest published release: an addition (…)` after skipping orphan tags)
   - `Bumping MyLib: own change since v1.0.0; `alpha` requested`

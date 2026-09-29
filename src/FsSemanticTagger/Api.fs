@@ -360,34 +360,45 @@ let internal assemblySearchPathsFor (dotnetRootVar: string option) (dllPath: str
 let getAssemblySearchPaths (dllPath: string) : string list =
     (assemblySearchPathsFor (dotnetRootFromEnvironment ()) dllPath).All
 
-/// The DLLs directly in `dir`, or none when it does not exist.
-let private dllsIn (dir: string) : string list =
-    if Directory.Exists(dir) then
-        Directory.GetFiles(dir, "*.dll") |> Array.toList
-    else
-        []
+/// The first `<name>.dll` in `searchDirs`, in their order.
+let internal firstDllNamed (searchDirs: string list) (name: string) : string option =
+    searchDirs
+    |> List.map (fun dir -> Path.Combine(dir, name + ".dll"))
+    |> List.tryFind File.Exists
 
-/// `dllsIn` for a directory of the .NET installation, listed once per process.
-/// Listing the installed runtimes is most of the cost of a resolver: thousands of
-/// files on a machine with several SDKs and frameworks, which took a GitHub Windows
-/// runner about 9s cold. The other directories are listed afresh every time.
-let private installedDllsIn = oncePerProcess dllsIn
+/// Does an assembly with public key token `candidate` satisfy a reference asking
+/// for `wanted`? `PathAssemblyResolver`'s rule: the tokens match, or the reference
+/// names none.
+let internal satisfiesReference (wanted: byte[] option) (candidate: byte[] option) : bool =
+    let token = Option.defaultValue [||]
+    Array.isEmpty (token wanted) || token wanted = token candidate
 
-/// The DLLs a resolver for `dllPath` offers, from the search paths in priority
-/// order; the first occurrence of a file name wins.
-let internal resolverDllsFor (dotnetRootVar: string option) (dllPath: string) : string list =
-    let paths = assemblySearchPathsFor dotnetRootVar dllPath
+/// Resolves a reference to the first `<name>.dll` on the search paths, in priority
+/// order: the dll's own directory, the .NET installation, then the package
+/// directories. It probes for the one name a reference asks for rather than listing
+/// every DLL on every path up front, as `PathAssemblyResolver` needs: listing the
+/// .NET installation (every SDK and shared framework) ran past 10s on a cold GitHub
+/// Windows runner, inside a single test's time budget.
+type internal ProbingAssemblyResolver(searchDirs: string list) =
+    inherit MetadataAssemblyResolver()
 
-    let seen =
-        System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    override _.Resolve(context: MetadataLoadContext, assemblyName: AssemblyName) : Assembly =
+        match firstDllNamed searchDirs assemblyName.Name with
+        | None -> null
+        | Some path ->
+            let candidate = context.LoadFromAssemblyPath path
 
-    dllsIn paths.DllDir
-    @ List.collect installedDllsIn paths.Installation
-    @ List.collect dllsIn paths.Packages
-    |> List.filter (fun path -> seen.Add(Path.GetFileName(path)))
+            if
+                satisfiesReference
+                    (Option.ofObj (assemblyName.GetPublicKeyToken()))
+                    (Option.ofObj (candidate.GetName().GetPublicKeyToken()))
+            then
+                candidate
+            else
+                null
 
 let createResolver (dllPath: string) : MetadataAssemblyResolver =
-    PathAssemblyResolver(resolverDllsFor (dotnetRootFromEnvironment ()) dllPath)
+    ProbingAssemblyResolver(getAssemblySearchPaths dllPath)
 
 /// Render a type as a comparison key, handling generics and arrays. A type is
 /// identified by its **assembly name + full name**, not its short name: a member

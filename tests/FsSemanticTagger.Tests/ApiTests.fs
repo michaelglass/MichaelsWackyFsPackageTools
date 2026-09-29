@@ -1283,7 +1283,7 @@ let ``readNuGetCache returns NotCached for nonexistent version of real package``
     test <@ (Extraction.readNuGetCache "FSharp.Core" "0.0.0-nonexistent").Api = NotCached @>
 
 [<Fact>]
-let ``createResolver returns a PathAssemblyResolver`` () =
+let ``createResolver's resolver loads a DLL and its references`` () =
     let dllPath = taggerDll
 
     let resolver = createResolver dllPath
@@ -1366,32 +1366,32 @@ let ``getAssemblySearchPaths searches the SDK FSharp dirs and shared frameworks 
         test <@ not (paths.All |> List.exists (fun p -> p.StartsWith noFsharpSdk)) @>)
 
 [<Fact>]
-let ``resolverDllsFor lists the .NET installation once per process and the package dir every time`` () =
+let ``the .NET installation's directories are listed once per process, a package's DLLs on every lookup`` () =
     TestHelpers.withTempDir (fun tmp ->
         let dotnetRoot = System.IO.Path.Combine(tmp, "dotnet")
         let framework = System.IO.Path.Combine(dotnetRoot, "shared", "Fake.App", "1.0.0")
         let packageDir = System.IO.Path.Combine(tmp, "pkg")
         System.IO.Directory.CreateDirectory framework |> ignore
         System.IO.Directory.CreateDirectory packageDir |> ignore
+        let dll = System.IO.Path.Combine(packageDir, "Pkg.dll")
+        System.IO.File.WriteAllText(dll, "")
 
-        let touch (dir: string) (name: string) =
-            let path = System.IO.Path.Combine(dir, name)
-            System.IO.File.WriteAllText(path, "")
-            path
+        let first = assemblySearchPathsFor (Some dotnetRoot) dll
 
-        let frameworkDll = touch framework "FakeFramework.dll"
-        let dll = touch packageDir "Pkg.dll"
+        let laterFramework =
+            System.IO.Path.Combine(dotnetRoot, "shared", "Fake.App", "2.0.0")
 
-        let first = resolverDllsFor (Some dotnetRoot) dll
-        let addedToFramework = touch framework "AddedLater.dll"
-        let addedToPackage = touch packageDir "AddedDependency.dll"
-        let second = resolverDllsFor (Some dotnetRoot) dll
+        System.IO.Directory.CreateDirectory laterFramework |> ignore
+        let second = assemblySearchPathsFor (Some dotnetRoot) dll
 
-        test <@ first |> List.contains frameworkDll @>
-        test <@ second |> List.contains frameworkDll @>
-        test <@ not (second |> List.contains addedToFramework) @>
-        test <@ not (first |> List.contains addedToPackage) @>
-        test <@ second |> List.contains addedToPackage @>)
+        test <@ first.Installation |> List.contains framework @>
+        test <@ not (second.Installation |> List.contains laterFramework) @>
+
+        // A restore can add a dependency mid-run; the next lookup finds it.
+        test <@ firstDllNamed second.All "AddedDependency" = None @>
+        let added = System.IO.Path.Combine(packageDir, "AddedDependency.dll")
+        System.IO.File.WriteAllText(added, "")
+        test <@ firstDllNamed second.All "AddedDependency" = Some added @>)
 
 [<Fact>]
 let ``oncePerProcess forgets a computation that threw, so the next call retries`` () =
@@ -1409,22 +1409,45 @@ let ``oncePerProcess forgets a computation that threw, so the next call retries`
     test <@ calls.Value = 2 @>
 
 [<Fact>]
-let ``resolverDllsFor keeps the first dll of each name, in search-path order`` () =
+let ``firstDllNamed takes the first dll of that name, in search-path order`` () =
     TestHelpers.withTempDir (fun tmp ->
-        let dotnetRoot = System.IO.Path.Combine(tmp, "dotnet")
-        let framework = System.IO.Path.Combine(dotnetRoot, "shared", "Fake.App", "1.0.0")
-        let packageDir = System.IO.Path.Combine(tmp, "pkg")
-        System.IO.Directory.CreateDirectory framework |> ignore
-        System.IO.Directory.CreateDirectory packageDir |> ignore
-        let packageCopy = System.IO.Path.Combine(packageDir, "Shared.dll")
-        let frameworkCopy = System.IO.Path.Combine(framework, "Shared.dll")
-        System.IO.File.WriteAllText(packageCopy, "")
+        let dirs =
+            [ "own"; "framework"; "package" ]
+            |> List.map (fun name -> System.IO.Path.Combine(tmp, name))
+
+        for dir in dirs do
+            System.IO.Directory.CreateDirectory dir |> ignore
+
+        let frameworkCopy = System.IO.Path.Combine(dirs[1], "Shared.dll")
         System.IO.File.WriteAllText(frameworkCopy, "")
+        System.IO.File.WriteAllText(System.IO.Path.Combine(dirs[2], "Shared.dll"), "")
 
-        let dlls = resolverDllsFor (Some dotnetRoot) packageCopy
+        test <@ firstDllNamed dirs "Shared" = Some frameworkCopy @>
+        test <@ firstDllNamed dirs "Missing" = None @>)
 
-        test <@ dlls |> List.contains packageCopy @>
-        test <@ not (dlls |> List.contains frameworkCopy) @>)
+[<Fact>]
+let ``a reference is satisfied by a matching public key token, or by any when it names none`` () =
+    let token = Some [| 1uy; 2uy |]
+    test <@ satisfiesReference token token @>
+    test <@ satisfiesReference None token @>
+    test <@ satisfiesReference (Some [||]) None @>
+    test <@ not (satisfiesReference token None) @>
+    test <@ not (satisfiesReference token (Some [| 3uy |])) @>
+
+[<Fact>]
+let ``the probing resolver refuses a dll whose public key token the reference does not match`` () =
+    TestHelpers.withTempDir (fun dir ->
+        // An unsigned assembly in a file named for FSharp.Core, which is signed.
+        System.IO.File.Copy(taggerDll, System.IO.Path.Combine(dir, "FSharp.Core.dll"))
+        let resolver = ProbingAssemblyResolver [ dir ]
+        use context = new System.Reflection.MetadataLoadContext(createResolver taggerDll)
+
+        let resolve (name: string) =
+            resolver.Resolve(context, System.Reflection.AssemblyName name)
+
+        test <@ isNull (resolve "FSharp.Core, PublicKeyToken=b03f5f7f11d50a3a") @>
+        test <@ isNull (resolve "NotThere") @>
+        test <@ not (isNull (resolve "FSharp.Core")) @>)
 
 [<Fact>]
 let ``getAssemblySearchPaths returns dllDir when dll has no deps.json`` () =
