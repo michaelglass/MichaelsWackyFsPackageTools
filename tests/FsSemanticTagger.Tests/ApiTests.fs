@@ -3,6 +3,7 @@ module FsSemanticTagger.Tests.ApiTests
 open Xunit
 open Tests.Common
 open Swensen.Unquote
+open FsSemanticTagger
 open FsSemanticTagger.Api
 
 /// The tool's own compiled DLL, a fixture for reading a real assembly.
@@ -445,10 +446,10 @@ let ``extractFromAssembly reads union cases through the metadata load context`` 
         @>
 
 [<Fact>]
-let ``extractFromNuGetCache returns NotCached for nonexistent package`` () =
-    test <@ extractFromNuGetCache "ThisPackageDoesNotExist12345" "1.0.0" = NotCached @>
+let ``readNuGetCache returns NotCached for nonexistent package`` () =
+    test <@ (Extraction.readNuGetCache "ThisPackageDoesNotExist12345" "1.0.0").Api = NotCached @>
 
-// downloadToCache / extractPreviousFromNuGet — the prior-API fetch path.
+// downloadToCache / Extraction.readPrevious — the prior-API fetch path.
 // These guard the bug where a missing prior package silently became "no change".
 
 [<Fact>]
@@ -785,24 +786,32 @@ let ``probeRestoreArgs omits --configfile when no repo nuget.config`` () =
     let args = probeRestoreArgs None "/tmp/probe.csproj"
     test <@ args = "restore \"/tmp/probe.csproj\"" @>
 
+/// The previous release's API when it could be read, else None.
+let private previousApi run (packageId: string) (version: string) : ApiSignature list option =
+    match (Extraction.readPrevious run packageId version).Api with
+    | Found api -> Some api
+    | Unreadable _
+    | NotRestorable _
+    | FetchError _ -> None
+
 [<Fact>]
-let ``extractPreviousFromNuGet returns None when uncached and download fails`` () =
+let ``readPrevious API returns None when uncached and download fails`` () =
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         FsSemanticTagger.Shell.Failure("restore failed", 1)
 
-    test <@ extractPreviousFromNuGet fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = None @>
+    test <@ previousApi fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = None @>
 
 [<Fact>]
-let ``extractPreviousFromNuGet returns None when download succeeds but package still absent`` () =
+let ``readPrevious API returns None when download succeeds but package still absent`` () =
     // Restore "succeeds" but our fake doesn't actually place the package in the cache,
     // so the re-check still finds nothing — must stay None, never fabricate an API.
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         FsSemanticTagger.Shell.Success ""
 
-    test <@ extractPreviousFromNuGet fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = None @>
+    test <@ previousApi fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = None @>
 
 [<Fact>]
-let ``extractPreviousFromNuGet returns cached API without downloading when already present`` () =
+let ``readPrevious API returns cached API without downloading when already present`` () =
     // FSharp.Core is always in the cache (it's a build dependency). Find a version
     // whose lib/ contains the dll, then assert the cache hit short-circuits download.
     let home =
@@ -822,7 +831,7 @@ let ``extractPreviousFromNuGet returns cached API without downloading when alrea
         downloadAttempted <- true
         FsSemanticTagger.Shell.Failure("should not be called on a cache hit", 1)
 
-    let result = extractPreviousFromNuGet fakeRun "FSharp.Core" cachedVersion
+    let result = previousApi fakeRun "FSharp.Core" cachedVersion
     test <@ Option.isSome result @>
     test <@ not downloadAttempted @>
 
@@ -857,33 +866,33 @@ let ``classifyRestoreFailure - NU1301 service-index 404 is FetchError not NotRes
     test <@ classifyRestoreFailure msg = FetchError msg @>
 
 [<Fact>]
-let ``extractPreviousFromNuGetResult - NotRestorable when uncached and restore reports package absent`` () =
+let ``readPrevious - NotRestorable when uncached and restore reports package absent`` () =
     let msg = "error NU1101: Unable to find package ThisPackageDoesNotExist12345"
 
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         FsSemanticTagger.Shell.Failure(msg, 1)
 
-    test <@ extractPreviousFromNuGetResult fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = NotRestorable msg @>
+    test <@ (Extraction.readPrevious fakeRun "ThisPackageDoesNotExist12345" "9.9.9").Api = NotRestorable msg @>
 
 [<Fact>]
-let ``extractPreviousFromNuGetResult - FetchError when restore succeeds but the package is still not cached`` () =
+let ``readPrevious - FetchError when restore succeeds but the package is still not cached`` () =
     // Restore said yes, yet nothing is where we read from (e.g. a relocated global
     // packages folder). That is not knowledge of absence: it must abort, not walk back.
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         FsSemanticTagger.Shell.Success ""
 
-    match extractPreviousFromNuGetResult fakeRun "ThisPackageDoesNotExist12345" "9.9.9" with
+    match (Extraction.readPrevious fakeRun "ThisPackageDoesNotExist12345" "9.9.9").Api with
     | FetchError reason -> test <@ reason.Contains("restore succeeded") @>
     | other -> failwithf "Expected FetchError, got %A" other
 
 [<Fact>]
-let ``extractPreviousFromNuGetResult - FetchError when uncached and feed unreachable`` () =
+let ``readPrevious - FetchError when uncached and feed unreachable`` () =
     let msg = "Unable to load the service index ... connection timed out"
 
     let fakeRun (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         FsSemanticTagger.Shell.Failure(msg, 1)
 
-    test <@ extractPreviousFromNuGetResult fakeRun "ThisPackageDoesNotExist12345" "9.9.9" = FetchError msg @>
+    test <@ (Extraction.readPrevious fakeRun "ThisPackageDoesNotExist12345" "9.9.9").Api = FetchError msg @>
 
 // ApiChange.toList
 
@@ -909,7 +918,7 @@ let ``ApiChange.toList single item Breaking`` () =
     test <@ ApiChange.toList change = [ ApiSignature.Marker "a" ] @>
 
 [<Fact>]
-let ``extractFromCacheRoot returns signatures for cached tool package`` () =
+let ``readCacheRoot returns signatures for cached tool package`` () =
     // Build a fake NuGet cache layout mimicking a dotnet tool:
     //   <root>/fakepkg/1.0.0/tools/net10.0/any/FakePkg.dll
     // Reuse the compiled test assembly as the DLL payload so the test has no
@@ -933,14 +942,14 @@ let ``extractFromCacheRoot returns signatures for cached tool package`` () =
             System.IO.File.Copy(dep, System.IO.Path.Combine(toolsDir, destName), true)
 
     try
-        match extractFromCacheRoot cacheRoot "FakePkg" "1.0.0" with
+        match (Extraction.readCacheRoot cacheRoot "FakePkg" "1.0.0").Api with
         | CachedRead sigs -> test <@ sigs.Length > 0 @>
         | other -> failwithf "Expected signatures from fixture cache, got %A" other
     finally
         System.IO.Directory.Delete(cacheRoot, true)
 
 [<Fact>]
-let ``extractFromCacheRoot finds an analyzer-packaged assembly under analyzers-dotnet-fs`` () =
+let ``readCacheRoot finds an analyzer-packaged assembly under analyzers-dotnet-fs`` () =
     // An FSharp.Analyzers.SDK analyzer package (IncludeBuildOutput=false,
     // DevelopmentDependency=true) ships its assembly under analyzers/dotnet/fs/<id>.dll
     // with NO lib/ folder. A resolver that searches only lib/ and tools/ never finds
@@ -964,7 +973,7 @@ let ``extractFromCacheRoot finds an analyzer-packaged assembly under analyzers-d
             System.IO.File.Copy(dep, System.IO.Path.Combine(analyzerDir, destName), true)
 
     try
-        match extractFromCacheRoot cacheRoot "FakeAnalyzer" "1.0.0" with
+        match (Extraction.readCacheRoot cacheRoot "FakeAnalyzer" "1.0.0").Api with
         | CachedRead sigs -> test <@ sigs.Length > 0 @>
         | other ->
             failwithf "Expected signatures from analyzer-packaged fixture cache (analyzers/dotnet/fs), got %A" other
@@ -972,7 +981,7 @@ let ``extractFromCacheRoot finds an analyzer-packaged assembly under analyzers-d
         System.IO.Directory.Delete(cacheRoot, true)
 
 [<Fact>]
-let ``extractFromCacheRoot still finds a lib-packaged assembly (lib layout unchanged)`` () =
+let ``readCacheRoot still finds a lib-packaged assembly (lib layout unchanged)`` () =
     // Regression guard: adding the analyzers/ search path must not disturb the
     // classic library layout <root>/<id>/<ver>/lib/<tfm>/<id>.dll.
     let srcDll = taggerDll
@@ -992,14 +1001,14 @@ let ``extractFromCacheRoot still finds a lib-packaged assembly (lib layout uncha
             System.IO.File.Copy(dep, System.IO.Path.Combine(libDir, destName), true)
 
     try
-        match extractFromCacheRoot cacheRoot "FakeLib" "1.0.0" with
+        match (Extraction.readCacheRoot cacheRoot "FakeLib" "1.0.0").Api with
         | CachedRead sigs -> test <@ sigs.Length > 0 @>
         | other -> failwithf "Expected signatures from lib-packaged fixture cache, got %A" other
     finally
         System.IO.Directory.Delete(cacheRoot, true)
 
 [<Fact>]
-let ``extractFromCacheRoot reports a cached package with no assembly as unreadable, not as an API`` () =
+let ``readCacheRoot reports a cached package with no assembly as unreadable, not as an API`` () =
     // The analyzers/ fallback must not conjure an API out of nothing: a package dir
     // that exists but ships no <id>.dll under lib/, tools/ or analyzers/ is
     // CachedUnreadable — a real package with no readable API, never "absent".
@@ -1016,7 +1025,7 @@ let ``extractFromCacheRoot reports a cached package with no assembly as unreadab
     try
         test
             <@
-                extractFromCacheRoot cacheRoot "EmptyPkg" "1.0.0" =
+                (Extraction.readCacheRoot cacheRoot "EmptyPkg" "1.0.0").Api =
                     CachedUnreadable
                         "EmptyPkg 1.0.0 is in the NuGet cache but ships no EmptyPkg.dll under lib/, tools/ or analyzers/"
             @>
@@ -1024,11 +1033,11 @@ let ``extractFromCacheRoot reports a cached package with no assembly as unreadab
         System.IO.Directory.Delete(cacheRoot, true)
 
 [<Fact>]
-let ``extractPreviousFromNuGetResult reports Found for an analyzer-packaged cached package`` () =
+let ``readPrevious reports Found for an analyzer-packaged cached package`` () =
     // End-to-end: an analyzer package whose assembly lives under
     // analyzers/dotnet/fs/ must resolve from the local cache as Found, NOT be
     // reported as unreadable. Fixture a GUID-named package
-    // in the real user cache so extractFromNuGetCache (which reads ~/.nuget/packages)
+    // in the real user cache so Extraction.readNuGetCache (which reads ~/.nuget/packages)
     // sees it, then assert the cache hit short-circuits before any restore.
     let home =
         System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
@@ -1056,7 +1065,7 @@ let ``extractPreviousFromNuGetResult reports Found for an analyzer-packaged cach
         FsSemanticTagger.Shell.Failure("restore must not be reached for a cached package", 1)
 
     try
-        match extractPreviousFromNuGetResult failRun pkgId "1.0.0" with
+        match (Extraction.readPrevious failRun pkgId "1.0.0").Api with
         | Found sigs -> test <@ not (List.isEmpty sigs) @>
         | other -> failwithf "Expected Found for analyzer-packaged cache, got %A" other
     finally
@@ -1269,9 +1278,9 @@ let ``compare with removed and added returns Breaking prioritizing removals`` ()
     | other -> failwithf "Expected Breaking, got %A" other
 
 [<Fact>]
-let ``extractFromNuGetCache returns NotCached for nonexistent version of real package`` () =
+let ``readNuGetCache returns NotCached for nonexistent version of real package`` () =
     // Package ID might exist but version won't
-    test <@ extractFromNuGetCache "FSharp.Core" "0.0.0-nonexistent" = NotCached @>
+    test <@ (Extraction.readNuGetCache "FSharp.Core" "0.0.0-nonexistent").Api = NotCached @>
 
 [<Fact>]
 let ``createResolver returns a PathAssemblyResolver`` () =
@@ -1764,7 +1773,7 @@ let ``readNuspecDependencies skips deps without id and defaults missing version`
             ()
 
 [<Fact>]
-let ``extractFromCacheRoot reports a cached assembly that cannot be read as CachedUnreadable naming it`` () =
+let ``readCacheRoot reports a cached assembly that cannot be read as CachedUnreadable naming it`` () =
     let cacheRoot =
         System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"))
 
@@ -1777,7 +1786,7 @@ let ``extractFromCacheRoot reports a cached assembly that cannot be read as Cach
         let badDll = System.IO.Path.Combine(libDir, "BadPkg.dll")
         System.IO.File.WriteAllText(badDll, "not a real assembly")
 
-        match extractFromCacheRoot cacheRoot "BadPkg" "1.0.0" with
+        match (Extraction.readCacheRoot cacheRoot "BadPkg" "1.0.0").Api with
         | CachedUnreadable reason -> test <@ reason.StartsWith("could not load " + badDll + ": ") @>
         | other -> failwithf "Expected CachedUnreadable, got %A" other
     finally
@@ -1799,6 +1808,76 @@ let private writeUnloadableCopy (path: string) =
     bytes[at + name.Length - 2] <- byte 'X'
     System.IO.File.WriteAllBytes(path, bytes)
 
+[<Fact>]
+let ``readDll reads a DLL's API and its CLI grammar`` () =
+    let read = Extraction.readDll taggerDll
+
+    test
+        <@
+            match read.Api with
+            | Ok api -> api |> List.contains (ApiSignature.TypeDecl "FsSemanticTagger.Program+Command")
+            | Error _ -> false
+        @>
+
+    test
+        <@
+            match read.Grammar with
+            | GrammarModelled grammar -> not grammar.Roots.IsEmpty
+            | GrammarNotModellable _
+            | GrammarUnreadable _ -> false
+        @>
+
+[<Fact>]
+let ``readDll of a file that is not an assembly is unreadable for both, for the same reason`` () =
+    TestHelpers.withTempDir (fun dir ->
+        let dll = System.IO.Path.Combine(dir, "Bad.dll")
+        System.IO.File.WriteAllText(dll, "not an assembly")
+
+        let read = Extraction.readDll dll
+
+        match read.Api, read.Grammar with
+        | Error reason, GrammarUnreadable grammarReason ->
+            test <@ reason.StartsWith("could not load " + dll + ": ") @>
+            test <@ grammarReason = reason @>
+        | other -> failwithf "Expected both unreadable, got %A" other)
+
+[<Fact>]
+let ``readDll reports an API that cannot be read from an assembly that loads`` () =
+    TestHelpers.withTempDir (fun dir ->
+        let dll = System.IO.Path.Combine(dir, "Unloadable.dll")
+        writeUnloadableCopy dll
+
+        match (Extraction.readDll dll).Api with
+        | Error reason ->
+            test <@ reason.StartsWith("could not load " + dll + ": ") @>
+            test <@ reason.Contains "CommandTreX" @>
+        | Ok api -> failwithf "Expected the API to be unreadable, got %d signatures" api.Length)
+
+[<Fact>]
+let ``readCacheRoot reads the API from the first candidate assembly whose API reads`` () =
+    TestHelpers.withTempDir (fun cacheRoot ->
+        let libDir (tfm: string) =
+            let dir = System.IO.Path.Combine(cacheRoot, "pkg", "1.0.0", "lib", tfm)
+            System.IO.Directory.CreateDirectory dir |> ignore
+            dir
+
+        // Tried first (newest-tfm-first sorts net9.0 above net10.0), and unreadable.
+        writeUnloadableCopy (System.IO.Path.Combine(libDir "net9.0", "Pkg.dll"))
+        let readable = libDir "net10.0"
+        // With its dependencies beside it, so its API loads.
+        for dll in System.IO.Directory.GetFiles(System.IO.Path.GetDirectoryName taggerDll, "*.dll") do
+            System.IO.File.Copy(dll, System.IO.Path.Combine(readable, System.IO.Path.GetFileName dll))
+
+        System.IO.File.Copy(taggerDll, System.IO.Path.Combine(readable, "Pkg.dll"))
+
+        test
+            <@
+                match (Extraction.readCacheRoot cacheRoot "Pkg" "1.0.0").Api with
+                | CachedRead api -> api |> List.contains (ApiSignature.TypeDecl "FsSemanticTagger.Program+Command")
+                | NotCached
+                | CachedUnreadable _ -> false
+            @>)
+
 /// The unreadable-assembly misclassification, at its source. A published package
 /// whose assembly will not load — here our own DLL referencing an assembly no
 /// cache holds, the same "Could not find assembly" failure an analyzer hits when
@@ -1807,7 +1886,7 @@ let private writeUnloadableCopy (path: string) =
 /// assembly and the dependency, and no restore is attempted: the package is right
 /// there in the cache.
 [<Fact>]
-let ``extractPreviousFromNuGetResult - a cached assembly that fails to load is Unreadable, never absent`` () =
+let ``readPrevious - a cached assembly that fails to load is Unreadable, never absent`` () =
     let home =
         System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
 
@@ -1825,7 +1904,7 @@ let ``extractPreviousFromNuGetResult - a cached assembly that fails to load is U
         FsSemanticTagger.Shell.Success ""
 
     try
-        match extractPreviousFromNuGetResult restoreRun pkgId "1.0.0" with
+        match (Extraction.readPrevious restoreRun pkgId "1.0.0").Api with
         | Unreadable reason ->
             test <@ reason.StartsWith("could not load " + dllPath + ": ") @>
             test <@ reason.Contains("Could not find assembly 'CommandTreX") @>
@@ -1836,7 +1915,7 @@ let ``extractPreviousFromNuGetResult - a cached assembly that fails to load is U
         System.IO.Directory.Delete(pkgRoot, true)
 
 [<Fact>]
-let ``extractPreviousFromNuGetResult - a package restored but unloadable is Unreadable, never absent`` () =
+let ``readPrevious - a package restored but unloadable is Unreadable, never absent`` () =
     // The uncached path: restore brings the package in, and it still will not load.
     // This is exactly the shape that used to become AbsentOnFeed after a successful
     // restore.
@@ -1854,7 +1933,7 @@ let ``extractPreviousFromNuGetResult - a package restored but unloadable is Unre
         FsSemanticTagger.Shell.Success ""
 
     try
-        match extractPreviousFromNuGetResult restoreRun pkgId "1.0.0" with
+        match (Extraction.readPrevious restoreRun pkgId "1.0.0").Api with
         | Unreadable reason -> test <@ reason.Contains("Could not find assembly") @>
         | other -> failwithf "Expected Unreadable, got %A" other
     finally
@@ -1929,7 +2008,7 @@ let ``referencedPackageDirsFor adds the cached package of an unprovided referenc
         test <@ List.isEmpty (referencedPackageDirsFor cacheRoot (fun _ -> true) taggerDll) @>)
 
 [<Fact>]
-let ``extractFromCacheRoot reads an analyzer-layout package whose nuspec declares no dependencies`` () =
+let ``readCacheRoot reads an analyzer-layout package whose nuspec declares no dependencies`` () =
     // An FSharp.Analyzers.SDK analyzer ships alone under analyzers/dotnet/fs/ and
     // lists no dependency; its references resolve from the NuGet cache by name.
     TestHelpers.withTempDir (fun cacheRoot ->
@@ -1944,6 +2023,6 @@ let ``extractFromCacheRoot reads an analyzer-layout package whose nuspec declare
 
         System.IO.File.Copy(taggerDll, System.IO.Path.Combine(analyzerDir, "Fake.Analyzer.dll"))
 
-        match extractFromCacheRoot cacheRoot "Fake.Analyzer" "1.0.0" with
+        match (Extraction.readCacheRoot cacheRoot "Fake.Analyzer" "1.0.0").Api with
         | CachedRead api -> test <@ api |> List.contains (ApiSignature.TypeDecl "FsSemanticTagger.Program+Command") @>
         | other -> failwithf "expected the analyzer's API, got %A" other)

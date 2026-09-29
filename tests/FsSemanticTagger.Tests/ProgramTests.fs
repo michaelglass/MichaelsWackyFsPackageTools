@@ -84,6 +84,33 @@ let ``run - check-api same dll returns Ok 0`` () =
     test <@ result = Ok 0 @>
 
 [<Fact>]
+let ``run - check-api lists additions over a DLL with no public API`` () =
+    let dll = typeof<FsSemanticTagger.Version.Version>.Assembly.Location
+    // A satellite resource assembly exports no types.
+    let empty =
+        Path.Combine(Path.GetDirectoryName dll, "de", "FSharp.Core.resources.dll")
+
+    let output, result =
+        withCapturedConsole (fun () -> run [| "check-api"; empty; dll |])
+
+    test <@ result = Ok 1 @>
+    test <@ output.Contains "Non-breaking additions:" @>
+
+[<Fact>]
+let ``run - check-api returns the load error of an unreadable new DLL`` () =
+    withTempDir (fun dir ->
+        let dll = System.Reflection.Assembly.GetExecutingAssembly().Location
+        let bad = Path.Combine(dir, "Bad.dll")
+        File.WriteAllText(bad, "not an assembly")
+
+        test
+            <@
+                match run [| "check-api"; dll; bad |] with
+                | Error reason -> reason.StartsWith("could not load " + bad + ": ")
+                | Ok _ -> false
+            @>)
+
+[<Fact>]
 let ``init creates semantic-tagger.json for multiple packages`` () =
     withTempDir (fun tmpDir ->
         let srcDir1 = Path.Combine(tmpDir, "src", "ToolA")
@@ -460,17 +487,13 @@ let ``runReleaseWith - returns Error when config missing`` () =
         let fakeRun _ _ =
             Shell.Failure("should not be called", 1)
 
-        let fakeExtractPrev _ _ = Api.FetchError "should not be called"
-        let fakeExtractCur _ = []
-
         let result =
             runReleaseWith
                 tmpDir
                 fakeRun
-                fakeExtractPrev
-                fakeExtractCur
-                (fun _ _ -> GrammarUnreadable "not cached")
-                (fun _ -> None)
+                ExtractionFakes.noPrevious
+                ExtractionFakes.noCachedPrevious
+                ExtractionFakes.noCurrent
                 Release.Auto
                 []
 
@@ -577,17 +600,13 @@ let ``runReleaseWith - returns Ok 0 for empty-package config when CI passes`` ()
             | "dotnet", "build -c Release" -> Shell.Success ""
             | _ -> Shell.Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
-        let extractPrev _ _ = Api.FetchError "should not be called"
-        let extractCur _ = []
-
         let result =
             runReleaseWith
                 tmpDir
                 fakeRun
-                extractPrev
-                extractCur
-                (fun _ _ -> GrammarUnreadable "not cached")
-                (fun _ -> None)
+                ExtractionFakes.noPrevious
+                ExtractionFakes.noCachedPrevious
+                ExtractionFakes.noCurrent
                 Release.Auto
                 []
 
@@ -608,17 +627,14 @@ let ``runReleaseWith - returns Ok when config loads (release aborts on uncommitt
 
         // run returns Failure so hasUncommittedChanges => true, release returns 1
         let fakeRun _ _ = Shell.Failure("not a repo", 1)
-        let fakeExtractPrev _ _ = Api.FetchError "should not be called"
-        let fakeExtractCur _ = []
 
         let result =
             runReleaseWith
                 tmpDir
                 fakeRun
-                fakeExtractPrev
-                fakeExtractCur
-                (fun _ _ -> GrammarUnreadable "not cached")
-                (fun _ -> None)
+                ExtractionFakes.noPrevious
+                ExtractionFakes.noCachedPrevious
+                ExtractionFakes.noCurrent
                 Release.Auto
                 [ Publish ]
 

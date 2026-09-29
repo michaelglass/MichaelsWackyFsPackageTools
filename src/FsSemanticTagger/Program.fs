@@ -114,10 +114,9 @@ let internal envVarFrom (getRaw: string -> string) (name: string) : string optio
 let internal runReleaseWith
     (cwd: string)
     (run: string -> string -> Shell.CommandResult)
-    (extractPreviousApi: string -> string -> Api.PreviousApiResult)
-    (extractCurrentApi: string -> Api.ApiSignature list)
-    (extractPreviousGrammar: string -> string -> GrammarRead)
-    (extractCurrentGrammar: string -> Grammar option)
+    (extractPrevious: string -> string -> Extraction.PreviousDll)
+    (extractCachedPrevious: string -> string -> Extraction.CachedDll)
+    (extractCurrent: string -> Extraction.ExtractedDll)
     (releaseCmd: Release.ReleaseCommand)
     (flags: ReleaseFlag list)
     : Result<int, string> =
@@ -136,10 +135,9 @@ let internal runReleaseWith
                     Command = releaseCmd
                     Mode = releaseMode flags
                     TargetPackages = targetPackages flags
-                    ExtractPreviousApi = extractPreviousApi
-                    ExtractCurrentApi = extractCurrentApi
-                    ExtractPreviousGrammar = extractPreviousGrammar
-                    ExtractCurrentGrammar = extractCurrentGrammar
+                    ExtractPrevious = extractPrevious
+                    ExtractCachedPrevious = extractCachedPrevious
+                    ExtractCurrent = extractCurrent
                     CiPollIntervalMs = 15000
                     CiWait =
                         fun () ->
@@ -166,50 +164,29 @@ let private runRelease (releaseCmd: Release.ReleaseCommand) (flags: ReleaseFlag 
     runReleaseWith
         cwd
         (Shell.runWithGitDir (Vcs.resolveGitDir cwd))
-        (Api.extractPreviousFromNuGetResult Shell.run)
-        Api.extractFromAssembly
-        Grammar.readPreviousGrammarFromNuGet
-        Grammar.extractGrammarFromAssembly
+        (Extraction.readPrevious Shell.run)
+        Extraction.readNuGetCache
+        Extraction.readDll
         releaseCmd
         flags
 
-/// The version this build runs as: the entry assembly's informational version,
-/// `<Version>` from the fsproj plus SourceLink's `+<sha>`.
-let internal ownVersion: string = CommandTree.entryAssemblyVersion ()
+/// `check-api`: diff two DLLs' public APIs, with their CLI grammars folded in.
+/// Each DLL is loaded once, for both.
+let private checkApi (oldDll: string) (newDll: string) : Result<int, string> =
+    let oldRead = Extraction.readDll oldDll
+    let newRead = Extraction.readDll newDll
 
-/// Dispatch a release verb only on a tagger new enough to honour a declared bump;
-/// an older one is refused before any config is read or anything is built.
-let internal runCommandWith
-    (ownVersion: string)
-    (releaseHandler: Release.ReleaseCommand -> ReleaseFlag list -> Result<int, string>)
-    (cmd: Command)
-    : Result<int, string> =
-    let release releaseCmd opts =
-        DeclaredBump.requireSupport ownVersion
-        |> Result.bind (fun () -> releaseHandler releaseCmd opts)
-
-    match cmd with
-    | Init -> initCommand (Directory.GetCurrentDirectory())
-    | ExtractApi dll ->
-        if not (File.Exists dll) then
-            Error(sprintf "DLL not found: %s" dll)
-        else
-            let sigs = Api.extractFromAssembly dll
-
-            for s in sigs do
-                printfn "%s" (Api.ApiSignature.render s)
-
-            Ok 0
-    | CheckApi(oldDll, newDll) ->
-        let oldApi = Api.extractFromAssembly oldDll
-        let newApi = Api.extractFromAssembly newDll
+    match oldRead.Api, newRead.Api with
+    | Error reason, _
+    | _, Error reason -> Error reason
+    | Ok oldApi, Ok newApi ->
         let apiChange = Api.compare oldApi newApi
 
         // Fold in the realized-CLI-grammar diff (stronger bump wins) when both DLLs
         // are CommandTree consumers, so a command/flag rename or arity change — invisible
         // to the assembly-signature diff — is surfaced by check-api too.
         let change =
-            match Grammar.readGrammar oldDll, Grammar.readGrammar newDll with
+            match oldRead.Grammar, newRead.Grammar with
             | GrammarModelled oldGrammar, GrammarModelled newGrammar ->
                 Grammar.foldDiffIntoApi None apiChange oldGrammar newGrammar
             | oldGrammar, GrammarModelled _ ->
@@ -238,6 +215,35 @@ let internal runCommandWith
         | Api.NoChange ->
             printfn "No API changes"
             Ok 0
+
+/// The version this build runs as: the entry assembly's informational version,
+/// `<Version>` from the fsproj plus SourceLink's `+<sha>`.
+let internal ownVersion: string = CommandTree.entryAssemblyVersion ()
+
+/// Dispatch a release verb only on a tagger new enough to honour a declared bump;
+/// an older one is refused before any config is read or anything is built.
+let internal runCommandWith
+    (ownVersion: string)
+    (releaseHandler: Release.ReleaseCommand -> ReleaseFlag list -> Result<int, string>)
+    (cmd: Command)
+    : Result<int, string> =
+    let release releaseCmd opts =
+        DeclaredBump.requireSupport ownVersion
+        |> Result.bind (fun () -> releaseHandler releaseCmd opts)
+
+    match cmd with
+    | Init -> initCommand (Directory.GetCurrentDirectory())
+    | ExtractApi dll ->
+        if not (File.Exists dll) then
+            Error(sprintf "DLL not found: %s" dll)
+        else
+            let sigs = Api.extractFromAssembly dll
+
+            for s in sigs do
+                printfn "%s" (Api.ApiSignature.render s)
+
+            Ok 0
+    | CheckApi(oldDll, newDll) -> checkApi oldDll newDll
     | Release opts -> release Release.Auto opts
     | Alpha opts -> release Release.StartAlpha opts
     | Beta opts -> release Release.PromoteToBeta opts

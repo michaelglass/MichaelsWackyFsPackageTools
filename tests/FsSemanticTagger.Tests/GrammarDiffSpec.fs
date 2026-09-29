@@ -6,7 +6,7 @@ module FsSemanticTagger.Tests.GrammarDiffSpec
 // Two halves:
 //   * The PURE diff over two grammar models (`FsSemanticTagger.Grammar.compare`).
 //   * The STRUCTURAL recovery of a consumer's realized grammar from a built
-//     assembly under MetadataLoadContext (`extractGrammarFromAssembly` /
+//     assembly under MetadataLoadContext (`readGrammar` /
 //     `extractGrammarForType`). These tests prove the metadata-only walk recovers
 //     exactly the tree CommandTree's own `fromUnion` builds at runtime.
 //
@@ -561,13 +561,20 @@ let ``foldIntoApi keeps the stronger bump and prefers the API signatures on a ti
 
 // ---- structural recovery under MetadataLoadContext (the crux) ---------------
 
+/// `Grammar.readGrammar`'s grammar, when it modelled one.
+let private modelledGrammar (dllPath: string) : FsSemanticTagger.Grammar option =
+    match Grammar.readGrammar dllPath with
+    | GrammarModelled grammar -> Some grammar
+    | GrammarNotModellable _
+    | GrammarUnreadable _ -> None
+
 [<Fact>]
-let ``extractGrammarFromAssembly recovers FsSemanticTagger's own realized grammar`` () =
+let ``readGrammar recovers FsSemanticTagger's own realized grammar`` () =
     // The real consumer: extract the grammar from the built FsSemanticTagger.dll
     // under MetadataLoadContext and assert it equals the tree CommandTree's own
     // fromUnion builds at runtime for the same Command DU.
     let dll = typeof<FsSemanticTagger.Program.Command>.Assembly.Location
-    let extracted = Grammar.extractGrammarFromAssembly dll
+    let extracted = modelledGrammar dll
     let expected = Some(Fixtures.expectedGrammar<FsSemanticTagger.Program.Command>())
     test <@ extracted = expected @>
 
@@ -625,7 +632,7 @@ let ``extraction recovers a positional-prefix flag leaf with an optional-value f
 let ``a non-CommandTree assembly yields no grammar (left to the API diff)`` () =
     // FSharp.Core does not reference CommandTree => not a consumer => None.
     let dll = typeof<int list>.Assembly.Location
-    test <@ Grammar.extractGrammarFromAssembly dll = None @>
+    test <@ modelledGrammar dll = None @>
 
 [<Fact>]
 let ``extraction + diff end-to-end: a renamed command is Breaking`` () =
@@ -694,7 +701,7 @@ let ``an assembly with several root command unions is ambiguous => None`` () =
     // The test assembly itself carries many unrelated command DUs (the fixtures),
     // so there is no single root => extraction refuses to guess.
     let dll = typeof<Fixtures.MiniV1>.Assembly.Location
-    test <@ Grammar.extractGrammarFromAssembly dll = None @>
+    test <@ modelledGrammar dll = None @>
 
     // Read, but not modellable — distinct from a DLL that could not be read — and
     // the reason names the candidates.
@@ -724,7 +731,7 @@ let ``extraction of an unreadable path is None (never throws)`` () =
     let bogus =
         System.IO.Path.Combine(System.IO.Path.GetTempPath(), "no-such-grammar.dll")
 
-    test <@ Grammar.extractGrammarFromAssembly bogus = None @>
+    test <@ modelledGrammar bogus = None @>
     test <@ Grammar.extractGrammarForType bogus "Whatever" = None @>
 
     test
@@ -742,13 +749,13 @@ let ``grammar cache readers report an absent package as unreadable`` () =
 
     test
         <@
-            Grammar.readGrammarFromCacheRoot bogusRoot "FsSemanticTagger" "1.0.0" =
+            (Extraction.readCacheRoot bogusRoot "FsSemanticTagger" "1.0.0").Grammar =
                 GrammarUnreadable("FsSemanticTagger 1.0.0 is not in the NuGet cache at " + bogusRoot)
         @>
 
     test
         <@
-            match Grammar.readPreviousGrammarFromNuGet "no-such-package-xyzzy" "9.9.9" with
+            match (Extraction.readNuGetCache "no-such-package-xyzzy" "9.9.9").Grammar with
             | GrammarUnreadable reason -> reason.Contains "is not in the NuGet cache"
             | GrammarModelled _
             | GrammarNotModellable _ -> false
@@ -764,7 +771,7 @@ let ``grammar cache readers report an absent package as unreadable`` () =
     try
         test
             <@
-                Grammar.readGrammarFromCacheRoot emptyRoot "Pkg" "1.0.0" =
+                (Extraction.readCacheRoot emptyRoot "Pkg" "1.0.0").Grammar =
                     GrammarUnreadable
                         "Pkg 1.0.0 is in the NuGet cache but ships no Pkg.dll under lib/, tools/ or analyzers/"
             @>
@@ -775,7 +782,7 @@ let ``grammar cache readers report an absent package as unreadable`` () =
             ()
 
 [<Fact>]
-let ``readGrammarFromCacheRoot reads a consumer from a cache layout`` () =
+let ``readCacheRoot reads a consumer from a cache layout`` () =
     let binDir =
         System.IO.Path.GetDirectoryName(typeof<FsSemanticTagger.Program.Command>.Assembly.Location)
 
@@ -795,7 +802,7 @@ let ``readGrammarFromCacheRoot reads a consumer from a cache layout`` () =
             System.IO.File.Copy(dll, System.IO.Path.Combine(pkgLib, System.IO.Path.GetFileName dll), true)
 
         let extracted =
-            Grammar.readGrammarFromCacheRoot cacheRoot "FsSemanticTagger" "1.0.0"
+            (Extraction.readCacheRoot cacheRoot "FsSemanticTagger" "1.0.0").Grammar
 
         test <@ extracted = GrammarModelled(Fixtures.expectedGrammar<FsSemanticTagger.Program.Command>()) @>
     finally
@@ -1148,7 +1155,7 @@ let ``noGrammarNote says why a read gives no grammar, and nothing for a modelled
         @>
 
 [<Fact>]
-let ``readGrammarFromCacheRoot reports a cached DLL that will not load`` () =
+let ``readCacheRoot reports a cached DLL that will not load`` () =
     Tests.Common.TestHelpers.withTempDir (fun cacheRoot ->
         let lib = System.IO.Path.Combine(cacheRoot, "pkg", "1.0.0", "lib", "net10.0")
         System.IO.Directory.CreateDirectory lib |> ignore
@@ -1157,7 +1164,7 @@ let ``readGrammarFromCacheRoot reports a cached DLL that will not load`` () =
 
         test
             <@
-                match Grammar.readGrammarFromCacheRoot cacheRoot "Pkg" "1.0.0" with
+                match (Extraction.readCacheRoot cacheRoot "Pkg" "1.0.0").Grammar with
                 | GrammarUnreadable reason -> reason.StartsWith("could not load " + dll + ": ")
                 | GrammarModelled _
                 | GrammarNotModellable _ -> false

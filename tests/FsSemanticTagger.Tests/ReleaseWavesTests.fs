@@ -13,6 +13,7 @@ open FsSemanticTagger.Config
 open FsSemanticTagger.Api
 open FsSemanticTagger.Release
 open Tests.Common.TestHelpers
+open FsSemanticTagger.Tests.ExtractionFakes
 
 /// No machine-local canary config, and a host that must never be reached.
 let private noCanary: ConsumerCanary.Settings =
@@ -170,10 +171,9 @@ let private releaseInputWith (repo: Repo) (rejectedTags: string list) checkFeed 
         Command = StartAlpha
         Mode = mode
         TargetPackages = []
-        ExtractPreviousApi = fun _ _ -> FetchError "not used"
-        ExtractCurrentApi = fun _ -> []
-        ExtractPreviousGrammar = fun _ _ -> GrammarUnreadable "not cached"
-        ExtractCurrentGrammar = fun _ -> None
+        ExtractPrevious = noPrevious
+        ExtractCachedPrevious = noCachedPrevious
+        ExtractCurrent = noCurrent
         CiPollIntervalMs = 0
         CiWait = CiWaitTests.fixedCiWait 0 10
         TagPush =

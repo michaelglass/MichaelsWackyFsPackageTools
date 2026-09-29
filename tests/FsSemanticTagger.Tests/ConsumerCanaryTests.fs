@@ -11,6 +11,7 @@ open FsSemanticTagger.Shell
 open FsSemanticTagger.Config
 open FsSemanticTagger.Version
 open FsSemanticTagger.ConsumerCanary
+open FsSemanticTagger.Tests.ExtractionFakes
 
 let private configPath = "/home/someone/.fssemantictagger.json"
 
@@ -702,10 +703,9 @@ let private releaseWithVersion (fsprojVersion: string) (dir: string) (canary: Se
                     Command = Release.StartAlpha
                     Mode = mode
                     TargetPackages = []
-                    ExtractPreviousApi = fun _ _ -> Api.FetchError "none"
-                    ExtractCurrentApi = fun _ -> []
-                    ExtractPreviousGrammar = fun _ _ -> GrammarUnreadable "not cached"
-                    ExtractCurrentGrammar = fun _ -> None
+                    ExtractPrevious = noPrevious
+                    ExtractCachedPrevious = noCachedPrevious
+                    ExtractCurrent = noCurrent
                     CiPollIntervalMs = 0
                     CiWait = CiWaitTests.fixedCiWait 0 10
                     TagPush =

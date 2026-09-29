@@ -555,12 +555,42 @@ let extractFromTypes (types: Type seq) : ApiSignature list =
     |> List.sortBy ApiSignature.render
     |> List.distinct
 
-let extractFromAssembly (dllPath: string) : ApiSignature list =
-    let resolver = createResolver dllPath
-    use context = new MetadataLoadContext(resolver)
+/// A DLL read from disk once: its assembly, loaded into a `MetadataLoadContext`
+/// whose resolver searches `getAssemblySearchPaths`, and a `PEReader` over the same
+/// bytes for what reflection does not show (the IL of method bodies). The API
+/// extractor and the CLI grammar reader share one, so a DLL read for both builds
+/// its resolver (deps.json, .nuspec closure, referenced packages) and load context
+/// once.
+[<NoEquality; NoComparison>]
+type LoadedDll =
+    {
+        Path: string
+        Assembly: Assembly
+        PE: PortableExecutable.PEReader
+    }
 
-    let assembly = context.LoadFromAssemblyPath(Path.GetFullPath(dllPath))
-    extractFromTypes (assembly.GetExportedTypes())
+/// Load `dllPath` and run `read` over it. The load context and the PE reader are
+/// disposed when `read` returns, so nothing `read` returns may hold on to them.
+let withLoadedDll (dllPath: string) (read: LoadedDll -> 'T) : 'T =
+    let image = File.ReadAllBytes dllPath
+    use context = new MetadataLoadContext(createResolver dllPath)
+
+    use pe =
+        new PortableExecutable.PEReader(Runtime.InteropServices.ImmutableCollectionsMarshal.AsImmutableArray image)
+
+    read
+        {
+            Path = dllPath
+            Assembly = context.LoadFromByteArray image
+            PE = pe
+        }
+
+/// The public API of a loaded DLL.
+let extractFromLoaded (dll: LoadedDll) : ApiSignature list =
+    extractFromTypes (dll.Assembly.GetExportedTypes())
+
+/// The public API of the DLL at `dllPath`. Throws when it cannot be loaded.
+let extractFromAssembly (dllPath: string) : ApiSignature list = withLoadedDll dllPath extractFromLoaded
 
 /// Locate the candidate directories (newest-tfm-first) and expected DLL file name
 /// for a cached package version. Covers the `lib/<tfm>/` (library) and
@@ -621,45 +651,6 @@ type CachedApi =
     /// resolve. Carries why, naming the assembly and the load error.
     | CachedUnreadable of reason: string
 
-/// Read a previously published package's public API from an arbitrary cache
-/// root (cacheRoot/<id>/<version>/{lib,tools,analyzers}/...). The first assembly
-/// that loads wins; a load failure is reported only when no candidate loads.
-let extractFromCacheRoot (cacheRoot: string) (packageId: string) (version: string) : CachedApi =
-    match packageCacheSearch cacheRoot packageId version with
-    | None -> NotCached
-    | Some(searchDirs, dllName) ->
-        let noAssembly =
-            sprintf
-                "%s %s is in the NuGet cache but ships no %s under lib/, tools/ or analyzers/"
-                packageId
-                version
-                dllName
-
-        // Newest-tfm-first; the first assembly that loads wins. Only when none
-        // loads is the FIRST load failure reported (it names the assembly and the
-        // dependency that could not be resolved).
-        let rec firstReadable (dllPaths: string list) (firstFailure: string option) =
-            match dllPaths with
-            | [] -> CachedUnreadable(defaultArg firstFailure noAssembly)
-            | dllPath :: rest ->
-                try
-                    CachedRead(extractFromAssembly dllPath)
-                with ex ->
-                    let failure = sprintf "could not load %s: %s" dllPath ex.Message
-                    firstReadable rest (Some(defaultArg firstFailure failure))
-
-        let dllPaths =
-            searchDirs
-            |> List.map (fun dir -> Path.Combine(dir, dllName))
-            |> List.filter File.Exists
-
-        firstReadable dllPaths None
-
-/// Read a previously published package's public API from the default
-/// user-local cache at ~/.nuget/packages/.
-let extractFromNuGetCache (packageId: string) (version: string) : CachedApi =
-    extractFromCacheRoot (nugetCacheRoot ()) packageId version
-
 /// Build the `dotnet restore` arguments for the probe project. The probe lives
 /// in a temp dir, so NuGet would otherwise resolve sources from the temp/global
 /// hierarchy and miss the repo's `nuget.config` — pin it with `--configfile`
@@ -677,7 +668,7 @@ let internal probeAvailabilityArgs (nugetConfig: string option) (proj: string) :
     probeRestoreArgs nugetConfig proj + " --no-http-cache"
 
 /// The repo's nuget.config in the current working directory, if any.
-let private currentNuGetConfig () : string option =
+let internal currentNuGetConfig () : string option =
     let cwd = Directory.GetCurrentDirectory()
 
     [ "nuget.config"; "NuGet.config" ]
@@ -688,7 +679,7 @@ let private currentNuGetConfig () : string option =
 /// `packageId`/`version`, run `f` against the project path, and clean up the
 /// temp dir afterwards. Shared by the cache-download and availability-probe
 /// paths so both reference the same package the same way.
-let private withProbeProject (packageId: string) (version: string) (f: string -> 'a) : 'a =
+let internal withProbeProject (packageId: string) (version: string) (f: string -> 'a) : 'a =
     let tmpDir =
         Path.Combine(Path.GetTempPath(), "fsst-probe-" + Guid.NewGuid().ToString("N"))
 
@@ -986,57 +977,6 @@ let isPublished
     (version: string)
     : bool =
     checkFeedPresence fetch run packageId version = OnFeed
-
-/// Extract the previous release's API: try the local NuGet cache first, then
-/// fall back to downloading the published package into the cache.
-///
-/// A package that is cached but unreadable is `Unreadable` straight away — the
-/// package plainly exists, and restoring it again cannot change its contents.
-/// Neither `Unreadable` nor `NotRestorable` claims the version is unpublished;
-/// callers decide that with `checkFeedPresence`. A transient `FetchError` (offline,
-/// feed unreachable, or a private feed without credentials) means callers MUST
-/// NOT guess the bump. Callers MUST NOT treat any failure as "no API change", or a
-/// breaking release would ship as a patch.
-let extractPreviousFromNuGetResult
-    (run: string -> string -> Shell.CommandResult)
-    (packageId: string)
-    (version: string)
-    : PreviousApiResult =
-    match extractFromNuGetCache packageId version with
-    | CachedRead api -> Found api
-    | CachedUnreadable reason -> Unreadable reason
-    | NotCached ->
-        withProbeProject packageId version (fun proj ->
-            match run "dotnet" (probeRestoreArgs (currentNuGetConfig ()) proj) with
-            | Shell.Failure(msg, _) -> classifyRestoreFailure msg
-            | Shell.Success _ ->
-                match extractFromNuGetCache packageId version with
-                | CachedRead api -> Found api
-                | CachedUnreadable reason -> Unreadable reason
-                | NotCached ->
-                    // Restore said yes but the package is not where we read from
-                    // (e.g. a relocated global packages folder). The truth is
-                    // unknown, so this must abort, never walk back.
-                    FetchError(
-                        sprintf
-                            "restore succeeded but %s %s is not in the NuGet cache at ~/.nuget/packages"
-                            packageId
-                            version
-                    ))
-
-/// Extract the previous release's API as an option: `None` whenever it could not
-/// be read, for any reason — callers MUST NOT treat None as "no API change", or a
-/// breaking release would be mis-versioned as a patch.
-let extractPreviousFromNuGet
-    (run: string -> string -> Shell.CommandResult)
-    (packageId: string)
-    (version: string)
-    : ApiSignature list option =
-    match extractPreviousFromNuGetResult run packageId version with
-    | Found api -> Some api
-    | Unreadable _
-    | NotRestorable _
-    | FetchError _ -> None
 
 /// Compare two API surfaces. A removal is breaking; so is a new case on a union
 /// that was already public, because consumers' exhaustive matches stop covering

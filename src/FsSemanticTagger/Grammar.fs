@@ -1051,95 +1051,46 @@ module Grammar =
             GlobalFlags = globalFlagsOf asm calls prefix
         }
 
-    /// Reads `dllPath` from disk once, into a `MetadataLoadContext` for its types
-    /// and a `PEReader` for the IL of its entry-point calls.
-    let private readAssembly (dllPath: string) (read: Assembly -> PEReader -> 'T) : 'T =
-        let image = File.ReadAllBytes dllPath
-        use context = new MetadataLoadContext(createResolver dllPath)
-
-        use pe =
-            new PEReader(Runtime.InteropServices.ImmutableCollectionsMarshal.AsImmutableArray image)
-
-        read (context.LoadFromByteArray image) pe
-
     /// Recover the realized CLI grammar of a single named root command union in an
     /// assembly. Internal seam for tests: bypasses consumer detection / root
     /// discovery so a fixture DU can be walked by full name. `None` on any read
     /// failure or when the named type isn't a union.
     let internal extractGrammarForType (dllPath: string) (rootTypeFullName: string) : Grammar option =
         try
-            readAssembly dllPath (fun asm pe ->
-                match asm.GetType(rootTypeFullName) |> Option.ofObj with
-                | Some t when isUnionType t -> Some(grammarOf pe asm t)
+            withLoadedDll dllPath (fun dll ->
+                match dll.Assembly.GetType(rootTypeFullName) |> Option.ofObj with
+                | Some t when isUnionType t -> Some(grammarOf dll.PE dll.Assembly t)
                 | _ -> None)
         with _ ->
             None
 
-    /// Read the realized CLI grammar of a CommandTree consumer assembly. NEVER
-    /// fabricates a grammar: an assembly that is not a consumer, or has no single
-    /// root command union, is `GrammarNotModellable`, and one that cannot be read
-    /// is `GrammarUnreadable`, each saying why.
+    let private unreadable (dllPath: string) (ex: exn) =
+        GrammarUnreadable(sprintf "could not load %s: %s" dllPath ex.Message)
+
+    /// Read the realized CLI grammar of a loaded CommandTree consumer assembly.
+    /// NEVER fabricates a grammar: an assembly that is not a consumer, or has no
+    /// single root command union, is `GrammarNotModellable`, and one whose types
+    /// cannot be read is `GrammarUnreadable`, each saying why.
+    let readLoaded (dll: LoadedDll) : GrammarRead =
+        try
+            let types = safeGetTypes dll.Assembly
+
+            if not (isCommandTreeConsumer dll.Assembly types) then
+                GrammarNotModellable "it is not a CommandTree consumer"
+            else
+                match findRootCommandUnion types with
+                | Ok root -> GrammarModelled(grammarOf dll.PE dll.Assembly root)
+                | Error reason -> GrammarNotModellable reason
+        with ex ->
+            unreadable dll.Path ex
+
+    /// `readLoaded` of the DLL at `dllPath`; `GrammarUnreadable` when it cannot be
+    /// loaded.
     let readGrammar (dllPath: string) : GrammarRead =
         try
-            readAssembly dllPath (fun asm pe ->
-                let types = safeGetTypes asm
-
-                if not (isCommandTreeConsumer asm types) then
-                    GrammarNotModellable "it is not a CommandTree consumer"
-                else
-                    match findRootCommandUnion types with
-                    | Ok root -> GrammarModelled(grammarOf pe asm root)
-                    | Error reason -> GrammarNotModellable reason)
+            withLoadedDll dllPath readLoaded
         with ex ->
-            GrammarUnreadable(sprintf "could not load %s: %s" dllPath ex.Message)
-
-    /// `readGrammar`'s grammar, if it modelled one. The API diff governs the bump
-    /// when this is `None`.
-    let extractGrammarFromAssembly (dllPath: string) : Grammar option =
-        match readGrammar dllPath with
-        | GrammarModelled grammar -> Some grammar
-        | GrammarNotModellable _
-        | GrammarUnreadable _ -> None
-
-    /// Grammar counterpart of `Api.extractFromCacheRoot`: read a previously
-    /// published package's grammar from an arbitrary cache root, looking in exactly
-    /// the directories the API extractor does (`Api.packageCacheSearch`). The first
-    /// assembly that loads decides; a load failure is reported only when none does.
-    let readGrammarFromCacheRoot (cacheRoot: string) (packageId: string) (version: string) : GrammarRead =
-        match packageCacheSearch cacheRoot packageId version with
-        | None -> GrammarUnreadable(sprintf "%s %s is not in the NuGet cache at %s" packageId version cacheRoot)
-        | Some(searchDirs, dllName) ->
-            let reads =
-                searchDirs
-                |> List.map (fun dir -> Path.Combine(dir, dllName))
-                |> List.filter File.Exists
-                |> List.map readGrammar
-
-            let loaded =
-                reads
-                |> List.tryFind (function
-                    | GrammarUnreadable _ -> false
-                    | GrammarModelled _
-                    | GrammarNotModellable _ -> true)
-
-            match loaded, reads with
-            | Some read, _ -> read
-            | None, firstFailure :: _ -> firstFailure
-            | None, [] ->
-                GrammarUnreadable(
-                    sprintf
-                        "%s %s is in the NuGet cache but ships no %s under lib/, tools/ or analyzers/"
-                        packageId
-                        version
-                        dllName
-                )
-
-    /// Grammar counterpart of `Api.extractPreviousFromNuGet`: read a prior release's
-    /// grammar from the user-local NuGet cache. Cache-only: the release flow has
-    /// already downloaded a library while extracting its API; a PackAsTool package
-    /// is never downloaded, so a cold cache reads as `GrammarUnreadable`.
-    let readPreviousGrammarFromNuGet (packageId: string) (version: string) : GrammarRead =
-        readGrammarFromCacheRoot (nugetCacheRoot ()) packageId version
+            unreadable dllPath ex
 
     /// Why `read` of `what` leaves no grammar to diff, as a note to print, or
     /// `None` when it modelled one.

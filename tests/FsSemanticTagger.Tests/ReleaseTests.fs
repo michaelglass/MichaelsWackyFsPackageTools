@@ -12,6 +12,7 @@ open FsSemanticTagger
 open FsSemanticTagger.Release
 open FsSemanticTagger.Api
 open FsSemanticTagger.Vcs
+open FsSemanticTagger.Tests.ExtractionFakes
 
 /// This module's own scratch directory, in place of the system temp dir. Its tests put
 /// their fsprojs in one directory with the CHANGELOG.md a release reads beside them,
@@ -40,12 +41,6 @@ let private noPreviousApi (_pkg: string) (_version: string) : PreviousApiResult 
 
 let private noCurrentApi (_dll: string) : ApiSignature list = []
 
-/// No CommandTree grammar: the API diff alone decides the bump.
-let private noPreviousGrammar (_pkg: string) (_version: string) : GrammarRead =
-    GrammarUnreadable "not in the NuGet cache"
-
-let private noCurrentGrammar (_dll: string) : Grammar option = None
-
 /// No machine-local canary config, and a host that must never be reached.
 let private noCanary: ConsumerCanary.Settings =
     {
@@ -65,7 +60,9 @@ let private seedTmpChangelog () =
     let p = Path.Combine(scratchDir, "CHANGELOG.md")
     File.WriteAllText(p, "# Changelog\n\n## Unreleased\n\n- test entry\n")
 
-let private runReleaseOnFeed run config cmd mode prev cur poll max push checkFeedPresence =
+/// `runReleaseOnFeed` with the prior release and the current build read by
+/// `previous` and `current`, grammars included.
+let private runReleaseReading run config cmd mode previous current poll max push checkFeedPresence =
     seedTmpChangelog ()
 
     release
@@ -75,10 +72,9 @@ let private runReleaseOnFeed run config cmd mode prev cur poll max push checkFee
             Command = cmd
             Mode = mode
             TargetPackages = []
-            ExtractPreviousApi = prev
-            ExtractCurrentApi = cur
-            ExtractPreviousGrammar = noPreviousGrammar
-            ExtractCurrentGrammar = noCurrentGrammar
+            ExtractPrevious = previous
+            ExtractCachedPrevious = noCachedPrevious
+            ExtractCurrent = current
             CiPollIntervalMs = poll
             CiWait = CiWaitTests.fixedCiWait poll max
             TagPush = immediateTagPush
@@ -91,6 +87,19 @@ let private runReleaseOnFeed run config cmd mode prev cur poll max push checkFee
             Check = false
             Canary = noCanary
         }
+
+let private runReleaseOnFeed run config cmd mode prev cur poll max push checkFeedPresence =
+    runReleaseReading
+        run
+        config
+        cmd
+        mode
+        (previousWith prev (fun _ _ -> noPreviousGrammar))
+        (currentWith cur (fun _ -> None))
+        poll
+        max
+        push
+        checkFeedPresence
 
 /// Every prior version is on the feed — the default for tests not about publication.
 let private runReleaseWithPush run config cmd mode prev cur poll max push =
@@ -646,10 +655,9 @@ let ``release - the version-bump commit's CI wait uses the history-sized budget,
                         Command = StartAlpha
                         Mode = PushTags
                         TargetPackages = []
-                        ExtractPreviousApi = noPreviousApi
-                        ExtractCurrentApi = noCurrentApi
-                        ExtractPreviousGrammar = noPreviousGrammar
-                        ExtractCurrentGrammar = noCurrentGrammar
+                        ExtractPrevious = noPrevious
+                        ExtractCachedPrevious = noCachedPrevious
+                        ExtractCurrent = noCurrent
                         CiPollIntervalMs = 0
                         CiWait = historySized
                         TagPush = immediateTagPush
@@ -1161,6 +1169,75 @@ let ``release - Auto detects breaking API change and bumps major`` () =
     finally
         File.Delete(tmpFile)
 
+[<Fact>]
+let ``release - Auto refuses to guess when the current build's API cannot be read`` () =
+    let tmpFile = scratchFile ()
+
+    try
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [
+                    ("git", "tag -l \"v*\"", Success "v1.0.0")
+                    ("jj",
+                     "diff --from v1.0.0 --to @ --summary \"glob:"
+                     + Path.GetDirectoryName(tmpFile)
+                     + "/**\"",
+                     Success "1 file changed")
+                ]
+
+        let config =
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "fake.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
+
+        let unreadable (_dll: string) : Extraction.ExtractedDll =
+            {
+                Api = Error "could not load fake.dll: Could not find assembly 'Gone'"
+                Grammar = GrammarUnreadable "could not load fake.dll: Could not find assembly 'Gone'"
+            }
+
+        let output, result =
+            withCapturedConsole (fun () ->
+                runReleaseReading
+                    fakeRun
+                    config
+                    Auto
+                    PushTags
+                    (previousWith (fun _ _ -> Found [ ApiSignature.TypeDecl "Foo" ]) (fun _ _ -> noPreviousGrammar))
+                    unreadable
+                    0
+                    10
+                    false
+                    (fun _ _ -> OnFeed))
+
+        test <@ result = 1 @>
+
+        test
+            <@
+                output.Contains
+                    "MyLib: could not read the public API of the current build (could not load fake.dll: Could not find assembly 'Gone')"
+            @>
+
+        test <@ (File.ReadAllText tmpFile).Contains("<Version>1.0.0</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
 /// A CLI with the one command `check-api`.
 let private checkApiGrammar =
     {
@@ -1238,10 +1315,9 @@ let private releaseLibraryAgainstGrammar (previousGrammar: GrammarRead) =
                         Command = Auto
                         Mode = PushTags
                         TargetPackages = []
-                        ExtractPreviousApi = (fun _ _ -> Found api)
-                        ExtractCurrentApi = (fun _ -> api)
-                        ExtractPreviousGrammar = (fun _ _ -> previousGrammar)
-                        ExtractCurrentGrammar = (fun _ -> Some diffApiGrammar)
+                        ExtractPrevious = previousWith (fun _ _ -> Found api) (fun _ _ -> previousGrammar)
+                        ExtractCachedPrevious = noCachedPrevious
+                        ExtractCurrent = currentWith (fun _ -> api) (fun _ -> Some diffApiGrammar)
                         CiPollIntervalMs = 0
                         CiWait = CiWaitTests.fixedCiWait 0 10
                         TagPush = immediateTagPush
@@ -1300,10 +1376,9 @@ let private releaseWithUnchangedApi (run: string -> string -> CommandResult) (co
                 Command = Auto
                 Mode = PushTags
                 TargetPackages = only
-                ExtractPreviousApi = (fun _ _ -> Found api)
-                ExtractCurrentApi = (fun _ -> api)
-                ExtractPreviousGrammar = noPreviousGrammar
-                ExtractCurrentGrammar = noCurrentGrammar
+                ExtractPrevious = previousWith (fun _ _ -> Found api) (fun _ _ -> noPreviousGrammar)
+                ExtractCachedPrevious = noCachedPrevious
+                ExtractCurrent = currentWith (fun _ -> api) (fun _ -> None)
                 CiPollIntervalMs = 0
                 CiWait = CiWaitTests.fixedCiWait 0 10
                 TagPush = immediateTagPush
@@ -3097,10 +3172,9 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
                     Command = StartAlpha
                     Mode = PushTags
                     TargetPackages = []
-                    ExtractPreviousApi = noPreviousApi
-                    ExtractCurrentApi = noCurrentApi
-                    ExtractPreviousGrammar = noPreviousGrammar
-                    ExtractCurrentGrammar = noCurrentGrammar
+                    ExtractPrevious = noPrevious
+                    ExtractCachedPrevious = noCachedPrevious
+                    ExtractCurrent = noCurrent
                     CiPollIntervalMs = 0
                     CiWait = CiWaitTests.fixedCiWait 0 10
                     TagPush = immediateTagPush
@@ -3217,10 +3291,9 @@ let ``release - dryRun with missing Unreleased warns but still returns 0`` () =
                         Command = StartAlpha
                         Mode = DryRun
                         TargetPackages = []
-                        ExtractPreviousApi = noPreviousApi
-                        ExtractCurrentApi = noCurrentApi
-                        ExtractPreviousGrammar = noPreviousGrammar
-                        ExtractCurrentGrammar = noCurrentGrammar
+                        ExtractPrevious = noPrevious
+                        ExtractCachedPrevious = noCachedPrevious
+                        ExtractCurrent = noCurrent
                         CiPollIntervalMs = 0
                         CiWait = CiWaitTests.fixedCiWait 0 10
                         TagPush = immediateTagPush
@@ -3417,10 +3490,9 @@ let private runReleaseWithNuGetWait run config cmd checkFeedPresence maxAttempts
             Command = cmd
             Mode = PushTags
             TargetPackages = []
-            ExtractPreviousApi = noPreviousApi
-            ExtractCurrentApi = noCurrentApi
-            ExtractPreviousGrammar = noPreviousGrammar
-            ExtractCurrentGrammar = noCurrentGrammar
+            ExtractPrevious = noPrevious
+            ExtractCachedPrevious = noCachedPrevious
+            ExtractCurrent = noCurrent
             CiPollIntervalMs = 0
             CiWait = CiWaitTests.fixedCiWait 0 10
             TagPush = immediateTagPush
@@ -3605,10 +3677,9 @@ let private runReleaseTargeting run config cmd mode targets =
             Command = cmd
             Mode = mode
             TargetPackages = targets
-            ExtractPreviousApi = noPreviousApi
-            ExtractCurrentApi = noCurrentApi
-            ExtractPreviousGrammar = noPreviousGrammar
-            ExtractCurrentGrammar = noCurrentGrammar
+            ExtractPrevious = noPrevious
+            ExtractCachedPrevious = noCachedPrevious
+            ExtractCurrent = noCurrent
             CiPollIntervalMs = 0
             CiWait = CiWaitTests.fixedCiWait 0 10
             TagPush = immediateTagPush
@@ -3724,10 +3795,9 @@ let ``release - --only on a multi-package repo uses the per-package CHANGELOG, n
                     Command = StartAlpha
                     Mode = PushTags
                     TargetPackages = [ "LibA" ]
-                    ExtractPreviousApi = noPreviousApi
-                    ExtractCurrentApi = noCurrentApi
-                    ExtractPreviousGrammar = noPreviousGrammar
-                    ExtractCurrentGrammar = noCurrentGrammar
+                    ExtractPrevious = noPrevious
+                    ExtractCachedPrevious = noCachedPrevious
+                    ExtractCurrent = noCurrent
                     CiPollIntervalMs = 0
                     CiWait = CiWaitTests.fixedCiWait 0 10
                     TagPush = immediateTagPush
@@ -4129,10 +4199,9 @@ let private runReleaseWithFeed run config checkFeedPresence =
             Command = Auto
             Mode = PushTags
             TargetPackages = []
-            ExtractPreviousApi = noPreviousApi
-            ExtractCurrentApi = noCurrentApi
-            ExtractPreviousGrammar = noPreviousGrammar
-            ExtractCurrentGrammar = noCurrentGrammar
+            ExtractPrevious = noPrevious
+            ExtractCachedPrevious = noCachedPrevious
+            ExtractCurrent = noCurrent
             CiPollIntervalMs = 0
             CiWait = CiWaitTests.fixedCiWait 0 10
             TagPush = immediateTagPush
@@ -4277,10 +4346,9 @@ let ``release - a published package whose DLL is unreadable is never republished
                         Command = Auto
                         Mode = PushTags
                         TargetPackages = []
-                        ExtractPreviousApi = extractPreviousApi
-                        ExtractCurrentApi = noCurrentApi
-                        ExtractPreviousGrammar = noPreviousGrammar
-                        ExtractCurrentGrammar = noCurrentGrammar
+                        ExtractPrevious = previousWith extractPreviousApi (fun _ _ -> noPreviousGrammar)
+                        ExtractCachedPrevious = noCachedPrevious
+                        ExtractCurrent = noCurrent
                         CiPollIntervalMs = 0
                         CiWait = CiWaitTests.fixedCiWait 0 10
                         TagPush = immediateTagPush
@@ -4515,10 +4583,9 @@ let private runReleaseInRoot run config cmd =
             Command = cmd
             Mode = PushTags
             TargetPackages = []
-            ExtractPreviousApi = noPreviousApi
-            ExtractCurrentApi = noCurrentApi
-            ExtractPreviousGrammar = noPreviousGrammar
-            ExtractCurrentGrammar = noCurrentGrammar
+            ExtractPrevious = noPrevious
+            ExtractCachedPrevious = noCachedPrevious
+            ExtractCurrent = noCurrent
             CiPollIntervalMs = 0
             CiWait = CiWaitTests.fixedCiWait 0 10
             TagPush = immediateTagPush
@@ -4708,10 +4775,9 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
                     Command = Auto
                     Mode = PushTags
                     TargetPackages = []
-                    ExtractPreviousApi = (fun _ _ -> Found oldApi)
-                    ExtractCurrentApi = (fun _ -> currentApi)
-                    ExtractPreviousGrammar = noPreviousGrammar
-                    ExtractCurrentGrammar = noCurrentGrammar
+                    ExtractPrevious = previousWith (fun _ _ -> Found oldApi) (fun _ _ -> noPreviousGrammar)
+                    ExtractCachedPrevious = noCachedPrevious
+                    ExtractCurrent = currentWith (fun _ -> currentApi) (fun _ -> None)
                     CiPollIntervalMs = 0
                     CiWait = CiWaitTests.fixedCiWait 0 10
                     TagPush = immediateTagPush
@@ -4925,10 +4991,9 @@ let ``release - library does NOT rebundle when only a separately-published depen
                     Command = Auto
                     Mode = PushTags
                     TargetPackages = []
-                    ExtractPreviousApi = noPreviousApi
-                    ExtractCurrentApi = noCurrentApi
-                    ExtractPreviousGrammar = noPreviousGrammar
-                    ExtractCurrentGrammar = noCurrentGrammar
+                    ExtractPrevious = noPrevious
+                    ExtractCachedPrevious = noCachedPrevious
+                    ExtractCurrent = noCurrent
                     CiPollIntervalMs = 0
                     CiWait = CiWaitTests.fixedCiWait 0 10
                     TagPush = immediateTagPush
@@ -5036,10 +5101,9 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
                     Command = Auto
                     Mode = PushTags
                     TargetPackages = [ "Cli" ]
-                    ExtractPreviousApi = noPreviousApi
-                    ExtractCurrentApi = noCurrentApi
-                    ExtractPreviousGrammar = noPreviousGrammar
-                    ExtractCurrentGrammar = noCurrentGrammar
+                    ExtractPrevious = noPrevious
+                    ExtractCachedPrevious = noCachedPrevious
+                    ExtractCurrent = noCurrent
                     CiPollIntervalMs = 0
                     CiWait = CiWaitTests.fixedCiWait 0 10
                     TagPush = immediateTagPush
@@ -5138,10 +5202,9 @@ let ``release - library rebundles when a non-configured helper dependency change
                     Command = Auto
                     Mode = PushTags
                     TargetPackages = []
-                    ExtractPreviousApi = noPreviousApi
-                    ExtractCurrentApi = noCurrentApi
-                    ExtractPreviousGrammar = noPreviousGrammar
-                    ExtractCurrentGrammar = noCurrentGrammar
+                    ExtractPrevious = noPrevious
+                    ExtractCachedPrevious = noCachedPrevious
+                    ExtractCurrent = noCurrent
                     CiPollIntervalMs = 0
                     CiWait = CiWaitTests.fixedCiWait 0 10
                     TagPush = immediateTagPush
@@ -5246,10 +5309,9 @@ let private releaseInput run config cmd mode check : ReleaseInput =
         Command = cmd
         Mode = mode
         TargetPackages = []
-        ExtractPreviousApi = noPreviousApi
-        ExtractCurrentApi = noCurrentApi
-        ExtractPreviousGrammar = noPreviousGrammar
-        ExtractCurrentGrammar = noCurrentGrammar
+        ExtractPrevious = noPrevious
+        ExtractCachedPrevious = noCachedPrevious
+        ExtractCurrent = noCurrent
         CiPollIntervalMs = 0
         CiWait = CiWaitTests.fixedCiWait 0 10
         TagPush = immediateTagPush
@@ -5689,13 +5751,11 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
                         Command = Auto
                         Mode = PushTags
                         TargetPackages = []
-                        // Constructing an API probe for a PackAsTool package raises NU1212.
-                        ExtractPreviousApi =
-                            (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package (NU1212)")
-                        ExtractCurrentApi =
-                            (fun _ -> failwith "API probe must not be constructed for a PackAsTool package (NU1212)")
-                        ExtractPreviousGrammar = (fun _ _ -> GrammarModelled checkApiGrammar)
-                        ExtractCurrentGrammar = (fun _ -> Some diffApiGrammar)
+                        // Restoring a PackAsTool package raises NU1212.
+                        ExtractPrevious = mustNotRestore
+                        ExtractCachedPrevious =
+                            cachedWith (CachedUnreadable "API not read") (GrammarModelled checkApiGrammar)
+                        ExtractCurrent = currentWith (fun _ -> []) (fun _ -> Some diffApiGrammar)
                         CiPollIntervalMs = 0
                         CiWait = CiWaitTests.fixedCiWait 0 10
                         TagPush = immediateTagPush
@@ -5770,11 +5830,9 @@ let ``release - PackAsTool that is not a CommandTree CLI keeps the conservative 
                     Command = Auto
                     Mode = PushTags
                     TargetPackages = []
-                    ExtractPreviousApi =
-                        (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package")
-                    ExtractCurrentApi = (fun _ -> failwith "API probe must not be constructed for a PackAsTool package")
-                    ExtractPreviousGrammar = noPreviousGrammar
-                    ExtractCurrentGrammar = noCurrentGrammar
+                    ExtractPrevious = mustNotRestore
+                    ExtractCachedPrevious = noCachedPrevious
+                    ExtractCurrent = noCurrent
                     CiPollIntervalMs = 0
                     CiWait = CiWaitTests.fixedCiWait 0 10
                     TagPush = immediateTagPush
@@ -5854,11 +5912,9 @@ let ``release - PackAsTool CLI aborts when the previous grammar cannot be read``
                     Command = Auto
                     Mode = PushTags
                     TargetPackages = []
-                    ExtractPreviousApi =
-                        (fun _ _ -> failwith "API probe must not be constructed for a PackAsTool package")
-                    ExtractCurrentApi = (fun _ -> failwith "API probe must not be constructed for a PackAsTool package")
-                    ExtractPreviousGrammar = noPreviousGrammar
-                    ExtractCurrentGrammar = (fun _ -> Some currentGrammar)
+                    ExtractPrevious = mustNotRestore
+                    ExtractCachedPrevious = noCachedPrevious
+                    ExtractCurrent = currentWith (fun _ -> []) (fun _ -> Some currentGrammar)
                     CiPollIntervalMs = 0
                     CiWait = CiWaitTests.fixedCiWait 0 10
                     TagPush = immediateTagPush
@@ -5881,13 +5937,13 @@ let ``release - PackAsTool CLI aborts when the previous grammar cannot be read``
             ()
 
 /// Release a PackAsTool CLI `Cli` at 1.0.0 (tag `cli-v1.0.0`, one own change since)
-/// whose current build has a grammar, with the previous release read by
-/// `previousGrammar` and the APIs by `previousApi`/`currentApi`. Returns the
-/// output, the exit code and the fsproj's version afterwards.
+/// whose current build has a grammar, with the previous release read from the cache
+/// as `previousGrammar` and `previousApi`, and the current API as `currentApi`.
+/// Returns the output, the exit code and the fsproj's version afterwards.
 let private releaseToolAgainst
     (previousGrammar: GrammarRead)
-    (previousApi: string -> string -> PreviousApiResult)
-    (currentApi: string -> ApiSignature list)
+    (previousApi: string -> string -> CachedApi)
+    (currentApi: Result<ApiSignature list, string>)
     =
     let dir =
         Path.Combine(scratchDir, "fsst-packastool-previous-" + System.Guid.NewGuid().ToString("N"))
@@ -5939,10 +5995,19 @@ let private releaseToolAgainst
                         Command = Auto
                         Mode = PushTags
                         TargetPackages = []
-                        ExtractPreviousApi = previousApi
-                        ExtractCurrentApi = currentApi
-                        ExtractPreviousGrammar = (fun _ _ -> previousGrammar)
-                        ExtractCurrentGrammar = (fun _ -> Some checkApiGrammar)
+                        ExtractPrevious = mustNotRestore
+                        ExtractCachedPrevious =
+                            fun pkg version ->
+                                {
+                                    Api = previousApi pkg version
+                                    Grammar = previousGrammar
+                                }
+                        ExtractCurrent =
+                            fun _ ->
+                                {
+                                    Api = currentApi
+                                    Grammar = GrammarModelled checkApiGrammar
+                                }
                         CiPollIntervalMs = 0
                         CiWait = CiWaitTests.fixedCiWait 0 10
                         TagPush = immediateTagPush
@@ -5963,16 +6028,13 @@ let private releaseToolAgainst
         with _ ->
             ()
 
-let private noToolApiProbe (_: string) (_: string) : PreviousApiResult =
-    failwith "API probe must not be constructed for a PackAsTool package"
-
 [<Fact>]
 let ``release - PackAsTool CLI whose previous package is missing fails closed with an installable fix`` () =
     let missing =
         GrammarUnreadable "Cli 1.0.0 is not in the NuGet cache at /home/me/.nuget/packages"
 
     let output, result, fsproj =
-        releaseToolAgainst missing noToolApiProbe (fun _ -> failwith "no API diff for a missing package")
+        releaseToolAgainst missing (fun _ _ -> NotCached) (Ok [])
 
     test <@ result = 1 @>
     test <@ fsproj.Contains "<Version>1.0.0</Version>" @>
@@ -5998,10 +6060,10 @@ let ``release - PackAsTool CLI whose previous grammar cannot be modelled is bump
             notModellable
             (fun _ version ->
                 if version = "1.0.0" then
-                    Found [ ApiSignature.TypeDecl "Cli" ]
+                    CachedRead [ ApiSignature.TypeDecl "Cli" ]
                 else
                     failwith "wrong baseline")
-            (fun _ -> [ ApiSignature.TypeDecl "Cli"; ApiSignature.TypeDecl "Cli.Added" ])
+            (Ok [ ApiSignature.TypeDecl "Cli"; ApiSignature.TypeDecl "Cli.Added" ])
 
     test <@ result = 0 @>
 
@@ -6020,8 +6082,8 @@ let ``release - PackAsTool CLI with an unmodellable grammar and an unreadable AP
     let output, result, fsproj =
         releaseToolAgainst
             (GrammarNotModellable "it has no root command union")
-            (fun _ _ -> Unreadable "could not load Cli.dll")
-            (fun _ -> [])
+            (fun _ _ -> CachedUnreadable "could not load Cli.dll")
+            (Ok [])
 
     test <@ result = 1 @>
     test <@ fsproj.Contains "<Version>1.0.0</Version>" @>
@@ -6030,6 +6092,37 @@ let ``release - PackAsTool CLI with an unmodellable grammar and an unreadable AP
         <@
             output.Contains
                 "the CLI grammar of the previous release cli-v1.0.0 could not be modelled, and its public API could not be read either (could not load Cli.dll)"
+        @>
+
+[<Fact>]
+let ``release - PackAsTool CLI with an unmodellable grammar and an uncached API fails closed`` () =
+    let output, result, fsproj =
+        releaseToolAgainst (GrammarNotModellable "it has no root command union") (fun _ _ -> NotCached) (Ok [])
+
+    test <@ result = 1 @>
+    test <@ fsproj.Contains "<Version>1.0.0</Version>" @>
+
+    test
+        <@
+            output.Contains
+                "the CLI grammar of the previous release cli-v1.0.0 could not be modelled, and its public API could not be read either (it is not in the NuGet cache)"
+        @>
+
+[<Fact>]
+let ``release - PackAsTool CLI with an unmodellable grammar and an unreadable current API fails closed`` () =
+    let output, result, fsproj =
+        releaseToolAgainst
+            (GrammarNotModellable "it has no root command union")
+            (fun _ _ -> CachedRead [ ApiSignature.TypeDecl "Cli" ])
+            (Error "could not load fake.dll: bad image")
+
+    test <@ result = 1 @>
+    test <@ fsproj.Contains "<Version>1.0.0</Version>" @>
+
+    test
+        <@
+            output.Contains
+                "Cli: could not read the public API of the current build (could not load fake.dll: bad image)"
         @>
 
 // A merge can push the `## Unreleased` callout below new entries; --check fails on
@@ -6068,10 +6161,9 @@ let private runCheck (config: ToolConfig) =
             Command = Auto
             Mode = DryRun
             TargetPackages = []
-            ExtractPreviousApi = noPreviousApi
-            ExtractCurrentApi = noCurrentApi
-            ExtractPreviousGrammar = noPreviousGrammar
-            ExtractCurrentGrammar = noCurrentGrammar
+            ExtractPrevious = noPrevious
+            ExtractCachedPrevious = noCachedPrevious
+            ExtractCurrent = noCurrent
             CiPollIntervalMs = 0
             CiWait = CiWaitTests.fixedCiWait 0 1
             TagPush = immediateTagPush
@@ -6249,10 +6341,9 @@ let private releaseWithTagPush run config (policy: TagPushPolicy) =
             Command = StartAlpha
             Mode = PushTags
             TargetPackages = []
-            ExtractPreviousApi = noPreviousApi
-            ExtractCurrentApi = noCurrentApi
-            ExtractPreviousGrammar = noPreviousGrammar
-            ExtractCurrentGrammar = noCurrentGrammar
+            ExtractPrevious = noPrevious
+            ExtractCachedPrevious = noCachedPrevious
+            ExtractCurrent = noCurrent
             CiPollIntervalMs = 0
             CiWait = CiWaitTests.fixedCiWait 0 10
             TagPush = policy
