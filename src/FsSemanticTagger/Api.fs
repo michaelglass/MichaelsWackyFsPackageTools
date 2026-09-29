@@ -309,23 +309,75 @@ let rec formatTypeName (t: Type) : string =
     else
         sprintf "%s [%s]" (fullOrName t) (t.Assembly.GetName().Name)
 
-let extractFromAssembly (dllPath: string) : ApiSignature list =
-    let resolver = createResolver dllPath
-    use context = new MetadataLoadContext(resolver)
+/// The `SourceConstructFlags.UnionCase` value of FSharp.Core's
+/// `CompilationMappingAttribute`, and the mask that isolates the construct kind
+/// from the flag bits above it.
+[<Literal>]
+let private UnionCaseConstruct = 8
 
-    let assembly = context.LoadFromAssemblyPath(Path.GetFullPath(dllPath))
+[<Literal>]
+let private ConstructKindMask = 31
 
+/// The union case a public static method constructs, read from the
+/// `[<CompilationMapping(SourceConstructFlags.UnionCase, i)>]` the F# compiler puts
+/// on each case's factory: `New<Case>` for a case with fields, the `get_<Case>`
+/// property getter for a fieldless one. This is the metadata
+/// `FSharpType.GetUnionCases` itself reads, so it covers what the compiled shape
+/// does not show uniformly: fieldless cases and struct unions have no nested case
+/// type, and a module compiles to a class whose nested types look like case
+/// types. A union with a private representation has no public factories, so it
+/// has no public cases — consumers cannot match on it.
+let private unionCaseOf (m: MethodInfo) : string option =
+    let isCaseFactory () =
+        m.GetCustomAttributesData()
+        |> Seq.exists (fun a ->
+            a.AttributeType.FullName = "Microsoft.FSharp.Core.CompilationMappingAttribute"
+            && a.ConstructorArguments.Count > 0
+            && (Convert.ToInt32(a.ConstructorArguments.[0].Value) &&& ConstructKindMask) = UnionCaseConstruct)
+
+    let factoryPrefix =
+        [ "New"; "get_" ]
+        |> List.tryFind (fun prefix -> m.Name.StartsWith(prefix, StringComparison.Ordinal))
+
+    match factoryPrefix with
+    | Some prefix when isCaseFactory () -> Some(m.Name.Substring prefix.Length)
+    | _ -> None
+
+/// The signature declaring that `unionFullName` has the public case `caseName`.
+/// Cases are signatures of their own because adding one breaks every consumer's
+/// exhaustive match, which no other signature can express.
+let private unionCaseSignature (unionFullName: string) (caseName: string) =
+    ApiSignature(sprintf "case %s::%s" unionFullName caseName)
+
+/// What a signature line declares, from most to least specific about what a
+/// consumer depends on: a union's case, a type, or a member of a type.
+type private SignatureKind =
+    | UnionCase of union: string
+    | TypeDeclaration
+    | Member
+
+let private kindOf (ApiSignature s) : SignatureKind =
+    if s.StartsWith("case ", StringComparison.Ordinal) then
+        UnionCase(s.Substring(5, s.LastIndexOf("::", StringComparison.Ordinal) - 5))
+    elif s.StartsWith("type ", StringComparison.Ordinal) then
+        TypeDeclaration
+    else
+        Member
+
+/// The public API signatures of `types`: each type, its public members and
+/// constructors, and, for a union, its public cases. Sorted.
+let extractFromTypes (types: Type seq) : ApiSignature list =
     [
-        for t in assembly.GetExportedTypes() do
+        for t in types do
             yield ApiSignature(sprintf "type %s" t.FullName)
 
-            for m in
-                t.GetMethods(
-                    BindingFlags.Public
-                    ||| BindingFlags.Instance
-                    ||| BindingFlags.Static
-                    ||| BindingFlags.DeclaredOnly
-                ) do
+            let declaredPublic =
+                BindingFlags.Public
+                ||| BindingFlags.Instance
+                ||| BindingFlags.Static
+                ||| BindingFlags.DeclaredOnly
+
+            for m in t.GetMethods(declaredPublic) do
                 if not m.IsSpecialName then
                     let ps =
                         m.GetParameters()
@@ -334,13 +386,7 @@ let extractFromAssembly (dllPath: string) : ApiSignature list =
 
                     yield ApiSignature(sprintf "  %s::%s(%s): %s" t.Name m.Name ps (formatTypeName m.ReturnType))
 
-            for p in
-                t.GetProperties(
-                    BindingFlags.Public
-                    ||| BindingFlags.Instance
-                    ||| BindingFlags.Static
-                    ||| BindingFlags.DeclaredOnly
-                ) do
+            for p in t.GetProperties(declaredPublic) do
                 yield ApiSignature(sprintf "  %s::%s: %s" t.Name p.Name (formatTypeName p.PropertyType))
 
             for c in t.GetConstructors(BindingFlags.Public ||| BindingFlags.Instance ||| BindingFlags.DeclaredOnly) do
@@ -350,8 +396,21 @@ let extractFromAssembly (dllPath: string) : ApiSignature list =
                     |> String.concat ", "
 
                 yield ApiSignature(sprintf "  %s::.ctor(%s)" t.Name ps)
+
+            for m in t.GetMethods(BindingFlags.Public ||| BindingFlags.Static ||| BindingFlags.DeclaredOnly) do
+                match unionCaseOf m with
+                | Some case -> yield unionCaseSignature t.FullName case
+                | None -> ()
     ]
+    |> List.distinct
     |> List.sort
+
+let extractFromAssembly (dllPath: string) : ApiSignature list =
+    let resolver = createResolver dllPath
+    use context = new MetadataLoadContext(resolver)
+
+    let assembly = context.LoadFromAssemblyPath(Path.GetFullPath(dllPath))
+    extractFromTypes (assembly.GetExportedTypes())
 
 /// Locate the candidate directories (newest-tfm-first) and expected DLL file name
 /// for a cached package version. Covers the `lib/<tfm>/` (library) and
@@ -830,40 +889,42 @@ let extractPreviousFromNuGet
     | NotRestorable _
     | FetchError _ -> None
 
-/// Compare two API surfaces
+/// Compare two API surfaces. A removal is breaking; so is a new case on a union
+/// that was already public, because consumers' exhaustive matches stop covering
+/// it. Every other addition — including new types nested in an existing module,
+/// or a brand-new union with its cases — is additive. A `Breaking` result lists
+/// only the breaking signatures, cases first, then types, then members, so its
+/// head names the declaration a consumer notices.
 let compare (baseline: ApiSignature list) (current: ApiSignature list) : ApiChange =
     let baseSet = Set.ofList baseline
     let currSet = Set.ofList current
     let removed = baseSet - currSet |> Set.toList
     let added = currSet - baseSet |> Set.toList
 
-    // Detect new DU cases: if a new nested type (Parent+Child) is added
-    // where the parent type already existed in the baseline, that's a
-    // breaking change — consumers with exhaustive pattern matches will break.
-    let hasNewDuCase =
-        let baseTypeNames =
-            baseSet
-            |> Set.filter (fun (ApiSignature s) -> s.StartsWith("type "))
-            |> Set.map (fun (ApiSignature s) -> s.Substring(5))
+    let baselineUnions =
+        baseline
+        |> List.choose (fun signature ->
+            match kindOf signature with
+            | UnionCase union -> Some union
+            | TypeDeclaration
+            | Member -> None)
+        |> Set.ofList
 
+    let newCases, additions =
         added
-        |> List.exists (fun (ApiSignature s) ->
-            if s.StartsWith("type ") then
-                let typeName = s.Substring(5)
+        |> List.partition (fun signature ->
+            match kindOf signature with
+            | UnionCase union -> baselineUnions.Contains union
+            | TypeDeclaration
+            | Member -> false)
 
-                match typeName.LastIndexOf('+') with
-                | -1 -> false
-                | i ->
-                    let parent = typeName.Substring(0, i)
-                    baseTypeNames.Contains(parent)
-            else
-                false)
+    let declarationFirst (signature: ApiSignature) =
+        match kindOf signature with
+        | UnionCase _ -> 0
+        | TypeDeclaration -> 1
+        | Member -> 2
 
-    match removed, added with
+    match removed @ newCases |> List.sortBy (fun s -> declarationFirst s, s), additions with
     | h :: t, _ -> Breaking(h, t)
-    | [], _ when hasNewDuCase ->
-        match added with
-        | h :: t -> Breaking(h, t)
-        | [] -> NoChange
     | [], h :: t -> Addition(h, t)
     | [], [] -> NoChange

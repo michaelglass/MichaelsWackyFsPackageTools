@@ -3,7 +3,7 @@
     "Api.fs": [
       {
         "line": 95,
-        "branch": 86,
+        "branch": 88,
         "reason": "httpGet is a live HttpClient network call, exercised in tests only through the injected fetch seam; the remaining partial branches are reflection and NuGet-cache probes that depend on what this machine has installed. The DOTNET_ROOT sdk/ and shared/ probes are covered through `assemblySearchPathsFor`, which takes DOTNET_ROOT as a parameter instead of reading (or making tests mutate) the process environment. Measured 2026-09-29 on macOS, SDK 10.0.4xx: 95.1% line, 86.8% branch (131/151). global.json pins the 10.0.4xx SDK band so macOS and Linux measure the same compiler output.",
         "platform": "macos"
       },
@@ -43,7 +43,7 @@
     "Grammar.fs": [
       {
         "line": 98,
-        "branch": 91,
+        "branch": 92,
         "reason": "the pure grammar diff is fully covered; the MetadataLoadContext structural walk's remaining gaps are defensive reflection paths that are unreachable from a test (ReflectionTypeLoadException recovery, an explicitly-null attribute named-arg, a CompilationMappingAttribute ctor arg that is not SourceConstructFlags). Floor = achieved macOS coverage.",
         "platform": "macos"
       },

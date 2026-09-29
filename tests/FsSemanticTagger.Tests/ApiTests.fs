@@ -243,52 +243,139 @@ let ``compare with only removals returns Breaking`` () =
     | Breaking _ -> test <@ (ApiChange.toList (compare baseline current)).Length = 2 @>
     | other -> failwithf "Expected Breaking, got %A" other
 
-[<Fact>]
-let ``compare detects new DU case as breaking change`` () =
-    // Adding a case to a discriminated union breaks exhaustive pattern matches.
-    // F# compiles DU cases as nested types: ParentType+CaseName
-    let baseline =
-        [
-            ApiSignature "type MyModule.MyUnion"
-            ApiSignature "type MyModule.MyUnion+CaseA"
-            ApiSignature "type MyModule.MyUnion+CaseB"
-            ApiSignature "  MyUnion::get_Tag(): Int32"
-            ApiSignature "  MyUnion+CaseA::.ctor(): Void"
-            ApiSignature "  MyUnion+CaseB::.ctor(String): Void"
-        ]
+// Union-case classification, diffed over real compiled before/after pairs
+// (ApiFixtures.fs). A scenario's two namespaces are renamed to `Lib` so they
+// diff as two releases of one library.
 
-    let current =
-        [
-            ApiSignature "type MyModule.MyUnion"
-            ApiSignature "type MyModule.MyUnion+CaseA"
-            ApiSignature "type MyModule.MyUnion+CaseB"
-            ApiSignature "type MyModule.MyUnion+CaseC"
-            ApiSignature "  MyUnion::get_Tag(): Int32"
-            ApiSignature "  MyUnion+CaseA::.ctor(): Void"
-            ApiSignature "  MyUnion+CaseB::.ctor(String): Void"
-            ApiSignature "  MyUnion+CaseC::.ctor(Int32): Void"
-        ]
+let private fixtureApi (ns: string) : ApiSignature list =
+    typeof<ApiFixtures.NewCaseWithFields.Before.Shape>.Assembly.GetExportedTypes()
+    |> Array.filter (fun t -> t.Namespace = ns)
+    |> extractFromTypes
+    |> List.map (fun (ApiSignature s) -> ApiSignature(s.Replace(ns + ".", "Lib.")))
 
-    match compare baseline current with
-    | Breaking _ -> ()
-    | other -> failwithf "Expected Breaking for new DU case, got %A" other
+let private diffScenario (scenario: string) : ApiChange =
+    compare (fixtureApi $"ApiFixtures.{scenario}.Before") (fixtureApi $"ApiFixtures.{scenario}.After")
+
+let private breakingHead (change: ApiChange) : string option =
+    match change with
+    | Breaking(ApiSignature s, _) -> Some s
+    | Addition _
+    | NoChange -> None
 
 [<Fact>]
-let ``compare does not flag new nested type as breaking when parent is new`` () =
-    // A brand new type with nested cases is just an addition, not breaking
-    let baseline = [ ApiSignature "type MyModule.OtherType" ]
+let ``a new case with fields on an existing union is breaking and names the case`` () =
+    test <@ breakingHead (diffScenario "NewCaseWithFields") = Some "case Lib.Shape::Triangle" @>
 
-    let current =
-        [
-            ApiSignature "type MyModule.OtherType"
-            ApiSignature "type MyModule.NewUnion"
-            ApiSignature "type MyModule.NewUnion+CaseA"
-            ApiSignature "type MyModule.NewUnion+CaseB"
-        ]
+[<Fact>]
+let ``a new fieldless case on an existing union is breaking and names the case`` () =
+    // Fieldless cases compile to no nested type, only a static property.
+    test <@ breakingHead (diffScenario "NewNullaryCase") = Some "case Lib.Platform::Windows" @>
 
-    match compare baseline current with
-    | Addition _ -> ()
-    | other -> failwithf "Expected Addition for entirely new type, got %A" other
+[<Fact>]
+let ``a second case on a single-case union is breaking`` () =
+    test <@ breakingHead (diffScenario "SingleCaseUnion") = Some "case Lib.Token::Anonymous" @>
+
+[<Fact>]
+let ``a new case on a RequireQualifiedAccess union is breaking`` () =
+    test <@ breakingHead (diffScenario "QualifiedAccessUnion") = Some "case Lib.Mode::Custom" @>
+
+[<Fact>]
+let ``a new case on a struct union is breaking`` () =
+    // Struct unions compile to no nested case types at all.
+    test <@ breakingHead (diffScenario "StructUnion") = Some "case Lib.Outcome::Errored" @>
+
+[<Fact>]
+let ``a new case on a union declared inside a module is breaking`` () =
+    test <@ breakingHead (diffScenario "UnionInModule") = Some "case Lib.Ratchet+Status::Failed" @>
+
+[<Fact>]
+let ``new types and functions inside an existing module are an addition`` () =
+    // Modules compile to classes, so `Cobertura+ReaderOptions` looks like a nested
+    // type of an existing type; it must not be read as a new union case.
+    let change = diffScenario "TypeInModule"
+
+    test
+        <@
+            (match change with
+             | Addition _ -> true
+             | _ -> false)
+        @>
+
+    let added = ApiChange.toList change |> List.map (fun (ApiSignature s) -> s)
+    test <@ added |> List.contains "type Lib.Cobertura+ReaderOptions" @>
+    test <@ added |> List.contains "case Lib.Cobertura+ExclusionReason::Matched" @>
+
+[<Fact>]
+let ``a new top-level union is an addition`` () =
+    test
+        <@
+            (match diffScenario "NewTopLevelUnion" with
+             | Addition _ -> true
+             | _ -> false)
+        @>
+
+[<Fact>]
+let ``a new case on a union with a private representation is not breaking`` () =
+    // Consumers cannot match on a private representation, so no case is public.
+    test <@ breakingHead (diffScenario "PrivateUnion") = None @>
+
+    test
+        <@
+            fixtureApi "ApiFixtures.PrivateUnion.After"
+            |> List.forall (fun (ApiSignature s) -> not (s.StartsWith "case "))
+        @>
+
+[<Fact>]
+let ``a removed union case is breaking`` () =
+    let change =
+        compare (fixtureApi "ApiFixtures.NewNullaryCase.After") (fixtureApi "ApiFixtures.NewNullaryCase.Before")
+
+    test
+        <@
+            ApiChange.toList change
+            |> List.contains (ApiSignature "case Lib.Platform::Windows")
+        @>
+
+    test <@ breakingHead change |> Option.isSome @>
+
+[<Fact>]
+let ``extractFromAssembly reads union cases through the metadata load context`` () =
+    // The fixtures above use runtime reflection; releases read a dll through a
+    // MetadataLoadContext, whose attribute data must yield the same cases.
+    let dll = typeof<ApiFixtures.NewCaseWithFields.Before.Shape>.Assembly.Location
+    let signatures = extractFromAssembly dll |> List.map (fun (ApiSignature s) -> s)
+
+    test
+        <@
+            signatures
+            |> List.contains "case ApiFixtures.NewNullaryCase.After.Platform::Windows"
+        @>
+
+    test
+        <@
+            signatures
+            |> List.contains "case ApiFixtures.NewCaseWithFields.After.Shape::Triangle"
+        @>
+
+    test
+        <@
+            signatures
+            |> List.contains "case ApiFixtures.StructUnion.After.Outcome::Errored"
+        @>
+
+    test
+        <@
+            signatures
+            |> List.contains "case ApiFixtures.SingleCaseUnion.Before.Token::Token"
+        @>
+
+    test
+        <@
+            not (
+                signatures
+                |> List.exists (fun s -> s.StartsWith "case ApiFixtures.TypeInModule.After.Cobertura::")
+            )
+        @>
 
 [<Fact>]
 let ``extractFromNuGetCache returns NotCached for nonexistent package`` () =
@@ -940,24 +1027,53 @@ let ``formatTypeName handles generic array combinations`` () =
         @>
 
 [<Fact>]
-let ``compare new DU case with no removals is Breaking`` () =
-    // Specifically test the hasNewDuCase path with no removals but added nested type
+let ``compare reads a new nested type under an existing type as an addition`` () =
+    // A nested type alone does not mean a union case: modules compile to classes
+    // too. Only a `case` signature on a union that already had cases breaks.
+    let baseline = [ ApiSignature "type MyModule.Parent" ]
+
+    let current =
+        [
+            ApiSignature "type MyModule.Parent"
+            ApiSignature "type MyModule.Parent+Child"
+        ]
+
+    test <@ compare baseline current = Addition(ApiSignature "type MyModule.Parent+Child", []) @>
+
+[<Fact>]
+let ``compare lists only the breaking signatures, cases first`` () =
     let baseline =
         [
-            ApiSignature "type MyModule.MyUnion"
-            ApiSignature "type MyModule.MyUnion+CaseA"
+            ApiSignature "  U::NewA(): M.U"
+            ApiSignature "  U::NewGone(): M.U"
+            ApiSignature "case M.U::A"
+            ApiSignature "case M.U::Gone"
+            ApiSignature "type M.U"
+            ApiSignature "type M.U+Gone"
         ]
 
     let current =
         [
-            ApiSignature "type MyModule.MyUnion"
-            ApiSignature "type MyModule.MyUnion+CaseA"
-            ApiSignature "type MyModule.MyUnion+CaseB"
+            ApiSignature "  U::NewA(): M.U"
+            ApiSignature "  U::NewB(): M.U"
+            ApiSignature "case M.U::A"
+            ApiSignature "case M.U::B"
+            ApiSignature "type M.U"
+            ApiSignature "type M.U+B"
         ]
 
-    match compare baseline current with
-    | Breaking _ -> ()
-    | other -> failwithf "Expected Breaking for new DU case, got %A" other
+    test
+        <@
+            compare baseline current =
+                Breaking(
+                    ApiSignature "case M.U::B",
+                    [
+                        ApiSignature "case M.U::Gone"
+                        ApiSignature "type M.U+Gone"
+                        ApiSignature "  U::NewGone(): M.U"
+                    ]
+                )
+        @>
 
 [<Fact>]
 let ``compare non-nested new type is Addition not Breaking`` () =
@@ -1641,7 +1757,14 @@ let ``extractPreviousFromNuGetResult - a cached assembly that fails to load is U
         match extractPreviousFromNuGetResult restoreRun pkgId "1.0.0" with
         | Unreadable reason ->
             test <@ reason.StartsWith("could not load " + dllPath + ": ") @>
-            test <@ reason.Contains("Could not find assembly 'System.Reflection.MetadataLoadContext") @>
+            // Which of the dll's absent dependencies (CommandTree,
+            // System.Reflection.MetadataLoadContext) is hit first depends on the
+            // order the extractor reads metadata; the reason names whichever it is.
+            test
+                <@
+                    reason.Contains("Could not find assembly 'CommandTree")
+                    || reason.Contains("Could not find assembly 'System.Reflection.MetadataLoadContext")
+                @>
         | other -> failwithf "Expected Unreadable, got %A" other
 
         test <@ not restoreAttempted @>

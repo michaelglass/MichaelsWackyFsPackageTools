@@ -111,6 +111,99 @@ module Fixtures =
         | [<Cmd(Name = "check")>] Inspect
         | [<Cmd("A brand new command")>] Extra // added command (Addition)
 
+    // --- global flags: each root is passed to `fromUnionWithGlobals` with its own
+    // flags union, so each pair is one call site the extractor can find ---
+    type GCmdV1 =
+        | [<Cmd("Check")>] Check
+        | [<Cmd("Loosen")>] Loosen
+
+    /// `Verbose` carries no attribute: a globals union need not mention CommandTree.
+    type GlobalFlagV1 =
+        | [<CmdFlag(Repeatable = true, Description = "Scope to a file")>] File of name: string
+        | Verbose
+
+    type GCmdSingle =
+        | [<Cmd("Check")>] Check
+        | [<Cmd("Loosen")>] Loosen
+
+    /// V1 with `--file` no longer repeatable.
+    type GlobalFlagSingle =
+        | [<CmdFlag(Description = "Scope to a file")>] File of name: string
+        | Verbose
+
+    type GCmdAdded =
+        | [<Cmd("Check")>] Check
+        | [<Cmd("Loosen")>] Loosen
+
+    /// V1 plus `--log-level`.
+    type GlobalFlagAdded =
+        | [<CmdFlag(Repeatable = true, Description = "Scope to a file")>] File of name: string
+        | Verbose
+        | [<CmdFlag(Name = "log-level")>] LogLevel of string
+
+    type GCmdRemoved =
+        | [<Cmd("Check")>] Check
+        | [<Cmd("Loosen")>] Loosen
+
+    /// V1 without `--verbose`.
+    type GlobalFlagRemoved = | [<CmdFlag(Repeatable = true, Description = "Scope to a file")>] File of name: string
+
+    let globalsV1 () =
+        CommandReflection.fromUnionWithGlobals<GCmdV1, GlobalFlagV1> "v1"
+
+    let globalsSingle () =
+        CommandReflection.fromUnionWithGlobals<GCmdSingle, GlobalFlagSingle> "single"
+
+    let globalsAdded () =
+        CommandReflection.tryFromUnionWithGlobals<GCmdAdded, GlobalFlagAdded> "added"
+
+    let globalsRemoved () =
+        CommandReflection.fromUnionWithGlobalsAndEnv<GCmdRemoved, GlobalFlagRemoved> "removed" "FIXTURE"
+
+    // --- call sites the globals discovery must refuse. None of these runs: the
+    // extractor reads them from metadata only. ---
+    type GCmdOdd = | [<Cmd("Check")>] OddCheck
+    type GCmdPrimitive = | [<Cmd("Check")>] PrimitiveCheck
+    type GCmdForeign = | [<Cmd("Check")>] ForeignCheck
+    type GCmdTwice = | [<Cmd("Check")>] TwiceCheck
+    type GCmdImposter = | [<Cmd("Check")>] ImposterCheck
+
+    /// A generic type's method with an entry point's name: its call site names a
+    /// type specification, not `CommandTree.CommandReflection`.
+    type Imposter<'T> =
+        static member fromUnionWithGlobals<'Cmd, 'Globals>() : 'Cmd list = []
+
+    let refusedCallSites () =
+        CommandReflection.fromUnionWithGlobals<GCmdOdd, BuildArgs> "not a union"
+        |> ignore
+
+        CommandReflection.fromUnionWithGlobals<GCmdPrimitive, int> "primitive" |> ignore
+
+        CommandReflection.fromUnionWithGlobals<GCmdForeign, System.DayOfWeek> "other assembly"
+        |> ignore
+
+        CommandReflection.fromUnionWithGlobals<GCmdTwice, GlobalFlagV1> "first"
+        |> ignore
+
+        CommandReflection.fromUnionWithGlobals<GCmdTwice, GlobalFlagRemoved> "second"
+        |> ignore
+
+        Imposter<int>.fromUnionWithGlobals<GCmdImposter, GlobalFlagV1>() |> ignore
+
+    /// Convert a runtime CommandTree flag to the production model.
+    let private toFlag (f: FlagInfo) : FsSemanticTagger.FlagSpec =
+        {
+            FsSemanticTagger.FlagSpec.LongName = f.LongName
+            ShortName = f.ShortName
+            Arity =
+                match f.Arity with
+                | Nullary -> FsSemanticTagger.FlagArity.Nullary
+                | Required -> FsSemanticTagger.FlagArity.RequiredValue
+                | Optional -> FsSemanticTagger.FlagArity.OptionalValue
+            TypeName = f.TypeName
+            IsRepeatable = f.IsRepeatable
+        }
+
     /// Convert a runtime CommandTree node to the production Grammar model — the
     /// ground truth the metadata-only walk is checked against. `FlagInfo.Arity`
     /// (Nullary | Required | Optional) maps 1:1 onto the production FlagArity, and
@@ -128,19 +221,7 @@ module Fixtures =
                         IsList = a.IsList
                         TypeName = a.TypeName
                     }),
-                leaf.Flags
-                |> List.map (fun f ->
-                    {
-                        FsSemanticTagger.FlagSpec.LongName = f.LongName
-                        ShortName = f.ShortName
-                        Arity =
-                            match f.Arity with
-                            | Nullary -> FsSemanticTagger.FlagArity.Nullary
-                            | Required -> FsSemanticTagger.FlagArity.RequiredValue
-                            | Optional -> FsSemanticTagger.FlagArity.OptionalValue
-                        TypeName = f.TypeName
-                        IsRepeatable = f.IsRepeatable
-                    })
+                leaf.Flags |> List.map toFlag
             )
         | Group g -> FsSemanticTagger.CommandNode.Group(g.Name, g.Children |> List.map toNode)
 
@@ -151,10 +232,26 @@ module Fixtures =
         | Group g ->
             {
                 FsSemanticTagger.Grammar.Roots = g.Children |> List.map toNode
+                GlobalFlags = []
             }
         | leaf ->
             {
                 FsSemanticTagger.Grammar.Roots = [ toNode leaf ]
+                GlobalFlags = []
+            }
+
+    /// The realized grammar of a `GlobalSpec`: its command tree plus its global flags.
+    let grammarOfGlobalSpec (spec: GlobalSpec<'Globals, 'Cmd>) : FsSemanticTagger.Grammar =
+        match spec.Tree with
+        | Group g ->
+            {
+                FsSemanticTagger.Grammar.Roots = g.Children |> List.map toNode
+                GlobalFlags = spec.GlobalFlags |> List.map toFlag
+            }
+        | leaf ->
+            {
+                FsSemanticTagger.Grammar.Roots = [ toNode leaf ]
+                GlobalFlags = spec.GlobalFlags |> List.map toFlag
             }
 
 open FsSemanticTagger
@@ -187,7 +284,7 @@ let private flag long arity =
     }
 
 let private leaf name args flags = Leaf(name, args, flags)
-let private grammar roots = { Roots = roots }
+let private grammar roots = { Roots = roots; GlobalFlags = [] }
 
 // ---- pure-diff facts --------------------------------------------------------
 
@@ -469,7 +566,10 @@ let ``extraction recovers a positional-prefix flag leaf with an optional-value f
     let extracted = Grammar.extractGrammarForType dll typeof<Fixtures.Prefixed>.FullName
 
     match extracted with
-    | Some { Roots = [ Leaf(name, args, flags) ] } ->
+    | Some {
+               Roots = [ Leaf(name, args, flags) ]
+               GlobalFlags = []
+           } ->
         test <@ name = "deploy" @>
 
         test
@@ -554,7 +654,15 @@ let ``extraction recovers a single-case nullary union`` () =
     let extracted =
         Grammar.extractGrammarForType dll typeof<Fixtures.SoleNullary>.FullName
 
-    test <@ extracted = Some { Roots = [ Leaf("only", [], []) ] } @>
+    test
+        <@
+            extracted =
+                Some
+                    {
+                        Roots = [ Leaf("only", [], []) ]
+                        GlobalFlags = []
+                    }
+        @>
 
 [<Fact>]
 let ``an assembly with several root command unions is ambiguous => None`` () =
@@ -629,3 +737,113 @@ let ``extractGrammarFromCacheRoot reads a consumer from a cache layout`` () =
             System.IO.Directory.Delete(cacheRoot, true)
         with _ ->
             ()
+
+// ---- global flags (CommandReflection.fromUnionWithGlobals) -------------------
+
+let private globals flags = { Roots = []; GlobalFlags = flags }
+
+[<Fact>]
+let ``added global flag is Addition`` () =
+    let before = globals [ flag "verbose" Nullary ]
+    let after = globals [ flag "verbose" Nullary; flag "log-level" RequiredValue ]
+    test <@ Grammar.compare before after = GAddition @>
+
+[<Fact>]
+let ``removed or renamed global flag is Breaking`` () =
+    let before = globals [ flag "verbose" Nullary; flag "file" RequiredValue ]
+    test <@ Grammar.compare before (globals [ flag "file" RequiredValue ]) = GBreaking @>
+
+    test <@ Grammar.compare before (globals [ flag "loud" Nullary; flag "file" RequiredValue ]) = GBreaking @>
+
+[<Fact>]
+let ``global flag made single-occurrence is Breaking; made repeatable is Addition`` () =
+    let single = globals [ flag "file" RequiredValue ]
+
+    let repeatable =
+        globals
+            [
+                { flag "file" RequiredValue with
+                    IsRepeatable = true
+                }
+            ]
+
+    test <@ Grammar.compare repeatable single = GBreaking @>
+    test <@ Grammar.compare single repeatable = GAddition @>
+
+[<Fact>]
+let ``a global flag change is breaking even when every command is unchanged`` () =
+    let commands = [ leaf "check" [] [] ]
+
+    let before =
+        {
+            Roots = commands
+            GlobalFlags = [ flag "verbose" Nullary ]
+        }
+
+    test <@ Grammar.compare before { before with GlobalFlags = [] } = GBreaking @>
+
+[<Fact>]
+let ``extraction recovers the global flags passed to fromUnionWithGlobals`` () =
+    // The globals union is found from the consumer's own call site, so its
+    // attribute-less `Verbose` case counts as well; it must equal the flags
+    // CommandTree builds at runtime.
+    let dll = typeof<Fixtures.GCmdV1>.Assembly.Location
+    let extracted = Grammar.extractGrammarForType dll typeof<Fixtures.GCmdV1>.FullName
+    let expected = Some(Fixtures.grammarOfGlobalSpec (Fixtures.globalsV1 ()))
+    test <@ extracted = expected @>
+
+    test
+        <@
+            extracted
+            |> Option.exists (fun g -> g.GlobalFlags |> List.exists (fun f -> f.LongName = "file" && f.IsRepeatable))
+        @>
+
+[<Fact>]
+let ``extraction finds globals through the try- and env- variants too`` () =
+    let dll = typeof<Fixtures.GCmdV1>.Assembly.Location
+
+    let flagNames (root: System.Type) =
+        Grammar.extractGrammarForType dll root.FullName
+        |> Option.map (fun g -> g.GlobalFlags |> List.map (fun f -> f.LongName))
+
+    test <@ flagNames typeof<Fixtures.GCmdAdded> = Some [ "file"; "verbose"; "log-level" ] @>
+    test <@ flagNames typeof<Fixtures.GCmdRemoved> = Some [ "file" ] @>
+
+[<Fact>]
+let ``a root never passed to fromUnionWithGlobals has no global flags`` () =
+    let dll = typeof<Fixtures.MiniV1>.Assembly.Location
+    let extracted = Grammar.extractGrammarForType dll typeof<Fixtures.MiniV1>.FullName
+    test <@ extracted |> Option.map (fun g -> g.GlobalFlags) = Some [] @>
+
+[<Fact>]
+let ``extraction + diff end-to-end: global flag changes bump`` () =
+    let dll = typeof<Fixtures.GCmdV1>.Assembly.Location
+
+    let extract (root: System.Type) =
+        Grammar.extractGrammarForType dll root.FullName
+
+    let diff (after: System.Type) =
+        match extract typeof<Fixtures.GCmdV1>, extract after with
+        | Some a, Some b -> Some(Grammar.compare a b)
+        | _ -> None
+
+    test <@ diff typeof<Fixtures.GCmdAdded> = Some GAddition @>
+    test <@ diff typeof<Fixtures.GCmdRemoved> = Some GBreaking @>
+    test <@ diff typeof<Fixtures.GCmdSingle> = Some GBreaking @>
+
+[<Fact>]
+let ``a call site that does not name one local union beside the root gives no global flags`` () =
+    // A record, a primitive or another assembly's type as the globals argument;
+    // a root passed with two different globals unions; a same-named method on
+    // another type. Each root is still a command union with its own grammar.
+    let dll = typeof<Fixtures.GCmdOdd>.Assembly.Location
+
+    let globalsOf (root: System.Type) =
+        Grammar.extractGrammarForType dll root.FullName
+        |> Option.map (fun g -> g.GlobalFlags)
+
+    test <@ globalsOf typeof<Fixtures.GCmdOdd> = Some [] @>
+    test <@ globalsOf typeof<Fixtures.GCmdPrimitive> = Some [] @>
+    test <@ globalsOf typeof<Fixtures.GCmdForeign> = Some [] @>
+    test <@ globalsOf typeof<Fixtures.GCmdTwice> = Some [] @>
+    test <@ globalsOf typeof<Fixtures.GCmdImposter> = Some [] @>

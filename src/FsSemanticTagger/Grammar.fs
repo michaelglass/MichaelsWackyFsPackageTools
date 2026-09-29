@@ -3,6 +3,9 @@ namespace FsSemanticTagger
 open System
 open System.IO
 open System.Reflection
+open System.Reflection.Metadata
+open System.Reflection.Metadata.Ecma335
+open System.Reflection.PortableExecutable
 open System.Text.RegularExpressions
 open FsSemanticTagger.Api
 
@@ -57,8 +60,14 @@ type CommandNode =
     | Leaf of name: string * args: ArgSpec list * flags: FlagSpec list
     | Group of name: string * children: CommandNode list
 
-/// A consumer's whole CLI contract: the forest of top-level commands.
-type Grammar = { Roots: CommandNode list }
+/// A consumer's whole CLI contract: the forest of top-level commands, and the
+/// global flags accepted before or after any of them (the `'Globals` union passed
+/// to `CommandReflection.fromUnionWithGlobals<'Cmd, 'Globals>`; empty without one).
+type Grammar =
+    {
+        Roots: CommandNode list
+        GlobalFlags: FlagSpec list
+    }
 
 /// The verdict, folded into the existing Api.ApiChange by taking the stronger bump.
 type GrammarChange =
@@ -202,9 +211,10 @@ module Grammar =
         | Leaf _, Group _
         | Group _, Leaf _ -> GBreaking
 
-    /// Diff two realized grammars into a single verdict.
+    /// Diff two realized grammars into a single verdict. Global flags follow the
+    /// same rules as a command's flags.
     let compare (previous: Grammar) (current: Grammar) : GrammarChange =
-        compareNodeLists previous.Roots current.Roots
+        combine (compareNodeLists previous.Roots current.Roots) (compareFlags previous.GlobalFlags current.GlobalFlags)
 
     /// Project a grammar verdict onto the existing `Api.ApiChange` so it can share
     /// the bump machinery. The carried signature is a human-readable marker (the
@@ -624,6 +634,120 @@ module Grammar =
                         caseAttributes t c
                         |> List.exists (fun a -> a.AttributeType.Namespace = commandTreeNamespace)))))
 
+    /// Qualifies a type name with its namespace, as `Type.FullName` does.
+    let private qualify (ns: string) (name: string) =
+        if String.IsNullOrEmpty ns then name else ns + "." + name
+
+    /// The `Type.FullName` of a type defined in the assembly being read.
+    let rec private definitionName (reader: MetadataReader) (handle: TypeDefinitionHandle) : string =
+        let definition = reader.GetTypeDefinition handle
+        let name = reader.GetString definition.Name
+        let declaring = definition.GetDeclaringType()
+
+        if declaring.IsNil then
+            qualify (reader.GetString definition.Namespace) name
+        else
+            definitionName reader declaring + "+" + name
+
+    /// The full names of a generic instantiation's type arguments, when every
+    /// one is a type this assembly defines; `None` for any other argument (a
+    /// primitive, a constructed generic, a type from another assembly), none of
+    /// which is a union this assembly declares.
+    let private typeArgumentsDefinedHere (reader: MetadataReader) (spec: MethodSpecification) : string list option =
+        let mutable blob = reader.GetBlobReader spec.Signature
+        blob.ReadSignatureHeader() |> ignore
+        let count = blob.ReadCompressedInteger()
+        let names = Collections.Generic.List<string>()
+        let mutable definedHere = true
+
+        while definedHere && names.Count < count do
+            let argument =
+                if blob.ReadSignatureTypeCode() = SignatureTypeCode.TypeHandle then
+                    blob.ReadTypeHandle()
+                else
+                    EntityHandle()
+
+            if argument.Kind = HandleKind.TypeDefinition then
+                names.Add(definitionName reader (TypeDefinitionHandle.op_Explicit argument))
+            else
+                definedHere <- false
+
+        if definedHere then Some(List.ofSeq names) else None
+
+    /// The CommandTree entry points that take a globals union, all
+    /// `<'Cmd, 'Globals>`.
+    let private withGlobalsEntryPoints =
+        set
+            [
+                "fromUnionWithGlobals"
+                "tryFromUnionWithGlobals"
+                "fromUnionWithGlobalsAndEnv"
+                "tryFromUnionWithGlobalsAndEnv"
+            ]
+
+    /// Is this referenced method one of `CommandTree.CommandReflection`'s
+    /// `*WithGlobals` entry points?
+    let private isWithGlobalsEntryPoint (reader: MetadataReader) (method: MemberReference) : bool =
+        method.Parent.Kind = HandleKind.TypeReference
+        && withGlobalsEntryPoints.Contains(reader.GetString method.Name)
+        && (let parent = reader.GetTypeReference(TypeReferenceHandle.op_Explicit method.Parent)
+            reader.GetString parent.Namespace + "." + reader.GetString parent.Name = "CommandTree.CommandReflection")
+
+    /// Every `(cmd, globals)` type-argument pair the assembly instantiates a
+    /// `CommandReflection.*WithGlobals` entry point with, read from its MethodSpec
+    /// table. The call site is the one place the program says which union holds
+    /// its global flags; nothing on the union itself has to (a globals case needs
+    /// no attribute), so the union cannot be recognised by its shape.
+    let private globalsInstantiations (dllPath: string) : (string * string) list =
+        use stream = File.OpenRead dllPath
+        use pe = new PEReader(stream)
+        let reader = pe.GetMetadataReader()
+
+        [
+            for row in 1 .. reader.GetTableRowCount TableIndex.MethodSpec do
+                let spec =
+                    reader.GetMethodSpecification(MetadataTokens.MethodSpecificationHandle row)
+
+                let isEntryPoint =
+                    spec.Method.Kind = HandleKind.MemberReference
+                    && isWithGlobalsEntryPoint
+                        reader
+                        (reader.GetMemberReference(MemberReferenceHandle.op_Explicit spec.Method))
+
+                match
+                    (if isEntryPoint then
+                         typeArgumentsDefinedHere reader spec
+                     else
+                         None)
+                with
+                | Some [ cmd; globals ] -> yield cmd, globals
+                | _ -> ()
+        ]
+
+    /// The global flags `root` is parsed with: the flags union the assembly passes
+    /// alongside `root` to a `*WithGlobals` entry point. None when it never does,
+    /// and none when it passes several different unions, since which one a given
+    /// run uses cannot be read from metadata.
+    let private globalFlagsOf (dllPath: string) (asm: Assembly) (root: Type) : FlagSpec list =
+        let globalsUnions =
+            globalsInstantiations dllPath
+            |> List.choose (fun (cmd, globals) -> if cmd = root.FullName then Some globals else None)
+            |> List.distinct
+
+        match globalsUnions with
+        | [ globals ] ->
+            match asm.GetType globals |> Option.ofObj with
+            | Some t when isUnionType t -> flagInfos t
+            | _ -> []
+        | _ -> []
+
+    /// The realized grammar rooted at `root`: its command forest and its global flags.
+    let private grammarOf (dllPath: string) (asm: Assembly) (root: Type) : Grammar =
+        {
+            Roots = walkUnion root
+            GlobalFlags = globalFlagsOf dllPath asm root
+        }
+
     /// Recover the realized CLI grammar of a single named root command union in an
     /// assembly. Internal seam for tests: bypasses consumer detection / root
     /// discovery so a fixture DU can be walked by full name. `None` on any read
@@ -635,7 +759,7 @@ module Grammar =
             let asm = context.LoadFromAssemblyPath(Path.GetFullPath dllPath)
 
             match asm.GetType(rootTypeFullName) |> Option.ofObj with
-            | Some t when isUnionType t -> Some { Roots = walkUnion t }
+            | Some t when isUnionType t -> Some(grammarOf dllPath asm t)
             | _ -> None
         with _ ->
             None
@@ -654,8 +778,7 @@ module Grammar =
             if not (isCommandTreeConsumer asm types) then
                 None
             else
-                findRootCommandUnion types
-                |> Option.map (fun root -> { Roots = walkUnion root })
+                findRootCommandUnion types |> Option.map (grammarOf dllPath asm)
         with _ ->
             None
 

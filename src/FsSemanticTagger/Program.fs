@@ -218,7 +218,7 @@ let internal runCommandWith
             printfn "BREAKING changes detected:"
 
             for (Api.ApiSignature s) in Api.ApiChange.toList change |> List.truncate 10 do
-                printfn "  - %s" s
+                printfn "  ! %s" s
 
             Ok 2
         | Api.Addition _ ->
