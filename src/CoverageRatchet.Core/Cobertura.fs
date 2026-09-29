@@ -7,11 +7,9 @@ open System.Text.RegularExpressions
 // sync:file-coverage:start
 /// Per-file coverage data parsed from a Cobertura XML report.
 ///
-/// Both the ratio and its two components are kept deliberately. The collector
-/// emits a source line only when its containing method JIT-compiles, so the
-/// *Total fields (the percentage DENOMINATOR) drift with load and run context,
-/// while the *Covered fields (the NUMERATOR) are stable for unchanged code.
-/// Count floors gate on the numerator for that reason — see ADR 0019.
+/// `*Total` counts drift between runs (a line is only emitted once its method is
+/// JIT-compiled); `*Covered` counts are stable for unchanged code, which is why
+/// count floors gate on them.
 type FileCoverage =
     { FileName: string
       LinePct: float
@@ -135,8 +133,7 @@ let private readClassLines (fileName: string) (classEl: XElement) : RawLine list
         |> Seq.toList
 
     if List.isEmpty lines then
-        // Emit a placeholder so buildCoverage knows this file exists (zero-line class).
-        // LineNum = -1 is filtered out by buildCoverage, resulting in 0 totalLines → 100%.
+        // Placeholder so a zero-line class still appears (as 100%); buildCoverage drops LineNum -1.
         [ { FileName = Path.GetFileName(fileName)
             LineNum = -1
             WasHit = false

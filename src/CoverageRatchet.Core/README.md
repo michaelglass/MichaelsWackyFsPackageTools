@@ -41,11 +41,9 @@ let latest: string option = findCoverageFile "/path/to/search"
 ```fsharp
 /// Per-file coverage data parsed from a Cobertura XML report.
 ///
-/// Both the ratio and its two components are kept deliberately. The collector
-/// emits a source line only when its containing method JIT-compiles, so the
-/// *Total fields (the percentage DENOMINATOR) drift with load and run context,
-/// while the *Covered fields (the NUMERATOR) are stable for unchanged code.
-/// Count floors gate on the numerator for that reason — see ADR 0019.
+/// `*Total` counts drift between runs (a line is only emitted once its method is
+/// JIT-compiled); `*Covered` counts are stable for unchanged code, which is why
+/// count floors gate on them.
 type FileCoverage =
     { FileName: string
       LinePct: float

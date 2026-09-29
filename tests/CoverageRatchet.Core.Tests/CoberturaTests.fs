@@ -296,14 +296,8 @@ let ``buildBranchGaps - file with no uncovered branches not included`` () =
 
     test <@ List.isEmpty result @>
 
-// --- ADR 0019 stability repro: the numerator survives what breaks the ratio ---
-//
-// ADR 0019's finding, restated: pooling a project that covers NONE of a file
-// enlarges that file's emitted-line set (the percentage denominator) without
-// adding hits. Embeddings.fs read 383/412 = 93.0% alone and 383/639 = 59.9%
-// pooled — "same hits, different denominator".
-//
-// These tests demonstrate that on real parsing rather than asserting it.
+// Pooling a project that covers none of a file can enlarge its emitted-line set
+// (LinesTotal) without adding hits; LinesCovered must not move.
 
 let private classXml (fileName: string) (lines: (int * int) list) =
     let lineEls =
@@ -318,33 +312,25 @@ let private classXml (fileName: string) (lines: (int * int) list) =
 
 [<Fact>]
 let ``pooling a project that covers none of a file leaves LinesCovered untouched`` () =
-    // Run A emits lines 1-4, hitting 3 of them.
     let runA = classXml "Foo.fs" [ 1, 1; 2, 1; 3, 1; 4, 0 ]
 
-    // Run B emits a WIDER set (1-10) for the same file and hits none of it —
-    // the "project that tests nothing of the file" from ADR 0019.
+    // Same file, wider emitted set, no hits.
     let runB = classXml "Foo.fs" [ for i in 1..10 -> i, 0 ]
 
     let alone = parseXmls [ runA ] |> List.head
     let pooled = parseXmls [ runA; runB ] |> List.head
 
-    // The denominator moves...
     test <@ alone.LinesTotal = 4 @>
     test <@ pooled.LinesTotal = 10 @>
 
-    // ...and drags the percentage down with it, on identical hits.
     test <@ alone.LinePct = 75.0 @>
     test <@ pooled.LinePct = 30.0 @>
 
-    // But the numerator — what count floors gate on — does not move.
     test <@ alone.LinesCovered = 3 @>
     test <@ pooled.LinesCovered = 3 @>
 
 [<Fact>]
 let ``LinesCovered rises only when hits are actually added`` () =
-    // Positive control for the test above: LinesCovered is not simply frozen.
-    // A pooled run that DOES add a hit must move it, or the stability claim
-    // would be vacuous.
     let runA = classXml "Foo.fs" [ 1, 1; 2, 0 ]
     let runB = classXml "Foo.fs" [ 1, 0; 2, 1 ]
 
@@ -363,8 +349,6 @@ let ``LinesCovered and LinesTotal agree with LinePct`` () =
     test <@ coverage.LinesCovered = 2 @>
     test <@ coverage.LinesTotal = 4 @>
     test <@ coverage.LinePct = 50.0 @>
-
-// ── ReaderOptions and readReports ─────────────────────────────────────────────────
 
 let private csharp =
     { ReaderOptions.defaults with
@@ -520,8 +504,7 @@ let ``readReports - one exclusion per base name across several reports`` () =
 
 [<Fact>]
 let ``readReports - a base name read in one project and excluded in another is on both sides`` () =
-    // Floors are keyed by base name, so this is one file to the ratchet; the exclusion
-    // list still reports the copy it skipped.
+    // Floors are keyed by base name, so the skipped copy is still listed.
     let xmls =
         [ classXml "LibA/Shared.fs" [ 1, 1 ]
           classXml "LibB/vendor/Shared.fs" [ 1, 0 ] ]

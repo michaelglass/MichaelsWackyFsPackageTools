@@ -11,8 +11,6 @@ open CoverageRatchet.Program
 open Tests.Common.TestHelpers
 open CoverageRatchet.Tests.CoverageTestHelpers
 
-// --- resolveGitDir tests ---
-
 [<Fact>]
 let ``resolveGitDir - returns None for normal git repo`` () =
     withTempDir (fun tmpDir ->
@@ -112,8 +110,6 @@ let ``resolveGitDir - walks up from a nested subdir and stops at a native git ro
 
         test <@ result = None @>)
 
-// --- formatFileResult tests ---
-
 [<Fact>]
 let ``formatFileResult - passing file at 100 percent`` () =
     let r =
@@ -153,8 +149,6 @@ let ``formatFileResult - file with no branches`` () =
 
     test <@ result.Contains("PASS") @>
     test <@ not (result.Contains("branches)")) @>
-
-// --- run tests ---
 
 let private makeCoverageXml (linePct: int) =
     let hitLines = linePct / 10
@@ -215,12 +209,10 @@ let ``run - check with failing coverage returns Ok 1`` () =
 let ``run - ratchet with no changes returns Ok 0`` () =
     withTempDir (fun tmpDir ->
         let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
-        // 50% coverage
         File.WriteAllText(xmlPath, makeCoverageXml 50)
 
         let configPath = Path.Combine(tmpDir, "config.json")
 
-        // Set up config with override matching actual coverage exactly
         let config =
             { DefaultLine = 100.0
               DefaultBranch = 100.0
@@ -243,12 +235,11 @@ let ``run - ratchet with no changes returns Ok 0`` () =
 let ``run - ratchet with tightened config returns Ok 1`` () =
     withTempDir (fun tmpDir ->
         let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
-        // 50% coverage
         File.WriteAllText(xmlPath, makeCoverageXml 50)
 
         let configPath = Path.Combine(tmpDir, "config.json")
 
-        // Set up config with override lower than actual coverage (will be tightened)
+        // Override below actual coverage, so ratchet tightens it.
         let config =
             { DefaultLine = 100.0
               DefaultBranch = 100.0
@@ -271,7 +262,6 @@ let ``run - ratchet with tightened config returns Ok 1`` () =
 let ``run - ratchet with failed files returns Ok 2`` () =
     withTempDir (fun tmpDir ->
         let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
-        // 50% coverage, but default threshold is 100%
         File.WriteAllText(xmlPath, makeCoverageXml 50)
 
         let configPath = Path.Combine(tmpDir, "config.json")
@@ -313,19 +303,12 @@ let ``run - loosen then check passes`` () =
 
         let configPath = Path.Combine(tmpDir, "config.json")
 
-        // Loosen first
         let _ = run (Loosen(config = Some configPath)) tmpDir false
 
-        // Now check should pass
         let result = run (Check(config = Some configPath)) tmpDir false
 
         test <@ result = Ok 0 @>)
 
-// --- runCheck with empty file list ---
-
-/// A C#-only report parses fine and yields no F# file. `check` used to answer
-/// `Ok 0` here — zero files examined, reported as a pass — which is the whole
-/// point of the exit-2 code: nothing was measured, so nothing is certified.
 [<Fact>]
 let ``run - check on a report with no F# file is undeterminable, not a pass`` () =
     withTempDir (fun tmpDir ->
@@ -342,7 +325,6 @@ let ``run - check on a report with no F# file is undeterminable, not a pass`` ()
 
         test <@ result = Ok 2 @>)
 
-/// The degenerate case: a well-formed report that carries no class at all.
 [<Fact>]
 let ``run - check on an empty coverage report is undeterminable, not a pass`` () =
     withTempDir (fun tmpDir ->
@@ -358,11 +340,8 @@ let ``run - check on an empty coverage report is undeterminable, not a pass`` ()
                 run (Check(config = Some(Path.Combine(tmpDir, "config.json")))) tmpDir false)
 
         test <@ result = Ok 2 @>
-        // It has to SAY so: a silent 2 is only marginally better than a silent 0.
         test <@ output.Contains("NOTHING MEASURED") @>)
 
-/// The same defect in the artifact path. `check-json` still writes its file —
-/// CI uploads it — but no longer claims the run passed.
 [<Fact>]
 let ``run - check-json on a report with no F# file is undeterminable, not a pass`` () =
     withTempDir (fun tmpDir ->
@@ -380,12 +359,9 @@ let ``run - check-json on a report with no F# file is undeterminable, not a pass
         test <@ result = Ok 2 @>
         test <@ File.Exists(outPath) @>)
 
-// --- ratchet None branch (tightened count) ---
-
 [<Fact>]
 let ``run - ratchet with new file in coverage only counts existing overrides as tightened`` () =
     withTempDir (fun tmpDir ->
-        // Coverage XML with Foo.fs at 50% and Bar.fs at 80%
         let xml =
             """<?xml version="1.0" encoding="utf-8"?>
 <coverage>
@@ -440,13 +416,10 @@ let ``run - ratchet with new file in coverage only counts existing overrides as 
 
         saveConfig configPath config
 
-        // Ratchet runs - Foo.fs tightens from 30 to 50, Bar.fs gets created via Failed path
+        // Foo.fs tightens 30 -> 50; Bar.fs has no override and fails the 100% default.
         let result = run (Ratchet(config = Some configPath)) tmpDir false
 
-        // Bar.fs is below 100% with no override, so this is a Failed result (Ok 2)
         test <@ result = Ok 2 @>)
-
-// --- check-json tests ---
 
 [<Fact>]
 let ``run - check-json writes platform and file results to output file`` () =
@@ -514,8 +487,6 @@ let ``run - check-json with failing coverage returns Ok 1`` () =
 
         test <@ result = Ok 1 @>)
 
-// --- targets tests ---
-
 [<Fact>]
 let ``run - targets returns Ok 0 and lists files`` () =
     withTempDir (fun tmpDir ->
@@ -553,8 +524,6 @@ let ``run - targets with no coverage file returns Error`` () =
 
         test <@ result = Error "No coverage.cobertura.xml found" @>)
 
-// --- gaps tests ---
-
 [<Fact>]
 let ``run - gaps returns Ok 0 with branch gaps`` () =
     withTempDir (fun tmpDir ->
@@ -581,7 +550,6 @@ let ``run - gaps returns Ok 0 with branch gaps`` () =
 [<Fact>]
 let ``run - gaps returns Ok 0 with no branch gaps at all`` () =
     withTempDir (fun tmpDir ->
-        // No branch lines, no gaps.
         let xml =
             """<?xml version="1.0" encoding="utf-8"?>
 <coverage><packages><package><classes>
@@ -602,7 +570,6 @@ let ``run - gaps returns Ok 0 with no branch gaps at all`` () =
             withCapturedConsole (fun () -> run (Gaps(config = Some configPath)) tmpDir false)
 
         test <@ result = Ok 0 @>
-        // Output should signal the empty-gap case.
         test <@ _output.Contains("No uncovered branches") @>)
 
 [<Fact>]
@@ -613,12 +580,9 @@ let ``run - gaps with no coverage file returns Error`` () =
 
         test <@ result = Error "No coverage.cobertura.xml found" @>)
 
-// --- multi-XML tests ---
-
 [<Fact>]
 let ``run - check merges coverage from multiple XMLs in subdirectories`` () =
     withTempDir (fun tmpDir ->
-        // Two test projects, each covering different lines of Foo.fs
         let sub1 = Path.Combine(tmpDir, "TestProject1")
         let sub2 = Path.Combine(tmpDir, "TestProject2")
         Directory.CreateDirectory(sub1) |> ignore
@@ -724,8 +688,6 @@ let ``run - ratchet merges coverage from multiple XMLs`` () =
 
         test <@ result = Ok 0 @>)
 
-// --- main tests ---
-
 [<Fact>]
 let ``main with --help returns 0`` () =
     let result = main [| "--help" |]
@@ -775,8 +737,6 @@ let ``main with no args and no coverage file returns 1`` () =
 
     test <@ result = 1 @>
 
-// --- formatFileResult additional variations ---
-
 [<Fact>]
 let ``formatFileResult - passing with override shows thresholds`` () =
     let r =
@@ -803,8 +763,6 @@ let ``formatFileResult - failing with no branches`` () =
     test <@ not (result.Contains("branches)")) @>
     test <@ not (result.Contains("[min:")) @>
 
-// --- run with each command variant ---
-
 [<Fact>]
 let ``run - check-json with default output path`` () =
     withTempDir (fun tmpDir ->
@@ -812,7 +770,6 @@ let ``run - check-json with default output path`` () =
         File.WriteAllText(xmlPath, makeCoverageXml 100)
 
         let configPath = Path.Combine(tmpDir, "config.json")
-        // No explicit output path - uses default
         let result = run (CheckJson(config = Some configPath, output = None)) tmpDir false
 
         test <@ result = Ok 0 @>)
@@ -840,8 +797,6 @@ let ``run - check-json with no coverage file returns Error`` () =
             run (CheckJson(config = Some(Path.Combine(tmpDir, "config.json")), output = Some "out.json")) tmpDir false
 
         test <@ result = Error "No coverage.cobertura.xml found" @>)
-
-// --- formatFileResult additional edge cases ---
 
 [<Fact>]
 let ``formatFileResult - failing file at default thresholds shows no min`` () =
@@ -880,8 +835,6 @@ let ``formatFileResult - passing with only branch below 100 shows threshold`` ()
     test <@ result.Contains("PASS") @>
     test <@ result.Contains("[min: line=100.0% branch=70.0%]") @>
 
-// --- main with subcommand help ---
-
 [<Fact>]
 let ``main with check --help returns 0`` () =
     let result = main [| "check"; "--help" |]
@@ -906,21 +859,16 @@ let ``main with check-json --help returns 0`` () =
 
     test <@ result = 0 @>
 
-// --- run uses default config path ---
-
 [<Fact>]
 let ``run - uses default config path when None`` () =
     withTempDir (fun tmpDir ->
         let xmlPath = Path.Combine(tmpDir, "coverage.cobertura.xml")
         File.WriteAllText(xmlPath, makeCoverageXml 100)
 
-        // Check with config=None uses the defaultConfigPath relative to cwd
         let result = run (Check(config = None)) tmpDir false
 
         // 100% coverage passes default thresholds
         test <@ result = Ok 0 @>)
-
-// --- run with loosen uses default config ---
 
 [<Fact>]
 let ``run - loosen with config None creates default config`` () =
@@ -931,8 +879,6 @@ let ``run - loosen with config None creates default config`` () =
         let result = run (Loosen(config = None)) tmpDir false
 
         test <@ result = Ok 0 @>)
-
-// --- ratchet with removed overrides ---
 
 [<Fact>]
 let ``run - ratchet removes override when file reaches 100 percent`` () =
@@ -959,14 +905,10 @@ let ``run - ratchet removes override when file reaches 100 percent`` () =
 
         let result = run (Ratchet(config = Some configPath)) tmpDir false
 
-        // Tightened returns Ok 1
         test <@ result = Ok 1 @>
 
-        // Verify override was removed from config
         let loaded = loadConfig configPath
         test <@ loaded.Overrides.ContainsKey("Foo.fs") = false @>)
-
-// --- ratchet with explicit config and 100% coverage ---
 
 [<Fact>]
 let ``run - ratchet with 100 percent coverage and no config returns Ok 0`` () =
@@ -979,8 +921,6 @@ let ``run - ratchet with 100 percent coverage and no config returns Ok 0`` () =
         let result = run (Ratchet(config = Some configPath)) tmpDir false
 
         test <@ result = Ok 0 @>)
-
-// --- check with mix of passed and failed files ---
 
 [<Fact>]
 let ``run - check reports both passed and failed files`` () =
@@ -1018,8 +958,6 @@ let ``run - check reports both passed and failed files`` () =
         // Bad.fs is at 50% with 100% threshold, so it fails
         test <@ result = Ok 1 @>)
 
-// --- check with all passing ---
-
 [<Fact>]
 let ``run - check with all files passing returns Ok 0`` () =
     withTempDir (fun tmpDir ->
@@ -1053,8 +991,6 @@ let ``run - check with all files passing returns Ok 0`` () =
 
         test <@ result = Ok 0 @>)
 
-// --- check-json with default output path writes to coverage-results.json ---
-
 [<Fact>]
 let ``run - check-json with None output writes coverage-results.json`` () =
     withTempDir (fun tmpDir ->
@@ -1066,10 +1002,7 @@ let ``run - check-json with None output writes coverage-results.json`` () =
         let result = run (CheckJson(config = Some configPath, output = None)) tmpDir false
 
         test <@ result = Ok 0 @>
-        // The default output path is "coverage-results.json" (relative)
         test <@ File.Exists("coverage-results.json") || result = Ok 0 @>)
-
-// --- loosen then ratchet flow ---
 
 [<Fact>]
 let ``run - loosen then ratchet produces no changes`` () =
@@ -1079,15 +1012,12 @@ let ``run - loosen then ratchet produces no changes`` () =
 
         let configPath = Path.Combine(tmpDir, "config.json")
 
-        // Loosen first
         let _ = run (Loosen(config = Some configPath)) tmpDir false
 
         // Ratchet should produce no changes (already loosened to actual)
         let result = run (Ratchet(config = Some configPath)) tmpDir false
 
         test <@ result = Ok 0 @>)
-
-// --- ratchet with multiple files, some tightened some removed ---
 
 [<Fact>]
 let ``run - ratchet tightens some overrides and removes others`` () =
@@ -1158,22 +1088,16 @@ let ``run - ratchet tightens some overrides and removes others`` () =
 
         let result = run (Ratchet(config = Some configPath)) tmpDir false
 
-        // Tightened returns Ok 1
         test <@ result = Ok 1 @>
 
-        // Verify: Foo.fs tightened, Bar.fs removed
         let loaded = loadConfig configPath
         test <@ loaded.Overrides.ContainsKey("Foo.fs") @>
         test <@ loaded.Overrides.["Foo.fs"].Line = 40.0 @>
         test <@ loaded.Overrides.ContainsKey("Bar.fs") = false @>)
 
-// --- defaultConfigPath value ---
-
 [<Fact>]
 let ``defaultConfigPath is coverage-ratchet.json`` () =
     test <@ defaultConfigPath = "coverage-ratchet.json" @>
-
-// --- CoverageFileCommand variants ---
 
 [<Fact>]
 let ``run dispatches Ratchet to CfRatchet`` () =
@@ -1194,8 +1118,6 @@ let ``run dispatches Loosen None to CfLoosen`` () =
         let result = run (Loosen(config = None)) tmpDir false
         test <@ result = Ok 0 @>)
 
-// --- CiResult type ---
-
 [<Fact>]
 let ``CiResult discriminated union cases are distinct`` () =
     let passed = CiPassed
@@ -1211,8 +1133,6 @@ let ``CiResult discriminated union cases are distinct`` () =
             | CiCoverageFailure dir -> dir = "/tmp/test"
             | _ -> false
         @>
-
-// --- check-json multiple files ---
 
 [<Fact>]
 let ``run - check-json includes multiple files in output`` () =
@@ -1265,8 +1185,6 @@ let ``run - check-json includes multiple files in output`` () =
         test <@ hasBar @>
         test <@ fooLine = 50 @>
         test <@ barLine = 100 @>)
-
-// --- pollCi tests ---
 
 let fakeRun (responses: (string * string * CoverageRatchet.Shell.CommandResult) list) =
     let mutable idx = 0
@@ -1421,8 +1339,6 @@ let ``pollCi - timeout returns CiOtherFailure`` () =
 
     test <@ result = CiOtherFailure @>
 
-// --- getVcsSha tests ---
-
 [<Fact>]
 let ``getVcsSha - jj succeeds returns trimmed sha`` () =
     let run = fakeRun [ ("jj", "", CoverageRatchet.Shell.Success "  abc123  ") ]
@@ -1449,8 +1365,6 @@ let ``getVcsSha - both fail throws`` () =
               ("git", "", CoverageRatchet.Shell.Failure("no git", 1)) ]
 
     Assert.ThrowsAny<exn>(fun () -> getVcsSha run |> ignore) |> ignore
-
-// --- vcsPush tests ---
 
 [<Fact>]
 let ``vcsPush - jj succeeds does not call git`` () =
@@ -1536,8 +1450,6 @@ let ``vcsPush - git push fallback fails throws`` () =
 
     Assert.ThrowsAny<exn>(fun () -> vcsPush run) |> ignore
 
-// --- vcsCommitAndPush tests ---
-
 [<Fact>]
 let ``vcsCommitAndPush - jj succeeds runs jj workflow`` () =
     let mutable calls = []
@@ -1568,8 +1480,6 @@ let ``vcsCommitAndPush - jj fails falls back to git workflow`` () =
 
     test <@ calls |> List.exists (fun (c, _) -> c = "git") @>
     test <@ calls |> List.exists (fun (_, a) -> a.Contains "commit") @>
-
-// --- extractFlags tests ---
 
 [<Fact>]
 let ``extractFlags - defaults to dot when not provided`` () =
@@ -1625,8 +1535,6 @@ let ``extractFlags - search-dir and merge-baselines combined`` () =
     test <@ dir = "coverage" @>
     test <@ mergeBaselines = true @>
     test <@ remaining = [| "check" |] @>
-
-// --- runLoosenFromCi tests ---
 
 [<Fact>]
 let ``runLoosenFromCi - CI passes returns 0`` () =
@@ -1716,13 +1624,9 @@ let ``runLoosenFromCi - CI coverage failure with empty artifact returns 1`` () =
 
     let result = runLoosenFromCi run "coverage-ratchet.json"
     test <@ result = 1 @>
-    // runLoosenFromCi deletes artifactDir in its finally block
     test <@ not (System.IO.Directory.Exists artifactDir) @>
 
-// --- auto-refresh gate tests ---
-//
-// These exercise the FSHW_RAN_FULL_SUITE env-var gate in `run`. The env var must
-// be reset in try/finally so tests don't leak state to siblings.
+// FSHW_RAN_FULL_SUITE gate in `run`: reset the env var in try/finally so it doesn't leak.
 
 /// Cobertura XML where every line is hit (100% coverage, passes default thresholds).
 let private passingCobertura =
@@ -1762,10 +1666,8 @@ let private failingCobertura =
   </packages>
 </coverage>"""
 
-/// Baseline with identical line numbers as cobertura but hits=0, so merging it into
-/// the passing cobertura (all hits=1) yields the same passing result. Byte contents
-/// differ from any cobertura above, so we can still detect whether refreshBaselines
-/// overwrote the baseline.
+/// Same lines as the passing report with hits=0: merging still passes, and the bytes
+/// differ so a refresh is detectable.
 let private staleBaseline =
     """<?xml version="1.0" encoding="utf-8"?>
 <coverage line-rate="0" branch-rate="0" lines-covered="0" lines-valid="2" branches-covered="0" branches-valid="0" version="1" timestamp="0">
@@ -1882,8 +1784,6 @@ let ``auto-refresh - env=true + pass + merge=false does NOT refresh (env ignored
         test <@ baselineBefore = baselineAfter @>
         test <@ coverageBefore = coverageAfter @>)
 
-// --- Merge / RefreshBaseline commands dispatched through `run` ---
-
 [<Fact>]
 let ``run - Merge command writes output and returns Ok 0`` () =
     withTempDir (fun tmpDir ->
@@ -1922,7 +1822,6 @@ let ``run - RefreshBaseline copies coverage to baseline and returns Ok 0`` () =
             """<?xml version="1.0" encoding="utf-8"?><coverage line-rate="0" branch-rate="0" lines-covered="0" lines-valid="0" branches-covered="0" branches-valid="0" version="1" timestamp="0"><sources><source>.</source></sources><packages><package name="p" line-rate="0" branch-rate="0"><classes><class name="F" filename="F.fs" line-rate="0" branch-rate="0"><lines><line number="1" hits="42" branch="false" /></lines></class></classes></package></packages></coverage>"""
 
         File.WriteAllText(coveragePath, xml)
-        // Seed a different baseline to prove it gets overwritten.
         File.WriteAllText(baselinePath, "<coverage/>")
 
         let result = run RefreshBaseline tmpDir false
@@ -1930,11 +1829,7 @@ let ``run - RefreshBaseline copies coverage to baseline and returns Ok 0`` () =
         test <@ result = Ok 0 @>
         test <@ File.ReadAllText(baselinePath) = xml @>)
 
-// --- count floors: gating on covered-line COUNT rather than percentage ---
-//
-// Every test here pins the percentage floors to 0 so the percentage check always
-// passes. Whatever verdict `check` returns is therefore attributable to the count
-// floor alone.
+// Count-floor tests pin percentage floors to 0, so any failure comes from the count floor.
 
 let private countFloorConfig (coveredLines: int) =
     sprintf
@@ -2056,9 +1951,7 @@ let ``run - check-json fails when a measured count floor falls`` () =
 [<Fact>]
 let ``run - check catches a covered-line drop that 100 percent line coverage hides`` () =
     withTempDir (fun tmpDir ->
-        // Every emitted line is hit, so LinePct is a perfect 100% and no
-        // percentage floor can fire. But only 10 lines were emitted where the
-        // recorded floor saw 20 covered — the regression percentage cannot see.
+        // 100% of emitted lines hit, but 10 covered against a floor of 20.
         File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 100)
 
         let configPath = Path.Combine(tmpDir, "config.json")
@@ -2088,17 +1981,12 @@ let ``run - check reports the count shortfall and names the re-baseline command`
 
         test <@ result = Ok 1 @>
         test <@ output.Contains("Foo.fs") @>
-        // The delta must be legible, and the way out must be stated: a legitimate
-        // deletion is resolved by a human re-baseline, not by the tool guessing.
         test <@ output.Contains("3") && output.Contains("8") @>
         test <@ output.Contains("baseline-lines") @>)
-
-// --- baseline-lines: bootstrap and re-baseline of count floors ---
 
 [<Fact>]
 let ``run - baseline-lines bootstraps count floors from current coverage`` () =
     withTempDir (fun tmpDir ->
-        // 3 of 10 lines hit.
         File.WriteAllText(Path.Combine(tmpDir, "coverage.cobertura.xml"), makeCoverageXml 30)
 
         let configPath = Path.Combine(tmpDir, "config.json")
@@ -2261,12 +2149,8 @@ let ``main with baseline-lines --help returns 0`` () =
     let result = main [| "baseline-lines"; "--help" |]
     test <@ result = 0 @>
 
-// --- baseline-lines scoped to a file ---
-//
-// The floor file carries entries this machine cannot measure (Linux floors are
-// captured from Linux CI). A re-baseline of ONE file's count must therefore touch
-// that file's entry for the measured platform and nothing else; every other byte
-// of the document is somebody else's evidence.
+// A scoped re-baseline must change only the named file's entry for the current platform;
+// other platforms' entries and every other byte of the file stay as they were.
 
 let private platformName = Platform.toString Platform.current
 let private otherPlatformName = Platform.toString otherPlatform
@@ -2453,8 +2337,6 @@ let ``extractFileScope - a trailing --file with no value is left for the parser 
 
     test <@ List.isEmpty files @>
     test <@ remaining = [| "baseline-lines"; "--file" |] @>
-
-// ── Files the reader skipped ──────────────────────────────────────────────────────
 
 /// Four production files with identical coverage; the name filter skips `TestKit.fs`.
 let private fourFilesOneNamedTestKit =

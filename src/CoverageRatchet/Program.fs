@@ -80,10 +80,7 @@ let formatFileResult (r: FileResult) =
 let formatCountShortfall (label: string) (actual: int) (floor: int) =
     sprintf "%s %d < %d (%+d)" label actual floor (actual - floor)
 
-/// Report count-floor failures. The tool cannot tell a deleted TEST from deleted
-/// COVERED CODE — the only signal that would distinguish them is the emitted-line
-/// total, which is exactly the unreliable quantity count floors exist to avoid —
-/// so the way out is named explicitly rather than guessed at.
+/// Report count-floor failures and the two ways out (fix the tests, or re-baseline).
 let private reportCountFailures (configPath: string) (failed: CountResult list) =
     printfn "FAILED count floors (absolute covered lines/branches):"
 
@@ -106,11 +103,7 @@ let private reportCountFailures (configPath: string) (failed: CountResult list) 
     printfn "  - you deliberately deleted covered code -> re-baseline it:"
     printfn "      coverageratchet baseline-lines %s" configPath
 
-/// Unmeasured floors, the cheap half: a coverage report with no F# file in it used
-/// to print one line and exit 0.
-///
-/// Zero files examined is not zero files failing. Every way of arriving here is
-/// a broken run, and each of them used to render identically to a healthy one.
+/// A report with no readable file is a broken run, not a pass.
 let private reportNothingMeasured () =
     printfn "NOTHING MEASURED: no F# source file appears in the coverage report(s)."
     printfn ""
@@ -122,8 +115,7 @@ let private reportNothingMeasured () =
     printfn "  - the test run collected no coverage (collector off, or the run crashed)"
     printfn "  - the report was read while it was still being written"
 
-/// Unmeasured floors, the expensive half: name every configured floor the report
-/// could not speak to. No-ops on an empty list so callers need no guard.
+/// Name every configured floor the report did not measure. No-op on an empty list.
 let private reportUnmeasuredFloors (configPath: string) (unmeasured: UnmeasuredFloor list) =
     if not (List.isEmpty unmeasured) then
         printfn ""
@@ -184,10 +176,8 @@ let private runCheck (configPath: string) (exclusions: ExcludedFile list) (files
 
         printfn ""
 
-        // "N/N files passed" is the sentence this ticket was filed over: the
-        // denominator came from the report, so it read identically at 7 files
-        // and at 50. It stays, because it is the useful per-run detail — but it
-        // no longer decides anything, and it now names the set it counted.
+        // Informational only: the verdict comes from `judge`, which also counts
+        // configured floors missing from the report.
         printfn "Result: %d/%d files in the report passed%s" passed.Length allResults.Length (excludedClause exclusions)
 
         let countResults = buildCountResults config files
@@ -202,9 +192,6 @@ let private runCheck (configPath: string) (exclusions: ExcludedFile list) (files
 
         match verdict with
         | AllFloorsHeld _ ->
-            // The claim that makes a green run worth anything, stated rather
-            // than assumed. Silent on a config with no floors: there is no
-            // obligation to have met.
             let expected = (configuredFloors config).Count
 
             if expected > 0 then
@@ -272,10 +259,8 @@ let private baselineFiles (configPath: string) (files: FileCoverage list) =
 
     0
 
-/// `scope` names the files whose floors this run re-baselines; empty means every
-/// file in the report. A scoped run that names a file the report did not measure
-/// writes nothing: a floor for the wrong file is worse than no change, and the
-/// number it would have written is not that file's count.
+/// `scope` limits the re-baseline to the named files; empty means every file in the
+/// report. Naming a file the report did not measure writes nothing and exits 2.
 let private runBaselineLines (configPath: string) (scope: string list) (allFiles: FileCoverage list) =
     let measured = allFiles |> List.map (fun f -> f.FileName) |> Set.ofList
     let unmeasured = scope |> List.filter (fun name -> not (Set.contains name measured))
@@ -299,13 +284,8 @@ let private runLoosen (configPath: string) (files: FileCoverage list) =
     printfn "Loosen complete: thresholds set to current coverage"
     0
 
-/// The artifact-writing twin of `runCheck`, and it carried the same defects: an
-/// empty report produced `{"results": {}}` and exit 0, a configured floor with
-/// no row in the report simply vanished, and the exit code ignored count floors
-/// entirely even though the README promised it "matches `check`". It now shares
-/// `judge`, so the two cannot drift apart again. The results file is written
-/// BEFORE the verdict is rendered, so a CI job that uploads it still has
-/// something to upload on a red run.
+/// `check` that also writes a results file. The file is written before the verdict,
+/// so a CI job can upload it from a red run; the exit code matches `check`.
 let private runCheckJson (configPath: string) (outputPath: string) (files: FileCoverage list) =
     let config = loadConfig configPath
     let allResults = buildFileResults config files
@@ -392,8 +372,7 @@ type CiResult =
     | CiOtherFailure
     | CiCoverageFailure of artifactDir: string
 
-// Shared with FsSemanticTagger via the linked Shared/GitDir.fs compile item;
-// walks up from any nested subdir to the repo root.
+// Shared/GitDir.fs (linked, also used by FsSemanticTagger): walks up to the repo root.
 let internal resolveGitDir (startDir: string) : string option = Shared.GitDir.resolveGitDir startDir
 
 let private withJjGitDir (f: unit -> 'a) : 'a =
@@ -696,9 +675,7 @@ let private runWithCoverageFiles (cmd: CoverageFileCommand) (configPath: string)
     | CfTargets -> runTargets configPath report.Excluded files
     | CfGaps -> runGaps report.Lines
 
-/// `fileScope` is the `--file` list: the files a `baseline-lines` run is limited to.
-/// No other command takes one, and refusing it there is cheaper than a run that
-/// silently ignored it.
+/// `fileScope` is the `--file` list; only `baseline-lines` accepts one.
 let runScoped
     (fileScope: string list)
     (command: Command)
@@ -770,9 +747,8 @@ let runScoped
         match coverageFileCmd with
         | None -> Ok(runLoosenFromCi Shell.run configPath)
         | Some cmd ->
-            // Layer each coverage.cobertura.xml onto a per-project baseline
-            // before reading, so impact-filtered partial runs can't lower the
-            // ratchet. Skipped unless --merge-baselines is set.
+            // --merge-baselines: layer each report onto its per-project baseline so a
+            // partial (impact-filtered) run can't lower the ratchet.
             if mergeBaselines then
                 Merge.mergeIntoBaselines searchDir
 
@@ -786,10 +762,8 @@ let runScoped
 
                 let result = runWithCoverageFiles cmd configPath report
 
-                // If the run just completed a known-full test suite (signalled
-                // by fs-hot-watch via FSHW_RAN_FULL_SUITE=true), advance the
-                // baseline to the current coverage so stale hits from deleted
-                // tests drop out.
+                // After a full suite (FSHW_RAN_FULL_SUITE=true, set by fs-hot-watch),
+                // reset the baseline so hits from deleted tests drop out.
                 if
                     mergeBaselines
                     && result = 0
