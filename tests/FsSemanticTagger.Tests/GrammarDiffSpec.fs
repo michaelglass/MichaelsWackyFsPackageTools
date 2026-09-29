@@ -232,6 +232,33 @@ module Fixtures =
         CommandReflection.fromUnionWithGlobals<ECmdGlobalsNoEnv, EnvGlobal> "no env"
         |> ignore
 
+    // --- declared on the root union: `[<CmdEnvPrefix>]` / `[<CmdGlobals>]` ---
+
+    /// Declares its prefix and its globals. Its one call site passes a computed
+    /// prefix and no globals, which the declarations override.
+    [<CmdEnvPrefix("DECL"); CmdGlobals(typeof<EnvGlobal>)>]
+    type DCmdDeclared = | [<Cmd("Run")>] Run of EnvFlag list
+
+    /// Declares only its prefix, and is parsed by plain `fromUnionWithGlobals`: the
+    /// prefix binds the global flags too.
+    [<CmdEnvPrefix("PLAIN")>]
+    type DCmdPrefixOnly = | [<Cmd("Run")>] Run of EnvFlag list
+
+    /// Declares a blank prefix, a `SpecError.InvalidEnvPrefix`: CommandTree binds
+    /// no prefix, whatever the call site passes.
+    [<CmdEnvPrefix(" ")>]
+    type DCmdBlankPrefix = | [<Cmd("Run")>] Run of EnvFlag list
+
+    /// Never run: the extractor reads declarations from metadata.
+    let declaredUnread (prefix: string) =
+        CommandReflection.tryFromUnionWithEnv<DCmdDeclared> "declared" (prefix.ToUpperInvariant())
+        |> ignore
+
+        CommandReflection.fromUnionWithGlobals<DCmdPrefixOnly, EnvGlobal> "prefix only"
+        |> ignore
+
+        CommandReflection.fromUnionWithEnv<DCmdBlankPrefix> "blank" "TOOL" |> ignore
+
     /// Convert a runtime CommandTree flag to the production model.
     let private toFlag (f: FlagInfo) : FsSemanticTagger.FlagSpec =
         {
@@ -1064,6 +1091,46 @@ let ``a prefix that is not one string literal is recorded as unknown, not guesse
 
     // Two call sites passing different literals.
     test <@ flagEnvs (extractEnv typeof<Fixtures.ECmdConflict>) = unknown @>
+
+[<Fact>]
+let ``a declared prefix and globals win over the call sites, and the prefix is never unknown`` () =
+    let extracted = extractEnv typeof<Fixtures.DCmdDeclared>
+
+    test
+        <@
+            flagEnvs extracted =
+                [
+                    "verbose", Some(EnvVar "DECL_VERBOSE")
+                    "ci", Some(EnvVar "CI")
+                    "log-level", Some(EnvVar "DECL_LVL")
+                    "no-cache", Some(EnvVar "NO_CACHE")
+                    "dry-run", Some(EnvVar "DECL_DRY_RUN")
+                ]
+        @>
+
+    test <@ extracted |> Option.map (fun g -> (Grammar.diff g g).Caveat) = Some None @>
+
+[<Fact>]
+let ``a declared prefix binds global flags parsed by plain fromUnionWithGlobals`` () =
+    test
+        <@
+            flagEnvs (extractEnv typeof<Fixtures.DCmdPrefixOnly>) =
+                [
+                    "verbose", Some(EnvVar "PLAIN_VERBOSE")
+                    "ci", Some(EnvVar "CI")
+                    "log-level", Some(EnvVar "PLAIN_LVL")
+                    "no-cache", Some(EnvVar "NO_CACHE")
+                    "dry-run", Some(EnvVar "PLAIN_DRY_RUN")
+                ]
+        @>
+
+[<Fact>]
+let ``a blank declared prefix binds no prefix, whatever the call site passes`` () =
+    test
+        <@
+            flagEnvs (extractEnv typeof<Fixtures.DCmdBlankPrefix>) =
+                [ "log-level", None; "no-cache", Some(EnvVar "NO_CACHE"); "dry-run", None ]
+        @>
 
 [<Fact>]
 let ``extraction + diff end-to-end: env bindings bump`` () =

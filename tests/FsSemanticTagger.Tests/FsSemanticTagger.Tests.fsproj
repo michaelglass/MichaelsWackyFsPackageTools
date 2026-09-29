@@ -35,6 +35,7 @@
     <Compile Include="BumpTests.fs" />
     <Compile Include="DeclaredBumpTests.fs" />
     <Compile Include="ProgramTests.fs" />
+    <Compile Include="CommandTreeDeclarations.fs" />
     <Compile Include="GrammarDiffSpec.fs" />
   </ItemGroup>
   <ItemGroup>

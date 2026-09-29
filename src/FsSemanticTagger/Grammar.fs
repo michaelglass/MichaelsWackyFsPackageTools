@@ -1017,38 +1017,91 @@ module Grammar =
             | [ Some prefix ] -> LiteralPrefix prefix
             | _ -> UnknownPrefix
 
-    /// The global flags `root` is parsed with: the flags union the assembly passes
-    /// alongside `root` to a `*WithGlobals` entry point. None when it never does,
-    /// and none when it passes several different unions, since which one a given
-    /// run uses cannot be read from metadata. Global flags read env vars only
-    /// through an `*AndEnv` entry point: CommandTree skips their env resolution,
-    /// `[<CmdEnvRaw>]` included, without a prefix.
-    let private globalFlagsOf (asm: Assembly) (calls: Instantiation list) (prefix: EnvPrefix) : FlagSpec list =
+    /// What the root command union declares about how it is parsed, with
+    /// CommandTree's `[<CmdEnvPrefix(prefix)>]` and `[<CmdGlobals(typeof<G>)>]`
+    /// (CommandTree 0.13 on). CommandTree takes a declaration over whatever an entry
+    /// point passes, and so does the grammar; the IL call-site scan remains for a
+    /// consumer that declares nothing, as one on an older CommandTree cannot.
+    [<NoEquality; NoComparison>]
+    type private Declarations =
+        {
+            /// The declared prefix. A blank one is a `SpecError.InvalidEnvPrefix`,
+            /// under which CommandTree binds no prefix at all.
+            EnvPrefix: EnvPrefix option
+            Globals: Type option
+        }
+
+    let private declarationsOf (root: Type) : Declarations =
+        let attrs = root.GetCustomAttributesData() |> List.ofSeq
+
+        {
+            EnvPrefix =
+                ctorString "CommandTree.CmdEnvPrefixAttribute" attrs
+                |> Option.map (fun prefix ->
+                    if String.IsNullOrWhiteSpace prefix then
+                        NoPrefix
+                    else
+                        LiteralPrefix prefix)
+            Globals =
+                attrs
+                |> List.tryFind (fun a ->
+                    a.AttributeType.FullName = "CommandTree.CmdGlobalsAttribute"
+                    && a.ConstructorArguments.Count = 1)
+                |> Option.bind (fun a ->
+                    match a.ConstructorArguments.[0].Value with
+                    | :? Type as t -> Some t
+                    | _ -> None)
+        }
+
+    /// The global flags `root` is parsed with: the union it declares with
+    /// `[<CmdGlobals>]`, else the flags union the assembly passes alongside `root`
+    /// to a `*WithGlobals` entry point. None when it does neither, and none when it
+    /// passes several different unions, since which one a given run uses cannot be
+    /// read from metadata. Global flags read env vars only under a prefix: a
+    /// declared one, or one passed to an `*AndEnv` entry point. Without one
+    /// CommandTree skips their env resolution, `[<CmdEnvRaw>]` included.
+    let private globalFlagsOf
+        (asm: Assembly)
+        (calls: Instantiation list)
+        (declarations: Declarations)
+        (prefix: EnvPrefix)
+        : FlagSpec list =
         let withGlobals =
             calls
             |> List.choose (fun i -> i.Globals |> Option.map (fun globals -> globals, i.EnvPrefixes.IsSome))
 
+        let prefixDeclared =
+            declarations.EnvPrefix |> Option.exists (fun declared -> declared <> NoPrefix)
+
         let envOf =
-            if withGlobals |> List.exists snd then
+            if prefixDeclared || withGlobals |> List.exists snd then
                 envBinding prefix
             else
                 fun _ _ -> None
 
-        match withGlobals |> List.map fst |> List.distinct with
-        | [ globals ] ->
-            match asm.GetType globals |> Option.ofObj with
-            | Some t when isUnionType t -> flagInfos envOf t
-            | _ -> []
+        let globals =
+            match declarations.Globals with
+            | Some declared -> Some declared
+            | None ->
+                match withGlobals |> List.map fst |> List.distinct with
+                | [ passed ] -> asm.GetType passed |> Option.ofObj
+                | _ -> None
+
+        match globals with
+        | Some t when isUnionType t -> flagInfos envOf t
         | _ -> []
 
     /// The realized grammar rooted at `root`: its command forest and its global flags.
     let private grammarOf (pe: PEReader) (asm: Assembly) (root: Type) : Grammar =
         let calls = instantiations pe root.FullName
-        let prefix = envPrefixOf calls
+        let declarations = declarationsOf root
+        // A declared prefix is known whatever the call sites pass.
+        let prefix =
+            declarations.EnvPrefix |> Option.defaultWith (fun () -> envPrefixOf calls)
 
         {
             Roots = walkUnion prefix root
-            GlobalFlags = globalFlagsOf asm calls prefix
+            GlobalFlags = globalFlagsOf asm calls declarations prefix
         }
 
     /// Recover the realized CLI grammar of a single named root command union in an
