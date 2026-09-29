@@ -515,6 +515,11 @@ type internal TagRunState =
 /// workflow is passed to `gh` by PATH (`--workflow`), the same identity the commit
 /// check uses for `.github/workflows/ci.yml`.
 ///
+/// The `gh` arguments that ask for `workflow`'s runs on `gitRef`: shared by the poll and
+/// the check command it prints, so the two cannot drift apart.
+let private tagRunListArgs (PublishWorkflow path) (gitRef: string) : string =
+    sprintf "run list --branch %s --workflow %s" gitRef path
+
 /// `None` means "could not find out" — `gh` missing, unauthenticated, rate-limited, or
 /// output we cannot parse. Deliberately distinct from `Some []` ("asked, and there are
 /// none"), because only the latter is evidence about the release.
@@ -523,10 +528,9 @@ let private runStatesForWorkflow
     (workflow: PublishWorkflow)
     (gitRef: string)
     : TagRunState list option =
-    let (PublishWorkflow path) = workflow
-
     let args =
-        sprintf "run list --branch %s --workflow %s --json name,status,conclusion,url,databaseId --limit 20" gitRef path
+        tagRunListArgs workflow gitRef
+        + " --json name,status,conclusion,url,databaseId --limit 20"
 
     match run "gh" args with
     | Success output ->
@@ -694,6 +698,12 @@ let internal waitForRunForRef
 
     ask 1 false
 
+/// `origin`'s URL, trimmed, or `None` when git cannot say.
+let private originUrl (run: string -> string -> CommandResult) : string option =
+    match run "git" "remote get-url origin" with
+    | Success url -> Some(url.Trim())
+    | Failure _ -> None
+
 /// Push one tag, retrying a few times before giving up.
 ///
 /// A push can fail for reasons that have nothing to do with the release and clear on
@@ -712,10 +722,7 @@ let internal waitForRunForRef
 /// SSH-flavoured; the remote was HTTPS. Repeating it verbatim sends the operator
 /// to the wrong place.
 let internal diagnosePushFailure (run: string -> string -> CommandResult) (error: string) : string =
-    let remote =
-        match run "git" "remote get-url origin" with
-        | Success url -> url.Trim()
-        | Failure _ -> ""
+    let remote = originUrl run |> Option.defaultValue ""
 
     let helper =
         match run "git" "config --get-regexp ^credential" with
@@ -883,19 +890,12 @@ let internal githubRepoSlug (remoteUrl: string) : string option =
     else
         None
 
-/// The `gh` question the post-push poll asks about one publish workflow, as a command
-/// an operator can paste. `--repo` is included whenever the remote is a GitHub URL:
-/// without it `gh` has to find the repository from the working directory, and in a jj
-/// checkout with no colocated `.git` it cannot ("failed to determine base repo").
+/// The poll's question as a command an operator can paste. `--repo` lets it run from a
+/// jj checkout with no colocated `.git`, where `gh` cannot find the repository itself.
 let internal tagRunCheckCommand (repo: string option) (workflow: PublishWorkflow) (tag: string) : string =
-    let (PublishWorkflow path) = workflow
+    let repoArg = repo |> Option.map (sprintf " --repo %s") |> Option.defaultValue ""
 
-    let repoArg =
-        match repo with
-        | Some slug -> sprintf " --repo %s" slug
-        | None -> ""
-
-    sprintf "gh run list%s --branch %s --workflow %s" repoArg tag path
+    sprintf "gh %s%s" (tagRunListArgs workflow tag) repoArg
 
 let internal pushTagsAndConfirmDetailed
     (run: string -> string -> CommandResult)
@@ -905,13 +905,9 @@ let internal pushTagsAndConfirmDetailed
     : TagConfirmationFailure list =
     runOrFail run "jj" "git export" |> ignore
 
-    // Only read when a run is missing, so a healthy release asks nothing extra.
+    // Read only when a run is missing.
     let repoSlug =
-        lazy
-            (withJjGitDir (fun () ->
-                match run "git" "remote get-url origin" with
-                | Success url -> githubRepoSlug url
-                | Failure _ -> None))
+        lazy (withJjGitDir (fun () -> originUrl run |> Option.bind githubRepoSlug))
 
     // A tag that never reached the remote is a DIFFERENT failure from one that
     // reached it and triggered nothing, and the operator's next move differs too:
