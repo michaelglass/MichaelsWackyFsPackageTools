@@ -338,6 +338,78 @@ let ``a removed union case is breaking`` () =
 
     test <@ breakingHead change |> Option.isSome @>
 
+// Compiler-invented members and types (ApiFixtures.CompilerInvented).
+
+let private namesModule =
+    typeof<ApiFixtures.CompilerInvented.Money>.Assembly.GetType "ApiFixtures.CompilerInvented.Names"
+
+let private signatureLines (types: System.Type list) : string list =
+    extractFromTypes types |> List.map (fun (ApiSignature s) -> s)
+
+[<Fact>]
+let ``a Debug build's __debug copies of inline functions are not API`` () =
+#if DEBUG
+    // Positive control: this Debug build did emit the copy that must be dropped.
+    test
+        <@
+            namesModule.GetMethods()
+            |> Array.exists (fun m -> m.Name.StartsWith "<sumBy>__debug@")
+        @>
+#endif
+    // Exactly what a Release build emits: the type and the six declared functions.
+    let lines = signatureLines [ namesModule ]
+    test <@ lines |> List.forall (fun s -> not (s.Contains "__debug")) @>
+    test <@ lines.Length = 7 @>
+
+[<Fact>]
+let ``source names that look unusual when compiled are kept`` () =
+    let lines =
+        signatureLines [ namesModule; typeof<ApiFixtures.CompilerInvented.Money> ]
+
+    let hasMember (prefix: string) =
+        lines
+        |> List.exists (fun s -> s.StartsWith("  " + prefix, System.StringComparison.Ordinal))
+
+    test <@ hasMember "Names::total(" @>
+    test <@ hasMember "Names::|Even|Odd|(" @>
+    test <@ hasMember "Names::|Positive|_|(" @>
+    test <@ hasMember "Names::op_BarGreaterGreater(" @>
+    test <@ hasMember "Names::a <b> c(" @>
+    test <@ hasMember "Names::point(" @>
+    // Compiler-generated, but API: derived equality/comparison, the case factory.
+    test <@ hasMember "Money::op_Addition(" @>
+    test <@ hasMember "Money::Equals(" @>
+    test <@ hasMember "Money::CompareTo(" @>
+    test <@ hasMember "Money::NewMoney(" @>
+    test <@ hasMember "Money::cents: " @>
+    test <@ lines |> List.contains "case ApiFixtures.CompilerInvented.Money::Money" @>
+
+[<Fact>]
+let ``an anonymous record type is not API, but a member exposing one still names it`` () =
+    let anonymous = ApiFixtures.CompilerInvented.Names.point().GetType()
+    let lines = signatureLines [ anonymous; namesModule ]
+    test <@ lines |> List.forall (fun s -> not (s.StartsWith "type <>f__AnonymousType")) @>
+
+    test
+        <@
+            lines
+            |> List.exists (fun s -> s.StartsWith "  Names::point(): <>f__AnonymousType")
+        @>
+
+[<Fact>]
+let ``extractFromAssembly drops compiler-invented members through the metadata load context`` () =
+    let dll = typeof<ApiFixtures.CompilerInvented.Money>.Assembly.Location
+    let lines = extractFromAssembly dll |> List.map (fun (ApiSignature s) -> s)
+    test <@ lines |> List.forall (fun s -> not (s.Contains "__debug@")) @>
+    test <@ lines |> List.forall (fun s -> not (s.StartsWith "type <>f__AnonymousType")) @>
+
+    test
+        <@
+            lines
+            |> List.contains
+                "  Names::|Even|Odd|(System.Int32 [System.Private.CoreLib]): Microsoft.FSharp.Core.FSharpChoice<Microsoft.FSharp.Core.Unit [FSharp.Core], Microsoft.FSharp.Core.Unit [FSharp.Core]> [FSharp.Core]"
+        @>
+
 [<Fact>]
 let ``extractFromAssembly reads union cases through the metadata load context`` () =
     // The fixtures above use runtime reflection; releases read a dll through a

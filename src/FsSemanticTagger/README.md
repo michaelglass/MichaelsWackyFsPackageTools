@@ -81,6 +81,12 @@ Exit codes:
 - **1** -- Non-breaking additions only
 - **2** -- Breaking changes detected
 
+When both DLLs are [CommandTree](https://github.com/michaelglass/CommandTree) CLIs, their command grammars are diffed too, and the stronger bump wins: commands, positional arguments, flags, global flags, and the environment variable each flag reads. A flag's environment variable is its `[<CmdEnvRaw>]` name, or `<prefix>_<suffix>`. The prefix is the string passed to `CommandReflection.fromUnionWithEnv` / `fromUnionWithGlobalsAndEnv` (or their `try…` variants), and the suffix comes from `[<CmdEnv>]` or the case name. A new environment variable is an addition; a removed or renamed one is breaking. The prefix is read from the call site only when it is a string literal there. Otherwise only the suffix is compared, and `check-api` and `release` print a line saying so:
+
+```
+note: the CLI's env-var prefix is not a string literal where it is passed to CommandTree, so the env vars of --verbose are compared by suffix only; a change to the prefix is not detected
+```
+
 ### Orchestrate a release
 
 ```bash

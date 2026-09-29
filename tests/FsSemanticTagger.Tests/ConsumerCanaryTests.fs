@@ -1197,6 +1197,22 @@ let ``runIn - a failure with nothing on stderr reports stdout`` () =
 let private killRecordedSleep (dir: string) =
     Shell.runIn dir "sh" "-c \"kill $(cat sleep.pid) 2>/dev/null\"" |> ignore
 
+/// Whether the `sleep` recorded in `<dir>/sleep.pid` is still running a few
+/// seconds on. Asks `sh`: on Windows the recorded pid is an MSYS2 pid.
+let private recordedSleepSurvives (dir: string) =
+    let alive () =
+        Shell.runIn dir "sh" "-c \"kill -0 $(cat sleep.pid) 2>/dev/null\""
+        |> (function
+        | Success _ -> true
+        | Failure _ -> false)
+
+    let deadline = Diagnostics.Stopwatch.StartNew()
+
+    while alive () && deadline.Elapsed < TimeSpan.FromSeconds 5.0 do
+        Threading.Thread.Sleep 100
+
+    alive ()
+
 let private truncationNote = "stopped reading output"
 
 [<Xunit.Fact(Timeout = IntegrationTimeoutMs)>]
@@ -1213,10 +1229,10 @@ let ``runLogged - a command past its budget is killed and the log says so`` () =
                     (TimeSpan.FromSeconds 1.0)
                     log
 
-            // Budget 1s + drainGrace 5s; a `sleep` that outlives the tree kill
-            // (Git for Windows) must not hold the gate for its full 30s.
             test <@ clock.Elapsed < TimeSpan.FromSeconds 20.0 @>
             test <@ outcome = TimedOut(TimeSpan.FromSeconds 1.0) @>
+            // Git for Windows: MSYS2 children are outside the tree `Kill` walks.
+            test <@ not (recordedSleepSurvives dir) @>
             let text = File.ReadAllText log
             test <@ text.Contains "started" @>
             test <@ text.Contains "killed after 0m1s" @>

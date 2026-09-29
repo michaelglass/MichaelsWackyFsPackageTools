@@ -43,7 +43,7 @@
     "Grammar.fs": [
       {
         "line": 98,
-        "branch": 92,
+        "branch": 93,
         "reason": "the pure grammar diff is fully covered; the MetadataLoadContext structural walk's remaining gaps are defensive reflection paths that are unreachable from a test (ReflectionTypeLoadException recovery, an explicitly-null attribute named-arg, a CompilationMappingAttribute ctor arg that is not SourceConstructFlags). Floor = achieved macOS coverage.",
         "platform": "macos"
       },
@@ -114,6 +114,11 @@
       "line": 99,
       "branch": 92,
       "reason": "loosened automatically"
+    },
+    "JobObject.fs": {
+      "line": 14,
+      "branch": 25,
+      "reason": "Windows-only Job Object P/Invoke (Native.enclose); coverage runs on macOS and Linux, where only the non-Windows no-op executes. The Windows path is exercised by the runLogged budget test on the test-windows CI job, which collects no coverage."
     }
   }
 }

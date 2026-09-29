@@ -42,9 +42,23 @@ type ArgSpec =
         TypeName: string
     }
 
+/// The environment variable a flag also reads when the command line does not
+/// set it. CommandTree names it `[<CmdEnvRaw(name)>]` when present, else
+/// `<prefix>_<suffix>`: the prefix is the string the consumer passes to a
+/// `CommandReflection.*WithEnv` / `*AndEnv` entry point, the suffix is
+/// `[<CmdEnv(suffix)>]` or the case name in SCREAMING_SNAKE_CASE.
+type EnvBinding =
+    /// The flag reads exactly this variable.
+    | EnvVar of name: string
+    /// The flag reads `<prefix>_<suffix>`, but the prefix is not a string literal
+    /// at the call site (a computed value, or different literals at different
+    /// call sites), so only the suffix is known.
+    | EnvVarUnknownPrefix of suffix: string
+
 /// A named flag in the realized grammar. `IsRepeatable` mirrors
 /// `[<CmdFlag(Repeatable = true)>]`: the flag may occur more than once, each
 /// occurrence appending a value (a non-repeatable flag rejects a duplicate).
+/// `Env` is the environment variable bound to the flag, if any.
 type FlagSpec =
     {
         LongName: string
@@ -52,6 +66,7 @@ type FlagSpec =
         Arity: FlagArity
         TypeName: string
         IsRepeatable: bool
+        Env: EnvBinding option
     }
 
 /// One node of the realized command tree. Descriptions/examples are intentionally
@@ -133,27 +148,51 @@ module Grammar =
 
         combineAll (perIndex @ addedTail @ removedTail)
 
+    /// Could two env bindings name the same variable? An unknown prefix hides
+    /// everything but the suffix, so a binding with an unknown prefix matches any
+    /// name ending in `_<suffix>`: whether the prefix itself changed cannot be read.
+    let private sameEnvVar (prev: EnvBinding) (curr: EnvBinding) : bool =
+        match prev, curr with
+        | EnvVar a, EnvVar b -> a = b
+        | EnvVarUnknownPrefix a, EnvVarUnknownPrefix b -> a = b
+        | EnvVar name, EnvVarUnknownPrefix suffix
+        | EnvVarUnknownPrefix suffix, EnvVar name -> name.EndsWith("_" + suffix, StringComparison.Ordinal)
+
+    /// Diff one flag's env binding. A new binding is additive (a variable that did
+    /// nothing now sets the flag); a removed or renamed one breaks every caller
+    /// who sets the flag through the old variable.
+    let private compareEnv (prev: EnvBinding option) (curr: EnvBinding option) : GrammarChange =
+        match prev, curr with
+        | None, None -> GNoChange
+        | None, Some _ -> GAddition
+        | Some _, None -> GBreaking
+        | Some p, Some c -> if sameEnvVar p c then GNoChange else GBreaking
+
     /// Diff one matched flag (same long name). Any arity or value-type change is
     /// breaking (a flag that used to consume its next token, or take an inline-only
     /// value, changes the meaning of old invocations). A dropped/changed short
     /// alias breaks `-x` callers; a newly-added short alias is additive. Making a
     /// flag repeatable is additive (a repeated flag, previously refused, now
-    /// parses); making it single-occurrence breaks callers who repeated it.
+    /// parses); making it single-occurrence breaks callers who repeated it. The
+    /// env binding is diffed alongside (`compareEnv`), stronger verdict wins.
     let private compareFlag (prev: FlagSpec) (curr: FlagSpec) : GrammarChange =
-        if prev.Arity <> curr.Arity then
-            GBreaking
-        elif prev.TypeName <> curr.TypeName then
-            GBreaking
-        elif prev.IsRepeatable && not curr.IsRepeatable then
-            GBreaking
-        elif prev.ShortName <> curr.ShortName then
-            match prev.ShortName, curr.ShortName with
-            | None, Some _ -> GAddition
-            | _ -> GBreaking
-        elif not prev.IsRepeatable && curr.IsRepeatable then
-            GAddition
-        else
-            GNoChange
+        let commandLine =
+            if prev.Arity <> curr.Arity then
+                GBreaking
+            elif prev.TypeName <> curr.TypeName then
+                GBreaking
+            elif prev.IsRepeatable && not curr.IsRepeatable then
+                GBreaking
+            elif prev.ShortName <> curr.ShortName then
+                match prev.ShortName, curr.ShortName with
+                | None, Some _ -> GAddition
+                | _ -> GBreaking
+            elif not prev.IsRepeatable && curr.IsRepeatable then
+                GAddition
+            else
+                GNoChange
+
+        combine commandLine (compareEnv prev.Env curr.Env)
 
     /// Diff a leaf's flags. Flags are matched by long name: a removed flag breaks
     /// `--flag` callers, an added flag is additive, a renamed flag reads as
@@ -246,6 +285,35 @@ module Grammar =
             toApiChange change
         else
             api
+
+    /// What diffing `previous` against `current` cannot see, one sentence each,
+    /// for `check-api` and `release` to print beside the verdict: the flags whose
+    /// env var has a prefix that is not a string literal at the call site.
+    let caveats (previous: Grammar) (current: Grammar) : string list =
+        let rec nodeFlags =
+            function
+            | Leaf(_, _, flags) -> flags
+            | Group(_, children) -> List.collect nodeFlags children
+
+        let flagsWithUnknownPrefix (grammar: Grammar) =
+            grammar.GlobalFlags @ List.collect nodeFlags grammar.Roots
+            |> List.choose (fun f ->
+                match f.Env with
+                | Some(EnvVarUnknownPrefix _) -> Some("--" + f.LongName)
+                | Some(EnvVar _)
+                | None -> None)
+
+        match
+            flagsWithUnknownPrefix previous @ flagsWithUnknownPrefix current
+            |> List.distinct
+        with
+        | [] -> []
+        | flags ->
+            [
+                sprintf
+                    "the CLI's env-var prefix is not a string literal where it is passed to CommandTree, so the env vars of %s are compared by suffix only; a change to the prefix is not detected"
+                    (String.concat ", " flags)
+            ]
 
     // -----------------------------------------------------------------------
     // Structural recovery under MetadataLoadContext.
@@ -482,11 +550,54 @@ module Grammar =
             })
         |> Array.toList
 
+    /// Convert PascalCase to SCREAMING_SNAKE_CASE, byte-identical to
+    /// CommandReflection.toScreamingSnakeCase (`LogLevel` -> `LOG_LEVEL`).
+    let private toScreamingSnakeCase (s: string) =
+        Regex.Replace(s, "([a-z])([A-Z])", "$1_$2").ToUpperInvariant()
+
+    /// The string constructor argument of an attribute, e.g. the `"LVL"` of
+    /// `[<CmdEnv("LVL")>]`.
+    let private ctorString (attrFullName: string) (attrs: CustomAttributeData list) : string option =
+        attrs
+        |> List.tryFind (fun a -> a.AttributeType.FullName = attrFullName && a.ConstructorArguments.Count = 1)
+        |> Option.bind (fun a ->
+            match a.ConstructorArguments.[0].Value with
+            | :? string as v -> Some v
+            | _ -> None)
+
+    /// The env-var prefix a grammar's flags are bound under: the string the
+    /// consumer passes to a `CommandReflection.*WithEnv` / `*AndEnv` entry point.
+    type private EnvPrefix =
+        /// No `*Env` entry point is called with this root.
+        | NoPrefix
+        | LiteralPrefix of string
+        /// Called, but the prefix is not one string literal.
+        | UnknownPrefix
+
+    /// The env binding of one flag case, mirroring CommandReflection.deriveEnvVar:
+    /// `[<CmdEnvRaw(name)>]` wins and ignores the prefix; otherwise, only under a
+    /// prefix, `<prefix>_<suffix>` with `[<CmdEnv(suffix)>]` or the case name.
+    let private envBinding (prefix: EnvPrefix) (caseName: string) (attrs: CustomAttributeData list) =
+        match ctorString "CommandTree.CmdEnvRawAttribute" attrs with
+        | Some raw -> Some(EnvVar raw)
+        | None ->
+            let suffix =
+                ctorString "CommandTree.CmdEnvAttribute" attrs
+                |> Option.defaultWith (fun () -> toScreamingSnakeCase caseName)
+
+            match prefix with
+            | NoPrefix -> None
+            | LiteralPrefix p -> Some(EnvVar(p + "_" + suffix))
+            | UnknownPrefix -> Some(EnvVarUnknownPrefix suffix)
+
     /// Flags from a flag-DU type, mirroring CommandReflection.getFlagInfoFromDU:
     /// arity from field shape, long name from `[<CmdFlag(Name)>]` or kebab, and the
     /// same short-flag derivation (first letter, suppressed on collision unless an
-    /// explicit short is given).
-    let private flagInfos (flagDUType: Type) : FlagSpec list =
+    /// explicit short is given). `envOf` gives each case's env binding.
+    let private flagInfos
+        (envOf: string -> CustomAttributeData list -> EnvBinding option)
+        (flagDUType: Type)
+        : FlagSpec list =
         let data =
             orderedCaseNames flagDUType
             |> List.map (fun caseName ->
@@ -511,11 +622,11 @@ module Grammar =
                     | [] -> "bool"
                     | (_, t) :: _ -> getTypeName t
 
-                longName, explicitShort, arity, typeName, isRepeatable)
+                longName, explicitShort, arity, typeName, isRepeatable, envOf caseName attrs)
 
         let autoShortCounts =
             data
-            |> List.choose (fun (longName, explicitShort, _, _, _) ->
+            |> List.choose (fun (longName, explicitShort, _, _, _, _) ->
                 match explicitShort with
                 | Some _ -> None
                 | None -> Some(string longName.[0]))
@@ -523,7 +634,7 @@ module Grammar =
             |> Map.ofList
 
         data
-        |> List.map (fun (longName, explicitShort, arity, typeName, isRepeatable) ->
+        |> List.map (fun (longName, explicitShort, arity, typeName, isRepeatable, env) ->
             let shortName =
                 match explicitShort with
                 | Some s -> Some s
@@ -540,6 +651,7 @@ module Grammar =
                 Arity = arity
                 TypeName = typeName
                 IsRepeatable = isRepeatable
+                Env = env
             })
 
     /// Walk one command union into its command forest, mirroring the branch order of
@@ -548,10 +660,13 @@ module Grammar =
     ///   2. single nested union field   -> Group (recurse)
     ///   3. single record field         -> Leaf (record fields as args)
     ///   4. otherwise                    -> Leaf (fields as positional args)
-    let rec private walkUnion (union: Type) : CommandNode list =
-        orderedCaseNames union |> List.map (walkCase union)
+    /// A command's flags are bound to env vars under `prefix`, and to a
+    /// `[<CmdEnvRaw>]` name even without one: CommandTree resolves a command's
+    /// flag env vars on every parse.
+    let rec private walkUnion (prefix: EnvPrefix) (union: Type) : CommandNode list =
+        orderedCaseNames union |> List.map (walkCase prefix union)
 
-    and private walkCase (union: Type) (caseName: string) : CommandNode =
+    and private walkCase (prefix: EnvPrefix) (union: Type) (caseName: string) : CommandNode =
         let attrs = caseAttributes union caseName
         let cmdName = commandName caseName attrs
         let fields = caseFields union caseName
@@ -565,9 +680,9 @@ module Grammar =
         if not (List.isEmpty fields) && trailingIsFlagDUList then
             let positional = fields |> List.take (fields.Length - 1)
             let flagDUType = listElementType (List.last fieldTypes)
-            Leaf(cmdName, argInfos positional, flagInfos flagDUType)
+            Leaf(cmdName, argInfos positional, flagInfos (envBinding prefix) flagDUType)
         elif fields.Length = 1 && isUnionType fieldTypes.Head then
-            Group(cmdName, walkUnion fieldTypes.Head)
+            Group(cmdName, walkUnion prefix fieldTypes.Head)
         elif fields.Length = 1 && isRecordType fieldTypes.Head then
             Leaf(cmdName, recordArgInfos fieldTypes.Head, [])
         else
@@ -674,78 +789,270 @@ module Grammar =
 
         if definedHere then Some(List.ofSeq names) else None
 
-    /// The CommandTree entry points that take a globals union, all
-    /// `<'Cmd, 'Globals>`.
-    let private withGlobalsEntryPoints =
-        set
+    /// What a `CommandTree.CommandReflection` entry point takes beside the root
+    /// command union: a globals union (`*WithGlobals*`, the second type argument)
+    /// and an env-var prefix (`*Env`, the last value argument).
+    type private EntryPoint =
+        {
+            TakesGlobals: bool
+            TakesEnvPrefix: bool
+        }
+
+    let private entryPoints =
+        Map.ofList
             [
-                "fromUnionWithGlobals"
-                "tryFromUnionWithGlobals"
-                "fromUnionWithGlobalsAndEnv"
-                "tryFromUnionWithGlobalsAndEnv"
+                "fromUnionWithEnv",
+                {
+                    TakesGlobals = false
+                    TakesEnvPrefix = true
+                }
+                "tryFromUnionWithEnv",
+                {
+                    TakesGlobals = false
+                    TakesEnvPrefix = true
+                }
+                "fromUnionWithGlobals",
+                {
+                    TakesGlobals = true
+                    TakesEnvPrefix = false
+                }
+                "tryFromUnionWithGlobals",
+                {
+                    TakesGlobals = true
+                    TakesEnvPrefix = false
+                }
+                "fromUnionWithGlobalsAndEnv",
+                {
+                    TakesGlobals = true
+                    TakesEnvPrefix = true
+                }
+                "tryFromUnionWithGlobalsAndEnv",
+                {
+                    TakesGlobals = true
+                    TakesEnvPrefix = true
+                }
             ]
 
-    /// Is this referenced method one of `CommandTree.CommandReflection`'s
-    /// `*WithGlobals` entry points?
-    let private isWithGlobalsEntryPoint (reader: MetadataReader) (method: MemberReference) : bool =
-        method.Parent.Kind = HandleKind.TypeReference
-        && withGlobalsEntryPoints.Contains(reader.GetString method.Name)
-        && (let parent = reader.GetTypeReference(TypeReferenceHandle.op_Explicit method.Parent)
-            reader.GetString parent.Namespace + "." + reader.GetString parent.Name = "CommandTree.CommandReflection")
+    /// The entry point a referenced method is, if it is a method of
+    /// `CommandTree.CommandReflection` listed in `entryPoints`.
+    let private entryPointOf (reader: MetadataReader) (method: MemberReference) : EntryPoint option =
+        if method.Parent.Kind <> HandleKind.TypeReference then
+            None
+        else
+            let parent = reader.GetTypeReference(TypeReferenceHandle.op_Explicit method.Parent)
 
-    /// Every `(cmd, globals)` type-argument pair the assembly instantiates a
-    /// `CommandReflection.*WithGlobals` entry point with, read from its MethodSpec
-    /// table. The call site is the one place the program says which union holds
-    /// its global flags; nothing on the union itself has to (a globals case needs
-    /// no attribute), so the union cannot be recognised by its shape.
-    let private globalsInstantiations (dllPath: string) : (string * string) list =
+            if
+                reader.GetString parent.Namespace + "." + reader.GetString parent.Name = "CommandTree.CommandReflection"
+            then
+                entryPoints.TryFind(reader.GetString method.Name)
+            else
+                None
+
+    /// One instantiation of an entry point in the assembly's MethodSpec table:
+    /// its type arguments (root first, then any globals union), and, for an
+    /// `*Env` entry point, the prefix passed at each call of it (`None` for a
+    /// call whose prefix is not a string literal).
+    type private Instantiation =
+        {
+            EntryPoint: EntryPoint
+            TypeArguments: string list
+            Prefixes: string option list
+        }
+
+    /// The opcodes the prefix scan reads, and each opcode's operand type.
+    [<Literal>]
+    let private Nop = 0x00us
+
+    [<Literal>]
+    let private LdStr = 0x72us
+
+    [<Literal>]
+    let private TailPrefix = 0xFE14us
+
+    [<Literal>]
+    let private Call = 0x28us
+
+    [<Literal>]
+    let private CallVirt = 0x6Fus
+
+    let private operandTypes =
+        lazy
+            (typeof<Emit.OpCodes>.GetFields(BindingFlags.Public ||| BindingFlags.Static)
+             |> Array.map (fun f ->
+                 let op = f.GetValue null :?> Emit.OpCode
+                 uint16 op.Value, op.OperandType)
+             |> dict)
+
+    /// The prefix argument of every call to each MethodSpec row in `targets`, read
+    /// from the IL of every method body: the string of the `ldstr` immediately
+    /// before the call (a `nop` or `tail.` between them aside), since the prefix is
+    /// the call's last argument. A call preceded by anything else passes a
+    /// computed prefix, recorded as `None`. An opcode the runtime does not define
+    /// ends the scan of that body, leaving its calls unread.
+    let private prefixesAtCalls
+        (pe: PEReader)
+        (reader: MetadataReader)
+        (targets: Set<int>)
+        : Map<int, string option list> =
+        let found = Collections.Generic.Dictionary<int, string option list>()
+
+        for handle in reader.MethodDefinitions do
+            let rva = (reader.GetMethodDefinition handle).RelativeVirtualAddress
+
+            if rva <> 0 then
+                let mutable il = pe.GetMethodBody(rva).GetILReader()
+                let mutable previousString: string option = None
+
+                while il.RemainingBytes > 0 do
+                    let first = il.ReadByte()
+
+                    let opcode =
+                        if first = 0xFEuy then
+                            0xFE00us ||| uint16 (il.ReadByte())
+                        else
+                            uint16 first
+
+                    match opcode with
+                    | LdStr ->
+                        let token = il.ReadInt32()
+
+                        previousString <-
+                            Some(reader.GetUserString(MetadataTokens.UserStringHandle(token &&& 0xFFFFFF)))
+                    | Call
+                    | CallVirt ->
+                        let token = il.ReadInt32()
+                        let row = token &&& 0xFFFFFF
+
+                        if (token >>> 24) = int TableIndex.MethodSpec && targets.Contains row then
+                            found.[row] <-
+                                previousString
+                                :: (match found.TryGetValue row with
+                                    | true, calls -> calls
+                                    | _ -> [])
+
+                        previousString <- None
+                    | Nop
+                    | TailPrefix -> ()
+                    | _ ->
+                        let size =
+                            match operandTypes.Value.TryGetValue opcode with
+                            | false, _ -> il.RemainingBytes
+                            | true, operandType ->
+                                match operandType with
+                                | Emit.OperandType.InlineNone -> 0
+                                | Emit.OperandType.ShortInlineBrTarget
+                                | Emit.OperandType.ShortInlineI
+                                | Emit.OperandType.ShortInlineVar -> 1
+                                | Emit.OperandType.InlineVar -> 2
+                                | Emit.OperandType.InlineI8
+                                | Emit.OperandType.InlineR -> 8
+                                | Emit.OperandType.InlineSwitch -> 4 * il.ReadInt32()
+                                | _ -> 4
+
+                        il.Offset <- il.Offset + size
+                        previousString <- None
+
+        found |> Seq.map (fun kv -> kv.Key, kv.Value) |> Map.ofSeq
+
+    /// Every instantiation of a CommandTree entry point whose type arguments are
+    /// all types this assembly defines. The call site is the one place the
+    /// program says which union holds its global flags (a globals case needs no
+    /// attribute, so the union cannot be recognised by its shape) and which
+    /// prefix its env vars take.
+    let private instantiations (dllPath: string) : Instantiation list =
         use stream = File.OpenRead dllPath
         use pe = new PEReader(stream)
         let reader = pe.GetMetadataReader()
 
+        let specs =
+            [
+                for row in 1 .. reader.GetTableRowCount TableIndex.MethodSpec do
+                    let spec =
+                        reader.GetMethodSpecification(MetadataTokens.MethodSpecificationHandle row)
+
+                    let entryPoint =
+                        if spec.Method.Kind = HandleKind.MemberReference then
+                            entryPointOf
+                                reader
+                                (reader.GetMemberReference(MemberReferenceHandle.op_Explicit spec.Method))
+                        else
+                            None
+
+                    match
+                        entryPoint
+                        |> Option.bind (fun e -> typeArgumentsDefinedHere reader spec |> Option.map (fun a -> e, a))
+                    with
+                    | Some(e, arguments) -> yield row, e, arguments
+                    | None -> ()
+            ]
+
+        let prefixes =
+            specs
+            |> List.filter (fun (_, e, _) -> e.TakesEnvPrefix)
+            |> List.map (fun (row, _, _) -> row)
+            |> Set.ofList
+            |> prefixesAtCalls pe reader
+
         [
-            for row in 1 .. reader.GetTableRowCount TableIndex.MethodSpec do
-                let spec =
-                    reader.GetMethodSpecification(MetadataTokens.MethodSpecificationHandle row)
-
-                let isEntryPoint =
-                    spec.Method.Kind = HandleKind.MemberReference
-                    && isWithGlobalsEntryPoint
-                        reader
-                        (reader.GetMemberReference(MemberReferenceHandle.op_Explicit spec.Method))
-
-                match
-                    (if isEntryPoint then
-                         typeArgumentsDefinedHere reader spec
-                     else
-                         None)
-                with
-                | Some [ cmd; globals ] -> yield cmd, globals
-                | _ -> ()
+            for row, e, arguments in specs ->
+                {
+                    EntryPoint = e
+                    TypeArguments = arguments
+                    Prefixes = prefixes.TryFind row |> Option.defaultValue []
+                }
         ]
+
+    /// The env-var prefix `root` is parsed with. A root passed to an `*Env` entry
+    /// point with one string literal at every call has that prefix. Any other
+    /// prefix is unknown rather than guessed: a computed value, different literals
+    /// at different calls, or an instantiation with no call to read (its method
+    /// passed as a value).
+    let private envPrefixOf (calls: Instantiation list) : EnvPrefix =
+        match calls |> List.filter (fun i -> i.EntryPoint.TakesEnvPrefix) with
+        | [] -> NoPrefix
+        | envCalls ->
+            let prefixes =
+                envCalls
+                |> List.collect (fun i -> if List.isEmpty i.Prefixes then [ None ] else i.Prefixes)
+                |> List.distinct
+
+            match prefixes with
+            | [ Some prefix ] -> LiteralPrefix prefix
+            | _ -> UnknownPrefix
 
     /// The global flags `root` is parsed with: the flags union the assembly passes
     /// alongside `root` to a `*WithGlobals` entry point. None when it never does,
     /// and none when it passes several different unions, since which one a given
-    /// run uses cannot be read from metadata.
-    let private globalFlagsOf (dllPath: string) (asm: Assembly) (root: Type) : FlagSpec list =
-        let globalsUnions =
-            globalsInstantiations dllPath
-            |> List.choose (fun (cmd, globals) -> if cmd = root.FullName then Some globals else None)
-            |> List.distinct
+    /// run uses cannot be read from metadata. Global flags read env vars only
+    /// through an `*AndEnv` entry point: CommandTree skips their env resolution,
+    /// `[<CmdEnvRaw>]` included, without a prefix.
+    let private globalFlagsOf (asm: Assembly) (calls: Instantiation list) (prefix: EnvPrefix) : FlagSpec list =
+        let withGlobals = calls |> List.filter (fun i -> i.EntryPoint.TakesGlobals)
 
-        match globalsUnions with
+        let envOf =
+            if withGlobals |> List.exists (fun i -> i.EntryPoint.TakesEnvPrefix) then
+                envBinding prefix
+            else
+                fun _ _ -> None
+
+        match withGlobals |> List.map (fun i -> List.last i.TypeArguments) |> List.distinct with
         | [ globals ] ->
             match asm.GetType globals |> Option.ofObj with
-            | Some t when isUnionType t -> flagInfos t
+            | Some t when isUnionType t -> flagInfos envOf t
             | _ -> []
         | _ -> []
 
     /// The realized grammar rooted at `root`: its command forest and its global flags.
     let private grammarOf (dllPath: string) (asm: Assembly) (root: Type) : Grammar =
+        let calls =
+            instantiations dllPath
+            |> List.filter (fun i -> List.head i.TypeArguments = root.FullName)
+
+        let prefix = envPrefixOf calls
+
         {
-            Roots = walkUnion root
-            GlobalFlags = globalFlagsOf dllPath asm root
+            Roots = walkUnion prefix root
+            GlobalFlags = globalFlagsOf asm calls prefix
         }
 
     /// Recover the realized CLI grammar of a single named root command union in an
