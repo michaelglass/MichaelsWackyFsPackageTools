@@ -1184,9 +1184,14 @@ let ``release - Auto folds a breaking grammar change into the bump when the API 
         let previousGrammar =
             {
                 Roots = [ Leaf("check-api", [], []) ]
+                GlobalFlags = []
             }
 
-        let currentGrammar = { Roots = [ Leaf("diff-api", [], []) ] }
+        let currentGrammar =
+            {
+                Roots = [ Leaf("diff-api", [], []) ]
+                GlobalFlags = []
+            }
 
         let config =
             {
@@ -5591,9 +5596,14 @@ let ``release - PackAsTool grammar break bumps major without constructing an API
         let previousGrammar =
             {
                 Roots = [ Leaf("check-api", [], []) ]
+                GlobalFlags = []
             }
 
-        let currentGrammar = { Roots = [ Leaf("diff-api", [], []) ] }
+        let currentGrammar =
+            {
+                Roots = [ Leaf("diff-api", [], []) ]
+                GlobalFlags = []
+            }
 
         let config =
             {
@@ -5753,7 +5763,11 @@ let ``release - PackAsTool CLI aborts when the previous grammar cannot be read``
                     ("jj", "diff --from v1.0.0 --to @ --summary \"glob:" + dir + "/**\"", Success "1 file changed")
                 ]
 
-        let currentGrammar = { Roots = [ Leaf("diff-api", [], []) ] }
+        let currentGrammar =
+            {
+                Roots = [ Leaf("diff-api", [], []) ]
+                GlobalFlags = []
+            }
 
         let config =
             {
