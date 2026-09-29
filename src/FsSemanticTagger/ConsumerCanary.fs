@@ -221,7 +221,7 @@ let toJson (config: CanaryConfig) : string =
     JsonSerializer.Serialize(
         {| localFeed = config.LocalFeed
            consumers = consumers |},
-        JsonSerializerOptions(WriteIndented = true)
+        JsonSerializerOptions(WriteIndented = true, NewLine = "\n")
     )
 
 /// Every (package, version, consumer) the plan touches, in plan order.

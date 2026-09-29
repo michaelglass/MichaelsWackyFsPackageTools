@@ -374,7 +374,10 @@ let parseJson (json: string) : ToolConfig =
 /// Serialize a ToolConfig to JSON string
 let toJson (config: ToolConfig) : string =
     use stream = new System.IO.MemoryStream()
-    use writer = new Utf8JsonWriter(stream, JsonWriterOptions(Indented = true))
+
+    use writer =
+        new Utf8JsonWriter(stream, JsonWriterOptions(Indented = true, NewLine = "\n"))
+
     writer.WriteStartObject()
     writer.WriteStartArray("packages")
 

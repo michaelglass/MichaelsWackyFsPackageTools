@@ -143,6 +143,7 @@ let private defaultConfig =
 let jsonOptions =
     let opts = JsonSerializerOptions()
     opts.WriteIndented <- true
+    opts.NewLine <- "\n"
     opts.Encoder <- JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     opts
 

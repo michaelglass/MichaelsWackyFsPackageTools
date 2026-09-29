@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix: the floor config is written with `\n` line endings on every platform. On Windows it was written with `\r\n`, so every save rewrote each line of a committed LF file.
 - feat: `ReaderOptions` makes the Cobertura reader's filters (source extensions, excluded file-name patterns, excluded path segments) configurable, so C# and VB reports can be read. `ReaderOptions.defaults` is the previous behaviour.
 - feat: `readReports options xmlContents` reads reports in one pass and returns a `Report`: the `RawLine`s read plus the `ExcludedFile`s skipped, each with an `ExclusionReason`. `parseXml`, `parseFiles`, `extractRawLines` and friends are unchanged and use the defaults.
 

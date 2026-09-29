@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix: `ratchet`, `loosen` and the other config-writing commands keep `\n` line endings on Windows instead of rewriting the whole file with `\r\n`.
 - fix: `check` says how many files the reader skipped (`Result: 3/3 files in the report passed (1 more was excluded by the reader; …)`) and `targets` lists them with the filter that matched. A skipped file never gets a floor, so it was missing from both sides of the count without a word — e.g. a production `TestKit.fs`, which the `Test` name filter catches.
 
 ## 0.15.0-alpha.17 - 2026-09-27
