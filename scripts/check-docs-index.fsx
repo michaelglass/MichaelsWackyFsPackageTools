@@ -1,5 +1,7 @@
 #!/usr/bin/env dotnet fsi
 
+#load "../src/Shared/SourceTree.fs"
+
 open System.IO
 open System.Text.RegularExpressions
 
@@ -15,9 +17,9 @@ let packageIdRegex = Regex(@"<PackageId>([^<]+)</PackageId>")
 
 let fsprojFiles =
     if Directory.Exists("src") then
-        Directory.GetFiles("src", "*.fsproj", SearchOption.AllDirectories)
+        Shared.SourceTree.findFiles "src" "*.fsproj"
     else
-        [||]
+        []
 
 let mutable failed = false
 

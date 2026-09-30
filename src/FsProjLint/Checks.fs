@@ -462,14 +462,13 @@ let checkProject (doc: XDocument) : CheckResult list =
     else
         allProjectChecks
 
-/// Discover all .fsproj files under the src/ directory.
+/// Discover all .fsproj files under the src/ directory, skipping build output,
+/// dot-directories and nested checkouts (see `Shared.SourceTree.isSkippedDir`).
 let discoverProjects (dir: string) : string list =
     let srcDir = Path.Combine(dir, "src")
 
     if Directory.Exists(srcDir) then
-        Directory.GetFiles(srcDir, "*.fsproj", SearchOption.AllDirectories)
-        |> Array.toList
-        |> List.sort
+        Shared.SourceTree.findFiles srcDir "*.fsproj"
     else
         []
 

@@ -19,7 +19,7 @@ let ``stable >=1.0 + Breaking bumps major`` () =
             Stage = Stable
         }
 
-    test <@ determineBump v (Breaking(ApiSignature.Marker "removed", [])) = bumpMajor v @>
+    test <@ determineBump v (Breaking(Reason "removed")) = bumpMajor v @>
 
 [<Fact>]
 let ``stable >=1.0 + Addition bumps minor`` () =
@@ -31,7 +31,7 @@ let ``stable >=1.0 + Addition bumps minor`` () =
             Stage = Stable
         }
 
-    test <@ determineBump v (Addition(ApiSignature.Marker "added", [])) = bumpMinor v @>
+    test <@ determineBump v (Addition(Reason "added")) = bumpMinor v @>
 
 [<Fact>]
 let ``stable >=1.0 + NoChange bumps patch`` () =
@@ -57,7 +57,7 @@ let ``pre-1.0 stable + Breaking bumps minor`` () =
             Stage = Stable
         }
 
-    test <@ determineBump v (Breaking(ApiSignature.Marker "removed", [])) = bumpMinor v @>
+    test <@ determineBump v (Breaking(Reason "removed")) = bumpMinor v @>
 
 [<Fact>]
 let ``pre-1.0 stable + Addition bumps patch`` () =
@@ -69,7 +69,7 @@ let ``pre-1.0 stable + Addition bumps patch`` () =
             Stage = Stable
         }
 
-    test <@ determineBump v (Addition(ApiSignature.Marker "added", [])) = bumpPatch v @>
+    test <@ determineBump v (Addition(Reason "added")) = bumpPatch v @>
 
 // determineBump: Alpha
 
@@ -83,7 +83,7 @@ let ``alpha + Breaking increments alpha number`` () =
             Stage = PreRelease(Alpha 1)
         }
 
-    test <@ determineBump v (Breaking(ApiSignature.Marker "removed", [])) = { v with Stage = PreRelease(Alpha 2) } @>
+    test <@ determineBump v (Breaking(Reason "removed")) = { v with Stage = PreRelease(Alpha 2) } @>
 
 [<Fact>]
 let ``alpha + Addition increments alpha number`` () =
@@ -95,7 +95,7 @@ let ``alpha + Addition increments alpha number`` () =
             Stage = PreRelease(Alpha 3)
         }
 
-    test <@ determineBump v (Addition(ApiSignature.Marker "added", [])) = { v with Stage = PreRelease(Alpha 4) } @>
+    test <@ determineBump v (Addition(Reason "added")) = { v with Stage = PreRelease(Alpha 4) } @>
 
 [<Fact>]
 let ``alpha + NoChange increments alpha number`` () =
@@ -121,7 +121,7 @@ let ``beta + any change increments beta number`` () =
             Stage = PreRelease(Beta 1)
         }
 
-    test <@ determineBump v (Breaking(ApiSignature.Marker "removed", [])) = { v with Stage = PreRelease(Beta 2) } @>
+    test <@ determineBump v (Breaking(Reason "removed")) = { v with Stage = PreRelease(Beta 2) } @>
 
 // determineBump: RC
 
@@ -147,7 +147,7 @@ let ``RC + API change reverts to beta`` () =
             Stage = PreRelease(RC 1)
         }
 
-    test <@ determineBump v (Breaking(ApiSignature.Marker "removed", [])) = toBeta v @>
+    test <@ determineBump v (Breaking(Reason "removed")) = toBeta v @>
 
 [<Fact>]
 let ``RC + Addition reverts to beta`` () =
@@ -159,7 +159,7 @@ let ``RC + Addition reverts to beta`` () =
             Stage = PreRelease(RC 2)
         }
 
-    test <@ determineBump v (Addition(ApiSignature.Marker "added", [])) = toBeta v @>
+    test <@ determineBump v (Addition(Reason "added")) = toBeta v @>
 
 // forCommand
 

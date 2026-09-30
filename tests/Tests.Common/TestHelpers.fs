@@ -74,3 +74,47 @@ let withCapturedConsole (action: unit -> 'a) : string * 'a =
         output.ToString().Replace("\r\n", "\n"), result
     finally
         ConsoleRouter.Capture.Value <- outer
+
+/// Lay `dir` out as a jj checkout whose sources `writeSources` writes once for
+/// real, at `src/Real`, and again as a copy in every place a source-tree scan
+/// must skip:
+///   * build output: `src/Real/bin/Debug`, `src/Real/obj`, `artifacts`, `output`,
+///     `src/node_modules/pkg`
+///   * a dot-directory: `src/.hidden`
+///   * a nested checkout: `src/ws` (its own `.jj`), `src/wt` (a `.git` file, as a
+///     git worktree has), `src/clone` (a `.git` directory)
+///   * a jj workspace in the default checkout: `.workspaces/ws1`
+/// `dir` itself carries a `.jj`, which must not stop it being scanned. Returns
+/// the real copy's directory.
+let layOutNestedCheckouts (dir: string) (writeSources: string -> unit) : string =
+    let at (relative: string) =
+        let path = Path.Combine(Array.append [| dir |] (relative.Split '/'))
+        Directory.CreateDirectory(path) |> ignore
+        path
+
+    let copyAt (relative: string) = writeSources (at relative)
+
+    at ".jj" |> ignore
+    let real = at "src/Real"
+    writeSources real
+
+    for skipped in
+        [
+            "src/Real/bin/Debug"
+            "src/Real/obj"
+            "artifacts"
+            "output"
+            "src/node_modules/pkg"
+            "src/.hidden"
+            "src/ws"
+            "src/wt"
+            "src/clone"
+            ".workspaces/ws1"
+        ] do
+        copyAt skipped
+
+    at "src/ws/.jj" |> ignore
+    at "src/clone/.git" |> ignore
+    File.WriteAllText(Path.Combine(dir, "src", "wt", ".git"), "gitdir: ../../.git/worktrees/wt\n")
+    at ".workspaces/ws1/.jj" |> ignore
+    real

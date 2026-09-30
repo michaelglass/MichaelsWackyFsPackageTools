@@ -1069,9 +1069,7 @@ let private resolveBaselineApi
 /// would block the release for nothing. Asked of `determineBump` itself rather than
 /// by matching on stages, so it stays true if the bump rules change.
 let private bumpDependsOnApiDiff (current: Version) : bool =
-    let probe = ApiSignature.Marker ""
-
-    [ Breaking(probe, []); Addition(probe, []) ]
+    [ Breaking(Reason ""); Addition(Reason "") ]
     |> List.exists (fun change -> determineBump current change <> determineBump current NoChange)
 
 /// Is the release tagged at `version` an ORPHAN — tagged, but its package never
@@ -1227,6 +1225,7 @@ let private decideBump
 
                 let floored, report = DeclaredBump.floor change declared
 
+                // `bump` prints the line saying why; the disagreement report follows it.
                 let decision =
                     bump reason OwnChange (skipReserved (determineBump currentVersion floored))
 
@@ -1313,12 +1312,7 @@ let private decideBump
 
                     let previousVersion, previous =
                         previousReads
-                        |> Seq.tryFind (fun (_, read) ->
-                            match read.Grammar with
-                            | GrammarUnreadable _ -> false
-                            | GrammarModelled _
-                            | GrammarNotModellable _ -> true)
-                        |> Option.orElseWith (fun () -> Seq.tryHead previousReads)
+                        |> Extraction.firstGrammarRead (fun (_, read) -> read.Grammar)
                         |> Option.defaultValue (
                             currentVersion,
                             {
@@ -1350,6 +1344,17 @@ let private decideBump
                         Grammar.noGrammarNote (sprintf "the previous release %s" previousTag) previous.Grammar
                         |> Option.iter (printfn "note: %s: %s" pkg.Name)
 
+                        let previousApiUnreadable reason =
+                            Some(
+                                CannotDetermine(
+                                    pkg,
+                                    sprintf
+                                        "the CLI grammar of the previous release %s could not be modelled, and its public API could not be read either (%s). Refusing to guess the version bump — a breaking CLI change would otherwise ship as a patch. Use an explicit alpha/beta/rc/stable command."
+                                        previousTag
+                                        reason
+                                )
+                            )
+
                         match previous.Api with
                         | CachedRead previousApi ->
                             match current.Api with
@@ -1360,25 +1365,8 @@ let private decideBump
                                         previousTag)
                                     (compare previousApi currentApi)
                             | Error reason -> currentApiUnreadable reason
-                        | NotCached ->
-                            Some(
-                                CannotDetermine(
-                                    pkg,
-                                    sprintf
-                                        "the CLI grammar of the previous release %s could not be modelled, and its public API could not be read either (it is not in the NuGet cache). Refusing to guess the version bump — a breaking CLI change would otherwise ship as a patch. Use an explicit alpha/beta/rc/stable command."
-                                        previousTag
-                                )
-                            )
-                        | CachedUnreadable reason ->
-                            Some(
-                                CannotDetermine(
-                                    pkg,
-                                    sprintf
-                                        "the CLI grammar of the previous release %s could not be modelled, and its public API could not be read either (%s). Refusing to guess the version bump — a breaking CLI change would otherwise ship as a patch. Use an explicit alpha/beta/rc/stable command."
-                                        previousTag
-                                        reason
-                                )
-                            )
+                        | NotCached -> previousApiUnreadable "it is not in the NuGet cache"
+                        | CachedUnreadable reason -> previousApiUnreadable reason
                     | GrammarUnreadable reason, GrammarModelled _ ->
                         // FAIL CLOSED. This package HAS a CLI grammar, but the previous
                         // release could not be read — the extractor is cache-only and
@@ -1465,6 +1453,7 @@ let private decideBump
                                 tag)
                             NoChange
                     | BaselineFound(baselineVersion, oldApi, previousGrammar) ->
+                        let baselineTag = toTag pkg.TagPrefix baselineVersion
                         let current = input.ExtractCurrent pkg.DllPath
 
                         match current.Api with
@@ -1481,18 +1470,14 @@ let private decideBump
                                 | GrammarModelled previousGrammar, GrammarModelled currentGrammar ->
                                     Grammar.foldDiffIntoApi (Some pkg.Name) apiChange previousGrammar currentGrammar
                                 | previousGrammar, GrammarModelled _ ->
-                                    let previousTag = toTag pkg.TagPrefix baselineVersion
-
                                     Grammar.noGrammarNote
-                                        (sprintf "the previous release %s" previousTag)
+                                        (sprintf "the previous release %s" baselineTag)
                                         previousGrammar
                                     |> Option.iter (printfn "note: %s: %s" pkg.Name)
 
                                     apiChange
                                 | _, GrammarNotModellable _
                                 | _, GrammarUnreadable _ -> apiChange
-
-                            let baselineTag = toTag pkg.TagPrefix baselineVersion
 
                             let diffedAgainst =
                                 if baselineTag = tag then

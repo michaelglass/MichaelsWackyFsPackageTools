@@ -4497,45 +4497,12 @@ let ``release - fresh changes still bump normally (not treated as resume)`` () =
 /// release read by `previous` and its current build by `current`. Returns the
 /// output and the exit code.
 let private releaseLibraryReading (cmd: ReleaseCommand) previous current =
-    let tmpFile = scratchFile ()
-
-    try
-        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>")
-
-        let (fakeRun, _getCalls) =
-            passingCiRun
-                [
-                    ("git", "tag -l \"v*\"", Success "v1.0.0")
-                    ("jj",
-                     "diff --from v1.0.0 --to @ --summary \"glob:"
-                     + Path.GetDirectoryName(tmpFile)
-                     + "/**\"",
-                     Success "1 file changed")
-                ]
-
-        let config =
-            {
-                Packages =
-                    [
-                        {
-                            Name = "MyLib"
-                            Fsproj = tmpFile
-                            DllPath = "fake.dll"
-                            TagPrefix = "v"
-                            FsProjsSharingSameTag = []
-                        }
-                    ]
-                ReservedVersions = Set.empty
-                PreBuildCmds = []
-                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
-                CiTimeout = None
-                RootDir = ""
-            }
+    withTempDir (fun dir ->
+        let _fsproj, fakeRun, config =
+            singlePackageRepo dir "1.0.0" "# Changelog\n\n## Unreleased\n\n- fix: a change\n"
 
         withCapturedConsole (fun () ->
-            runReleaseReading fakeRun config cmd PushTags previous current 0 10 false (fun _ _ -> OnFeed))
-    finally
-        File.Delete(tmpFile)
+            runReleaseReading fakeRun config cmd PushTags previous current 0 10 false (fun _ _ -> OnFeed)))
 
 /// `releaseLibraryReading` with the prior and current API both `[ type Foo ]` and
 /// no CLI grammar.

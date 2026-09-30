@@ -252,6 +252,21 @@ let ``discover with one packable fsproj`` () =
         test <@ config.Packages[0].DllPath = Path.Combine("src", "MyLib", "bin", "Release", "net10.0", "MyLib.dll") @>)
 
 [<Fact>]
+let ``discover counts a package once when nested checkouts and dot-directories hold copies of it`` () =
+    // A default jj checkout with workspaces under .workspaces/ holds a full copy
+    // of the sources per workspace; discovery must still see one package.
+    withTempDir (fun tmpDir ->
+        layOutNestedCheckouts tmpDir (fun at ->
+            File.WriteAllText(
+                Path.Combine(at, "MyLib.fsproj"),
+                "<Project><PropertyGroup><PackageId>MyLib</PackageId></PropertyGroup></Project>"
+            ))
+        |> ignore
+
+        test <@ findPackableProjects tmpDir = [ "MyLib", Path.Combine("src", "Real", "MyLib.fsproj") ] @>
+        test <@ (discover tmpDir |> Result.map (fun c -> c.Packages.Length)) = Ok 1 @>)
+
+[<Fact>]
 let ``discover skips non-packable fsproj`` () =
     withTempDir (fun tmpDir ->
         let srcDir = Path.Combine(tmpDir, "src", "MyLib")

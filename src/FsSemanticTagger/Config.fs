@@ -240,9 +240,13 @@ let transitiveProjectRefFsprojs (rootDir: string) (fsprojRelPath: string) : stri
 /// is treated as a runnable example (not something published to NuGet) and
 /// excluded. Real dotnet tools (Exe + PackAsTool) and libraries with a PackageId
 /// are kept.
+///
+/// The scan skips build output, dot-directories and nested checkouts (see
+/// `Shared.SourceTree.isSkippedDir`), so a jj workspace or git worktree inside the
+/// repository is not counted as more packages.
 let findPackableProjects (rootDir: string) : (string * string) list =
-    Directory.GetFiles(rootDir, "*.fsproj", SearchOption.AllDirectories)
-    |> Array.choose (fun path ->
+    Shared.SourceTree.findFiles rootDir "*.fsproj"
+    |> List.choose (fun path ->
         let content = File.ReadAllText(path)
         let m = packageIdRegex.Match(content)
 
@@ -254,7 +258,6 @@ let findPackableProjects (rootDir: string) : (string * string) list =
             Some(m.Groups[1].Value, relativePath)
         else
             None)
-    |> Array.toList
 
 /// Discover a single-package config by finding the packable fsproj
 let discover (rootDir: string) : Result<ToolConfig, string> =

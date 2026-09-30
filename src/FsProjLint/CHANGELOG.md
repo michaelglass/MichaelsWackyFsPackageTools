@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- chore(deps): CommandTree 0.12.0 → 0.13.0.
+- fix: **the project scan under `src/` skips nested checkouts, dot-directories and build output.** A jj workspace or git worktree inside `src/` (a directory with its own `.jj` or `.git` entry), any dot-directory, build output (`bin`, `obj`, `artifacts`, `output`) and `node_modules` are no longer linted as more projects. This is the same rule FsSemanticTagger and SyncDocs apply.
+
 ## 0.10.0-alpha.19 - 2026-09-29
 
 - chore(deps): CommandTree 0.11.3 → 0.12.0.

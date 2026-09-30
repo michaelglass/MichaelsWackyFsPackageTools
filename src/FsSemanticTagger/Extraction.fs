@@ -7,16 +7,29 @@ module FsSemanticTagger.Extraction
 open System.IO
 open FsSemanticTagger.Api
 
-/// What one DLL yields: its public API, or why it could not be read, and its CLI
-/// grammar.
-type ExtractedDll =
-    {
-        Api: Result<ApiSignature list, string>
-        Grammar: GrammarRead
-    }
+/// What reading one DLL yields: its public API, as `'api` describes the outcome,
+/// and its CLI grammar.
+type DllRead<'api> = { Api: 'api; Grammar: GrammarRead }
 
-let private couldNotLoad (dllPath: string) (ex: exn) =
-    sprintf "could not load %s: %s" dllPath ex.Message
+/// A built DLL: its public API, or why it could not be read.
+type ExtractedDll = DllRead<Result<ApiSignature list, string>>
+
+/// A package version in the NuGet cache, its API as `Api.CachedApi` describes.
+type CachedDll = DllRead<CachedApi>
+
+/// A prior release as `readPrevious` fetched it, its API as
+/// `Api.PreviousApiResult` describes.
+type PreviousDll = DllRead<PreviousApiResult>
+
+/// The first of `reads` whose grammar was read, modelled or not; else the first.
+let firstGrammarRead (grammarOf: 'a -> GrammarRead) (reads: 'a seq) : 'a option =
+    reads
+    |> Seq.tryFind (fun read ->
+        match grammarOf read with
+        | GrammarUnreadable _ -> false
+        | GrammarModelled _
+        | GrammarNotModellable _ -> true)
+    |> Option.orElseWith (fun () -> Seq.tryHead reads)
 
 /// Read the DLL at `dllPath` once, for both its API and its grammar. A DLL that
 /// cannot be loaded at all is unreadable for both, for the same reason.
@@ -38,11 +51,6 @@ let readDll (dllPath: string) : ExtractedDll =
             Api = Error reason
             Grammar = GrammarUnreadable reason
         }
-
-/// What the NuGet cache holds for one package version: its public API and its CLI
-/// grammar, each as `Api.CachedApi` and `GrammarRead` describe.
-type CachedDll =
-    { Api: CachedApi; Grammar: GrammarRead }
 
 /// Read a previously published package from an arbitrary cache root
 /// (cacheRoot/<id>/<version>/{lib,tools,analyzers}/..., see
@@ -86,12 +94,8 @@ let readCacheRoot (cacheRoot: string) (packageId: string) (version: string) : Ca
 
         let grammar =
             reads
-            |> Seq.map (fun read -> read.Value.Grammar)
-            |> Seq.tryFind (function
-                | GrammarUnreadable _ -> false
-                | GrammarModelled _
-                | GrammarNotModellable _ -> true)
-            |> Option.orElseWith (fun () -> reads |> Seq.map (fun read -> read.Value.Grammar) |> Seq.tryHead)
+            |> firstGrammarRead (fun read -> read.Value.Grammar)
+            |> Option.map (fun read -> read.Value.Grammar)
             |> Option.defaultValue (GrammarUnreadable noAssembly)
 
         { Api = api; Grammar = grammar }
@@ -99,14 +103,6 @@ let readCacheRoot (cacheRoot: string) (packageId: string) (version: string) : Ca
 /// `readCacheRoot` over the user-local NuGet cache at ~/.nuget/packages/.
 let readNuGetCache (packageId: string) (version: string) : CachedDll =
     readCacheRoot (nugetCacheRoot ()) packageId version
-
-/// A prior release as `readPrevious` fetched it: its public API, as
-/// `Api.PreviousApiResult` describes, and its CLI grammar.
-type PreviousDll =
-    {
-        Api: PreviousApiResult
-        Grammar: GrammarRead
-    }
 
 /// Read a prior release: from the local NuGet cache, else by restoring it into the
 /// cache first and reading it from there.
@@ -121,26 +117,16 @@ type PreviousDll =
 ///
 /// A restore that fails leaves the grammar as the cache read it: unreadable.
 let readPrevious (run: string -> string -> Shell.CommandResult) (packageId: string) (version: string) : PreviousDll =
-    let asPrevious (cached: CachedDll) =
-        match cached.Api with
-        | CachedRead api ->
-            Some
-                {
-                    Api = Found api
-                    Grammar = cached.Grammar
-                }
-        | CachedUnreadable reason ->
-            Some
-                {
-                    Api = Unreadable reason
-                    Grammar = cached.Grammar
-                }
+    let asPrevious (api: CachedApi) : PreviousApiResult option =
+        match api with
+        | CachedRead api -> Some(Found api)
+        | CachedUnreadable reason -> Some(Unreadable reason)
         | NotCached -> None
 
     let cached = readNuGetCache packageId version
 
-    match asPrevious cached with
-    | Some previous -> previous
+    match asPrevious cached.Api with
+    | Some api -> { Api = api; Grammar = cached.Grammar }
     | None ->
         withProbeProject packageId version (fun proj ->
             match run "dotnet" (probeRestoreArgs (currentNuGetConfig ()) proj) with
@@ -150,8 +136,14 @@ let readPrevious (run: string -> string -> Shell.CommandResult) (packageId: stri
                     Grammar = cached.Grammar
                 }
             | Shell.Success _ ->
-                match asPrevious (readNuGetCache packageId version) with
-                | Some previous -> previous
+                let restored = readNuGetCache packageId version
+
+                match asPrevious restored.Api with
+                | Some api ->
+                    {
+                        Api = api
+                        Grammar = restored.Grammar
+                    }
                 | None ->
                     // Restore said yes but the package is not where we read from
                     // (e.g. a relocated global packages folder). The truth is

@@ -125,13 +125,13 @@ let floor (computed: ApiChange) (declared: Declaration option) : ApiChange * str
     match declared with
     | None -> computed, None
     | Some d when d.Level > rank computed ->
-        let marker =
-            ApiSignature.Marker(sprintf "changelog: %s declares %s" d.Source (describeLevel d.Level))
+        let reason =
+            Reason(sprintf "changelog: %s declares %s" d.Source (describeLevel d.Level))
 
         let change =
             match d.Level with
-            | DeclaresBreaking -> Breaking(marker, [])
-            | _ -> Addition(marker, [])
+            | DeclaresBreaking -> Breaking reason
+            | _ -> Addition reason
 
         change,
         Some(

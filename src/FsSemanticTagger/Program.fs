@@ -201,15 +201,15 @@ let private checkApi (oldDll: string) (newDll: string) : Result<int, string> =
         | Api.Breaking _ ->
             printfn "BREAKING changes detected:"
 
-            for s in Api.ApiChange.toList change |> List.truncate 10 do
-                printfn "  ! %s" (Api.ApiSignature.render s)
+            for line in Api.ApiChange.lines change |> List.truncate 10 do
+                printfn "  ! %s" line
 
             Ok 2
         | Api.Addition _ ->
             printfn "Non-breaking additions:"
 
-            for s in Api.ApiChange.toList change |> List.truncate 10 do
-                printfn "  + %s" (Api.ApiSignature.render s)
+            for line in Api.ApiChange.lines change |> List.truncate 10 do
+                printfn "  + %s" line
 
             Ok 1
         | Api.NoChange ->

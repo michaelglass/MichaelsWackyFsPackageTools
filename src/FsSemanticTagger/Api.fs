@@ -5,8 +5,7 @@ open System.IO
 open System.Reflection
 open System.Runtime.InteropServices
 
-/// One declaration of a public API surface, or a marker standing in for one in a
-/// verdict no declaration produced. Each declaration keeps the names it is made of
+/// One declaration of a public API surface. Each keeps the names it is made of
 /// apart, so classifying one never re-parses its rendered text.
 [<RequireQualifiedAccess>]
 type ApiSignature =
@@ -18,10 +17,6 @@ type ApiSignature =
     /// short `Name`; `signature` is the member's name with its parameter and return
     /// types, as `ApiSignature.render` prints it after the `::`.
     | Member of declaringType: string * signature: string
-    /// Not a declaration: the human-readable reason a verdict carries when no
-    /// declaration produced it, such as a CLI grammar change or a changelog's
-    /// declared bump.
-    | Marker of text: string
 
 module ApiSignature =
     /// The one-line text of a signature, as `extract-api`, `check-api` and the
@@ -31,25 +26,56 @@ module ApiSignature =
         | ApiSignature.UnionCase(union, case) -> sprintf "case %s::%s" union case
         | ApiSignature.TypeDecl fullName -> sprintf "type %s" fullName
         | ApiSignature.Member(declaringType, signature) -> sprintf "  %s::%s" declaringType signature
-        | ApiSignature.Marker text -> text
 
+/// What a verdict rests on.
+type Evidence =
+    /// The signatures that changed, the one that decided the verdict first.
+    | Signatures of head: ApiSignature * rest: ApiSignature list
+    /// Why, when no signature decided the verdict: a CLI grammar change or a
+    /// changelog's declared bump.
+    | Reason of string
+
+module Evidence =
+    /// One line per signature, or the reason, as `check-api` prints them.
+    let lines (evidence: Evidence) : string list =
+        match evidence with
+        | Signatures(h, t) -> h :: t |> List.map ApiSignature.render
+        | Reason reason -> [ reason ]
+
+    /// The signature that decided the verdict, or the reason.
+    let headline (evidence: Evidence) : string =
+        match evidence with
+        | Signatures(h, _) -> (ApiSignature.render h).Trim()
+        | Reason reason -> reason
+
+/// The verdict of an API diff, with the evidence it rests on.
 type ApiChange =
-    | Breaking of head: ApiSignature * rest: ApiSignature list
-    | Addition of head: ApiSignature * rest: ApiSignature list
+    | Breaking of Evidence
+    | Addition of Evidence
     | NoChange
 
 module ApiChange =
-    let toList =
-        function
-        | Breaking(h, t)
-        | Addition(h, t) -> h :: t
+    /// The signatures a verdict rests on; none for a `Reason` or `NoChange`.
+    let toList (change: ApiChange) : ApiSignature list =
+        match change with
+        | Breaking(Signatures(h, t))
+        | Addition(Signatures(h, t)) -> h :: t
+        | Breaking(Reason _)
+        | Addition(Reason _)
         | NoChange -> []
 
-    /// The verdict in words, naming the signature that decided it.
+    /// The evidence as `check-api` prints it; none for `NoChange`.
+    let lines (change: ApiChange) : string list =
+        match change with
+        | Breaking evidence
+        | Addition evidence -> Evidence.lines evidence
+        | NoChange -> []
+
+    /// The verdict in words, naming what decided it.
     let describe (change: ApiChange) : string =
         match change with
-        | Breaking(s, _) -> sprintf "a breaking change (%s)" ((ApiSignature.render s).Trim())
-        | Addition(s, _) -> sprintf "an addition (%s)" ((ApiSignature.render s).Trim())
+        | Breaking evidence -> sprintf "a breaking change (%s)" (Evidence.headline evidence)
+        | Addition evidence -> sprintf "an addition (%s)" (Evidence.headline evidence)
         | NoChange -> "no public API change"
 
 let private supportedTfms =
@@ -284,6 +310,13 @@ type internal AssemblySearchPaths =
     /// Every directory, in priority order.
     member this.All = this.DllDir :: this.Installation @ this.Packages
 
+/// The first `<name>.dll` in `searchDirs`, in their order.
+let internal firstDllNamed (searchDirs: string list) (name: string) : string option =
+    searchDirs
+    |> List.tryPick (fun dir ->
+        let path = Path.Combine(dir, name + ".dll")
+        if File.Exists path then Some path else None)
+
 /// `getAssemblySearchPaths` with the DOTNET_ROOT value passed in rather than read
 /// from this process's environment, so a test can vary it without changing the
 /// environment every concurrently started `dotnet` inherits.
@@ -346,8 +379,7 @@ let internal assemblySearchPathsFor (dotnetRootVar: string option) (dllPath: str
     // installation supplies.
     let referencedPackageDirs =
         let isProvided (name: string) =
-            dllDir :: installation
-            |> List.exists (fun dir -> File.Exists(Path.Combine(dir, name + ".dll")))
+            firstDllNamed (dllDir :: installation) name |> Option.isSome
 
         referencedPackageDirsFor (nugetCacheRoot ()) isProvided dllPath
 
@@ -360,25 +392,19 @@ let internal assemblySearchPathsFor (dotnetRootVar: string option) (dllPath: str
 let getAssemblySearchPaths (dllPath: string) : string list =
     (assemblySearchPathsFor (dotnetRootFromEnvironment ()) dllPath).All
 
-/// The first `<name>.dll` in `searchDirs`, in their order.
-let internal firstDllNamed (searchDirs: string list) (name: string) : string option =
-    searchDirs
-    |> List.map (fun dir -> Path.Combine(dir, name + ".dll"))
-    |> List.tryFind File.Exists
-
 /// Does an assembly with public key token `candidate` satisfy a reference asking
 /// for `wanted`? `PathAssemblyResolver`'s rule: the tokens match, or the reference
 /// names none.
-let internal satisfiesReference (wanted: byte[] option) (candidate: byte[] option) : bool =
-    let token = Option.defaultValue [||]
+/// A null token is no token.
+let internal satisfiesReference (wanted: byte[]) (candidate: byte[]) : bool =
+    let token (t: byte[]) = if isNull t then [||] else t
     Array.isEmpty (token wanted) || token wanted = token candidate
 
 /// Resolves a reference to the first `<name>.dll` on the search paths, in priority
 /// order: the dll's own directory, the .NET installation, then the package
 /// directories. It probes for the one name a reference asks for rather than listing
-/// every DLL on every path up front, as `PathAssemblyResolver` needs: listing the
-/// .NET installation (every SDK and shared framework) ran past 10s on a cold GitHub
-/// Windows runner, inside a single test's time budget.
+/// every DLL on every path up front, as `PathAssemblyResolver` does, which is slow
+/// on a .NET installation with many SDKs and shared frameworks.
 type internal ProbingAssemblyResolver(searchDirs: string list) =
     inherit MetadataAssemblyResolver()
 
@@ -388,11 +414,7 @@ type internal ProbingAssemblyResolver(searchDirs: string list) =
         | Some path ->
             let candidate = context.LoadFromAssemblyPath path
 
-            if
-                satisfiesReference
-                    (Option.ofObj (assemblyName.GetPublicKeyToken()))
-                    (Option.ofObj (candidate.GetName().GetPublicKeyToken()))
-            then
+            if satisfiesReference (assemblyName.GetPublicKeyToken()) (candidate.GetName().GetPublicKeyToken()) then
                 candidate
             else
                 null
@@ -586,6 +608,10 @@ type LoadedDll =
         Assembly: Assembly
         PE: PortableExecutable.PEReader
     }
+
+/// Why the DLL at `dllPath` could not be loaded or read.
+let internal couldNotLoad (dllPath: string) (ex: exn) : string =
+    sprintf "could not load %s: %s" dllPath ex.Message
 
 /// Load `dllPath` and run `read` over it. The load context and the PE reader are
 /// disposed when `read` returns, so nothing `read` returns may hold on to them.
@@ -1013,8 +1039,7 @@ let compare (baseline: ApiSignature list) (current: ApiSignature list) : ApiChan
         |> List.choose (function
             | ApiSignature.UnionCase(union, _) -> Some union
             | ApiSignature.TypeDecl _
-            | ApiSignature.Member _
-            | ApiSignature.Marker _ -> None)
+            | ApiSignature.Member _ -> None)
         |> Set.ofList
 
     let newCases, additions =
@@ -1022,8 +1047,7 @@ let compare (baseline: ApiSignature list) (current: ApiSignature list) : ApiChan
         |> List.partition (function
             | ApiSignature.UnionCase(union, _) -> baselineUnions.Contains union
             | ApiSignature.TypeDecl _
-            | ApiSignature.Member _
-            | ApiSignature.Marker _ -> false)
+            | ApiSignature.Member _ -> false)
 
     // Cases (grouped by union), then types, then members.
     let breakingOrder (signature: ApiSignature) =
@@ -1031,12 +1055,11 @@ let compare (baseline: ApiSignature list) (current: ApiSignature list) : ApiChan
             match signature with
             | ApiSignature.UnionCase(union, _) -> 0, union
             | ApiSignature.TypeDecl _ -> 1, ""
-            | ApiSignature.Member _
-            | ApiSignature.Marker _ -> 2, ""
+            | ApiSignature.Member _ -> 2, ""
 
         rank, ApiSignature.render signature
 
     match removed @ newCases |> List.sortBy breakingOrder, additions with
-    | h :: t, _ -> Breaking(h, t)
-    | [], h :: t -> Addition(h, t)
+    | h :: t, _ -> Breaking(Signatures(h, t))
+    | [], h :: t -> Addition(Signatures(h, t))
     | [], [] -> NoChange

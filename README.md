@@ -133,7 +133,7 @@ mise run check       # Format, lint, and docs checks
 mise run ci          # Full CI pipeline locally
 ```
 
-The local gate must run on **.NET SDK 10.0.4xx**. `global.json` pins 10.0.400 with
+The local gate must run on **.NET SDK 10.0.4xx**. `global.json` pins 10.0.401 with
 `rollForward: latestPatch`, and CI's build job uses the same band. Branch coverage
 counts depend on the SDK feature band: the F# compiler in 10.0.3xx and in 10.0.4xx
 emits different branch points for identical code. A floor measured on one band

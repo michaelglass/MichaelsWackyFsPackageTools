@@ -273,13 +273,13 @@ module Grammar =
     let compare (previous: Grammar) (current: Grammar) : GrammarChange =
         combine (compareNodeLists previous.Roots current.Roots) (compareFlags previous.GlobalFlags current.GlobalFlags)
 
-    /// Project a grammar verdict onto the existing `Api.ApiChange` so it can share
-    /// the bump machinery. The carried signature is a human-readable marker (the
-    /// grammar diff has no assembly-signature strings of its own).
+    /// Project a grammar verdict onto `Api.ApiChange` so it can share the bump
+    /// machinery. The grammar diff names no signature, so the verdict carries a
+    /// `Reason`.
     let toApiChange (change: GrammarChange) : ApiChange =
         match change with
-        | GBreaking -> Breaking(ApiSignature.Marker "grammar: a breaking CLI grammar change was detected", [])
-        | GAddition -> Addition(ApiSignature.Marker "grammar: an additive CLI grammar change was detected", [])
+        | GBreaking -> Breaking(Reason "grammar: a breaking CLI grammar change was detected")
+        | GAddition -> Addition(Reason "grammar: an additive CLI grammar change was detected")
         | GNoChange -> NoChange
 
     /// Fold a grammar verdict into an API verdict, stronger bump wins. The API
@@ -569,15 +569,17 @@ module Grammar =
     let private toScreamingSnakeCase (s: string) =
         Regex.Replace(s, "([a-z])([A-Z])", "$1_$2").ToUpperInvariant()
 
-    /// The string constructor argument of an attribute, e.g. the `"LVL"` of
-    /// `[<CmdEnv("LVL")>]`.
-    let private ctorString (attrFullName: string) (attrs: CustomAttributeData list) : string option =
+    /// The single constructor argument of an attribute when it is a `'T`, e.g. the
+    /// `"LVL"` of `[<CmdEnv("LVL")>]` or the `typeof<G>` of `[<CmdGlobals(typeof<G>)>]`.
+    let private ctorArg<'T> (attrFullName: string) (attrs: CustomAttributeData list) : 'T option =
         attrs
         |> List.tryFind (fun a -> a.AttributeType.FullName = attrFullName && a.ConstructorArguments.Count = 1)
         |> Option.bind (fun a ->
             match a.ConstructorArguments.[0].Value with
-            | :? string as v -> Some v
+            | :? 'T as v -> Some v
             | _ -> None)
+
+    let private ctorString = ctorArg<string>
 
     /// The env-var prefix a grammar's flags are bound under: the string the
     /// consumer passes to a `CommandReflection.*WithEnv` / `*AndEnv` entry point.
@@ -1018,10 +1020,9 @@ module Grammar =
             | _ -> UnknownPrefix
 
     /// What the root command union declares about how it is parsed, with
-    /// CommandTree's `[<CmdEnvPrefix(prefix)>]` and `[<CmdGlobals(typeof<G>)>]`
-    /// (CommandTree 0.13 on). CommandTree takes a declaration over whatever an entry
-    /// point passes, and so does the grammar; the IL call-site scan remains for a
-    /// consumer that declares nothing, as one on an older CommandTree cannot.
+    /// CommandTree's `[<CmdEnvPrefix(prefix)>]` and `[<CmdGlobals(typeof<G>)>]`.
+    /// As in CommandTree, a declaration takes precedence over what an entry point
+    /// passes; what is not declared is read from the entry-point call sites.
     [<NoEquality; NoComparison>]
     type private Declarations =
         {
@@ -1042,15 +1043,7 @@ module Grammar =
                         NoPrefix
                     else
                         LiteralPrefix prefix)
-            Globals =
-                attrs
-                |> List.tryFind (fun a ->
-                    a.AttributeType.FullName = "CommandTree.CmdGlobalsAttribute"
-                    && a.ConstructorArguments.Count = 1)
-                |> Option.bind (fun a ->
-                    match a.ConstructorArguments.[0].Value with
-                    | :? Type as t -> Some t
-                    | _ -> None)
+            Globals = ctorArg<Type> "CommandTree.CmdGlobalsAttribute" attrs
         }
 
     /// The global flags `root` is parsed with: the union it declares with
@@ -1062,19 +1055,20 @@ module Grammar =
     /// CommandTree skips their env resolution, `[<CmdEnvRaw>]` included.
     let private globalFlagsOf
         (asm: Assembly)
-        (calls: Instantiation list)
+        (calls: Lazy<Instantiation list>)
         (declarations: Declarations)
         (prefix: EnvPrefix)
         : FlagSpec list =
         let withGlobals =
-            calls
-            |> List.choose (fun i -> i.Globals |> Option.map (fun globals -> globals, i.EnvPrefixes.IsSome))
+            lazy
+                (calls.Value
+                 |> List.choose (fun i -> i.Globals |> Option.map (fun globals -> globals, i.EnvPrefixes.IsSome)))
 
         let prefixDeclared =
             declarations.EnvPrefix |> Option.exists (fun declared -> declared <> NoPrefix)
 
         let envOf =
-            if prefixDeclared || withGlobals |> List.exists snd then
+            if prefixDeclared || withGlobals.Value |> List.exists snd then
                 envBinding prefix
             else
                 fun _ _ -> None
@@ -1083,7 +1077,7 @@ module Grammar =
             match declarations.Globals with
             | Some declared -> Some declared
             | None ->
-                match withGlobals |> List.map fst |> List.distinct with
+                match withGlobals.Value |> List.map fst |> List.distinct with
                 | [ passed ] -> asm.GetType passed |> Option.ofObj
                 | _ -> None
 
@@ -1093,11 +1087,12 @@ module Grammar =
 
     /// The realized grammar rooted at `root`: its command forest and its global flags.
     let private grammarOf (pe: PEReader) (asm: Assembly) (root: Type) : Grammar =
-        let calls = instantiations pe root.FullName
         let declarations = declarationsOf root
-        // A declared prefix is known whatever the call sites pass.
+        // Scanned only for what the root does not declare.
+        let calls = lazy (instantiations pe root.FullName)
+
         let prefix =
-            declarations.EnvPrefix |> Option.defaultWith (fun () -> envPrefixOf calls)
+            declarations.EnvPrefix |> Option.defaultWith (fun () -> envPrefixOf calls.Value)
 
         {
             Roots = walkUnion prefix root
@@ -1117,9 +1112,6 @@ module Grammar =
         with _ ->
             None
 
-    let private unreadable (dllPath: string) (ex: exn) =
-        GrammarUnreadable(sprintf "could not load %s: %s" dllPath ex.Message)
-
     /// Read the realized CLI grammar of a loaded CommandTree consumer assembly.
     /// NEVER fabricates a grammar: an assembly that is not a consumer, or has no
     /// single root command union, is `GrammarNotModellable`, and one whose types
@@ -1135,15 +1127,7 @@ module Grammar =
                 | Ok root -> GrammarModelled(grammarOf dll.PE dll.Assembly root)
                 | Error reason -> GrammarNotModellable reason
         with ex ->
-            unreadable dll.Path ex
-
-    /// `readLoaded` of the DLL at `dllPath`; `GrammarUnreadable` when it cannot be
-    /// loaded.
-    let readGrammar (dllPath: string) : GrammarRead =
-        try
-            withLoadedDll dllPath readLoaded
-        with ex ->
-            unreadable dllPath ex
+            GrammarUnreadable(couldNotLoad dll.Path ex)
 
     /// Why `read` of `what` leaves no grammar to diff, as a note to print, or
     /// `None` when it modelled one.

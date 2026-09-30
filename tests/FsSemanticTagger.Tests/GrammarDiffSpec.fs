@@ -6,7 +6,7 @@ module FsSemanticTagger.Tests.GrammarDiffSpec
 // Two halves:
 //   * The PURE diff over two grammar models (`FsSemanticTagger.Grammar.compare`).
 //   * The STRUCTURAL recovery of a consumer's realized grammar from a built
-//     assembly under MetadataLoadContext (`readGrammar` /
+//     assembly under MetadataLoadContext (`Extraction.readDll` /
 //     `extractGrammarForType`). These tests prove the metadata-only walk recovers
 //     exactly the tree CommandTree's own `fromUnion` builds at runtime.
 //
@@ -578,25 +578,27 @@ let ``foldIntoApi keeps the stronger bump and prefers the API signatures on a ti
         @>
 
     // API at least as strong => the (richer) API change is kept unchanged.
-    let apiAddition = Api.Addition(Api.ApiSignature.Member("Foo", "New(): int"), [])
+    let apiAddition =
+        Api.Addition(Api.Signatures(Api.ApiSignature.Member("Foo", "New(): int"), []))
+
     test <@ Grammar.foldIntoApi apiAddition GAddition = apiAddition @>
     test <@ Grammar.foldIntoApi apiAddition GNoChange = apiAddition @>
 
     // A breaking API keeps its bump regardless of a weaker grammar verdict.
-    let apiBreaking = Api.Breaking(Api.ApiSignature.TypeDecl "Gone", [])
+    let apiBreaking = Api.Breaking(Api.Signatures(Api.ApiSignature.TypeDecl "Gone", []))
     test <@ Grammar.foldIntoApi apiBreaking GAddition = apiBreaking @>
 
 // ---- structural recovery under MetadataLoadContext (the crux) ---------------
 
-/// `Grammar.readGrammar`'s grammar, when it modelled one.
+/// `Extraction.readDll`'s grammar, when it modelled one.
 let private modelledGrammar (dllPath: string) : FsSemanticTagger.Grammar option =
-    match Grammar.readGrammar dllPath with
+    match (Extraction.readDll dllPath).Grammar with
     | GrammarModelled grammar -> Some grammar
     | GrammarNotModellable _
     | GrammarUnreadable _ -> None
 
 [<Fact>]
-let ``readGrammar recovers FsSemanticTagger's own realized grammar`` () =
+let ``readDll recovers FsSemanticTagger's own realized grammar`` () =
     // The real consumer: extract the grammar from the built FsSemanticTagger.dll
     // under MetadataLoadContext and assert it equals the tree CommandTree's own
     // fromUnion builds at runtime for the same Command DU.
@@ -734,7 +736,7 @@ let ``an assembly with several root command unions is ambiguous => None`` () =
     // the reason names the candidates.
     test
         <@
-            match Grammar.readGrammar dll with
+            match (Extraction.readDll dll).Grammar with
             | GrammarNotModellable reason ->
                 reason.Contains "candidate root command unions ("
                 && reason.Contains typeof<Fixtures.MiniV1>.FullName
@@ -745,7 +747,7 @@ let ``an assembly with several root command unions is ambiguous => None`` () =
 [<Fact>]
 let ``an assembly that is not a CommandTree consumer is read but not modellable`` () =
     let nonConsumer = typeof<Map<int, int>>.Assembly.Location
-    test <@ Grammar.readGrammar nonConsumer = GrammarNotModellable "it is not a CommandTree consumer" @>
+    test <@ (Extraction.readDll nonConsumer).Grammar = GrammarNotModellable "it is not a CommandTree consumer" @>
 
 [<Fact>]
 let ``extractGrammarForType on a non-union type is None`` () =
@@ -763,7 +765,7 @@ let ``extraction of an unreadable path is None (never throws)`` () =
 
     test
         <@
-            match Grammar.readGrammar bogus with
+            match (Extraction.readDll bogus).Grammar with
             | GrammarUnreadable reason -> reason.StartsWith("could not load " + bogus + ": ")
             | GrammarModelled _
             | GrammarNotModellable _ -> false
