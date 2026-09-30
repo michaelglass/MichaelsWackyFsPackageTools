@@ -3,7 +3,7 @@
     "Api.fs": [
       {
         "line": 96,
-        "branch": 89,
+        "branch": 91,
         "reason": "httpGet is a live HttpClient network call, exercised in tests only through the injected fetch seam; the remaining partial branches are reflection and NuGet-cache probes that depend on what this machine has installed. The DOTNET_ROOT sdk/ and shared/ probes are covered through `assemblySearchPathsFor`, which takes DOTNET_ROOT as a parameter instead of reading (or making tests mutate) the process environment. Measured 2026-09-29 on macOS, SDK 10.0.4xx: 95.1% line, 86.8% branch (131/151). global.json pins the 10.0.4xx SDK band so macOS and Linux measure the same compiler output.",
         "platform": "macos"
       },
