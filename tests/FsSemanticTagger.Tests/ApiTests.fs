@@ -156,7 +156,7 @@ let ``compare with added signatures returns Addition`` () =
 
     let result = compare baseline current
 
-    test <@ result = Addition(ApiSignature.Member("Foo", "Bar(): String"), []) @>
+    test <@ result = Addition(Signatures(ApiSignature.Member("Foo", "Bar(): String"), [])) @>
 
 [<Fact>]
 let ``compare with removed signatures returns Breaking`` () =
@@ -166,7 +166,7 @@ let ``compare with removed signatures returns Breaking`` () =
     let current = [ ApiSignature.TypeDecl "Foo" ]
     let result = compare baseline current
 
-    test <@ result = Breaking(ApiSignature.Member("Foo", "Bar(): String"), []) @>
+    test <@ result = Breaking(Signatures(ApiSignature.Member("Foo", "Bar(): String"), [])) @>
 
 [<Fact>]
 let ``compare with both added and removed returns Breaking`` () =
@@ -270,15 +270,15 @@ let private fixtureApi (ns: string) : ApiSignature list =
     |> List.map (function
         | ApiSignature.UnionCase(union, case) -> ApiSignature.UnionCase(toLib union, case)
         | ApiSignature.TypeDecl fullName -> ApiSignature.TypeDecl(toLib fullName)
-        | ApiSignature.Member(declaringType, signature) -> ApiSignature.Member(declaringType, toLib signature)
-        | ApiSignature.Marker text -> ApiSignature.Marker text)
+        | ApiSignature.Member(declaringType, signature) -> ApiSignature.Member(declaringType, toLib signature))
 
 let private diffScenario (scenario: string) : ApiChange =
     compare (fixtureApi $"ApiFixtures.{scenario}.Before") (fixtureApi $"ApiFixtures.{scenario}.After")
 
 let private breakingHead (change: ApiChange) : string option =
     match change with
-    | Breaking(head, _) -> Some(ApiSignature.render head)
+    | Breaking(Signatures(head, _)) -> Some(ApiSignature.render head)
+    | Breaking(Reason _)
     | Addition _
     | NoChange -> None
 
@@ -894,19 +894,19 @@ let ``readPrevious - FetchError when uncached and feed unreachable`` () =
 
     test <@ (Extraction.readPrevious fakeRun "ThisPackageDoesNotExist12345" "9.9.9").Api = FetchError msg @>
 
-// ApiChange.toList
+// ApiChange.toList / lines
+
+let private a = ApiSignature.TypeDecl "A"
+let private b = ApiSignature.TypeDecl "B"
+let private c = ApiSignature.TypeDecl "C"
 
 [<Fact>]
 let ``ApiChange.toList Breaking returns all items`` () =
-    let change =
-        Breaking(ApiSignature.Marker "a", [ ApiSignature.Marker "b"; ApiSignature.Marker "c" ])
-
-    test <@ ApiChange.toList change = [ ApiSignature.Marker "a"; ApiSignature.Marker "b"; ApiSignature.Marker "c" ] @>
+    test <@ ApiChange.toList (Breaking(Signatures(a, [ b; c ]))) = [ a; b; c ] @>
 
 [<Fact>]
 let ``ApiChange.toList Addition returns all items`` () =
-    let change = Addition(ApiSignature.Marker "a", [ ApiSignature.Marker "b" ])
-    test <@ ApiChange.toList change = [ ApiSignature.Marker "a"; ApiSignature.Marker "b" ] @>
+    test <@ ApiChange.toList (Addition(Signatures(a, [ b ]))) = [ a; b ] @>
 
 [<Fact>]
 let ``ApiChange.toList NoChange returns empty`` () =
@@ -914,8 +914,16 @@ let ``ApiChange.toList NoChange returns empty`` () =
 
 [<Fact>]
 let ``ApiChange.toList single item Breaking`` () =
-    let change = Breaking(ApiSignature.Marker "a", [])
-    test <@ ApiChange.toList change = [ ApiSignature.Marker "a" ] @>
+    test <@ ApiChange.toList (Breaking(Signatures(a, []))) = [ a ] @>
+
+[<Fact>]
+let ``a verdict resting on a reason has no signatures and prints the reason`` () =
+    test <@ List.isEmpty (ApiChange.toList (Breaking(Reason "grammar: changed"))) @>
+    test <@ List.isEmpty (ApiChange.toList (Addition(Reason "grammar: changed"))) @>
+    test <@ ApiChange.lines (Addition(Reason "grammar: changed")) = [ "grammar: changed" ] @>
+    test <@ ApiChange.lines (Breaking(Signatures(a, [ b ]))) = [ "type A"; "type B" ] @>
+    test <@ List.isEmpty (ApiChange.lines NoChange) @>
+    test <@ ApiChange.describe (Breaking(Reason "grammar: changed")) = "a breaking change (grammar: changed)" @>
 
 [<Fact>]
 let ``readCacheRoot returns signatures for cached tool package`` () =
@@ -1104,7 +1112,7 @@ let ``compare reads a new nested type under an existing type as an addition`` ()
             ApiSignature.TypeDecl "MyModule.Parent+Child"
         ]
 
-    test <@ compare baseline current = Addition(ApiSignature.TypeDecl "MyModule.Parent+Child", []) @>
+    test <@ compare baseline current = Addition(Signatures(ApiSignature.TypeDecl "MyModule.Parent+Child", [])) @>
 
 [<Fact>]
 let ``compare lists only the breaking signatures, cases first`` () =
@@ -1132,12 +1140,14 @@ let ``compare lists only the breaking signatures, cases first`` () =
         <@
             compare baseline current =
                 Breaking(
-                    ApiSignature.UnionCase("M.U", "B"),
-                    [
-                        ApiSignature.UnionCase("M.U", "Gone")
-                        ApiSignature.TypeDecl "M.U+Gone"
-                        ApiSignature.Member("U", "NewGone(): M.U")
-                    ]
+                    Signatures(
+                        ApiSignature.UnionCase("M.U", "B"),
+                        [
+                            ApiSignature.UnionCase("M.U", "Gone")
+                            ApiSignature.TypeDecl "M.U+Gone"
+                            ApiSignature.Member("U", "NewGone(): M.U")
+                        ]
+                    )
                 )
         @>
 
@@ -1149,14 +1159,13 @@ let ``compare classifies a case whose name contains :: by its union, not its tex
     let baseline = [ ApiSignature.TypeDecl "M.U"; ApiSignature.UnionCase("M.U", "A") ]
     let added = ApiSignature.UnionCase("M.U", "A::B")
 
-    test <@ compare baseline (added :: baseline) = Breaking(added, []) @>
+    test <@ compare baseline (added :: baseline) = Breaking(Signatures(added, [])) @>
 
 [<Fact>]
 let ``render prints each signature kind as extract-api always has`` () =
     test <@ ApiSignature.render (ApiSignature.UnionCase("M.U", "A")) = "case M.U::A" @>
     test <@ ApiSignature.render (ApiSignature.TypeDecl "M.U+A") = "type M.U+A" @>
     test <@ ApiSignature.render (ApiSignature.Member("U", "get_A(): M.U")) = "  U::get_A(): M.U" @>
-    test <@ ApiSignature.render (ApiSignature.Marker "grammar: changed") = "grammar: changed" @>
 
 [<Fact>]
 let ``compare non-nested new type is Addition not Breaking`` () =
@@ -1220,7 +1229,7 @@ let ``compare with added non-type signatures is Addition`` () =
         [ ApiSignature.TypeDecl "Foo"; ApiSignature.Member("Foo", "NewMethod(): Void") ]
 
     match compare baseline current with
-    | Addition(s, []) -> test <@ (ApiSignature.render s).Contains("NewMethod") @>
+    | Addition(Signatures(s, [])) -> test <@ (ApiSignature.render s).Contains("NewMethod") @>
     | other -> failwithf "Expected Addition, got %A" other
 
 [<Fact>]
@@ -1271,7 +1280,7 @@ let ``compare with removed and added returns Breaking prioritizing removals`` ()
         ]
 
     match compare baseline current with
-    | Breaking(h, t) ->
+    | Breaking(Signatures(h, t)) ->
         let all = h :: t
         test <@ all |> List.exists (ApiSignature.render >> fun s -> s.Contains("OldMethod")) @>
         test <@ all |> List.exists (ApiSignature.render >> fun s -> s.Contains("AnotherOld")) @>
@@ -1427,12 +1436,13 @@ let ``firstDllNamed takes the first dll of that name, in search-path order`` () 
 
 [<Fact>]
 let ``a reference is satisfied by a matching public key token, or by any when it names none`` () =
-    let token = Some [| 1uy; 2uy |]
+    let token = [| 1uy; 2uy |]
+    let none: byte[] = null
     test <@ satisfiesReference token token @>
-    test <@ satisfiesReference None token @>
-    test <@ satisfiesReference (Some [||]) None @>
-    test <@ not (satisfiesReference token None) @>
-    test <@ not (satisfiesReference token (Some [| 3uy |])) @>
+    test <@ satisfiesReference none token @>
+    test <@ satisfiesReference [||] none @>
+    test <@ not (satisfiesReference token none) @>
+    test <@ not (satisfiesReference token [| 3uy |]) @>
 
 [<Fact>]
 let ``the probing resolver refuses a dll whose public key token the reference does not match`` () =
