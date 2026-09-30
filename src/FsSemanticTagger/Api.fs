@@ -48,6 +48,7 @@ module Evidence =
         | Signatures(h, _) -> (ApiSignature.render h).Trim()
         | Reason reason -> reason
 
+/// The verdict of an API diff, with the evidence it rests on.
 type ApiChange =
     | Breaking of Evidence
     | Addition of Evidence
