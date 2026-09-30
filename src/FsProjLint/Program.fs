@@ -47,8 +47,15 @@ Project-level checks (run for each packable .fsproj — those with a
   - Microsoft.SourceLink.GitHub PackageReference is present
   - IncludeSymbols is true and SymbolPackageFormat is snupkg
     (skipped when IncludeBuildOutput is false)
+  - RepositoryUrl, and a github.com PackageProjectUrl, name the
+    repository the `origin` remote names (ssh/https spellings, a .git
+    suffix and a trailing / are equivalent; github.com names compare
+    case-insensitively). Read from the fsproj, else the nearest
+    Directory.Build.props. Skipped when there is no origin remote or a
+    URL is not a hosted repository URL.
 
-Exit code is 0 when every check passes, 1 otherwise.
+Exit code is 1 when any check fails, else 0. Skipped checks print
+their reason and do not fail the run.
 
 There are no flags or config files — fsprojlint is intentionally
 opinionated about what an OSS-ready F# package looks like.
@@ -67,25 +74,55 @@ let main argv =
 
     match CommandTree.parse tree argv with
     | Ok Check ->
-        let result = runLint (Directory.GetCurrentDirectory())
-        let allChecks = result.RepoChecks @ (result.ProjectChecks |> List.collect snd)
+        let cwd = Directory.GetCurrentDirectory()
+        let result = runLint cwd
 
-        let failed, passed =
-            allChecks |> List.partition (fun c -> CheckOutcome.isFailed c.Outcome)
+        // Each check with the project it ran on, if any.
+        let allChecks =
+            (result.RepoChecks |> List.map (fun c -> None, c))
+            @ (result.ProjectChecks
+               |> List.collect (fun (project, checks) ->
+                   checks |> List.map (fun c -> Some(Path.GetRelativePath(cwd, project)), c)))
 
-        if not (List.isEmpty failed) then
-            printfn "FAILED:"
+        let label (project: string option, check: CheckResult) =
+            match project with
+            | Some p -> sprintf "%s (%s)" check.Name p
+            | None -> check.Name
 
-            for c in failed do
-                printfn "  FAIL %s" c.Name
+        let printSection (heading: string) (tag: string) (checks: (string option * CheckResult) list) =
+            if not (List.isEmpty checks) then
+                printfn "%s" heading
 
-        if not (List.isEmpty passed) then
-            printfn "Passed:"
+                for entry in checks do
+                    printfn "  %s %s" tag (label entry)
 
-            for c in passed do
-                printfn "  PASS %s" c.Name
+                    match (snd entry).Outcome with
+                    | Failed reason
+                    | Skipped reason ->
+                        for line in reason.Split('\n') do
+                            printfn "       %s" line
+                    | Passed -> ()
 
-        printfn "\nResult: %d/%d checks passed" passed.Length allChecks.Length
+        let failed =
+            allChecks |> List.filter (fun (_, c) -> CheckOutcome.isFailed c.Outcome)
+
+        let skipped =
+            allChecks |> List.filter (fun (_, c) -> CheckOutcome.isSkipped c.Outcome)
+
+        let passed =
+            allChecks |> List.filter (fun (_, c) -> CheckOutcome.isPassed c.Outcome)
+
+        printSection "FAILED:" "FAIL" failed
+        printSection "Skipped:" "SKIP" skipped
+        printSection "Passed:" "PASS" passed
+
+        let skippedNote =
+            if List.isEmpty skipped then
+                ""
+            else
+                sprintf ", %d skipped" skipped.Length
+
+        printfn "\nResult: %d/%d checks passed%s" passed.Length (passed.Length + failed.Length) skippedNote
 
         if List.isEmpty failed then 0 else 1
     | Error(HelpRequested path) ->

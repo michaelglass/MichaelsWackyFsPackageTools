@@ -19,10 +19,12 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="TestFixtures.fs" />
+    <Compile Include="GitFixtures.fs" />
     <Compile Include="RepoCheckTests.fs" />
     <Compile Include="ProjectCheckTests.fs" />
     <Compile Include="GitignoreLeakTests.fs" />
     <Compile Include="RefStampGuardTests.fs" />
+    <Compile Include="RepositoryUrlTests.fs" />
     <Compile Include="IntegrationTests.fs" />
   </ItemGroup>
   <ItemGroup>

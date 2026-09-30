@@ -18,15 +18,9 @@ open FsProjLint.Checks
 open Tests.Common.TestHelpers
 open FsProjLint.Tests.TestFixtures
 
-let private isPassed (result: CheckResult) =
-    match result.Outcome with
-    | Passed -> true
-    | Failed _ -> false
+let private isPassed (result: CheckResult) = CheckOutcome.isPassed result.Outcome
 
-let private isFailed (result: CheckResult) =
-    match result.Outcome with
-    | Passed -> false
-    | Failed _ -> true
+let private isFailed (result: CheckResult) = CheckOutcome.isFailed result.Outcome
 
 let private createFile (dir: string) (relativePath: string) (content: string) =
     let fullPath = System.IO.Path.Combine(dir, relativePath)
@@ -111,7 +105,8 @@ let ``fails with a fix-me message naming Directory Build props`` () =
         | Failed reason ->
             test <@ reason.Contains "RefStamp" @>
             test <@ reason.Contains "Directory.Build.props" @>
-        | Passed -> failwith "expected the check to fail")
+        | Passed
+        | Skipped _ -> failwith "expected the check to fail")
 
 [<Fact>]
 let ``an unparseable root Directory Build props does not count as a guard`` () =

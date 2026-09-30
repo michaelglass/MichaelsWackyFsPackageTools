@@ -11,15 +11,9 @@ let private checkXml (content: string) =
     let doc = XDocument.Parse(content)
     checkProject doc
 
-let private isPassed (result: CheckResult) =
-    match result.Outcome with
-    | Passed -> true
-    | Failed _ -> false
+let private isPassed (result: CheckResult) = CheckOutcome.isPassed result.Outcome
 
-let private isFailed (result: CheckResult) =
-    match result.Outcome with
-    | Passed -> false
-    | Failed _ -> true
+let private isFailed (result: CheckResult) = CheckOutcome.isFailed result.Outcome
 
 let private allProjectFsproj =
     """<Project Sdk="Microsoft.NET.Sdk">
@@ -91,7 +85,8 @@ let ``fails when TreatWarningsAsErrors is false`` () =
         <@
             match twaCheck.Outcome with
             | Failed reason -> reason.Contains("'false'") && reason.Contains("'true'")
-            | Passed -> false
+            | Passed
+            | Skipped _ -> false
         @>
 
 // -- Packable project checks --
@@ -427,14 +422,16 @@ let ``checkPropertyEquals reports wrong value differently from missing`` () =
         <@
             match wrongCheck.Outcome with
             | Failed reason -> reason.Contains("'false'")
-            | Passed -> false
+            | Passed
+            | Skipped _ -> false
         @>
 
     test
         <@
             match missingCheck.Outcome with
             | Failed reason -> reason.Contains("not found")
-            | Passed -> false
+            | Passed
+            | Skipped _ -> false
         @>
 
 // -- checkPropertyPresent with empty value --

@@ -7,49 +7,17 @@ open Tests.Common
 open Swensen.Unquote
 open FsProjLint.Checks
 open Tests.Common.TestHelpers
+open FsProjLint.Tests.GitFixtures
 
-let private isPassed (result: CheckResult) =
-    match result.Outcome with
-    | Passed -> true
-    | Failed _ -> false
+let private isPassed (result: CheckResult) = CheckOutcome.isPassed result.Outcome
 
-let private isFailed (result: CheckResult) =
-    match result.Outcome with
-    | Passed -> false
-    | Failed _ -> true
+let private isFailed (result: CheckResult) = CheckOutcome.isFailed result.Outcome
 
 let private failureReason (result: CheckResult) =
     match result.Outcome with
-    | Passed -> ""
     | Failed reason -> reason
-
-/// Run a git command in `dir`, ignoring its output (used only to build fixtures).
-let private git (dir: string) (args: string list) =
-    let psi = ProcessStartInfo("git")
-    psi.WorkingDirectory <- dir
-    psi.RedirectStandardOutput <- true
-    psi.RedirectStandardError <- true
-    psi.UseShellExecute <- false
-    psi.CreateNoWindow <- true
-    // Deterministic identity + no signing so commits work on any machine/CI.
-    psi.ArgumentList.Add("-c")
-    psi.ArgumentList.Add("user.name=test")
-    psi.ArgumentList.Add("-c")
-    psi.ArgumentList.Add("user.email=test@example.com")
-    psi.ArgumentList.Add("-c")
-    psi.ArgumentList.Add("commit.gpgsign=false")
-
-    for a in args do
-        psi.ArgumentList.Add(a)
-
-    use p = Process.Start(psi)
-    p.WaitForExit()
-    p.ExitCode
-
-let private writeFile (dir: string) (relativePath: string) (content: string) =
-    let full = Path.Combine(dir, relativePath)
-    Directory.CreateDirectory(Path.GetDirectoryName(full)) |> ignore
-    File.WriteAllText(full, content)
+    | Passed
+    | Skipped _ -> ""
 
 let private deleteFile (dir: string) (relativePath: string) =
     let full = Path.Combine(dir, relativePath)
@@ -183,33 +151,6 @@ let ``fails for a leak on the current branch even when other branches exist`` ()
 // path is reached and handled gracefully. The real-jj fixtures below cover the
 // actual @- ancestry scan when a jj binary is available.
 
-/// Run git against an explicit fake jj store (`<root>/.jj/repo/store/git`) the
-/// way jj itself does: history under the store, work-tree at the root.
-let private gitStore (store: string) (workTree: string) (args: string list) =
-    let psi = ProcessStartInfo("git")
-    psi.WorkingDirectory <- workTree
-    psi.RedirectStandardOutput <- true
-    psi.RedirectStandardError <- true
-    psi.UseShellExecute <- false
-    psi.CreateNoWindow <- true
-    psi.ArgumentList.Add("--git-dir")
-    psi.ArgumentList.Add(store)
-    psi.ArgumentList.Add("--work-tree")
-    psi.ArgumentList.Add(workTree)
-    psi.ArgumentList.Add("-c")
-    psi.ArgumentList.Add("user.name=test")
-    psi.ArgumentList.Add("-c")
-    psi.ArgumentList.Add("user.email=test@example.com")
-    psi.ArgumentList.Add("-c")
-    psi.ArgumentList.Add("commit.gpgsign=false")
-
-    for a in args do
-        psi.ArgumentList.Add(a)
-
-    use p = Process.Start(psi)
-    p.WaitForExit()
-    p.ExitCode
-
 [<Fact>]
 let ``resolves the jj store path and passes when no jj op-log can name a current commit`` () =
     // Exercises GitDir.resolveGitDir's jj-store branch and gitContextFor's jj
@@ -217,9 +158,7 @@ let ``resolves the jj store path and passes when no jj op-log can name a current
     // commit can't be resolved, so the check passes gracefully rather than
     // scanning git HEAD (which under jj is unreliable).
     withTempDir (fun root ->
-        let store = Path.Combine(root, ".jj", "repo", "store", "git")
-        Directory.CreateDirectory(store) |> ignore
-        gitStore store root [ "init"; "-q"; "-b"; "main" ] |> ignore
+        let store = initFakeJjStore root
 
         writeFile root ".gitignore" ".secret\n"
         writeFile root "README.md" "hello"
