@@ -481,6 +481,29 @@ let ``findPackableProjects skips non-packable`` () =
         test <@ projects[0] |> fst = "MyLib" @>)
 
 [<Fact>]
+let ``findPackableProjects reads IsPackable from the nearest Directory.Build.props`` () =
+    withTempDir (fun tmpDir ->
+        let testDir = Path.Combine(tmpDir, "tests", "MyLib.Tests")
+        Directory.CreateDirectory(testDir) |> ignore
+
+        File.WriteAllText(
+            Path.Combine(tmpDir, "tests", "Directory.Build.props"),
+            "<Project><PropertyGroup><IsPackable>false</IsPackable></PropertyGroup></Project>"
+        )
+
+        File.WriteAllText(Path.Combine(testDir, "MyLib.Tests.fsproj"), packableFsproj "MyLib.Tests")
+        File.WriteAllText(Path.Combine(tmpDir, "MyLib.fsproj"), packableFsproj "MyLib")
+
+        test <@ findPackableProjects tmpDir = [ "MyLib", "MyLib.fsproj" ] @>)
+
+[<Fact>]
+let ``findPackableProjects skips a project that does not parse`` () =
+    withTempDir (fun tmpDir ->
+        File.WriteAllText(Path.Combine(tmpDir, "Broken.fsproj"), "<Project><PackageId>Broken</PackageId>")
+
+        test <@ List.isEmpty (findPackableProjects tmpDir) @>)
+
+[<Fact>]
 let ``findPackableProjects excludes example exe without PackAsTool but keeps tool exe and library`` () =
     withTempDir (fun tmpDir ->
         let exampleDir = Path.Combine(tmpDir, "examples", "Demo")

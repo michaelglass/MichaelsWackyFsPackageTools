@@ -1,15 +1,12 @@
 module FsProjLint.Tests.ProjectCheckTests
 
-open System.Xml.Linq
 open Xunit
 open Tests.Common
 open Swensen.Unquote
 open FsProjLint.Checks
 open FsProjLint.Tests.TestFixtures
 
-let private checkXml (content: string) =
-    let doc = XDocument.Parse(content)
-    checkProject doc
+let private checkXml (content: string) = checkProject (projectOf content)
 
 let private isPassed (result: CheckResult) = CheckOutcome.isPassed result.Outcome
 
@@ -150,7 +147,7 @@ let ``packable project fails when missing Description`` () =
 
     test <@ isFailed descCheck @>
 
-// -- isPackable --
+// -- non-packable projects --
 
 [<Fact>]
 let ``non-packable project with IsPackable false skips package checks`` () =
@@ -167,122 +164,6 @@ let ``non-packable project with no PackageId skips package checks`` () =
     test <@ results.Length = 1 @>
 
     test <@ results.[0].Name = "TreatWarningsAsErrors is true" && isPassed results.[0] @>
-
-[<Fact>]
-let ``isPackable returns true with PackageId and IsPackable true`` () =
-    let doc =
-        XDocument.Parse(
-            """<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <PackageId>MyPackage</PackageId>
-    <IsPackable>true</IsPackable>
-  </PropertyGroup>
-</Project>"""
-        )
-
-    test <@ isPackable doc @>
-
-[<Fact>]
-let ``isPackable returns false with PackageId and IsPackable false`` () =
-    let doc =
-        XDocument.Parse(
-            """<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <PackageId>MyPackage</PackageId>
-    <IsPackable>false</IsPackable>
-  </PropertyGroup>
-</Project>"""
-        )
-
-    test <@ not (isPackable doc) @>
-
-[<Fact>]
-let ``isPackable returns false with no PackageId`` () =
-    let doc =
-        XDocument.Parse(
-            """<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <OutputType>Exe</OutputType>
-  </PropertyGroup>
-</Project>"""
-        )
-
-    test <@ not (isPackable doc) @>
-
-[<Fact>]
-let ``isPackable returns true with PackageId and no IsPackable property`` () =
-    let doc =
-        XDocument.Parse(
-            """<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <PackageId>MyPackage</PackageId>
-  </PropertyGroup>
-</Project>"""
-        )
-
-    test <@ isPackable doc @>
-
-// -- getProperty --
-
-[<Fact>]
-let ``getProperty returns Some for present property`` () =
-    let doc =
-        XDocument.Parse("""<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>""")
-
-    test <@ getProperty doc "Version" = Some "1.0.0" @>
-
-[<Fact>]
-let ``getProperty returns None for missing property`` () =
-    let doc = XDocument.Parse("""<Project><PropertyGroup></PropertyGroup></Project>""")
-
-    test <@ getProperty doc "Version" = None @>
-
-// -- hasPackageRef --
-
-[<Fact>]
-let ``hasPackageRef returns true for present reference`` () =
-    let doc =
-        XDocument.Parse(
-            """<Project>
-  <ItemGroup>
-    <PackageReference Include="SomePackage" Version="1.0.0" />
-  </ItemGroup>
-</Project>"""
-        )
-
-    test <@ hasPackageRef doc "SomePackage" @>
-
-[<Fact>]
-let ``hasPackageRef returns false for missing reference`` () =
-    let doc =
-        XDocument.Parse(
-            """<Project>
-  <ItemGroup>
-    <PackageReference Include="OtherPackage" Version="1.0.0" />
-  </ItemGroup>
-</Project>"""
-        )
-
-    test <@ not (hasPackageRef doc "SomePackage") @>
-
-[<Fact>]
-let ``hasPackageRef returns false when no PackageReference elements`` () =
-    let doc = XDocument.Parse("""<Project><ItemGroup></ItemGroup></Project>""")
-
-    test <@ not (hasPackageRef doc "SomePackage") @>
-
-[<Fact>]
-let ``hasPackageRef returns false when PackageReference has no Include attribute`` () =
-    let doc =
-        XDocument.Parse(
-            """<Project>
-  <ItemGroup>
-    <PackageReference Update="SomePackage" Version="1.0.0" />
-  </ItemGroup>
-</Project>"""
-        )
-
-    test <@ not (hasPackageRef doc "SomePackage") @>
 
 // -- Individual package checks (present and missing) --
 

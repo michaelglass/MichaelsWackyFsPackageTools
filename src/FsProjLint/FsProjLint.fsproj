@@ -23,6 +23,9 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="FsProjLint.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="CommandTree" Version="0.13.0" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.401" PrivateAssets="All" />
     <PackageReference Update="FSharp.Core" Version="10.1.*" />
@@ -30,6 +33,7 @@
   <ItemGroup>
     <Compile Include="../Shared/GitDir.fs" Link="GitDir.fs" />
     <Compile Include="../Shared/SourceTree.fs" Link="SourceTree.fs" />
+    <Compile Include="../Shared/MsBuildProject.fs" Link="MsBuildProject.fs" />
     <Compile Include="Checks.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

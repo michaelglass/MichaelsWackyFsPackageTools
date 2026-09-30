@@ -20,6 +20,7 @@
   <ItemGroup>
     <Compile Include="TestFixtures.fs" />
     <Compile Include="GitFixtures.fs" />
+    <Compile Include="MsBuildProjectTests.fs" />
     <Compile Include="RepoCheckTests.fs" />
     <Compile Include="ProjectCheckTests.fs" />
     <Compile Include="GitignoreLeakTests.fs" />

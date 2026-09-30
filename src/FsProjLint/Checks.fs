@@ -4,6 +4,7 @@ open System.Diagnostics
 open System.IO
 open System.Threading.Tasks
 open System.Xml.Linq
+open Shared.MsBuildProject
 
 type CheckOutcome =
     | Passed
@@ -316,32 +317,20 @@ let checkGitignoreLeaks (dir: string) : CheckResult =
 
     { Name = name; Outcome = outcome }
 
-/// Get a property value from an fsproj XDocument.
-let getProperty (doc: XDocument) (name: string) : string option =
-    doc.Descendants(XName.Get name)
-    |> Seq.tryHead
-    |> Option.map (fun el -> el.Value)
-
-/// Check if an fsproj has a PackageReference with the given package ID.
-let hasPackageRef (doc: XDocument) (packageId: string) : bool =
+/// Does `doc` have a `<PackageReference Include="packageId">`?
+let private referencesPackage (doc: XDocument) (packageId: string) : bool =
     doc.Descendants(XName.Get "PackageReference")
     |> Seq.exists (fun el ->
-        let includeAttr = el.Attribute(XName.Get "Include")
-
-        match includeAttr with
+        match el.Attribute(XName.Get "Include") with
         | null -> false
         | attr -> attr.Value = packageId)
 
-/// Determine if a project is packable (has PackageId and IsPackable is not "false").
-let isPackable (doc: XDocument) : bool =
-    let hasPackageId = (getProperty doc "PackageId").IsSome
-
-    let isPackableProp =
-        match getProperty doc "IsPackable" with
-        | Some "false" -> false
-        | _ -> true
-
-    hasPackageId && isPackableProp
+/// Does the project, or its nearest Directory.Build.props, have a
+/// `<PackageReference Include="packageId">`?
+let internal hasPackageReference (project: Project) (packageId: string) : bool =
+    referencesPackage project.Document packageId
+    || project.DirectoryBuildProps
+       |> Option.exists (fun (_, doc) -> referencesPackage doc packageId)
 
 // --- RefStamp local-pack guard ----------------------------------------------
 //
@@ -371,10 +360,11 @@ let private hasRefStampImport (doc: XDocument) : bool =
 
 /// Repo-level check (packable repos only): the RefStamp local-pack guard is
 /// wired in, so `dotnet pack` on a dev machine cannot emit a release-shaped
-/// version. `packableProjects` are the parsed packable fsprojs under src/.
-let checkRefStampGuard (dir: string) (packableProjects: XDocument list) : CheckResult =
+/// version. `packableProjects` are the repository's packable projects; each is
+/// guarded by its own fsproj or its nearest Directory.Build.props.
+let internal checkRefStampGuard (dir: string) (packableProjects: Project list) : CheckResult =
     let hasRefStampGuard (doc: XDocument) =
-        hasPackageRef doc "RefStamp" || hasRefStampImport doc
+        referencesPackage doc "RefStamp" || hasRefStampImport doc
 
     let rootGuard =
         [ "Directory.Build.props"; "Directory.Build.targets" ]
@@ -389,7 +379,10 @@ let checkRefStampGuard (dir: string) (packableProjects: XDocument list) : CheckR
 
     let perProjectGuard =
         not (List.isEmpty packableProjects)
-        && packableProjects |> List.forall hasRefStampGuard
+        && packableProjects
+           |> List.forall (fun project ->
+               hasRefStampGuard project.Document
+               || project.DirectoryBuildProps |> Option.exists (snd >> hasRefStampGuard))
 
     {
         Name = "Local packs are ref-stamped (RefStamp)"
@@ -406,8 +399,8 @@ let checkRefStampGuard (dir: string) (packableProjects: XDocument list) : CheckR
                 )
     }
 
-let private checkPropertyEquals (doc: XDocument) (propName: string) (expected: string) (checkName: string) =
-    match getProperty doc propName with
+let private checkPropertyEquals (project: Project) (propName: string) (expected: string) (checkName: string) =
+    match propertyValue project propName with
     | Some v when v = expected -> { Name = checkName; Outcome = Passed }
     | Some v ->
         {
@@ -420,35 +413,36 @@ let private checkPropertyEquals (doc: XDocument) (propName: string) (expected: s
             Outcome = Failed(sprintf "%s not found" propName)
         }
 
-let private checkPropertyPresent (doc: XDocument) (propName: string) (checkName: string) =
-    match getProperty doc propName with
-    | Some v when v.Trim().Length > 0 -> { Name = checkName; Outcome = Passed }
-    | _ ->
+let private checkPropertyPresent (project: Project) (propName: string) (checkName: string) =
+    match propertyValue project propName with
+    | Some _ -> { Name = checkName; Outcome = Passed }
+    | None ->
         {
             Name = checkName
             Outcome = Failed(sprintf "%s missing or empty" propName)
         }
 
-/// Check a single fsproj file.
-let checkProject (doc: XDocument) : CheckResult list =
+/// Check a single project. Properties are read as MSBuild sees them: the
+/// project's own, else the nearest Directory.Build.props's.
+let internal checkProject (project: Project) : CheckResult list =
     let allProjectChecks =
         [
-            checkPropertyEquals doc "TreatWarningsAsErrors" "true" "TreatWarningsAsErrors is true"
+            checkPropertyEquals project "TreatWarningsAsErrors" "true" "TreatWarningsAsErrors is true"
         ]
 
-    if isPackable doc then
-        let includesBuildOutput = getProperty doc "IncludeBuildOutput" <> Some "false"
+    if isPackable project then
+        let includesBuildOutput = propertyValue project "IncludeBuildOutput" <> Some "false"
 
         let packageChecks =
             [
-                checkPropertyPresent doc "Version" "Version present"
-                checkPropertyPresent doc "Description" "Description present"
-                checkPropertyPresent doc "Authors" "Authors present"
-                checkPropertyPresent doc "PackageLicenseExpression" "PackageLicenseExpression present"
-                checkPropertyPresent doc "RepositoryUrl" "RepositoryUrl present"
-                checkPropertyPresent doc "RepositoryType" "RepositoryType present"
-                checkPropertyEquals doc "GenerateDocumentationFile" "true" "GenerateDocumentationFile is true"
-                (let has = hasPackageRef doc "Microsoft.SourceLink.GitHub"
+                checkPropertyPresent project "Version" "Version present"
+                checkPropertyPresent project "Description" "Description present"
+                checkPropertyPresent project "Authors" "Authors present"
+                checkPropertyPresent project "PackageLicenseExpression" "PackageLicenseExpression present"
+                checkPropertyPresent project "RepositoryUrl" "RepositoryUrl present"
+                checkPropertyPresent project "RepositoryType" "RepositoryType present"
+                checkPropertyEquals project "GenerateDocumentationFile" "true" "GenerateDocumentationFile is true"
+                (let has = hasPackageReference project "Microsoft.SourceLink.GitHub"
 
                  {
                      Name = "Has Microsoft.SourceLink.GitHub"
@@ -463,8 +457,8 @@ let checkProject (doc: XDocument) : CheckResult list =
         let symbolChecks =
             if includesBuildOutput then
                 [
-                    checkPropertyEquals doc "IncludeSymbols" "true" "IncludeSymbols is true"
-                    checkPropertyEquals doc "SymbolPackageFormat" "snupkg" "SymbolPackageFormat is snupkg"
+                    checkPropertyEquals project "IncludeSymbols" "true" "IncludeSymbols is true"
+                    checkPropertyEquals project "SymbolPackageFormat" "snupkg" "SymbolPackageFormat is snupkg"
                 ]
             else
                 []
@@ -597,59 +591,12 @@ let resolveOrigin (dir: string) : OriginRemote =
             | None -> NoOrigin(sprintf "origin remote '%s' is not a hosted repository URL" url)
         | _ -> NoOrigin "no `origin` remote"
 
-/// A property value and the file that sets it.
-type private PropertySource = { Value: string; File: string }
-
-/// The value MSBuild would see for `name`: the project's own, else the nearest
-/// Directory.Build.props at or above the project's directory, up to `repoDir`.
-/// MSBuild imports only that nearest file, so a property it lacks is unset even
-/// if a props file further up sets it (unless the nearest one imports it, which
-/// this does not follow).
-let private effectiveProperty (repoDir: string) (projectPath: string) (doc: XDocument) (name: string) =
-    let nonEmpty (file: string) (value: string option) =
-        value
-        |> Option.map (fun v -> v.Trim())
-        |> Option.filter (fun v -> v.Length > 0)
-        |> Option.map (fun v -> { Value = v; File = file })
-
-    match nonEmpty projectPath (getProperty doc name) with
-    | Some found -> Some found
-    | None ->
-        let root = Path.GetFullPath(repoDir)
-
-        let rec nearestProps (dir: string) =
-            let candidate = Path.Combine(dir, "Directory.Build.props")
-
-            if File.Exists(candidate) then
-                Some candidate
-            elif Path.GetFullPath(dir) = root then
-                None
-            else
-                match Directory.GetParent(dir) with
-                | null -> None
-                | parent -> nearestProps parent.FullName
-
-        let projectDir = Path.GetDirectoryName(Path.GetFullPath(projectPath))
-
-        match nearestProps projectDir with
-        | None -> None
-        | Some props ->
-            try
-                nonEmpty props (getProperty (XDocument.Load(props)) name)
-            with _ ->
-                None
-
 /// Project-level checks (packable projects): RepositoryUrl, and a github.com
 /// PackageProjectUrl, name the repository `origin` names. A missing
 /// RepositoryUrl adds nothing here ("RepositoryUrl present" fails it); a
 /// PackageProjectUrl off github.com (a docs site, `$(RepositoryUrl)`) is not
 /// checked.
-let checkRepositoryUrls
-    (origin: OriginRemote)
-    (repoDir: string)
-    (projectPath: string)
-    (doc: XDocument)
-    : CheckResult list =
+let internal checkRepositoryUrls (origin: OriginRemote) (repoDir: string) (project: Project) : CheckResult list =
     let relative (file: string) = Path.GetRelativePath(repoDir, file)
 
     let compare (property: string) (link: string) (found: PropertySource) (declared: RepoRef option) =
@@ -686,11 +633,11 @@ let checkRepositoryUrls
         }
 
     let repositoryUrl =
-        effectiveProperty repoDir projectPath doc "RepositoryUrl"
+        property project "RepositoryUrl"
         |> Option.map (fun found -> compare "RepositoryUrl" "Source repository" found (RepoRef.tryParse found.Value))
 
     let projectUrl =
-        effectiveProperty repoDir projectPath doc "PackageProjectUrl"
+        property project "PackageProjectUrl"
         |> Option.bind (fun found ->
             match RepoRef.tryParse found.Value with
             | Some declared when declared.Host = "github.com" ->
@@ -699,61 +646,67 @@ let checkRepositoryUrls
 
     List.choose id [ repositoryUrl; projectUrl ]
 
-/// Discover all .fsproj files under the src/ directory, skipping build output,
-/// dot-directories and nested checkouts (see `Shared.SourceTree.isSkippedDir`).
-let discoverProjects (dir: string) : string list =
-    let srcDir = Path.Combine(dir, "src")
+/// The projects fsprojlint checks, each parsed with its nearest
+/// Directory.Build.props: every .fsproj under src/, and every packable one
+/// (see `Shared.MsBuildProject.isPackable`) anywhere else in the repository, such
+/// as a root-level or tools/ project. A project that does not parse is kept, so
+/// its failure is reported. The scan skips build output, dot-directories and
+/// nested checkouts (see `Shared.SourceTree.isSkippedDir`). Sorted by path.
+let internal discoverProjects (dir: string) : (string * Result<Project, string>) list =
+    // Every project under src/ is checked, packable or not, as before packable
+    // projects elsewhere were found; TreatWarningsAsErrors applies to them all.
+    let srcDir =
+        Path.Combine(Path.GetFullPath dir, "src") + string Path.DirectorySeparatorChar
 
-    if Directory.Exists(srcDir) then
-        Shared.SourceTree.findFiles srcDir "*.fsproj"
-    else
-        []
+    Shared.SourceTree.findFiles dir "*.fsproj"
+    |> List.map (fun path -> path, load dir path)
+    |> List.filter (fun (path, loaded) ->
+        Path.GetFullPath(path).StartsWith(srcDir, System.StringComparison.Ordinal)
+        || (match loaded with
+            | Ok project -> isPackable project
+            | Error _ -> true))
 
 /// Run all lint checks and return a structured result.
 let runLint (dir: string) : LintResult =
     let projects = discoverProjects dir
 
-    let loadResults =
-        projects
-        |> List.map (fun p ->
-            try
-                let doc = XDocument.Load(p)
-                (p, Ok doc)
-            with ex ->
-                (p, Error ex.Message))
-
     // One origin lookup per run, and only when some project is packable.
     let origin = lazy (resolveOrigin dir)
 
+    // Each loaded project with whether it is packable, decided once.
+    let classified =
+        projects
+        |> List.map (fun (path, loaded) -> path, loaded |> Result.map (fun project -> project, isPackable project))
+
+    let packableProjects =
+        classified
+        |> List.choose (fun (_, loaded) ->
+            match loaded with
+            | Ok(project, true) -> Some project
+            | _ -> None)
+
     let projectChecks =
-        loadResults
-        |> List.map (fun (p, result) ->
-            match result with
-            | Ok doc when isPackable doc -> (p, checkProject doc @ checkRepositoryUrls origin.Value dir p doc)
-            | Ok doc -> (p, checkProject doc)
+        classified
+        |> List.map (fun (path, loaded) ->
+            match loaded with
+            | Ok(project, true) -> (path, checkProject project @ checkRepositoryUrls origin.Value dir project)
+            | Ok(project, false) -> (path, checkProject project)
             | Error msg ->
-                (p,
+                (path,
                  [
                      {
                          Name = "XML parse"
-                         Outcome = Failed(sprintf "Failed to parse %s: %s" (Path.GetFileName(p)) msg)
+                         Outcome = Failed msg
                      }
                  ]))
 
-    let packableDocs =
-        loadResults
-        |> List.choose (fun (_, result) ->
-            match result with
-            | Ok doc when isPackable doc -> Some doc
-            | _ -> None)
-
-    let hasPackable = not (List.isEmpty packableDocs)
+    let hasPackable = not (List.isEmpty packableProjects)
 
     let repoChecks =
         checkRepo dir hasPackable
         @ [ checkGitignoreLeaks dir ]
         @ (if hasPackable then
-               [ checkRefStampGuard dir packableDocs ]
+               [ checkRefStampGuard dir packableProjects ]
            else
                [])
 

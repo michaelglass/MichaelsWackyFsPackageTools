@@ -7,7 +7,6 @@ module FsProjLint.Tests.RepositoryUrlTests
 // github.com/michaelglass/UnionConfig, so that link was a 404.
 
 open System.IO
-open System.Xml.Linq
 open Xunit
 open Tests.Common
 open Swensen.Unquote
@@ -54,7 +53,10 @@ let private originOf (url: string) = Origin(parse url)
 let private checkWith (dir: string) (origin: OriginRemote) (projectXml: string) =
     let projectPath = Path.Combine(dir, "src", "MyPackage", "MyPackage.fsproj")
     writeFile dir "src/MyPackage/MyPackage.fsproj" projectXml
-    checkRepositoryUrls origin dir projectPath (XDocument.Parse projectXml)
+
+    match Shared.MsBuildProject.load dir projectPath with
+    | Ok project -> checkRepositoryUrls origin dir project
+    | Error e -> failwith e
 
 let private find (name: string) (results: CheckResult list) =
     results |> List.find (fun r -> r.Name = name)
@@ -333,16 +335,6 @@ let ``only the nearest Directory.Build.props counts`` () =
             (props "<RepositoryUrl>https://github.com/michaelglass/union-config</RepositoryUrl>")
 
         writeFile dir "src/Directory.Build.props" (props "")
-
-        let results =
-            checkWith dir (originOf "https://github.com/michaelglass/UnionConfig") (fsproj "")
-
-        test <@ List.isEmpty results @>)
-
-[<Fact>]
-let ``an unparseable Directory.Build.props provides no RepositoryUrl`` () =
-    withTempDir (fun dir ->
-        writeFile dir "Directory.Build.props" "<Project"
 
         let results =
             checkWith dir (originOf "https://github.com/michaelglass/UnionConfig") (fsproj "")

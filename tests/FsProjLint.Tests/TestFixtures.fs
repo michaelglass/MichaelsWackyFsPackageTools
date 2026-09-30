@@ -19,3 +19,12 @@ let packableFsproj =
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
   </ItemGroup>
 </Project>"""
+
+/// A project parsed from `xml` with no Directory.Build.props, for checks that
+/// read only the project's own properties.
+let internal projectOf (xml: string) : Shared.MsBuildProject.Project =
+    {
+        Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "MyPackage.fsproj")
+        Document = System.Xml.Linq.XDocument.Parse xml
+        DirectoryBuildProps = None
+    }

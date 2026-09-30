@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix: **finding the packages to release reads `IsPackable`, `OutputType` and `PackAsTool` from the nearest `Directory.Build.props` too,** not just the fsproj, and parses the fsproj as XML rather than matching text. A test project marked `<IsPackable>false</IsPackable>` by a `tests/Directory.Build.props` is no longer a release candidate, and a `<PackageId>` inside an XML comment no longer counts. A project that does not parse is not a candidate. FsProjLint decides which projects are packable with the same code.
 ## 0.14.0-alpha.21 - 2026-09-30
 
 - feat: **an `## Unreleased` entry that opens with upper-case `BREAKING` but is not a breaking-change marker is warned about.** TestPrune's `- **BREAKING (API): Audit.ownIds → Audit.observe …**` was read as declaring nothing, and the release said the changelog "declares only a feature"; the major bump came from the API diff alone. Such an entry (`BREAKING:`, `BREAKING (API):`, `BREAKING CHANGES:`) still declares nothing, but `release` and `release --check` now print a warning naming the changelog, the entry and the accepted forms (`feat!:`, any `<type>!:`, `BREAKING CHANGE:`). Lower-case prose is not warned about.

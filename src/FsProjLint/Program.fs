@@ -11,8 +11,11 @@ let tree =
 
 let private rootHelpExtras =
     """
-Run from the root of an F# repo. fsprojlint scans every .fsproj under
-src/ and runs a fixed set of checks at two levels:
+Run from the root of an F# repo. fsprojlint checks every .fsproj under
+src/, and every packable .fsproj elsewhere in the repo (the root,
+tools/, ...; test, benchmark and example projects are not packable). It
+skips build output, dot-directories and nested checkouts, and runs a
+fixed set of checks at two levels:
 
 Repo-level checks (run once per repo):
   - LICENSE or LICENSE.md exists at the repo root
@@ -36,22 +39,26 @@ Repo-level checks (run once per repo):
     cannot produce a release-shaped version (never-re-extracted stale
     NuGet cache entries die with it).
 
-Project-level checks (run for every .fsproj under src/):
+Project properties are read as MSBuild sees them: from the .fsproj,
+else from the nearest Directory.Build.props (up to the repo root).
+
+Project-level checks (run for every checked .fsproj):
   - TreatWarningsAsErrors is true
 
 Project-level checks (run for each packable .fsproj — those with a
-<PackageId> and IsPackable not set to "false"):
+<PackageId>, IsPackable not set to "false", and not an OutputType Exe
+without PackAsTool true, i.e. not an example app):
   - Version, Description, Authors, PackageLicenseExpression,
     RepositoryUrl, RepositoryType are present and non-empty
   - GenerateDocumentationFile is true
-  - Microsoft.SourceLink.GitHub PackageReference is present
+  - Microsoft.SourceLink.GitHub PackageReference is present (in the
+    .fsproj or the nearest Directory.Build.props)
   - IncludeSymbols is true and SymbolPackageFormat is snupkg
     (skipped when IncludeBuildOutput is false)
   - RepositoryUrl, and a github.com PackageProjectUrl, name the
     repository the `origin` remote names (ssh/https spellings, a .git
     suffix and a trailing / are equivalent; github.com names compare
-    case-insensitively). Read from the fsproj, else the nearest
-    Directory.Build.props. Skipped when there is no origin remote or a
+    case-insensitively). Skipped when there is no origin remote or a
     URL is not a hosted repository URL.
 
 Exit code is 1 when any check fails, else 0. Skipped checks print

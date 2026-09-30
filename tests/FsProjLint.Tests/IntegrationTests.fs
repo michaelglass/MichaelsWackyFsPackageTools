@@ -13,16 +13,16 @@ let private isPassed (result: CheckResult) = CheckOutcome.isPassed result.Outcom
 
 let private isFailed (result: CheckResult) = CheckOutcome.isFailed result.Outcome
 
-let private createFile (dir: string) (relativePath: string) (content: string) =
-    let fullPath = Path.Combine(dir, relativePath)
-    let parent = Path.GetDirectoryName(fullPath)
-    Directory.CreateDirectory(parent) |> ignore
-    File.WriteAllText(fullPath, content)
-
 // -- discoverProjects --
 
+let private discoveredPaths (dir: string) =
+    discoverProjects dir |> List.map (fst >> fun p -> Path.GetRelativePath(dir, p))
+
+let private libraryFsproj (packageId: string) (extra: string) =
+    sprintf "<Project><PropertyGroup><PackageId>%s</PackageId>%s</PropertyGroup></Project>" packageId extra
+
 [<Fact>]
-let ``discoverProjects returns empty list when no src directory`` () =
+let ``discoverProjects returns empty list when the repository has no projects`` () =
     withTempDir (fun dir ->
         let results = discoverProjects dir
 
@@ -31,8 +31,8 @@ let ``discoverProjects returns empty list when no src directory`` () =
 [<Fact>]
 let ``discoverProjects finds nested projects`` () =
     withTempDir (fun dir ->
-        createFile dir "src/A/A.fsproj" "<Project />"
-        createFile dir "src/B/Sub/B.fsproj" "<Project />"
+        writeFile dir "src/A/A.fsproj" "<Project />"
+        writeFile dir "src/B/Sub/B.fsproj" "<Project />"
 
         let results = discoverProjects dir
 
@@ -41,11 +41,10 @@ let ``discoverProjects finds nested projects`` () =
 [<Fact>]
 let ``discoverProjects returns sorted list`` () =
     withTempDir (fun dir ->
-        createFile dir "src/Zebra/Zebra.fsproj" "<Project />"
-        createFile dir "src/Alpha/Alpha.fsproj" "<Project />"
+        writeFile dir "src/Zebra/Zebra.fsproj" "<Project />"
+        writeFile dir "src/Alpha/Alpha.fsproj" "<Project />"
 
-        let results = discoverProjects dir
-        let names = results |> List.map Path.GetFileName
+        let names = discoverProjects dir |> List.map (fst >> Path.GetFileName)
 
         test <@ names = [ "Alpha.fsproj"; "Zebra.fsproj" ] @>)
 
@@ -55,20 +54,97 @@ let ``discoverProjects skips build output, dot-directories and nested checkouts`
         let real =
             layOutNestedCheckouts dir (fun at -> File.WriteAllText(Path.Combine(at, "Real.fsproj"), "<Project />"))
 
-        test <@ discoverProjects dir = [ Path.Combine(real, "Real.fsproj") ] @>)
+        test <@ discoverProjects dir |> List.map fst = [ Path.Combine(real, "Real.fsproj") ] @>)
+
+[<Fact>]
+let ``discoverProjects finds a packable project at the repository root`` () =
+    withTempDir (fun dir ->
+        writeFile dir "Shim.fsproj" (libraryFsproj "Shim" "")
+
+        test <@ discoveredPaths dir = [ "Shim.fsproj" ] @>)
+
+[<Fact>]
+let ``discoverProjects finds packable projects outside src`` () =
+    withTempDir (fun dir ->
+        writeFile
+            dir
+            "tools/Tool/Tool.fsproj"
+            (libraryFsproj "Tool" "<OutputType>Exe</OutputType><PackAsTool>true</PackAsTool>")
+
+        writeFile dir "src/Lib/Lib.fsproj" (libraryFsproj "Lib" "")
+
+        test
+            <@
+                discoveredPaths dir =
+                    [
+                        Path.Combine("src", "Lib", "Lib.fsproj")
+                        Path.Combine("tools", "Tool", "Tool.fsproj")
+                    ]
+            @>)
+
+[<Fact>]
+let ``discoverProjects leaves out test, benchmark and example projects outside src`` () =
+    withTempDir (fun dir ->
+        writeFile dir "tests/Lib.Tests/Lib.Tests.fsproj" (libraryFsproj "Lib.Tests" "<IsPackable>false</IsPackable>")
+
+        writeFile
+            dir
+            "tests/Directory.Build.props"
+            "<Project><PropertyGroup><IsPackable>false</IsPackable></PropertyGroup></Project>"
+
+        writeFile dir "tests/Other.Tests/Other.Tests.fsproj" (libraryFsproj "Other.Tests" "")
+        writeFile dir "benchmarks/Bench/Bench.fsproj" (libraryFsproj "Bench" "<OutputType>Exe</OutputType>")
+
+        writeFile
+            dir
+            "examples/Sample/Sample.fsproj"
+            "<Project><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>"
+
+        test <@ List.isEmpty (discoverProjects dir) @>)
+
+[<Fact>]
+let ``discoverProjects keeps every project under src, packable or not`` () =
+    withTempDir (fun dir ->
+        writeFile dir "src/Lib/Lib.fsproj" (libraryFsproj "Lib" "")
+
+        writeFile
+            dir
+            "src/Lib.Tests/Lib.Tests.fsproj"
+            "<Project><PropertyGroup><IsPackable>false</IsPackable></PropertyGroup></Project>"
+
+        writeFile dir "src/Sample/Sample.fsproj" "<Project />"
+
+        test
+            <@
+                discoveredPaths dir =
+                    [
+                        Path.Combine("src", "Lib.Tests", "Lib.Tests.fsproj")
+                        Path.Combine("src", "Lib", "Lib.fsproj")
+                        Path.Combine("src", "Sample", "Sample.fsproj")
+                    ]
+            @>)
+
+[<Fact>]
+let ``discoverProjects reports a project outside src that does not parse`` () =
+    withTempDir (fun dir ->
+        writeFile dir "Broken.fsproj" "<Project"
+
+        match discoverProjects dir with
+        | [ (path, Error _) ] -> test <@ Path.GetFileName path = "Broken.fsproj" @>
+        | other -> failwithf "expected one parse failure, got %A" other)
 
 // -- runLint integration --
 
 [<Fact>]
 let ``complete valid repo passes all checks`` () =
     withTempDir (fun dir ->
-        createFile dir "LICENSE" ""
-        createFile dir "README.md" ""
-        createFile dir ".editorconfig" ""
-        createFile dir "docs/index.md" ""
-        createFile dir "src/MyProject/MyProject.fsproj" packableFsproj
+        writeFile dir "LICENSE" ""
+        writeFile dir "README.md" ""
+        writeFile dir ".editorconfig" ""
+        writeFile dir "docs/index.md" ""
+        writeFile dir "src/MyProject/MyProject.fsproj" packableFsproj
         // The RefStamp local-pack guard, wired the one-line-per-repo way.
-        createFile
+        writeFile
             dir
             "Directory.Build.props"
             """<Project>
@@ -96,7 +172,7 @@ let ``repo with issues reports correct failures`` () =
   </PropertyGroup>
 </Project>"""
 
-        createFile dir "src/MyProject/MyProject.fsproj" fsproj
+        writeFile dir "src/MyProject/MyProject.fsproj" fsproj
 
         let result = runLint dir
         let allChecks = result.RepoChecks @ (result.ProjectChecks |> List.collect snd)
@@ -117,9 +193,9 @@ let ``repo with issues reports correct failures`` () =
 [<Fact>]
 let ``runLint with no projects found`` () =
     withTempDir (fun dir ->
-        createFile dir "LICENSE" ""
-        createFile dir "README.md" ""
-        createFile dir ".editorconfig" ""
+        writeFile dir "LICENSE" ""
+        writeFile dir "README.md" ""
+        writeFile dir ".editorconfig" ""
 
         let result = runLint dir
 
@@ -131,11 +207,11 @@ let ``runLint with no projects found`` () =
 [<Fact>]
 let ``runLint with mixed passing and failing projects`` () =
     withTempDir (fun dir ->
-        createFile dir "LICENSE" ""
-        createFile dir "README.md" ""
-        createFile dir ".editorconfig" ""
-        createFile dir "docs/index.md" ""
-        createFile dir "src/GoodProject/GoodProject.fsproj" packableFsproj
+        writeFile dir "LICENSE" ""
+        writeFile dir "README.md" ""
+        writeFile dir ".editorconfig" ""
+        writeFile dir "docs/index.md" ""
+        writeFile dir "src/GoodProject/GoodProject.fsproj" packableFsproj
 
         let badFsproj =
             """<Project Sdk="Microsoft.NET.Sdk">
@@ -144,7 +220,7 @@ let ``runLint with mixed passing and failing projects`` () =
   </PropertyGroup>
 </Project>"""
 
-        createFile dir "src/BadProject/BadProject.fsproj" badFsproj
+        writeFile dir "src/BadProject/BadProject.fsproj" badFsproj
         git dir [ "init"; "-q"; "-b"; "main" ] |> ignore
         git dir [ "remote"; "add"; "origin"; "https://github.com/test/test" ] |> ignore
 
@@ -168,10 +244,10 @@ let ``runLint with mixed passing and failing projects`` () =
 [<Fact>]
 let ``runLint with malformed XML produces failure result instead of exception`` () =
     withTempDir (fun dir ->
-        createFile dir "LICENSE" ""
-        createFile dir "README.md" ""
-        createFile dir ".editorconfig" ""
-        createFile dir "src/Bad/Bad.fsproj" "this is not valid xml <><>"
+        writeFile dir "LICENSE" ""
+        writeFile dir "README.md" ""
+        writeFile dir ".editorconfig" ""
+        writeFile dir "src/Bad/Bad.fsproj" "this is not valid xml <><>"
 
         let result = runLint dir
 
@@ -182,6 +258,75 @@ let ``runLint with malformed XML produces failure result instead of exception`` 
         test <@ checks.Length = 1 @>
         test <@ checks.[0].Name = "XML parse" @>
         test <@ isFailed checks.[0] @>)
+
+[<Fact>]
+let ``runLint reports a Directory.Build.props that does not parse against the project`` () =
+    withTempDir (fun dir ->
+        writeFile dir "Directory.Build.props" "<Project"
+        writeFile dir "src/Lib/Lib.fsproj" "<Project />"
+
+        match (runLint dir).ProjectChecks with
+        | [ (_, [ check ]) ] ->
+            test <@ check.Name = "XML parse" && isFailed check @>
+
+            test
+                <@
+                    (match check.Outcome with
+                     | Failed r -> r
+                     | _ -> "")
+                        .Contains
+                        "Directory.Build.props"
+                @>
+        | other -> failwithf "expected one parse failure, got %A" other)
+
+[<Fact>]
+let ``runLint runs the package checks on a packable project at the repository root`` () =
+    withTempDir (fun dir ->
+        writeFile dir "Shim.fsproj" packableFsproj
+
+        match (runLint dir).ProjectChecks with
+        | [ (path, checks) ] ->
+            test <@ Path.GetFileName path = "Shim.fsproj" @>
+            test <@ checks |> List.exists (fun c -> c.Name = "Description present" && isPassed c) @>
+        | other -> failwithf "expected the root project, got %A" other)
+
+[<Fact>]
+let ``runLint counts package metadata set only in Directory.Build.props as present`` () =
+    withTempDir (fun dir ->
+        writeFile
+            dir
+            "Directory.Build.props"
+            """<Project>
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Version>1.0.0</Version>
+    <Description>A test package</Description>
+    <Authors>testauthor</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/test/test</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
+  </ItemGroup>
+</Project>"""
+
+        writeFile
+            dir
+            "src/Lib/Lib.fsproj"
+            "<Project><PropertyGroup><PackageId>Lib</PackageId></PropertyGroup></Project>"
+
+        let checks = (runLint dir).ProjectChecks |> List.collect snd
+        // No origin remote here, so the origin comparison is skipped; every
+        // other check passes on values read from Directory.Build.props.
+        let notPassed =
+            checks |> List.filter (isPassed >> not) |> List.map (fun c -> c.Name)
+
+        test <@ notPassed = [ "RepositoryUrl matches origin remote" ] @>
+        test <@ checks.Length = 12 @>)
 
 // -- Program.main --
 
@@ -239,13 +384,13 @@ let ``Program.main returns 1 for failing repo`` () =
 [<Fact>]
 let ``Program.main returns 0 for fully passing repo`` () =
     withTempDir (fun tmpDir ->
-        createFile tmpDir "LICENSE" ""
-        createFile tmpDir "README.md" ""
-        createFile tmpDir ".editorconfig" ""
-        createFile tmpDir "docs/index.md" ""
-        createFile tmpDir "src/MyProject/MyProject.fsproj" packableFsproj
+        writeFile tmpDir "LICENSE" ""
+        writeFile tmpDir "README.md" ""
+        writeFile tmpDir ".editorconfig" ""
+        writeFile tmpDir "docs/index.md" ""
+        writeFile tmpDir "src/MyProject/MyProject.fsproj" packableFsproj
         // The RefStamp local-pack guard, wired the one-line-per-repo way.
-        createFile
+        writeFile
             tmpDir
             "Directory.Build.props"
             """<Project>
@@ -270,7 +415,7 @@ let ``Program.main returns 0 for fully passing repo`` () =
 let ``Program.main prints FAILED and Passed sections for mixed results`` () =
     withTempDir (fun tmpDir ->
         // Missing LICENSE and editorconfig but has README
-        createFile tmpDir "README.md" ""
+        writeFile tmpDir "README.md" ""
 
         let prev = Directory.GetCurrentDirectory()
 

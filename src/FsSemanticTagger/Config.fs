@@ -52,23 +52,14 @@ let defaultPublishWorkflows: PublishWorkflow list =
 let private assemblyNameRegex =
     Regex(@"<AssemblyName>([^<]+)</AssemblyName>", RegexOptions.Compiled)
 
-let private packageIdRegex =
-    Regex(@"<PackageId>([^<]+)</PackageId>", RegexOptions.Compiled)
-
 let private projectReferenceIncludeRegex =
     Regex(
         """<ProjectReference\b[^>]*?\bInclude\s*=\s*["']([^"']+)["']""",
         RegexOptions.Compiled ||| RegexOptions.IgnoreCase
     )
 
-let private isPackableFalseRegex =
-    Regex(@"<IsPackable>\s*false\s*</IsPackable>", RegexOptions.Compiled ||| RegexOptions.IgnoreCase)
-
 let private packAsToolRegex =
     Regex(@"<PackAsTool>\s*true\s*</PackAsTool>", RegexOptions.Compiled ||| RegexOptions.IgnoreCase)
-
-let private outputTypeExeRegex =
-    Regex(@"<OutputType>\s*Exe\s*</OutputType>", RegexOptions.Compiled ||| RegexOptions.IgnoreCase)
 
 /// True when the fsproj content marks the project `<PackAsTool>true</PackAsTool>`.
 /// A pack-as-tool project physically bundles its entire transitive
@@ -234,12 +225,12 @@ let transitiveProjectRefFsprojs (rootDir: string) (fsprojRelPath: string) : stri
 
 /// Find all packable fsproj files, returning (packageName, relativePath) list.
 ///
-/// A project counts as a release candidate when it has a `<PackageId>`, is not
-/// `<IsPackable>false</IsPackable>`, and is not an executable example app: an
-/// `<OutputType>Exe</OutputType>` project that lacks `<PackAsTool>true</PackAsTool>`
-/// is treated as a runnable example (not something published to NuGet) and
-/// excluded. Real dotnet tools (Exe + PackAsTool) and libraries with a PackageId
-/// are kept.
+/// A project counts as a release candidate when `Shared.MsBuildProject.isPackable`
+/// says so: it has a `<PackageId>`, is not `<IsPackable>false</IsPackable>`, and
+/// is not an executable example app (an `<OutputType>Exe</OutputType>` project
+/// without `<PackAsTool>true</PackAsTool>`). Each property is read from the
+/// fsproj, else the nearest Directory.Build.props. A project that does not parse
+/// is not a candidate.
 ///
 /// The scan skips build output, dot-directories and nested checkouts (see
 /// `Shared.SourceTree.isSkippedDir`), so a jj workspace or git worktree inside the
@@ -247,17 +238,11 @@ let transitiveProjectRefFsprojs (rootDir: string) (fsprojRelPath: string) : stri
 let findPackableProjects (rootDir: string) : (string * string) list =
     Shared.SourceTree.findFiles rootDir "*.fsproj"
     |> List.choose (fun path ->
-        let content = File.ReadAllText(path)
-        let m = packageIdRegex.Match(content)
-
-        let isExampleExe =
-            outputTypeExeRegex.IsMatch(content) && not (packAsToolRegex.IsMatch(content))
-
-        if m.Success && not (isPackableFalseRegex.IsMatch(content)) && not isExampleExe then
-            let relativePath = Path.GetRelativePath(rootDir, path)
-            Some(m.Groups[1].Value, relativePath)
-        else
-            None)
+        match Shared.MsBuildProject.load rootDir path with
+        | Ok project when Shared.MsBuildProject.isPackable project ->
+            Shared.MsBuildProject.propertyValue project "PackageId"
+            |> Option.map (fun packageId -> packageId, Path.GetRelativePath(rootDir, path))
+        | _ -> None)
 
 /// Discover a single-package config by finding the packable fsproj
 let discover (rootDir: string) : Result<ToolConfig, string> =

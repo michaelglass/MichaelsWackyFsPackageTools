@@ -10,25 +10,19 @@ module FsProjLint.Tests.RefStampGuardTests
 // direct Import of RefStamp.targets — the shape the monorepo that OWNS
 // RefStamp uses to dogfood it before the package exists on NuGet).
 
-open System.Xml.Linq
 open Xunit
 open Tests.Common
 open Swensen.Unquote
 open FsProjLint.Checks
 open Tests.Common.TestHelpers
 open FsProjLint.Tests.TestFixtures
+open FsProjLint.Tests.GitFixtures
 
 let private isPassed (result: CheckResult) = CheckOutcome.isPassed result.Outcome
 
 let private isFailed (result: CheckResult) = CheckOutcome.isFailed result.Outcome
 
-let private createFile (dir: string) (relativePath: string) (content: string) =
-    let fullPath = System.IO.Path.Combine(dir, relativePath)
-    let parent = System.IO.Path.GetDirectoryName(fullPath)
-    System.IO.Directory.CreateDirectory(parent) |> ignore
-    System.IO.File.WriteAllText(fullPath, content)
-
-let private parse (xml: string) = XDocument.Parse xml
+let private parse (xml: string) = projectOf xml
 
 let private packableWithRefStamp =
     parse
@@ -52,7 +46,7 @@ let private packableWithoutRefStamp =
 [<Fact>]
 let ``passes when a root Directory Build props references RefStamp`` () =
     withTempDir (fun dir ->
-        createFile
+        writeFile
             dir
             "Directory.Build.props"
             """<Project>
@@ -68,7 +62,7 @@ let ``passes when a root Directory Build props references RefStamp`` () =
 [<Fact>]
 let ``passes when a root Directory Build targets imports RefStamp targets`` () =
     withTempDir (fun dir ->
-        createFile
+        writeFile
             dir
             "Directory.Build.targets"
             """<Project>
@@ -111,18 +105,39 @@ let ``fails with a fix-me message naming Directory Build props`` () =
 [<Fact>]
 let ``an unparseable root Directory Build props does not count as a guard`` () =
     withTempDir (fun dir ->
-        createFile dir "Directory.Build.props" "<Project><not-closed</Project>"
+        writeFile dir "Directory.Build.props" "<Project><not-closed</Project>"
 
         let result = checkRefStampGuard dir [ packableWithoutRefStamp ]
 
         test <@ isFailed result @>)
+
+[<Fact>]
+let ``passes when each project's nearest Directory Build props references RefStamp`` () =
+    withTempDir (fun dir ->
+        writeFile
+            dir
+            "src/Directory.Build.props"
+            """<Project>
+  <ItemGroup>
+    <PackageReference Include="RefStamp" Version="0.1.0" PrivateAssets="all" />
+  </ItemGroup>
+</Project>"""
+
+        writeFile
+            dir
+            "src/Lib/Lib.fsproj"
+            "<Project><PropertyGroup><PackageId>Lib</PackageId></PropertyGroup></Project>"
+
+        match Shared.MsBuildProject.load dir (System.IO.Path.Combine(dir, "src", "Lib", "Lib.fsproj")) with
+        | Ok project -> test <@ isPassed (checkRefStampGuard dir [ project ]) @>
+        | Error e -> failwith e)
 
 // --- runLint wiring -----------------------------------------------------------
 
 [<Fact>]
 let ``runLint includes the guard check for packable repos`` () =
     withTempDir (fun dir ->
-        createFile dir "src/MyProject/MyProject.fsproj" packableFsproj
+        writeFile dir "src/MyProject/MyProject.fsproj" packableFsproj
 
         let result = runLint dir
 
@@ -131,7 +146,7 @@ let ``runLint includes the guard check for packable repos`` () =
 [<Fact>]
 let ``runLint omits the guard check when nothing is packable`` () =
     withTempDir (fun dir ->
-        createFile
+        writeFile
             dir
             "src/MyProject/MyProject.fsproj"
             """<Project Sdk="Microsoft.NET.Sdk">
