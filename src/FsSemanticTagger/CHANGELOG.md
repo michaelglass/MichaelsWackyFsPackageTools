@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- feat: **an `## Unreleased` entry that opens with upper-case `BREAKING` but is not a breaking-change marker is warned about.** TestPrune's `- **BREAKING (API): Audit.ownIds → Audit.observe …**` was read as declaring nothing, and the release said the changelog "declares only a feature"; the major bump came from the API diff alone. Such an entry (`BREAKING:`, `BREAKING (API):`, `BREAKING CHANGES:`) still declares nothing, but `release` and `release --check` now print a warning naming the changelog, the entry and the accepted forms (`feat!:`, any `<type>!:`, `BREAKING CHANGE:`). Lower-case prose is not warned about.
+  - `DeclaredBump.markerLevel` becomes `DeclaredBump.marker`, returning a `Marker`: `Declares level`, `UnrecognisedBreaking` or `NoMarker`. New `DeclaredBump.unrecognisedWarnings`.
+
 ## 0.14.0-alpha.20 - 2026-09-30
 
 - chore(deps): CommandTree 0.12.0 → 0.13.0.

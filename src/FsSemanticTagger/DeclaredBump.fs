@@ -45,26 +45,40 @@ let private entryPrefixRegex =
 let private breakingNoteRegex =
     Regex(@"^BREAKING[ -]CHANGE:", RegexOptions.Compiled)
 
+/// Upper-case `BREAKING` opening an entry: how an author writes a breaking change
+/// whether or not the form is one `marker` recognises.
+let private looksBreakingRegex =
+    Regex(@"^BREAKING(?![A-Za-z])", RegexOptions.Compiled)
+
+/// What one changelog entry says about the bump.
+type Marker =
+    | Declares of DeclaredLevel
+    /// Opens with upper-case `BREAKING` but is not a recognised form, such as
+    /// `BREAKING (API):`, `BREAKING:` or `BREAKING CHANGES:`. It declares nothing;
+    /// it is reported so the author can write the marker they meant.
+    | UnrecognisedBreaking
+    | NoMarker
+
 /// What one changelog line declares. Only a marker at the START of the entry
 /// counts, with the same conventional types `Changelog` groups bullets by; a marker
 /// mentioned mid-sentence, or on an unrecognised type, declares nothing.
-let markerLevel (line: string) : DeclaredLevel option =
+let marker (line: string) : Marker =
     let entry = entryPrefixRegex.Replace(line.Trim(), "", 1)
 
     if breakingNoteRegex.IsMatch entry then
-        Some DeclaresBreaking
+        Declares DeclaresBreaking
     else
         let m = Changelog.conventionalPrefixRegex.Match entry
         let ty = m.Groups[1].Value.ToLowerInvariant()
 
-        if not (m.Success && Changelog.conventionalTypes.Contains ty) then
-            None
-        elif m.Groups[3].Success then
-            Some DeclaresBreaking
-        elif ty = "feat" then
-            Some DeclaresFeature
+        if m.Success && Changelog.conventionalTypes.Contains ty then
+            if m.Groups[3].Success then Declares DeclaresBreaking
+            elif ty = "feat" then Declares DeclaresFeature
+            else Declares DeclaresPatch
+        elif looksBreakingRegex.IsMatch entry then
+            UnrecognisedBreaking
         else
-            Some DeclaresPatch
+            NoMarker
 
 /// The strongest declaration, keeping the first on a tie.
 let strongest (declarations: Declaration list) : Declaration option =
@@ -74,9 +88,9 @@ let strongest (declarations: Declaration list) : Declaration option =
         | Some b when b.Level >= d.Level -> best
         | _ -> Some d)
 
-/// The strongest declaration among `lines` of the changelog at `source`. Lines in
-/// fenced code are sample text, not entries, and declare nothing.
-let declare (source: string) (lines: string list) : Declaration option =
+/// Each entry of `lines`, trimmed, with its marker. Lines in fenced code are
+/// sample text, not entries, and are skipped.
+let private markedEntries (lines: string list) : (string * Marker) list =
     lines
     |> List.fold
         (fun (inFence, found) line ->
@@ -87,22 +101,40 @@ let declare (source: string) (lines: string list) : Declaration option =
             elif inFence then
                 (inFence, found)
             else
-                let found =
-                    match markerLevel line with
-                    | Some level ->
-                        {
-                            Level = level
-                            Source = source
-                            Entry = line.Trim()
-                        }
-                        :: found
-                    | None -> found
-
-                (inFence, found))
+                (inFence, (line.Trim(), marker line) :: found))
         (false, [])
     |> snd
     |> List.rev
+
+/// The strongest declaration among `lines` of the changelog at `source`.
+let declare (source: string) (lines: string list) : Declaration option =
+    markedEntries lines
+    |> List.choose (fun (entry, m) ->
+        match m with
+        | Declares level ->
+            Some
+                {
+                    Level = level
+                    Source = source
+                    Entry = entry
+                }
+        | UnrecognisedBreaking
+        | NoMarker -> None)
     |> strongest
+
+/// A warning for each distinct entry of `lines` (the changelog at `source`) that
+/// reads as a breaking change but is not a marker, so the author learns it
+/// declared nothing before a consumer does.
+let unrecognisedWarnings (source: string) (lines: string list) : string list =
+    markedEntries lines
+    |> List.filter (fun (_, m) -> m = UnrecognisedBreaking)
+    |> List.map fst
+    |> List.distinct
+    |> List.map (
+        sprintf
+            "warning: %s: the entry `%s` starts with BREAKING but is not a breaking-change marker, so it declares nothing and the bump comes from the API diff alone. To declare a breaking change, start the entry with `feat!:` (any `<type>!:`) or `BREAKING CHANGE:`."
+            source
+    )
 
 let private rank (change: ApiChange) : DeclaredLevel =
     match change with
