@@ -7,16 +7,11 @@ open Swensen.Unquote
 open FsProjLint.Checks
 open Tests.Common.TestHelpers
 open FsProjLint.Tests.TestFixtures
+open FsProjLint.Tests.GitFixtures
 
-let private isPassed (result: CheckResult) =
-    match result.Outcome with
-    | Passed -> true
-    | Failed _ -> false
+let private isPassed (result: CheckResult) = CheckOutcome.isPassed result.Outcome
 
-let private isFailed (result: CheckResult) =
-    match result.Outcome with
-    | Passed -> false
-    | Failed _ -> true
+let private isFailed (result: CheckResult) = CheckOutcome.isFailed result.Outcome
 
 let private createFile (dir: string) (relativePath: string) (content: string) =
     let fullPath = Path.Combine(dir, relativePath)
@@ -81,6 +76,9 @@ let ``complete valid repo passes all checks`` () =
     <PackageReference Include="RefStamp" Version="0.1.0" PrivateAssets="all" />
   </ItemGroup>
 </Project>"""
+        // An origin remote naming the repository packableFsproj's RepositoryUrl names.
+        git dir [ "init"; "-q"; "-b"; "main" ] |> ignore
+        git dir [ "remote"; "add"; "origin"; "git@github.com:test/test.git" ] |> ignore
 
         let result = runLint dir
         let allChecks = result.RepoChecks @ (result.ProjectChecks |> List.collect snd)
@@ -147,6 +145,8 @@ let ``runLint with mixed passing and failing projects`` () =
 </Project>"""
 
         createFile dir "src/BadProject/BadProject.fsproj" badFsproj
+        git dir [ "init"; "-q"; "-b"; "main" ] |> ignore
+        git dir [ "remote"; "add"; "origin"; "https://github.com/test/test" ] |> ignore
 
         let result = runLint dir
 
@@ -284,5 +284,58 @@ let ``Program.main prints FAILED and Passed sections for mixed results`` () =
             test <@ printed.Contains "Passed:" @>
             test <@ printed.Contains "PASS" @>
             test <@ printed.Contains "Result:" @>
+        finally
+            Directory.SetCurrentDirectory(prev))
+
+[<Fact>]
+let ``Program.main prints the failure reason and the skipped section`` () =
+    withTempDir (fun dir ->
+        git dir [ "init"; "-q"; "-b"; "main" ] |> ignore
+
+        git dir [ "remote"; "add"; "origin"; "https://github.com/michaelglass/UnionConfig.git" ]
+        |> ignore
+
+        writeFile
+            dir
+            "src/Mismatched/Mismatched.fsproj"
+            (packableFsproj.Replace("https://github.com/test/test", "https://github.com/michaelglass/union-config"))
+
+        writeFile
+            dir
+            "src/Unresolved/Unresolved.fsproj"
+            (packableFsproj.Replace("https://github.com/test/test", "$(Url)"))
+
+        let prev = Directory.GetCurrentDirectory()
+
+        try
+            Directory.SetCurrentDirectory(dir)
+            let printed, exitCode = withCapturedConsole (fun () -> FsProjLint.Program.main [||])
+
+            test <@ exitCode = 1 @>
+
+            test
+                <@
+                    printed.Contains(
+                        sprintf
+                            "FAIL %s (%s)"
+                            "RepositoryUrl matches origin remote"
+                            (Path.Combine("src", "Mismatched", "Mismatched.fsproj"))
+                    )
+                @>
+
+            test <@ printed.Contains "<RepositoryUrl>https://github.com/michaelglass/UnionConfig</RepositoryUrl>" @>
+            test <@ printed.Contains "Skipped:" @>
+
+            test
+                <@
+                    printed.Contains(
+                        sprintf
+                            "SKIP %s (%s)"
+                            "RepositoryUrl matches origin remote"
+                            (Path.Combine("src", "Unresolved", "Unresolved.fsproj"))
+                    )
+                @>
+
+            test <@ printed.Contains "1 skipped" @>
         finally
             Directory.SetCurrentDirectory(prev))

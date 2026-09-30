@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- feat: **new check "RepositoryUrl matches origin remote"** for packable projects: `RepositoryUrl` (from the fsproj, else the nearest `Directory.Build.props`) must name the repository the `origin` remote names, and so must `PackageProjectUrl` when it is a github.com URL. ssh and https spellings, a `.git` suffix and a trailing `/` are equivalent; github.com owner and name compare case-insensitively, so `union-config` vs `UnionConfig` still fails. Works in jj repos without a colocated `.git`. **This can newly fail a repo whose RepositoryUrl names another repository** (nuget.org's Source repository link for such a package is broken). The check is skipped, not failed, when there is no `origin` remote or a URL is not a hosted repository URL.
+- feat: failed and skipped checks print their reason, and project-level checks name their project. A new `Skipped` outcome is listed under `Skipped:`, is left out of the pass count, and does not change the exit code.
+
 ## 0.10.0-alpha.20 - 2026-09-30
 
 - chore(deps): CommandTree 0.12.0 → 0.13.0.

@@ -8,17 +8,28 @@ open System.Xml.Linq
 type CheckOutcome =
     | Passed
     | Failed of reason: string
+    /// The check could not run here (e.g. no origin remote to compare against).
+    /// Neither a pass nor a failure: the exit code ignores it.
+    | Skipped of reason: string
 
 module CheckOutcome =
     let isPassed =
         function
         | Passed -> true
-        | Failed _ -> false
+        | Failed _
+        | Skipped _ -> false
 
     let isFailed =
         function
-        | Passed -> false
         | Failed _ -> true
+        | Passed
+        | Skipped _ -> false
+
+    let isSkipped =
+        function
+        | Skipped _ -> true
+        | Passed
+        | Failed _ -> false
 
 type CheckResult = { Name: string; Outcome: CheckOutcome }
 
@@ -462,6 +473,232 @@ let checkProject (doc: XDocument) : CheckResult list =
     else
         allProjectChecks
 
+// --- repository URL matches origin -------------------------------------------
+//
+// nuget.org links a package to its RepositoryUrl. A RepositoryUrl (or a
+// github.com PackageProjectUrl) naming another repository than the one the
+// project lives in makes that link wrong, often a 404. The repository the
+// project lives in is the one its `origin` remote names.
+
+/// A repository on a git host. Only `RepoRef.tryParse` builds one, so the host
+/// is lower-case and the name carries no `.git` suffix or trailing slash.
+type RepoRef =
+    private
+        {
+            host: string
+            owner: string
+            name: string
+        }
+
+    /// Lower-case host name, e.g. `github.com`.
+    member this.Host = this.host
+    /// Everything between the host and the name; `group/subgroup` on GitLab.
+    member this.Owner = this.owner
+    /// The repository name.
+    member this.Name = this.name
+
+module RepoRef =
+    let private github = "github.com"
+
+    let private scpLike =
+        System.Text.RegularExpressions.Regex(@"^[A-Za-z0-9._-]+@(?<host>[^:/\s]+):(?<path>[^/].*)$")
+
+    let private fromHostAndPath (host: string) (path: string) : RepoRef option =
+        let segments =
+            path.Split('/', System.StringSplitOptions.RemoveEmptyEntries) |> Array.toList
+
+        let host = host.ToLowerInvariant()
+
+        let stripGit (name: string) =
+            if name.EndsWith(".git", System.StringComparison.OrdinalIgnoreCase) then
+                name.Substring(0, name.Length - 4)
+            else
+                name
+
+        let ownerAndName =
+            match segments with
+            // A github.com path past owner/name is a page in the repository.
+            | owner :: name :: _ when host = github -> Some(owner, stripGit name)
+            | _ :: _ :: _ ->
+                let name = List.last segments
+                let owner = segments |> List.take (segments.Length - 1) |> String.concat "/"
+                Some(owner, stripGit name)
+            | _ -> None
+
+        ownerAndName
+        |> Option.filter (fun (_, name) -> name.Length > 0)
+        |> Option.map (fun (owner, name) ->
+            {
+                host = host
+                owner = owner
+                name = name
+            })
+
+    /// Parse an https, ssh (`ssh://` or `git@host:owner/repo`), http or git URL
+    /// naming a hosted repository. None for anything else, including a local
+    /// path, a `file://` URL, or a value still holding an MSBuild `$(...)`.
+    let tryParse (url: string) : RepoRef option =
+        let url = url.Trim()
+
+        if
+            url.Length = 0
+            || url.Contains "$("
+            || url |> Seq.exists System.Char.IsWhiteSpace
+        then
+            None
+        else
+            let scp = scpLike.Match url
+
+            if scp.Success && not (url.Contains "://") then
+                fromHostAndPath scp.Groups["host"].Value scp.Groups["path"].Value
+            else
+                match System.Uri.TryCreate(url, System.UriKind.Absolute) with
+                | true, uri when
+                    List.contains uri.Scheme [ "https"; "http"; "ssh"; "git"; "git+ssh" ]
+                    && uri.Host.Length > 0
+                    ->
+                    fromHostAndPath uri.Host (System.Uri.UnescapeDataString uri.AbsolutePath)
+                | _ -> None
+
+    /// True when both name the same repository. GitHub treats owner and
+    /// repository names case-insensitively; other hosts are compared exactly.
+    let sameRepository (a: RepoRef) (b: RepoRef) : bool =
+        let comparison =
+            if a.host = github then
+                System.StringComparison.OrdinalIgnoreCase
+            else
+                System.StringComparison.Ordinal
+
+        a.host = b.host
+        && System.String.Equals(a.owner, b.owner, comparison)
+        && System.String.Equals(a.name, b.name, comparison)
+
+    /// The repository's https URL, e.g. `https://github.com/owner/name`.
+    let toUrl (r: RepoRef) : string =
+        sprintf "https://%s/%s/%s" r.host r.owner r.name
+
+/// The repository a checkout's `origin` remote names, or why there is none.
+type OriginRemote =
+    | Origin of RepoRef
+    | NoOrigin of reason: string
+
+/// Read the `origin` remote of the git or jj repository containing `dir`. A jj
+/// repository without a colocated `.git` keeps its remotes in its git store.
+let resolveOrigin (dir: string) : OriginRemote =
+    match gitContextFor dir with
+    | None -> NoOrigin "not a git or jj repository, so there is no origin remote to compare against"
+    | Some ctx ->
+        match runGit ctx [ "remote"; "get-url"; "origin" ] None with
+        | Some(0, out) ->
+            let url = out.Trim()
+
+            match RepoRef.tryParse url with
+            | Some repo -> Origin repo
+            | None -> NoOrigin(sprintf "origin remote '%s' is not a hosted repository URL" url)
+        | _ -> NoOrigin "no `origin` remote"
+
+/// A property value and the file that sets it.
+type private PropertySource = { Value: string; File: string }
+
+/// The value MSBuild would see for `name`: the project's own, else the nearest
+/// Directory.Build.props at or above the project's directory, up to `repoDir`.
+/// MSBuild imports only that nearest file, so a property it lacks is unset even
+/// if a props file further up sets it (unless the nearest one imports it, which
+/// this does not follow).
+let private effectiveProperty (repoDir: string) (projectPath: string) (doc: XDocument) (name: string) =
+    let nonEmpty (file: string) (value: string option) =
+        value
+        |> Option.map (fun v -> v.Trim())
+        |> Option.filter (fun v -> v.Length > 0)
+        |> Option.map (fun v -> { Value = v; File = file })
+
+    match nonEmpty projectPath (getProperty doc name) with
+    | Some found -> Some found
+    | None ->
+        let root = Path.GetFullPath(repoDir)
+
+        let rec nearestProps (dir: string) =
+            let candidate = Path.Combine(dir, "Directory.Build.props")
+
+            if File.Exists(candidate) then
+                Some candidate
+            elif Path.GetFullPath(dir) = root then
+                None
+            else
+                match Directory.GetParent(dir) with
+                | null -> None
+                | parent -> nearestProps parent.FullName
+
+        let projectDir = Path.GetDirectoryName(Path.GetFullPath(projectPath))
+
+        match nearestProps projectDir with
+        | None -> None
+        | Some props ->
+            try
+                nonEmpty props (getProperty (XDocument.Load(props)) name)
+            with _ ->
+                None
+
+/// Project-level checks (packable projects): RepositoryUrl, and a github.com
+/// PackageProjectUrl, name the repository `origin` names. A missing
+/// RepositoryUrl adds nothing here ("RepositoryUrl present" fails it); a
+/// PackageProjectUrl off github.com (a docs site, `$(RepositoryUrl)`) is not
+/// checked.
+let checkRepositoryUrls
+    (origin: OriginRemote)
+    (repoDir: string)
+    (projectPath: string)
+    (doc: XDocument)
+    : CheckResult list =
+    let relative (file: string) = Path.GetRelativePath(repoDir, file)
+
+    let compare (property: string) (link: string) (found: PropertySource) (declared: RepoRef option) =
+        let outcome =
+            match origin, declared with
+            | NoOrigin reason, _ -> Skipped reason
+            | Origin _, None ->
+                Skipped(
+                    sprintf
+                        "%s '%s' (in %s) is not a hosted repository URL, so it cannot be compared with origin"
+                        property
+                        found.Value
+                        (relative found.File)
+                )
+            | Origin expected, Some declared when RepoRef.sameRepository expected declared -> Passed
+            | Origin expected, Some _ ->
+                Failed(
+                    sprintf
+                        "%s '%s' (in %s) names a different repository than the origin remote, %s, so the package's %s link on nuget.org points at the wrong repository. Fix: set <%s>%s</%s> in %s."
+                        property
+                        found.Value
+                        (relative found.File)
+                        (RepoRef.toUrl expected)
+                        link
+                        property
+                        (RepoRef.toUrl expected)
+                        property
+                        (relative found.File)
+                )
+
+        {
+            Name = sprintf "%s matches origin remote" property
+            Outcome = outcome
+        }
+
+    let repositoryUrl =
+        effectiveProperty repoDir projectPath doc "RepositoryUrl"
+        |> Option.map (fun found -> compare "RepositoryUrl" "Source repository" found (RepoRef.tryParse found.Value))
+
+    let projectUrl =
+        effectiveProperty repoDir projectPath doc "PackageProjectUrl"
+        |> Option.bind (fun found ->
+            match RepoRef.tryParse found.Value with
+            | Some declared when declared.Host = "github.com" ->
+                Some(compare "PackageProjectUrl" "Project website" found (Some declared))
+            | _ -> None)
+
+    List.choose id [ repositoryUrl; projectUrl ]
+
 /// Discover all .fsproj files under the src/ directory, skipping build output,
 /// dot-directories and nested checkouts (see `Shared.SourceTree.isSkippedDir`).
 let discoverProjects (dir: string) : string list =
@@ -485,10 +722,14 @@ let runLint (dir: string) : LintResult =
             with ex ->
                 (p, Error ex.Message))
 
+    // One origin lookup per run, and only when some project is packable.
+    let origin = lazy (resolveOrigin dir)
+
     let projectChecks =
         loadResults
         |> List.map (fun (p, result) ->
             match result with
+            | Ok doc when isPackable doc -> (p, checkProject doc @ checkRepositoryUrls origin.Value dir p doc)
             | Ok doc -> (p, checkProject doc)
             | Error msg ->
                 (p,

@@ -7,15 +7,9 @@ open Swensen.Unquote
 open FsProjLint.Checks
 open Tests.Common.TestHelpers
 
-let private isPassed (result: CheckResult) =
-    match result.Outcome with
-    | Passed -> true
-    | Failed _ -> false
+let private isPassed (result: CheckResult) = CheckOutcome.isPassed result.Outcome
 
-let private isFailed (result: CheckResult) =
-    match result.Outcome with
-    | Passed -> false
-    | Failed _ -> true
+let private isFailed (result: CheckResult) = CheckOutcome.isFailed result.Outcome
 
 let private createFile (dir: string) (relativePath: string) =
     let fullPath = Path.Combine(dir, relativePath)

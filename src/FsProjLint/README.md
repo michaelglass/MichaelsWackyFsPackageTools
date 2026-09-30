@@ -18,7 +18,7 @@ Run from the root of your repository:
 fsprojlint
 ```
 
-FsProjLint discovers all `.fsproj` files under `src/` and checks them alongside repo-level requirements. Exit code 0 means everything passed; exit code 1 means at least one check failed.
+FsProjLint discovers all `.fsproj` files under `src/` and checks them alongside repo-level requirements. Exit code 0 means no check failed; exit code 1 means at least one check failed.
 
 ## Checks
 
@@ -55,23 +55,31 @@ A project is considered packable if it has a `PackageId` and `IsPackable` is not
 | IncludeSymbols is true | Symbol packages included |
 | SymbolPackageFormat is snupkg | Uses the portable PDB symbol format |
 | Has Microsoft.SourceLink.GitHub | SourceLink package referenced for debugger support |
+| RepositoryUrl matches origin remote | `RepositoryUrl` names the repository the project lives in, as recorded by the `origin` remote. nuget.org's "Source repository" link comes from `RepositoryUrl`, so a wrong one (e.g. `github.com/owner/union-config` for the repo `github.com/owner/UnionConfig`) is a broken link. `git@host:owner/repo`, `ssh://`, `https://`, a `.git` suffix and a trailing `/` all name the same repository; on github.com owner and name compare case-insensitively, elsewhere exactly. The value comes from the fsproj, else the nearest `Directory.Build.props` at or above it. Works in git checkouts and in jj repos with or without a colocated `.git`. **Skipped** (not failed) when there is no `origin` remote, the directory is not a repository, or either URL is not a hosted repository URL (a local path, an unexpanded `$(...)`). A missing `RepositoryUrl` is left to "RepositoryUrl present". |
+| PackageProjectUrl matches origin remote | Same rule for `PackageProjectUrl`, checked only when it is a github.com URL (a docs site or other host is not checked). Paths below `owner/repo` (e.g. `/tree/main/docs`) are allowed. |
 
 ## Example Output
 
+Failed and skipped checks print their reason; project-level checks name their project.
+
 ```
 FAILED:
-  FAIL IncludeSymbols is true
-  FAIL Has Microsoft.SourceLink.GitHub
+  FAIL IncludeSymbols is true (src/MyLib/MyLib.fsproj)
+       IncludeSymbols not found
+  FAIL RepositoryUrl matches origin remote (src/MyLib/MyLib.fsproj)
+       RepositoryUrl 'https://github.com/owner/my-lib' (in src/MyLib/MyLib.fsproj) names a different repository than the origin remote, https://github.com/owner/MyLib, so the package's Source repository link on nuget.org points at the wrong repository. Fix: set <RepositoryUrl>https://github.com/owner/MyLib</RepositoryUrl> in src/MyLib/MyLib.fsproj.
 Passed:
   PASS LICENSE exists
   PASS README.md exists
   PASS .editorconfig exists
-  PASS TreatWarningsAsErrors is true
-  PASS Version present
-  PASS Description present
+  PASS TreatWarningsAsErrors is true (src/MyLib/MyLib.fsproj)
+  PASS Version present (src/MyLib/MyLib.fsproj)
+  PASS Description present (src/MyLib/MyLib.fsproj)
 
 Result: 6/8 checks passed
 ```
+
+A check that cannot run here is listed under `Skipped:` with its reason and left out of the pass count, e.g. `Result: 6/8 checks passed, 1 skipped`. Skipped checks do not change the exit code.
 
 ## License
 
