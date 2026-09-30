@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.4 - 2026-09-30
+
+- deps: bump CommandTree 0.11.3, MetadataLoadContext, test and dev tools
+
+
 ## 0.1.0-alpha.3 - 2026-09-15
 
 - Stamp project-reference dependency versions during local packing so they match the dependency packages produced from the same source. Release dependency versions remain unchanged.

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.20 - 2026-09-30
+
 - chore(deps): CommandTree 0.12.0 → 0.13.0.
 - fix: **finding the packages to release skips nested checkouts.** Without a semantic-tagger.json, `release` and `init` counted every packable .fsproj under the repository, including the copies in jj workspaces or git worktrees inside it. A default jj checkout with three workspaces under `.workspaces/` found one package four times and refused with "Found 4 packable .fsproj files; create a semantic-tagger.json to configure multi-package release". The scan now skips every dot-directory (`.workspaces`, `.jj`, `.git`, …), every directory with its own `.jj` or `.git` entry (the repository root excepted), and build output (`bin`, `obj`, `artifacts`, `output`) and `node_modules`.
 - feat: **the CLI grammar reads the env prefix and global flags a root command union declares.** CommandTree (from 0.13) lets a root union declare `[<CmdEnvPrefix("MYAPP")>]` and `[<CmdGlobals(typeof<GlobalFlag>)>]`, and its entry points take the declaration over whatever they are passed. The grammar now does the same: a declared prefix binds every command flag and every global flag, even when the CLI is parsed with plain `fromUnion` / `fromUnionWithGlobals`, and it is never an unknown prefix, whatever the call sites pass. A declared globals union is the CLI's global flags. A blank declared prefix binds none, as in CommandTree. Consumers that declare nothing, including every one on an older CommandTree, are still read from their entry-point call sites.
