@@ -88,7 +88,7 @@ let withCapturedConsole (action: unit -> 'a) : string * 'a =
 /// the real copy's directory.
 let layOutNestedCheckouts (dir: string) (writeSources: string -> unit) : string =
     let at (relative: string) =
-        let path = Path.Combine(dir, relative)
+        let path = Path.Combine(Array.append [| dir |] (relative.Split '/'))
         Directory.CreateDirectory(path) |> ignore
         path
 
@@ -115,6 +115,6 @@ let layOutNestedCheckouts (dir: string) (writeSources: string -> unit) : string 
 
     at "src/ws/.jj" |> ignore
     at "src/clone/.git" |> ignore
-    File.WriteAllText(Path.Combine(dir, "src/wt/.git"), "gitdir: ../../.git/worktrees/wt\n")
+    File.WriteAllText(Path.Combine(dir, "src", "wt", ".git"), "gitdir: ../../.git/worktrees/wt\n")
     at ".workspaces/ws1/.jj" |> ignore
     real
