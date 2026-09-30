@@ -449,7 +449,7 @@ let ``planPromotion promotes an authored section as written and never merges com
                 planPromotion path [ "docs: trim comments"; "chore: tooling" ] [] =
                     Ok
                         {
-                            Source = Authored
+                            Source = Authored [ "- chore: package metadata" ]
                             DependencyBullets = []
                         }
             @>)
@@ -465,7 +465,7 @@ let ``planPromotion adds a dependency bump the authored section does not mention
                 planPromotion path [] [ sqlHydraBump ] =
                     Ok
                         {
-                            Source = Authored
+                            Source = Authored [ "- chore: package metadata" ]
                             DependencyBullets = [ sqlHydraBullet ]
                         }
             @>)
@@ -490,7 +490,7 @@ let ``planPromotion leaves out a dependency change the authored section already 
                 plan =
                     Ok
                         {
-                            Source = Authored
+                            Source = Authored [ "- feat!: require sqlhydra.query 4.1.0-beta.3"; "- fix: drop Old" ]
                             DependencyBullets = [ "- build(deps): add Npgsql 8.0.0" ]
                         }
             @>)
@@ -506,7 +506,7 @@ let ``planPromotion still adds a bump when the section names the package but not
                 planPromotion path [] [ sqlHydraBump ] =
                     Ok
                         {
-                            Source = Authored
+                            Source = Authored [ "- docs: SqlHydra.Query usage example" ]
                             DependencyBullets = [ sqlHydraBullet ]
                         }
             @>)
@@ -585,7 +585,7 @@ let ``applyPromotion of an authored plan with no dependency changes promotes unc
             (v "0.2.0")
             sampleDate
             {
-                Source = Authored
+                Source = Authored [ "- chore: package metadata" ]
                 DependencyBullets = []
             }
 
@@ -607,7 +607,7 @@ let ``applyPromotion appends dependency bullets after the authored entries, insi
             (v "0.2.0")
             sampleDate
             {
-                Source = Authored
+                Source = Authored [ "> ### Read this first"; "- chore: package metadata" ]
                 DependencyBullets = [ sqlHydraBullet ]
             }
 
@@ -643,7 +643,7 @@ let ``applyPromotion appends dependency bullets when the authored section is the
             (v "0.2.0")
             sampleDate
             {
-                Source = Authored
+                Source = Authored [ "- chore: note" ]
                 DependencyBullets = [ sqlHydraBullet ]
             }
 

@@ -52,11 +52,13 @@ let private looksBreakingRegex =
 
 /// What one changelog entry says about the bump.
 type Marker =
+    /// A recognised marker, declaring this level.
     | Declares of DeclaredLevel
     /// Opens with upper-case `BREAKING` but is not a recognised form, such as
     /// `BREAKING (API):`, `BREAKING:` or `BREAKING CHANGES:`. It declares nothing;
     /// it is reported so the author can write the marker they meant.
     | UnrecognisedBreaking
+    /// Neither a marker nor an upper-case `BREAKING`: an ordinary entry.
     | NoMarker
 
 /// What one changelog line declares. Only a marker at the START of the entry
@@ -93,15 +95,14 @@ let strongest (declarations: Declaration list) : Declaration option =
 let private markedEntries (lines: string list) : (string * Marker) list =
     lines
     |> List.fold
-        (fun (inFence, found) line ->
-            let t = (line: string).TrimStart()
-
-            if t.StartsWith("```") || t.StartsWith("~~~") then
+        (fun (inFence, found) (line: string) ->
+            if Changelog.isFenceDelimiter line then
                 (not inFence, found)
             elif inFence then
                 (inFence, found)
             else
-                (inFence, (line.Trim(), marker line) :: found))
+                let entry = line.Trim()
+                (inFence, (entry, marker entry) :: found))
         (false, [])
     |> snd
     |> List.rev
@@ -127,8 +128,11 @@ let declare (source: string) (lines: string list) : Declaration option =
 /// declared nothing before a consumer does.
 let unrecognisedWarnings (source: string) (lines: string list) : string list =
     markedEntries lines
-    |> List.filter (fun (_, m) -> m = UnrecognisedBreaking)
-    |> List.map fst
+    |> List.choose (fun (entry, m) ->
+        match m with
+        | UnrecognisedBreaking -> Some entry
+        | Declares _
+        | NoMarker -> None)
     |> List.distinct
     |> List.map (
         sprintf
