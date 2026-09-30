@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: **the scan for code-sourced docs skips every dot-directory and every nested checkout.** It already skipped `.git`, `.jj`, `.workspaces` and `.fsdocs` by name. It now skips any dot-directory (`.fshw`, `.devenv`, …) and any directory with its own `.jj` or `.git` entry, such as a jj workspace or git worktree outside `.workspaces/`. This is the same rule FsSemanticTagger and FsProjLint apply.
+
 ## 0.13.0-alpha.7 - 2026-09-29
 
 - fix: documents with CRLF line endings are now synced. Previously a section in a CRLF docs page was never replaced, so `sync` changed nothing and `check` reported the stale page as in sync; a CRLF README's code-sourced blocks likewise read as out of sync forever. Synced content now takes the target file's line endings (the majority ending in a mixed file), so a CRLF file stays CRLF and an LF file stays LF

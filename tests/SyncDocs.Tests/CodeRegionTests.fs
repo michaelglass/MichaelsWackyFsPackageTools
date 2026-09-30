@@ -397,6 +397,20 @@ let ``discoverStandaloneCodeDocs - finds a markdown doc carrying a src= block`` 
         test <@ docs |> List.exists (fun p -> p.EndsWith "writing-plugins.md") @>)
 
 [<Fact>]
+let ``discoverStandaloneCodeDocs - skips build output, dot-directories and nested checkouts`` () =
+    withTempDir (fun tmpDir ->
+        let real =
+            layOutNestedCheckouts tmpDir (fun at ->
+                File.WriteAllText(
+                    Path.Combine(at, "guide.md"),
+                    "<!-- sync:ex:start src=code/Snippets.fs -->\nbody\n<!-- sync:ex:end -->\n"
+                ))
+
+        let docs = discoverStandaloneCodeDocs tmpDir []
+
+        test <@ docs = [ Path.Combine(real, "guide.md") ] @>)
+
+[<Fact>]
 let ``discoverStandaloneCodeDocs - ignores markdown without a src= block`` () =
     withTempDir (fun tmpDir ->
         writeFile tmpDir "docs/plain.md" "<!-- sync:intro:start -->\njust text\n<!-- sync:intro:end -->\n"

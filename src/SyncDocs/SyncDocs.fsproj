@@ -30,6 +30,7 @@
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.401" PrivateAssets="All" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../Shared/SourceTree.fs" Link="SourceTree.fs" />
     <Compile Include="Sync.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

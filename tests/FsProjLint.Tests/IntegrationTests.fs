@@ -54,6 +54,14 @@ let ``discoverProjects returns sorted list`` () =
 
         test <@ names = [ "Alpha.fsproj"; "Zebra.fsproj" ] @>)
 
+[<Fact>]
+let ``discoverProjects skips build output, dot-directories and nested checkouts`` () =
+    withTempDir (fun dir ->
+        let real =
+            layOutNestedCheckouts dir (fun at -> File.WriteAllText(Path.Combine(at, "Real.fsproj"), "<Project />"))
+
+        test <@ discoverProjects dir = [ Path.Combine(real, "Real.fsproj") ] @>)
+
 // -- runLint integration --
 
 [<Fact>]

@@ -29,6 +29,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../Shared/GitDir.fs" Link="GitDir.fs" />
+    <Compile Include="../Shared/SourceTree.fs" Link="SourceTree.fs" />
     <Compile Include="Checks.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

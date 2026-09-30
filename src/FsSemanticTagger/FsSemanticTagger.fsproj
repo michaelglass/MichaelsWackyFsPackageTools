@@ -38,6 +38,7 @@
   <ItemGroup>
     <Compile Include="../Shared/GitDir.fs" Link="GitDir.fs" />
     <Compile Include="../Shared/GitStoreEnvironment.fs" Link="GitStoreEnvironment.fs" />
+    <Compile Include="../Shared/SourceTree.fs" Link="SourceTree.fs" />
     <Compile Include="JobObject.fs" />
     <Compile Include="Shell.fs" />
     <Compile Include="Version.fs" />
