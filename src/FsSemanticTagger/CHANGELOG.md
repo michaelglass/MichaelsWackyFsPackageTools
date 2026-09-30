@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.22 - 2026-09-30
+
 - fix: **finding the packages to release reads `IsPackable`, `OutputType` and `PackAsTool` from the nearest `Directory.Build.props` too,** not just the fsproj, and parses the fsproj as XML rather than matching text. A test project marked `<IsPackable>false</IsPackable>` by a `tests/Directory.Build.props` is no longer a release candidate, and a `<PackageId>` inside an XML comment no longer counts. A project that does not parse is not a candidate. FsProjLint decides which projects are packable with the same code.
 ## 0.14.0-alpha.21 - 2026-09-30
 
