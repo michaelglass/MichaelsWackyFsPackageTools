@@ -26,6 +26,14 @@ So in `auto` mode the release also reads the entries it is about to publish: the
 | `feat:` | a feature | at least Minor (or patch if < 1.0) |
 | `fix:`, `chore:`, other recognised types | a patch-level change | no floor |
 
+An entry that opens with upper-case `BREAKING` in any other form (`BREAKING:`, `BREAKING (API):`, `BREAKING CHANGES:`) declares nothing. `release` and `release --check` print a warning for it naming the changelog, the entry and the accepted forms:
+
+```
+MyLib: warning: CHANGELOG.md: the entry `- BREAKING: drop v1` starts with BREAKING but is not a breaking-change marker, so it declares nothing and the bump comes from the API diff alone. To declare a breaking change, start the entry with `feat!:` (any `<type>!:`) or `BREAKING CHANGE:`.
+```
+
+Lower-case prose such as "Breaking change: …" is not warned about.
+
 The bump is the stronger of the declared and the computed change. When the two disagree the release prints a line saying so, in either direction: when the changelog raised the bump, and when the API diff found more than the changelog declares. A changelog with no markers leaves the bump exactly as the API diff computes it. With several changelogs behind one tag (`fsProjsSharingSameTag`), the strongest declaration across them counts. Markers inside fenced code blocks are ignored.
 
 Support for declarations arrived in 0.14.0-alpha.12. A release verb (`release`, `alpha`, `beta`, `rc`, `stable`) run by an older tagger, or by one whose own version cannot be read, is refused before anything is read or built, with a message naming that minimum and where to pin it (`.config/dotnet-tools.json`).
@@ -81,7 +89,7 @@ Exit codes:
 - **1** -- Non-breaking additions only
 - **2** -- Breaking changes detected
 
-When both DLLs are [CommandTree](https://github.com/michaelglass/CommandTree) CLIs, their command grammars are diffed too, and the stronger bump wins: commands, positional arguments, flags, global flags, and the environment variable each flag reads. A flag's environment variable is its `[<CmdEnvRaw>]` name, or `<prefix>_<suffix>`. The prefix is the string passed to `CommandReflection.fromUnionWithEnv` / `fromUnionWithGlobalsAndEnv` (or their `try…` variants), and the suffix comes from `[<CmdEnv>]` or the case name. A new environment variable is an addition; a removed or renamed one is breaking. The prefix is read from the call site only when it is a string literal there. Otherwise only the suffix is compared, and `check-api` and `release` print a line saying so:
+When both DLLs are [CommandTree](https://github.com/michaelglass/CommandTree) CLIs, their command grammars are diffed too, and the stronger bump wins: commands, positional arguments, flags, global flags, and the environment variable each flag reads. A flag's environment variable is its `[<CmdEnvRaw>]` name, or `<prefix>_<suffix>`, with the suffix from `[<CmdEnv>]` or the case name. A new environment variable is an addition; a removed or renamed one is breaking. The prefix, like the global flags, is read first from the root command union: `[<CmdEnvPrefix("MYAPP")>]` and `[<CmdGlobals(typeof<G>)>]` (CommandTree 0.13 and later). Without a declaration, as on an older CommandTree, the prefix is the string passed to `CommandReflection.fromUnionWithEnv` / `fromUnionWithGlobalsAndEnv` (or their `try…` variants) when it is the same string literal at every call site, and the global flags are the union passed to a `*WithGlobals` entry point. When the prefix is neither declared nor a literal, only the suffix is compared, and `check-api` and `release` print a line saying so:
 
 ```
 note: the CLI's env-var prefix is not a string literal where it is passed to CommandTree, so the env vars of --verbose are compared by suffix only; a change to the prefix is not detected

@@ -7,7 +7,7 @@ open FsSemanticTagger.Api
 open FsSemanticTagger.DeclaredBump
 open FsSemanticTagger.Release
 
-// markerLevel: which changelog lines declare what
+// marker: which changelog lines declare what
 
 [<Theory>]
 [<InlineData("- feat!: drop the v1 schema")>]
@@ -20,21 +20,21 @@ open FsSemanticTagger.Release
 [<InlineData("BREAKING CHANGE: SchemaVersion is now 10")>]
 [<InlineData("- BREAKING-CHANGE: hyphenated footer form")>]
 let ``a breaking marker declares a breaking change`` (line: string) =
-    test <@ markerLevel line = Some DeclaresBreaking @>
+    test <@ marker line = Declares DeclaresBreaking @>
 
 [<Theory>]
 [<InlineData("- feat: add a flag")>]
 [<InlineData("- feat(cli): scoped")>]
 [<InlineData("+ FEAT: upper-case type")>]
 let ``a feat marker declares a feature`` (line: string) =
-    test <@ markerLevel line = Some DeclaresFeature @>
+    test <@ marker line = Declares DeclaresFeature @>
 
 [<Theory>]
 [<InlineData("- fix: handle a null")>]
 [<InlineData("- chore: tidy")>]
 [<InlineData("- build(deps): bump X from 1 to 2")>]
 let ``a non-breaking non-feat marker declares a patch`` (line: string) =
-    test <@ markerLevel line = Some DeclaresPatch @>
+    test <@ marker line = Declares DeclaresPatch @>
 
 [<Theory>]
 [<InlineData("- test entry")>]
@@ -44,7 +44,41 @@ let ``a non-breaking non-feat marker declares a patch`` (line: string) =
 [<InlineData("- Breaking change: prose, not the footer token")>]
 [<InlineData("  - **Breaking (API):** a sub-bullet heading")>]
 [<InlineData("> ### A callout")>]
-let ``a line without a conventional marker declares nothing`` (line: string) = test <@ markerLevel line = None @>
+[<InlineData("- breaking the old parser, which nobody used")>]
+[<InlineData("- BREAKINGLY fast: not the word BREAKING")>]
+let ``a line without a conventional marker declares nothing`` (line: string) = test <@ marker line = NoMarker @>
+
+[<Theory>]
+[<InlineData("- **BREAKING (API): Audit.ownIds → Audit.observe**")>]
+[<InlineData("- BREAKING: dropped the v1 schema")>]
+[<InlineData("- BREAKING CHANGES: plural")>]
+[<InlineData("* __BREAKING__ bold heading")>]
+let ``an upper-case BREAKING that is no marker is unrecognised, not a declaration`` (line: string) =
+    test <@ marker line = UnrecognisedBreaking @>
+
+// unrecognisedWarnings: once per distinct entry, naming the file and the accepted forms
+
+[<Fact>]
+let ``unrecognisedWarnings names the file, the entry and the accepted forms, once per entry`` () =
+    let entry = "- BREAKING (API): renamed X"
+
+    let warnings =
+        unrecognisedWarnings "CHANGELOG.md" [ entry; "- feat!: b"; entry; "- Breaking change: prose" ]
+
+    test <@ warnings.Length = 1 @>
+    test <@ warnings[0].StartsWith "warning: CHANGELOG.md: the entry `- BREAKING (API): renamed X`" @>
+    test <@ warnings[0].Contains "`feat!:` (any `<type>!:`) or `BREAKING CHANGE:`" @>
+
+[<Fact>]
+let ``unrecognisedWarnings skips fenced code and recognised markers`` () =
+    let lines =
+        [ "```"; "BREAKING: an example"; "```"; "BREAKING CHANGE: real"; "- fix!: x" ]
+
+    test <@ (unrecognisedWarnings "c" lines).IsEmpty @>
+
+[<Fact>]
+let ``an unrecognised BREAKING entry declares nothing`` () =
+    test <@ declare "c" [ "- BREAKING: x" ] = None @>
 
 // declare: one changelog's strongest declaration
 

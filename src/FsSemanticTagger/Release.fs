@@ -1214,13 +1214,22 @@ let private decideBump
             // changelog(s) behind this tag declare (`DeclaredBump`): the API diff cannot
             // see a changed `[<Literal>]`, but an author who wrote `feat!:` has said it
             // breaks. Every disagreement is printed; no markers leaves `change` as is.
+            // An entry that reads as breaking but is no marker is warned about.
             let ownChangeBump (reason: string) (change: ApiChange) =
-                let declared =
+                let entries =
                     changelogPathsFor input.Config pkg
-                    |> List.choose (fun (_, path) ->
+                    |> List.map (fun (_, path) ->
+                        path,
                         Changelog.promotedEntryLines path (fun () ->
-                            descriptionsSinceTag input.Run tag (packageChangeDirs input.Config pkg))
-                        |> DeclaredBump.declare path)
+                            descriptionsSinceTag input.Run tag (packageChangeDirs input.Config pkg)))
+
+                for path, lines in entries do
+                    DeclaredBump.unrecognisedWarnings path lines
+                    |> List.iter (printfn "%s: %s" pkg.Name)
+
+                let declared =
+                    entries
+                    |> List.choose (fun (path, lines) -> DeclaredBump.declare path lines)
                     |> DeclaredBump.strongest
 
                 let floored, report = DeclaredBump.floor change declared
@@ -1732,6 +1741,14 @@ let private runChangelogCheck (input: ReleaseInput) (selectedPackages: PackageCo
 
         for bullet in plan.DependencyBullets do
             printfn "      %s" bullet
+
+        let entries =
+            match plan.Source with
+            | Changelog.Authored -> Changelog.promotedEntryLines path (fun () -> [])
+            | Changelog.Derived bullets -> bullets
+
+        DeclaredBump.unrecognisedWarnings path entries
+        |> List.iter (printfn "%s: %s" pkgName)
 
     // The callout-order rule is checked for EVERY selected package (and the repo
     // root changelog), not only the changed ones: a merge buries a callout by

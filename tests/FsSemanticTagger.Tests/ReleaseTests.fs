@@ -1376,7 +1376,13 @@ let ``release - Auto notes a previous CLI grammar it cannot model and lets the A
 
 /// Auto/PushTags with an identical API, so any bump above patch comes from the
 /// changelog. Returns the captured output and the exit code.
-let private releaseWithUnchangedApi (run: string -> string -> CommandResult) (config: ToolConfig) (only: string list) =
+let private releaseWithUnchangedApiAs
+    (mode: ReleaseMode)
+    (check: bool)
+    (run: string -> string -> CommandResult)
+    (config: ToolConfig)
+    (only: string list)
+    =
     let api = [ ApiSignature.TypeDecl "Foo" ]
 
     withCapturedConsole (fun () ->
@@ -1385,7 +1391,7 @@ let private releaseWithUnchangedApi (run: string -> string -> CommandResult) (co
                 Run = run
                 Config = config
                 Command = Auto
-                Mode = PushTags
+                Mode = mode
                 TargetPackages = only
                 ExtractPrevious = previousWith (fun _ _ -> Found api) (fun _ _ -> noPreviousGrammar)
                 ExtractCachedPrevious = noCachedPrevious
@@ -1399,9 +1405,11 @@ let private releaseWithUnchangedApi (run: string -> string -> CommandResult) (co
                 NuGetPollIntervalMs = 0
                 NuGetMaxAttempts = 1
                 Push = false
-                Check = false
+                Check = check
                 Canary = noCanary
             })
+
+let private releaseWithUnchangedApi = releaseWithUnchangedApiAs PushTags false
 
 /// A single-package repo in `dir` at `version`, with `changelog` as its root CHANGELOG.md.
 let private singlePackageRepo (dir: string) (version: string) (changelog: string) =
@@ -1456,6 +1464,55 @@ let ``release - Auto floors the bump at major when the changelog declares a brea
         test <@ output.Contains "MyLib: " @>
         test <@ output.Contains "declares a breaking change" @>
         test <@ output.Contains "- feat!: SchemaVersion 9 -> 10" @>)
+
+/// The entry TestPrune shipped: it reads as breaking but is no marker.
+let private unrecognisedBreakingChangelog =
+    "# Changelog\n\n## Unreleased\n\n- **BREAKING (API): Audit.ownIds → Audit.observe**\n"
+
+[<Fact>]
+let ``release --dry-run - warns about an entry that looks breaking but is no marker`` () =
+    withTempDir (fun dir ->
+        let fsproj, run, config =
+            singlePackageRepo dir "7.0.0" unrecognisedBreakingChangelog
+
+        let output, result = releaseWithUnchangedApiAs DryRun false run config []
+
+        test <@ result = 0 @>
+        test <@ (File.ReadAllText fsproj).Contains("<Version>7.0.0</Version>") @>
+        test <@ output.Contains "7.0.1" @>
+        test <@ output.Split("warning:").Length = 2 @>
+
+        test
+            <@
+                output.Contains(
+                    sprintf
+                        "MyLib: warning: %s: the entry `- **BREAKING (API): Audit.ownIds → Audit.observe**` starts with BREAKING but is not a breaking-change marker"
+                        (Path.Combine(dir, "CHANGELOG.md"))
+                )
+            @>)
+
+[<Fact>]
+let ``release --check - warns about an entry that looks breaking but is no marker`` () =
+    withTempDir (fun dir ->
+        let _, run, config = singlePackageRepo dir "7.0.0" unrecognisedBreakingChangelog
+
+        let output, result = releaseWithUnchangedApiAs DryRun true run config []
+
+        test <@ result = 0 @>
+        test <@ output.Contains "Release will promote:" @>
+        test <@ output.Contains "MyLib: warning: " @>
+        test <@ output.Contains "`feat!:` (any `<type>!:`) or `BREAKING CHANGE:`" @>)
+
+[<Fact>]
+let ``release --check - a recognised breaking marker draws no warning`` () =
+    withTempDir (fun dir ->
+        let _, run, config =
+            singlePackageRepo dir "7.0.0" "# Changelog\n\n## Unreleased\n\n- BREAKING CHANGE: a\n- feat!: b\n"
+
+        let output, result = releaseWithUnchangedApiAs DryRun true run config []
+
+        test <@ result = 0 @>
+        test <@ not (output.Contains "warning:") @>)
 
 [<Fact>]
 let ``release - Auto keeps a declared fix with an unchanged API at a patch, and reports no disagreement`` () =
