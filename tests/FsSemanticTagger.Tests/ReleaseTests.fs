@@ -1374,7 +1374,32 @@ let ``release - Auto notes a previous CLI grammar it cannot model and lets the A
 
     test <@ fsproj.Contains "<Version>1.0.1</Version>" @>
 
-/// Auto/PushTags with an identical API, so any bump above patch comes from the
+/// A `ReleaseInput` for `run` and `config` with no DLLs to extract, no waiting,
+/// and every package already on the feed.
+let private releaseInput run config cmd mode check : ReleaseInput =
+    {
+        Run = run
+        Config = config
+        Command = cmd
+        Mode = mode
+        TargetPackages = []
+        ExtractPrevious = noPrevious
+        ExtractCachedPrevious = noCachedPrevious
+        ExtractCurrent = noCurrent
+        CiPollIntervalMs = 0
+        CiWait = CiWaitTests.fixedCiWait 0 10
+        TagPush = immediateTagPush
+        CheckFeedPresence = (fun _ _ -> OnFeed)
+        CheckRestorable = (fun _ _ _ -> OnFeed)
+        WaitForNuGet = false
+        NuGetPollIntervalMs = 0
+        NuGetMaxAttempts = 1
+        Push = false
+        Check = check
+        Canary = noCanary
+    }
+
+/// Auto with an identical API, so any bump above patch comes from the
 /// changelog. Returns the captured output and the exit code.
 let private releaseWithUnchangedApiAs
     (mode: ReleaseMode)
@@ -1387,26 +1412,10 @@ let private releaseWithUnchangedApiAs
 
     withCapturedConsole (fun () ->
         release
-            {
-                Run = run
-                Config = config
-                Command = Auto
-                Mode = mode
+            { releaseInput run config Auto mode check with
                 TargetPackages = only
                 ExtractPrevious = previousWith (fun _ _ -> Found api) (fun _ _ -> noPreviousGrammar)
-                ExtractCachedPrevious = noCachedPrevious
                 ExtractCurrent = currentWith (fun _ -> api) (fun _ -> None)
-                CiPollIntervalMs = 0
-                CiWait = CiWaitTests.fixedCiWait 0 10
-                TagPush = immediateTagPush
-                CheckFeedPresence = (fun _ _ -> OnFeed)
-                CheckRestorable = (fun _ _ _ -> OnFeed)
-                WaitForNuGet = false
-                NuGetPollIntervalMs = 0
-                NuGetMaxAttempts = 1
-                Push = false
-                Check = check
-                Canary = noCanary
             })
 
 let private releaseWithUnchangedApi = releaseWithUnchangedApiAs PushTags false
@@ -1465,7 +1474,7 @@ let ``release - Auto floors the bump at major when the changelog declares a brea
         test <@ output.Contains "declares a breaking change" @>
         test <@ output.Contains "- feat!: SchemaVersion 9 -> 10" @>)
 
-/// The entry TestPrune shipped: it reads as breaking but is no marker.
+/// An entry that reads as breaking but is no marker.
 let private unrecognisedBreakingChangelog =
     "# Changelog\n\n## Unreleased\n\n- **BREAKING (API): Audit.ownIds → Audit.observe**\n"
 
@@ -5511,29 +5520,6 @@ let private rs = string (char 0x1e)
 /// The jj args descriptionsSinceTag issues for v1.0.0 over one dir.
 let private descArgsFor (ownDir: string) =
     sprintf "log -r \"v1.0.0..@\" --no-graph -T \"description ++ \\\"\\x1e\\\"\" \"%s\"" ownDir
-
-let private releaseInput run config cmd mode check : ReleaseInput =
-    {
-        Run = run
-        Config = config
-        Command = cmd
-        Mode = mode
-        TargetPackages = []
-        ExtractPrevious = noPrevious
-        ExtractCachedPrevious = noCachedPrevious
-        ExtractCurrent = noCurrent
-        CiPollIntervalMs = 0
-        CiWait = CiWaitTests.fixedCiWait 0 10
-        TagPush = immediateTagPush
-        CheckFeedPresence = (fun _ _ -> OnFeed)
-        CheckRestorable = (fun _ _ _ -> OnFeed)
-        WaitForNuGet = false
-        NuGetPollIntervalMs = 0
-        NuGetMaxAttempts = 1
-        Push = false
-        Check = check
-        Canary = noCanary
-    }
 
 /// A single-package repo at 1.0.0 with the given CHANGELOG body.
 /// Returns (fsproj, ownDir, changelogPath, config).

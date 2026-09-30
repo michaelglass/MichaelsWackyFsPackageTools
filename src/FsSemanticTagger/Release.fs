@@ -1109,6 +1109,13 @@ let private neverPushed (remote: Result<Set<string>, string>) (tag: string) : bo
     | Ok tags -> not (tags.Contains tag)
     | Error _ -> false
 
+/// Print `pkgName`'s warnings for entries of the changelog at `path` that read as
+/// breaking but are no marker. Shared by the release and `release --check`, so both
+/// warn about the same entries in the same words.
+let private warnUnrecognisedBreaking (pkgName: string) (path: string) (entries: string list) =
+    DeclaredBump.unrecognisedWarnings path entries
+    |> List.iter (printfn "%s: %s" pkgName)
+
 let private decideBump
     (input: ReleaseInput)
     (remote: Result<Set<string>, string>)
@@ -1224,8 +1231,7 @@ let private decideBump
                             descriptionsSinceTag input.Run tag (packageChangeDirs input.Config pkg)))
 
                 for path, lines in entries do
-                    DeclaredBump.unrecognisedWarnings path lines
-                    |> List.iter (printfn "%s: %s" pkg.Name)
+                    warnUnrecognisedBreaking pkg.Name path lines
 
                 let declared =
                     entries
@@ -1727,28 +1733,27 @@ let private runChangelogCheck (input: ReleaseInput) (selectedPackages: PackageCo
         printfn "Release will promote:"
 
     for (pkgName, path, plan) in promotions do
-        match plan.Source with
-        | Changelog.Authored ->
-            printfn "  %s (%s): the authored '## Unreleased' section, promoted as written" pkgName path
+        let entries =
+            match plan.Source with
+            | Changelog.Authored entries ->
+                printfn "  %s (%s): the authored '## Unreleased' section, promoted as written" pkgName path
 
-            if not plan.DependencyBullets.IsEmpty then
-                printfn "    plus the consumer-visible dependency changes it does not name:"
-        | Changelog.Derived bullets ->
-            printfn "  %s (%s): '## Unreleased' is empty, so release writes these derived entries:" pkgName path
+                if not plan.DependencyBullets.IsEmpty then
+                    printfn "    plus the consumer-visible dependency changes it does not name:"
 
-            for bullet in bullets do
-                printfn "      %s" bullet
+                entries
+            | Changelog.Derived bullets ->
+                printfn "  %s (%s): '## Unreleased' is empty, so release writes these derived entries:" pkgName path
+
+                for bullet in bullets do
+                    printfn "      %s" bullet
+
+                bullets
 
         for bullet in plan.DependencyBullets do
             printfn "      %s" bullet
 
-        let entries =
-            match plan.Source with
-            | Changelog.Authored -> Changelog.promotedEntryLines path (fun () -> [])
-            | Changelog.Derived bullets -> bullets
-
-        DeclaredBump.unrecognisedWarnings path entries
-        |> List.iter (printfn "%s: %s" pkgName)
+        warnUnrecognisedBreaking pkgName path entries
 
     // The callout-order rule is checked for EVERY selected package (and the repo
     // root changelog), not only the changed ones: a merge buries a callout by

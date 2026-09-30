@@ -98,7 +98,7 @@ let internal calloutTitle (line: string) : string option =
 
 /// A fenced-code delimiter. Everything between two of them is sample text, so a
 /// `>` in there is markdown being *shown*, not a blockquote in the document.
-let private isFenceDelimiter (line: string) : bool =
+let internal isFenceDelimiter (line: string) : bool =
     let t = line.TrimStart()
     t.StartsWith("```") || t.StartsWith("~~~")
 
@@ -501,7 +501,8 @@ let promotedEntryLines (changelogPath: string) (descriptions: unit -> string lis
 type UnreleasedSource =
     /// The hand-authored `## Unreleased` section, promoted as written. Commit
     /// summaries are NOT merged into it: an author who wrote the section owns it.
-    | Authored
+    /// `entries` are its non-blank lines, as `promotedEntryLines` reads them.
+    | Authored of entries: string list
     /// The section is missing or empty, so it is filled from commit summaries
     /// (`deriveUnreleasedBullets`, possibly none when only dependencies changed).
     | Derived of bullets: string list
@@ -537,13 +538,13 @@ let planPromotion
 
     match validateUnreleased changelogPath with
     | Ok() ->
-        let body =
-            String.Join("\n", unreleasedEntries (File.ReadAllLines changelogPath) |> Seq.map snd)
+        let entries =
+            unreleasedEntries (File.ReadAllLines changelogPath) |> Seq.map snd |> Seq.toList
 
         Ok
             {
-                Source = Authored
-                DependencyBullets = unmentioned body
+                Source = Authored entries
+                DependencyBullets = unmentioned (String.concat "\n" entries)
             }
     | Error err ->
         let bullets = deriveUnreleasedBullets descriptions
@@ -564,7 +565,7 @@ let planPromotion
 let applyPromotion (changelogPath: string) (version: Version) (today: DateTime) (plan: PromotionPlan) : unit =
     match plan.Source with
     | Derived bullets -> promoteOrInsertLines changelogPath version today (bullets @ plan.DependencyBullets)
-    | Authored ->
+    | Authored _ ->
         if not (List.isEmpty plan.DependencyBullets) then
             let lines = File.ReadAllLines changelogPath
 
