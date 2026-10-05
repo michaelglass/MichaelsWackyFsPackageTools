@@ -29,41 +29,52 @@ let withTempDir (action: string -> 'a) =
     finally
         cleanupDir dir
 
-/// Forwards writes to the capture active in the current async flow, else to `fallback`.
+/// Forwards writes to the capture active in the current async flow, else to `stdout`.
 /// `AsyncLocal` flows into tasks, async continuations and started threads, so output from
 /// work the action spawns lands in its capture while concurrent tests keep their own.
-type private ConsoleRouter(fallback: TextWriter) =
+type private ConsoleRouter(stdout: TextWriter) =
     inherit TextWriter()
 
     static member val Capture = AsyncLocal<TextWriter>()
 
     member private _.Target =
         match ConsoleRouter.Capture.Value with
-        | null -> fallback
+        | null -> stdout
         | capture -> capture
 
-    override _.Encoding = fallback.Encoding
+    override _.Encoding = stdout.Encoding
     override this.Write(value: char) = this.Target.Write(value)
     override this.Write(value: string) = this.Target.Write(value)
     override this.Write(buffer: char[], index: int, count: int) = this.Target.Write(buffer, index, count)
     override this.WriteLine(value: string) = this.Target.WriteLine(value)
     override this.Flush() = this.Target.Flush()
 
-let private routerLock = obj ()
-let mutable private installedRouter: TextWriter = null
+// One handle per process: on Unix each OpenStandardOutput call duplicates the descriptor.
+let private standardOutput = lazy (Console.OpenStandardOutput())
 
-// Console.SetOut wraps the router in a synchronized writer, so every capture buffer is
-// written under one lock. Reinstalls if something else has replaced Console.Out since.
-let private ensureRouter () =
-    lock routerLock (fun () ->
-        if not (obj.ReferenceEquals(Console.Out, installedRouter)) then
-            Console.SetOut(new ConsoleRouter(Console.Out))
-            installedRouter <- Console.Out)
+/// Makes Console.Out a router that sends each write to the calling flow's capture, else to stdout.
+///
+/// Console.SetOut wraps the router in a synchronized writer, so a write first locks the
+/// Console.Out it started on. On Unix the standard output stream then locks the current
+/// Console.Out for each write. The router writes uncaptured output to its own unsynchronized
+/// writer over that stream (the encoding and buffering Console gives its own stdout writer), so
+/// every lock a write takes after its first is the current Console.Out, never an older one. Two
+/// writes therefore cannot each hold a lock the other is waiting for, even while Console.Out is
+/// being replaced.
+let installConsoleRouter () =
+    let stdout =
+        new StreamWriter(standardOutput.Value, Console.Out.Encoding, 256, leaveOpen = true, AutoFlush = true)
+
+    Console.SetOut(new ConsoleRouter(stdout))
+
+// Installed by the first capture. Other tests may be writing at that moment, which is safe: see
+// `installConsoleRouter`.
+let private router = lazy (installConsoleRouter ())
 
 /// Captures what `action` writes to Console.Out, isolated from concurrently running tests.
 /// Captured output uses `\n` line endings on every platform (`printfn` writes `\r\n` on Windows).
 let withCapturedConsole (action: unit -> 'a) : string * 'a =
-    ensureRouter ()
+    router.Force()
     let output = System.Text.StringBuilder()
     use writer = new StringWriter(output)
     let outer = ConsoleRouter.Capture.Value
