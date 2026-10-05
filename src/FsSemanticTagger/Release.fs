@@ -528,7 +528,7 @@ let private pushTagsInWaves (input: ReleaseInput) (waves: (PackageConfig * Versi
                 if gatesLater || input.WaitForNuGet then
                     let tools =
                         wave
-                        |> List.filter (fun (pkg, _) -> isPackAsTool (System.IO.File.ReadAllText pkg.Fsproj))
+                        |> List.filter (fun (pkg, _) -> isPackAsTool input.Config.RootDir pkg.Fsproj)
                         |> List.map (fun (pkg, _) -> pkg.Name)
                         |> Set.ofList
 
@@ -1306,7 +1306,7 @@ let private decideBump
                 | Auto -> depBumpAuto currentVersion tag
                 | _ -> explicitBump (sprintf "bundled dependency changed since %s (rebundle)" tag) DependencyChange
             | true, _ ->
-                match input.Command, isPackAsTool (System.IO.File.ReadAllText pkg.Fsproj) with
+                match input.Command, isPackAsTool input.Config.RootDir pkg.Fsproj with
                 | Auto, true ->
                     // A PackAsTool package has no library API surface to diff: a
                     // PackageReference to a tool package fails NU1212, which would land

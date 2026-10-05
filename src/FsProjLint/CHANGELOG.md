@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- feat!: **a `Directory.Build.props` that does not parse fails once, naming that file, and the projects under it are skipped.** It used to fail every project under it with the same "XML parse" message. Now it is one `FAIL XML parse (<path to Directory.Build.props>)`, and each project under it gets one `SKIP Project checks` whose reason names the broken file: without the props file, neither the project's properties nor whether it is packable can be known. The exit code is still 1. A project that does not parse itself still fails "XML parse" on its own.
+  - `LintResult` gains `PropsChecks`, each broken `Directory.Build.props` with its failure.
+
 ## 0.10.0-alpha.21 - 2026-09-30
 
 - feat: **packable projects outside `src/` are checked.** A packable `.fsproj` at the repository root (FSharpLintAnalyzerShim's layout), under `tools/` or anywhere else now gets the project-level checks, and counts towards the repo-level checks that apply only to packable repos (`docs/index.md exists`, RefStamp). Projects under `src/` are all checked, as before. **A repo with a packable project outside `src/` can see new checks run, and newly fail.** Packable is the rule FsSemanticTagger uses to find the packages to release: a `PackageId`, `IsPackable` not `false`, and not an `Exe` without `PackAsTool`, so test, benchmark and example projects are left out.

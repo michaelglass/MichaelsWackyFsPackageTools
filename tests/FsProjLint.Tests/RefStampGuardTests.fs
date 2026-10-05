@@ -130,7 +130,7 @@ let ``passes when each project's nearest Directory Build props references RefSta
 
         match Shared.MsBuildProject.load dir (System.IO.Path.Combine(dir, "src", "Lib", "Lib.fsproj")) with
         | Ok project -> test <@ isPassed (checkRefStampGuard dir [ project ]) @>
-        | Error e -> failwith e)
+        | Error e -> failwithf "%A" e)
 
 // --- runLint wiring -----------------------------------------------------------
 

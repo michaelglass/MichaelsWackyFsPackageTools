@@ -3,7 +3,6 @@ module FsSemanticTagger.Config
 open System.IO
 open System.Text.Json
 open System.Text.RegularExpressions
-open System.Xml.Linq
 
 type PackageConfig =
     {
@@ -49,40 +48,53 @@ type ToolConfig =
 let defaultPublishWorkflows: PublishWorkflow list =
     [ PublishWorkflow ".github/workflows/release.yml" ]
 
-let private assemblyNameRegex =
-    Regex(@"<AssemblyName>([^<]+)</AssemblyName>", RegexOptions.Compiled)
-
 let private projectReferenceIncludeRegex =
     Regex(
         """<ProjectReference\b[^>]*?\bInclude\s*=\s*["']([^"']+)["']""",
         RegexOptions.Compiled ||| RegexOptions.IgnoreCase
     )
 
-let private packAsToolRegex =
-    Regex(@"<PackAsTool>\s*true\s*</PackAsTool>", RegexOptions.Compiled ||| RegexOptions.IgnoreCase)
+/// The project at `fsprojPath` (relative to `rootDir`, or absolute) with the
+/// nearest Directory.Build.props up to `rootDir`, or up to the project's own
+/// directory when `rootDir` is empty. None when the project or that props file
+/// does not parse.
+let private loadProject (rootDir: string) (fsprojPath: string) : Shared.MsBuildProject.Project option =
+    let fsproj = Path.GetFullPath(Path.Combine(rootDir, fsprojPath))
 
-/// True when the fsproj content marks the project `<PackAsTool>true</PackAsTool>`.
+    let root =
+        if System.String.IsNullOrEmpty rootDir then
+            Path.GetDirectoryName fsproj
+        else
+            rootDir
+
+    Shared.MsBuildProject.load root fsproj |> Result.toOption
+
+/// True when the project at `fsprojPath` (relative to `rootDir`, or absolute) is
+/// `<PackAsTool>true</PackAsTool>`, read from the fsproj, else the nearest
+/// Directory.Build.props. False when either does not parse.
 /// A pack-as-tool project physically bundles its entire transitive
 /// `<ProjectReference>` closure into the published artifact, so a change to any
 /// referenced project genuinely changes what ships.
-let isPackAsTool (content: string) : bool = packAsToolRegex.IsMatch(content)
+let isPackAsTool (rootDir: string) (fsprojPath: string) : bool =
+    loadProject rootDir fsprojPath
+    |> Option.exists Shared.MsBuildProject.isPackAsTool
 
-/// Derive the DLL output path from an fsproj path and its content.
-let deriveDllPathFromContent (fsprojPath: string) (content: string) : string =
-    let dir = Path.GetDirectoryName(fsprojPath)
-    let assemblyNameMatch = assemblyNameRegex.Match(content)
+/// The Release DLL path of the project at `fsprojPath`, relative to `rootDir`:
+/// `bin/Release/net10.0/<AssemblyName>.dll` beside the fsproj. `AssemblyName` is
+/// read from the fsproj, else the nearest Directory.Build.props; it defaults to
+/// the fsproj's file name, as in MSBuild, and also when either file does not parse.
+let deriveDllPath (rootDir: string) (fsprojPath: string) : string =
+    let fsproj = Path.Combine(rootDir, fsprojPath)
 
     let name =
-        if assemblyNameMatch.Success then
-            assemblyNameMatch.Groups[1].Value
-        else
-            Path.GetFileNameWithoutExtension(fsprojPath)
+        loadProject rootDir fsprojPath
+        |> Option.bind (fun project -> Shared.MsBuildProject.propertyValue project "AssemblyName")
+        |> Option.defaultValue (Path.GetFileNameWithoutExtension fsproj)
 
-    Path.Combine(dir, "bin", "Release", "net10.0", name + ".dll")
-
-/// Derive the DLL path from an fsproj file path (reads the file).
-let deriveDllPath (fsprojPath: string) : string =
-    deriveDllPathFromContent fsprojPath (File.ReadAllText(fsprojPath))
+    Path.GetRelativePath(
+        rootDir,
+        Path.Combine(Path.GetDirectoryName fsproj, "bin", "Release", "net10.0", name + ".dll")
+    )
 
 /// Parse the `Include` values of every `<ProjectReference>` from fsproj XML
 /// content. Pure (no I/O). Handles both self-closing
@@ -125,9 +137,7 @@ let private walkBundledReferences
     (isSeparatelyReleased: string -> bool)
     : (string * string) list =
     let rootFsprojFull = Path.GetFullPath(Path.Combine(rootDir, fsprojRelPath))
-
-    let rootIsTool =
-        File.Exists(rootFsprojFull) && isPackAsTool (File.ReadAllText(rootFsprojFull))
+    let rootIsTool = isPackAsTool rootDir fsprojRelPath
 
     let visited = System.Collections.Generic.HashSet<string>()
     let followed = ResizeArray<string * string>()
@@ -169,9 +179,10 @@ let private walkBundledReferences
 /// separately-published NuGet package — i.e. a dependency boundary that is
 /// consumed via a `PackageReference`/`<dependency>` rather than bundled.
 ///
-/// Bundling rule (decided once at the root): if the root fsproj is
-/// `<PackAsTool>true</PackAsTool>` it physically ships its ENTIRE transitive
-/// closure, so every reference is bundled regardless of the predicate.
+/// Bundling rule (decided once at the root): if the root project is
+/// `<PackAsTool>true</PackAsTool>` (see `isPackAsTool`) it physically ships its
+/// ENTIRE transitive closure, so every reference is bundled regardless of the
+/// predicate.
 /// Otherwise (a library) a referenced project `R` is bundled iff it is NOT
 /// separately released: a separately-released `R` is excluded AND not recursed
 /// past (its own transitive deps are its concern); a non-published helper `R` is
@@ -252,7 +263,6 @@ let discover (rootDir: string) : Result<ToolConfig, string> =
     | 0 -> Error "No packable .fsproj found (must have <PackageId>)"
     | 1 ->
         let name, relativePath = projects[0]
-        let fsproj = Path.Combine(rootDir, relativePath)
 
         Ok
             {
@@ -261,7 +271,7 @@ let discover (rootDir: string) : Result<ToolConfig, string> =
                         {
                             Name = name
                             Fsproj = relativePath
-                            DllPath = Path.GetRelativePath(rootDir, deriveDllPath fsproj)
+                            DllPath = deriveDllPath rootDir relativePath
                             TagPrefix = "v"
                             FsProjsSharingSameTag = []
                         }
@@ -444,8 +454,9 @@ let toJson (config: ToolConfig) : string =
     System.Text.Encoding.UTF8.GetString(stream.GetBuffer(), 0, int stream.Length)
 
 /// Load config: try semantic-tagger.json first, fall back to discover.
-/// DLL paths are always re-derived from the fsproj on disk so that
-/// AssemblyName overrides are respected (parseJson can't do I/O).
+/// DLL paths are always re-derived from the fsproj on disk so that an
+/// AssemblyName in the fsproj or its Directory.Build.props is respected
+/// (parseJson can't do I/O).
 let load (rootDir: string) : Result<ToolConfig, string> =
     let jsonPath = Path.Combine(rootDir, "semantic-tagger.json")
 
@@ -459,11 +470,9 @@ let load (rootDir: string) : Result<ToolConfig, string> =
                 Packages =
                     config.Packages
                     |> List.map (fun pkg ->
-                        let fsprojFull = Path.Combine(rootDir, pkg.Fsproj)
-
-                        if File.Exists fsprojFull then
+                        if File.Exists(Path.Combine(rootDir, pkg.Fsproj)) then
                             { pkg with
-                                DllPath = Path.GetRelativePath(rootDir, deriveDllPath fsprojFull)
+                                DllPath = deriveDllPath rootDir pkg.Fsproj
                             }
                         else
                             pkg)

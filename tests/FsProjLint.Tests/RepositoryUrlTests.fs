@@ -56,7 +56,7 @@ let private checkWith (dir: string) (origin: OriginRemote) (projectXml: string) 
 
     match Shared.MsBuildProject.load dir projectPath with
     | Ok project -> checkRepositoryUrls origin dir project
-    | Error e -> failwith e
+    | Error e -> failwithf "%A" e
 
 let private find (name: string) (results: CheckResult list) =
     results |> List.find (fun r -> r.Name = name)

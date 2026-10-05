@@ -54,18 +54,22 @@ let internal property (project: Project) (name: string) : PropertySource option 
 let internal propertyValue (project: Project) (name: string) : string option =
     property project name |> Option.map (fun found -> found.Value)
 
+let private propertyIs (project: Project) (name: string) (expected: string) : bool =
+    propertyValue project name
+    |> Option.exists (fun value -> String.Equals(value, expected, StringComparison.OrdinalIgnoreCase))
+
+/// Is this project a dotnet tool (`PackAsTool` true)? A tool package bundles its
+/// whole `<ProjectReference>` closure and has a CLI rather than a library API.
+let internal isPackAsTool (project: Project) : bool = propertyIs project "PackAsTool" "true"
+
 /// Is this project published as a package? It has a PackageId, is not
 /// `IsPackable` false (test projects), and is not an example app: an
 /// `OutputType` Exe without `PackAsTool` true is something to run, not to publish,
 /// so benchmarks and samples are left out while dotnet tools are kept.
 let internal isPackable (project: Project) : bool =
-    let is name expected =
-        propertyValue project name
-        |> Option.exists (fun value -> String.Equals(value, expected, StringComparison.OrdinalIgnoreCase))
-
     (propertyValue project "PackageId").IsSome
-    && not (is "IsPackable" "false")
-    && not (is "OutputType" "Exe" && not (is "PackAsTool" "true"))
+    && not (propertyIs project "IsPackable" "false")
+    && not (propertyIs project "OutputType" "Exe" && not (isPackAsTool project))
 
 /// The nearest Directory.Build.props at or above `projectDir`, stopping at
 /// `repoDir`: the project's directory first, then each parent up to the root.
@@ -82,25 +86,39 @@ let private nearestDirectoryBuildProps (repoDir: string) (projectDir: string) : 
     |> Array.map (fun dir -> Path.Combine(dir, "Directory.Build.props"))
     |> Array.tryFind File.Exists
 
+/// A file that does not parse, and the parser's message.
+type internal ParseFailure = { File: string; Message: string }
+
+/// Why `load` could not read a project's properties.
+type internal LoadError =
+    /// The project file itself does not parse.
+    | ProjectUnparseable of ParseFailure
+    /// The project parses, but the nearest Directory.Build.props, whose
+    /// properties MSBuild imports into it, does not. The failure names that props
+    /// file, which every project under it shares.
+    | DirectoryBuildPropsUnparseable of ParseFailure
+
 /// Parse the project at `projectPath` and the nearest Directory.Build.props up to
-/// `repoDir`. Error names the file that does not parse.
-let internal load (repoDir: string) (projectPath: string) : Result<Project, string> =
+/// `repoDir`. A project that does not parse is reported as such, whether or not
+/// its props file parses.
+let internal load (repoDir: string) (projectPath: string) : Result<Project, LoadError> =
     let parse (file: string) =
         try
             Ok(XDocument.Load file)
         with ex ->
-            Error(sprintf "Failed to parse %s: %s" (Path.GetFileName file) ex.Message)
+            Error { File = file; Message = ex.Message }
 
     let projectPath = Path.GetFullPath projectPath
 
-    let directoryBuildProps =
+    parse projectPath
+    |> Result.mapError ProjectUnparseable
+    |> Result.bind (fun document ->
         match nearestDirectoryBuildProps repoDir (Path.GetDirectoryName projectPath) with
         | None -> Ok None
-        | Some props -> parse props |> Result.map (fun doc -> Some(props, doc))
-
-    parse projectPath
-    |> Result.bind (fun document ->
-        directoryBuildProps
+        | Some props ->
+            parse props
+            |> Result.map (fun doc -> Some(props, doc))
+            |> Result.mapError DirectoryBuildPropsUnparseable
         |> Result.map (fun props ->
             {
                 Path = projectPath

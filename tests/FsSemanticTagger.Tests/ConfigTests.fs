@@ -814,34 +814,58 @@ let ``toJson omits empty reservedVersions`` () =
     let json = toJson config
     test <@ not (json.Contains "reservedVersions") @>
 
-[<Fact>]
-let ``deriveDllPathFromContent with AssemblyName override`` () =
-    let fsprojPath = "/some/path/MyLib.fsproj"
+let private writeFile (root: string) (relPath: string) (content: string) =
+    let full = Path.Combine(root, relPath)
+    Directory.CreateDirectory(Path.GetDirectoryName full) |> ignore
+    File.WriteAllText(full, content)
 
-    let content =
-        """<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <AssemblyName>CustomAssemblyName</AssemblyName>
-  </PropertyGroup>
-</Project>"""
+let private writeProject (root: string) (relPath: string) (properties: string) =
+    writeFile root relPath (sprintf "<Project><PropertyGroup>%s</PropertyGroup></Project>" properties)
 
-    let result = deriveDllPathFromContent fsprojPath content
-    test <@ result.Contains("CustomAssemblyName.dll") @>
-    test <@ not (result.Contains("MyLib.dll")) @>
+let private releaseDll (dir: string) (name: string) =
+    Path.Combine(dir, "bin", "Release", "net10.0", name + ".dll")
 
 [<Fact>]
-let ``deriveDllPathFromContent without AssemblyName uses fsproj name`` () =
-    let fsprojPath = "/some/path/MyLib.fsproj"
+let ``deriveDllPath reads AssemblyName from the fsproj`` () =
+    withTempDir (fun root ->
+        writeProject root "src/MyLib/MyLib.fsproj" "<AssemblyName>CustomAssemblyName</AssemblyName>"
 
-    let content =
-        """<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <PackageId>MyLib</PackageId>
-  </PropertyGroup>
-</Project>"""
+        test
+            <@
+                deriveDllPath root "src/MyLib/MyLib.fsproj" =
+                    releaseDll (Path.Combine("src", "MyLib")) "CustomAssemblyName"
+            @>)
 
-    let result = deriveDllPathFromContent fsprojPath content
-    test <@ result.Contains("MyLib.dll") @>
+[<Fact>]
+let ``deriveDllPath without AssemblyName uses the fsproj name`` () =
+    withTempDir (fun root ->
+        writeProject root "src/MyLib/MyLib.fsproj" "<PackageId>MyLib</PackageId>"
+
+        test <@ deriveDllPath root "src/MyLib/MyLib.fsproj" = releaseDll (Path.Combine("src", "MyLib")) "MyLib" @>)
+
+[<Fact>]
+let ``deriveDllPath reads AssemblyName from the nearest Directory.Build.props`` () =
+    withTempDir (fun root ->
+        writeProject root "src/Directory.Build.props" "<AssemblyName>FromProps</AssemblyName>"
+        writeProject root "src/MyLib/MyLib.fsproj" "<PackageId>MyLib</PackageId>"
+
+        test <@ deriveDllPath root "src/MyLib/MyLib.fsproj" = releaseDll (Path.Combine("src", "MyLib")) "FromProps" @>)
+
+[<Fact>]
+let ``deriveDllPath: an empty AssemblyName in the fsproj hides the props value`` () =
+    withTempDir (fun root ->
+        writeProject root "Directory.Build.props" "<AssemblyName>FromProps</AssemblyName>"
+        writeProject root "src/MyLib/MyLib.fsproj" "<AssemblyName></AssemblyName>"
+
+        test <@ deriveDllPath root "src/MyLib/MyLib.fsproj" = releaseDll (Path.Combine("src", "MyLib")) "MyLib" @>)
+
+[<Fact>]
+let ``deriveDllPath under a Directory.Build.props that does not parse uses the fsproj name`` () =
+    withTempDir (fun root ->
+        writeFile root "Directory.Build.props" "<Project"
+        writeProject root "src/MyLib/MyLib.fsproj" "<AssemblyName>Custom</AssemblyName>"
+
+        test <@ deriveDllPath root "src/MyLib/MyLib.fsproj" = releaseDll (Path.Combine("src", "MyLib")) "MyLib" @>)
 
 [<Fact>]
 let ``load re-derives dllPath from fsproj with AssemblyName`` () =
@@ -878,6 +902,35 @@ let ``load re-derives dllPath from fsproj with AssemblyName`` () =
         let config = load tmpDir |> Result.defaultWith failwith
         test <@ config.Packages[0].DllPath.Contains("MyCustomAssembly.dll") @>
         test <@ not (config.Packages[0].DllPath.Contains("old/path")) @>)
+
+[<Fact>]
+let ``load and discover read AssemblyName from Directory.Build.props for the DLL path`` () =
+    withTempDir (fun root ->
+        writeProject root "src/Directory.Build.props" "<AssemblyName>FromProps</AssemblyName>"
+        writeProject root "src/MyLib/MyLib.fsproj" "<PackageId>MyLib</PackageId>"
+
+        let expected =
+            Path.Combine("src", "MyLib", "bin", "Release", "net10.0", "FromProps.dll")
+
+        let discovered = load root |> Result.defaultWith failwith
+        test <@ discovered.Packages[0].DllPath = expected @>
+
+        writeFile
+            root
+            "semantic-tagger.json"
+            """{ "packages": [ { "name": "MyLib", "fsproj": "src/MyLib/MyLib.fsproj" } ] }"""
+
+        let configured = load root |> Result.defaultWith failwith
+        test <@ configured.Packages[0].DllPath = expected @>)
+
+[<Fact>]
+let ``findPackableProjects leaves out a project under a Directory.Build.props that does not parse`` () =
+    withTempDir (fun root ->
+        writeFile root "src/Broken/Directory.Build.props" "<Project"
+        writeProject root "src/Broken/Broken.fsproj" "<PackageId>Broken</PackageId>"
+        writeProject root "src/Fine/Fine.fsproj" "<PackageId>Fine</PackageId>"
+
+        test <@ findPackableProjects root |> List.map fst = [ "Fine" ] @>)
 
 [<Fact>]
 let ``parseJson with empty reservedVersions array`` () =
@@ -1005,20 +1058,6 @@ let ``findPackableProjects ignores fsproj without PackageId`` () =
         test <@ projects.Length = 0 @>)
 
 [<Fact>]
-let ``deriveDllPathFromContent uses correct output path structure`` () =
-    let fsprojPath = "/repo/src/MyLib/MyLib.fsproj"
-
-    let content =
-        """<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <PackageId>MyLib</PackageId>
-  </PropertyGroup>
-</Project>"""
-
-    let result = deriveDllPathFromContent fsprojPath content
-    test <@ result = Path.Combine(Path.GetDirectoryName(fsprojPath), "bin", "Release", "net10.0", "MyLib.dll") @>
-
-[<Fact>]
 let ``parseProjectReferenceIncludes parses self-closing references`` () =
     let content =
         """<Project Sdk="Microsoft.NET.Sdk">
@@ -1123,29 +1162,58 @@ let ``transitiveProjectRefDirs skips missing referenced fsproj`` () =
 
 [<Fact>]
 let ``isPackAsTool is true for a PackAsTool true project`` () =
-    let content =
-        """<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><PackAsTool>true</PackAsTool></PropertyGroup>
-</Project>"""
-
-    test <@ isPackAsTool content @>
+    withTempDir (fun root ->
+        writeProject root "Cli.fsproj" "<PackAsTool>true</PackAsTool>"
+        test <@ isPackAsTool root "Cli.fsproj" @>)
 
 [<Fact>]
 let ``isPackAsTool tolerates whitespace and case`` () =
-    let content =
-        "<Project>\n  <PropertyGroup><PackAsTool>  True  </PackAsTool></PropertyGroup>\n</Project>"
+    withTempDir (fun root ->
+        writeProject root "Cli.fsproj" "<PackAsTool>  True  </PackAsTool>"
+        test <@ isPackAsTool root "Cli.fsproj" @>)
 
-    test <@ isPackAsTool content @>
+[<Theory>]
+[<InlineData("")>]
+[<InlineData("<PackAsTool>false</PackAsTool>")>]
+let ``isPackAsTool is false when absent or false`` (properties: string) =
+    withTempDir (fun root ->
+        writeProject root "Lib.fsproj" properties
+        test <@ not (isPackAsTool root "Lib.fsproj") @>)
 
 [<Fact>]
-let ``isPackAsTool is false when absent or false`` () =
-    test <@ not (isPackAsTool "<Project><PropertyGroup></PropertyGroup></Project>") @>
-    test <@ not (isPackAsTool "<Project><PropertyGroup><PackAsTool>false</PackAsTool></PropertyGroup></Project>") @>
+let ``isPackAsTool reads PackAsTool from the nearest Directory.Build.props`` () =
+    withTempDir (fun root ->
+        writeProject root "src/Cli/Directory.Build.props" "<PackAsTool>true</PackAsTool>"
+        writeProject root "src/Cli/Cli.fsproj" "<OutputType>Exe</OutputType>"
+
+        test <@ isPackAsTool root "src/Cli/Cli.fsproj" @>
+        test <@ isPackAsTool root (Path.Combine(root, "src/Cli/Cli.fsproj")) @>)
+
+[<Fact>]
+let ``isPackAsTool: an empty PackAsTool in the fsproj hides the props value`` () =
+    withTempDir (fun root ->
+        writeProject root "Directory.Build.props" "<PackAsTool>true</PackAsTool>"
+        writeProject root "src/Lib/Lib.fsproj" "<PackAsTool></PackAsTool>"
+
+        test <@ not (isPackAsTool root "src/Lib/Lib.fsproj") @>)
+
+[<Fact>]
+let ``isPackAsTool is false under a Directory.Build.props that does not parse`` () =
+    withTempDir (fun root ->
+        writeFile root "Directory.Build.props" "<Project"
+        writeProject root "src/Cli/Cli.fsproj" "<PackAsTool>true</PackAsTool>"
+
+        test <@ not (isPackAsTool root "src/Cli/Cli.fsproj") @>)
+
+[<Fact>]
+let ``isPackAsTool with no repository root reads the project's own directory`` () =
+    withTempDir (fun root ->
+        writeProject root "Directory.Build.props" "<PackAsTool>true</PackAsTool>"
+        writeProject root "Cli.fsproj" ""
+
+        test <@ isPackAsTool "" (Path.Combine(root, "Cli.fsproj")) @>)
 
 let private writeFsprojWith (root: string) (relPath: string) (packAsTool: bool) (refs: string list) =
-    let full = Path.Combine(root, relPath)
-    Directory.CreateDirectory(Path.GetDirectoryName(full)) |> ignore
-
     let refLines =
         refs
         |> List.map (fun r -> sprintf "    <ProjectReference Include=\"%s\" />" r)
@@ -1157,10 +1225,13 @@ let private writeFsprojWith (root: string) (relPath: string) (packAsTool: bool) 
         else
             ""
 
-    let content =
-        sprintf "<Project Sdk=\"Microsoft.NET.Sdk\">\n%s  <ItemGroup>\n%s\n  </ItemGroup>\n</Project>" toolProp refLines
-
-    File.WriteAllText(full, content)
+    writeFile
+        root
+        relPath
+        (sprintf
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n%s  <ItemGroup>\n%s\n  </ItemGroup>\n</Project>"
+            toolProp
+            refLines)
 
 [<Fact>]
 let ``transitiveBundledRefDirs - PackAsTool root includes a separately-released ref (full closure)`` () =
@@ -1173,6 +1244,18 @@ let ``transitiveBundledRefDirs - PackAsTool root includes a separately-released 
         let isSep = (fun p -> p = "src/Core/Core.fsproj")
         let result = transitiveBundledRefDirs root "src/Cli/Cli.fsproj" isSep
         test <@ result = [ "src/Core"; "src/Helper" ] @>)
+
+[<Fact>]
+let ``transitiveBundledRefDirs - a root that is a tool through Directory.Build.props bundles its full closure`` () =
+    withTempDir (fun root ->
+        writeFsprojWith root "src/Cli/Cli.fsproj" false [ "../Core/Core.fsproj" ]
+        writeFsprojWith root "src/Core/Core.fsproj" false []
+        writeProject root "src/Cli/Directory.Build.props" "<PackAsTool>true</PackAsTool>"
+
+        let result =
+            transitiveBundledRefDirs root "src/Cli/Cli.fsproj" (fun p -> p = "src/Core/Core.fsproj")
+
+        test <@ result = [ "src/Core" ] @>)
 
 [<Fact>]
 let ``transitiveBundledRefDirs - library root EXCLUDES a separately-released ref and stops recursing`` () =

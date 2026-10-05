@@ -63,8 +63,7 @@ let initCommand (rootDir: string) : Result<int, string> =
             let packages =
                 projects
                 |> List.map (fun (name, relativePath) ->
-                    let fsprojFullPath = Path.Combine(rootDir, relativePath)
-                    let dllPath = Path.GetRelativePath(rootDir, Config.deriveDllPath fsprojFullPath)
+                    let dllPath = Config.deriveDllPath rootDir relativePath
 
                     let tagPrefix = if isMulti then name.ToLowerInvariant() + "-v" else "v"
 

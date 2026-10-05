@@ -311,6 +311,24 @@ let ``a dependency that is a tool is gated as a tool`` () =
         test <@ indexOf t "restorable(tool) Tool 0.1.0-alpha.1" < indexOf t "push cli-v0.1.0-alpha.1" @>)
 
 [<Fact>]
+let ``a dependency that is a tool through Directory.Build.props is gated as a tool`` () =
+    withRepo [ "Cli", [ "Tool" ]; "Tool", [] ] (fun repo ->
+        File.WriteAllText(
+            Path.Combine(repo.Root, "src", "Tool", "Directory.Build.props"),
+            "<Project><PropertyGroup><PackAsTool>true</PackAsTool></PropertyGroup></Project>"
+        )
+
+        let checkFeed = feed repo.Timeline (Map [ "Tool", 1; "Cli", 1 ])
+        let checkRestorable = restorable repo.Timeline (Map [ "Tool", 1 ])
+
+        let _, result =
+            withCapturedConsole (fun () -> release (releaseInputWith repo [] checkFeed checkRestorable false PushTags))
+
+        let t = repo.Timeline
+        test <@ result = 0 @>
+        test <@ indexOf t "restorable(tool) Tool 0.1.0-alpha.1" < indexOf t "push cli-v0.1.0-alpha.1" @>)
+
+[<Fact>]
 let ``a dependency that never reaches the feed holds its dependent's tag back and exits 2`` () =
     withRepo [ "Cli", [ "TestPrune" ]; "TestPrune", [] ] (fun repo ->
         let checkFeed = feed repo.Timeline Map.empty

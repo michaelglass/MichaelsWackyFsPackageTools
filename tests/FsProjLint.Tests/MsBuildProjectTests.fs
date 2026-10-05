@@ -19,7 +19,7 @@ let private withProperties (properties: string) =
 let private loadOk (dir: string) (relativePath: string) =
     match load dir (Path.Combine(dir, relativePath)) with
     | Ok project -> project
-    | Error e -> failwith e
+    | Error e -> failwithf "%A" e
 
 let private valueOf (project: Project) (name: string) =
     property project name |> Option.map (fun found -> found.Value)
@@ -93,19 +93,42 @@ let ``a Directory.Build.props above the repository root is not read`` () =
 [<Fact>]
 let ``load reports a project that does not parse`` () =
     withTempDir (fun dir ->
+        let path = Path.Combine(dir, "Bad.fsproj")
         writeFile dir "Bad.fsproj" "<Project><Unclosed>"
 
-        test <@ Result.isError (load dir (Path.Combine(dir, "Bad.fsproj"))) @>)
+        match load dir path with
+        | Error(ProjectUnparseable failure) -> test <@ failure.File = path @>
+        | other -> failwithf "expected the project parse failure, got %A" other)
 
 [<Fact>]
-let ``load reports a Directory.Build.props that does not parse`` () =
+let ``load reports a Directory.Build.props that does not parse, naming the props file`` () =
     withTempDir (fun dir ->
         writeFile dir "Directory.Build.props" "<Project><Unclosed>"
         writeFile dir "Lib.fsproj" (withProperties "")
 
         match load dir (Path.Combine(dir, "Lib.fsproj")) with
-        | Error e -> test <@ e.Contains "Directory.Build.props" @>
-        | Ok _ -> failwith "expected the props parse failure")
+        | Error(DirectoryBuildPropsUnparseable failure) ->
+            test <@ failure.File = Path.Combine(dir, "Directory.Build.props") @>
+            test <@ failure.Message.Length > 0 @>
+        | other -> failwithf "expected the props parse failure, got %A" other)
+
+[<Fact>]
+let ``load reports the project's own parse failure over its props file's`` () =
+    withTempDir (fun dir ->
+        writeFile dir "Directory.Build.props" "<Project"
+        writeFile dir "Bad.fsproj" "<Project"
+
+        match load dir (Path.Combine(dir, "Bad.fsproj")) with
+        | Error(ProjectUnparseable _) -> ()
+        | other -> failwithf "expected the project parse failure, got %A" other)
+
+[<Theory>]
+[<InlineData("<PackAsTool>true</PackAsTool>", true)>]
+[<InlineData("<PackAsTool> True </PackAsTool>", true)>]
+[<InlineData("<PackAsTool>false</PackAsTool>", false)>]
+[<InlineData("", false)>]
+let ``isPackAsTool reads PackAsTool true`` (properties: string, expected: bool) =
+    test <@ isPackAsTool (projectOf (withProperties properties)) = expected @>
 
 // -- hasPackageReference --
 

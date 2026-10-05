@@ -851,6 +851,61 @@ let ``release - Auto with own-changed PackAsTool package skips the API-diff (NU1
         File.Delete(tmpFile)
 
 [<Fact>]
+let ``release - Auto reads PackAsTool and AssemblyName from Directory.Build.props for a tool`` () =
+    let dir = Path.Combine(scratchDir, Path.GetRandomFileName())
+    Directory.CreateDirectory(dir) |> ignore
+
+    try
+        File.WriteAllText(
+            Path.Combine(dir, "Directory.Build.props"),
+            "<Project><PropertyGroup><PackAsTool>true</PackAsTool><AssemblyName>my-tool</AssemblyName></PropertyGroup></Project>"
+        )
+
+        let fsproj = Path.Combine(dir, "MyTool.fsproj")
+
+        File.WriteAllText(fsproj, "<Project><PropertyGroup><Version>0.14.0-alpha.1</Version></PropertyGroup></Project>")
+
+        File.WriteAllText(
+            Path.Combine(dir, "semantic-tagger.json"),
+            """{ "packages": [ { "name": "MyTool", "fsproj": "MyTool.fsproj", "tagPrefix": "cli-v" } ] }"""
+        )
+
+        let loaded = FsSemanticTagger.Config.load dir |> Result.defaultWith failwith
+
+        // Absolute, as the release reads `Fsproj` as given.
+        let config =
+            { loaded with
+                Packages = loaded.Packages |> List.map (fun pkg -> { pkg with Fsproj = fsproj })
+            }
+
+        let (fakeRun, _getCalls) =
+            passingCiRun
+                [
+                    ("git", "tag -l \"cli-v*\"", Success "cli-v0.14.0-alpha.1")
+                    ("jj",
+                     "diff --from cli-v0.14.0-alpha.1 --to @ --summary \"glob:" + dir + "/**\"",
+                     Success "1 file changed")
+                ]
+
+        let dllsRead = ResizeArray<string>()
+
+        let current dll =
+            dllsRead.Add dll
+            []
+
+        // Read as a library, the package would ask for its previous API and stop here.
+        let previousApi (_pkg: string) (_version: string) : PreviousApiResult =
+            FetchError "NU1212: DotnetToolReference project style can only contain references of the DotnetTool type"
+
+        let result = runRelease fakeRun config Auto PushTags previousApi current 0 10
+
+        test <@ result = 0 @>
+        test <@ File.ReadAllText(fsproj).Contains("<Version>0.14.0-alpha.2</Version>") @>
+        test <@ List.ofSeq dllsRead = [ Path.Combine("bin", "Release", "net10.0", "my-tool.dll") ] @>
+    finally
+        Directory.Delete(dir, true)
+
+[<Fact>]
 let ``release - non-Auto with reserved version skips package`` () =
     let (fakeRun, _getCalls) = passingCiRun []
 
