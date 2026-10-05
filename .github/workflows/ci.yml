@@ -4,7 +4,7 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
-  # Run CI (including the Windows job) on any branch: gh workflow run ci.yml --ref <branch>
+  # Run CI (including the Windows and macOS jobs) on any branch: gh workflow run ci.yml --ref <branch>
   workflow_dispatch:
 
 permissions:
@@ -21,6 +21,8 @@ jobs:
       # re-measure the coverage floors when you move it.
       dotnet-version: '10.0.4xx'
       test-windows: true
+      # Free for public repos; catches macOS-only failures in console and process code.
+      test-macos: true
       fantomas-paths: "src/ tests/"
       syncdocs-cmd: "dotnet run --project $GITHUB_WORKSPACE/src/SyncDocs/SyncDocs.fsproj --"
       # MSBuild-targets-only package: its tests instrument nothing.

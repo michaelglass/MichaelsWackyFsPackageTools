@@ -53,6 +53,12 @@ on:
           (build + tests only; format, lint, docs and coverage stay on Linux).
         type: boolean
         default: false
+      test-macos:
+        description: >-
+          Also build and test on macos-latest in a separate `test-macos` job
+          (build + tests only; format, lint, docs and coverage stay on Linux).
+        type: boolean
+        default: false
       failure-artifacts:
         description: >-
           Newline-separated globs uploaded as an artifact when the job fails.
@@ -278,10 +284,19 @@ jobs:
           done
 
   # Not a matrix on `build`, so Linux-only steps need no OS guards and the
-  # `build` check keeps its name.
-  test-windows:
-    if: inputs.test-windows
-    runs-on: windows-latest
+  # `build` check keeps its name. Each opted-in OS reports as `test-<os>`.
+  test-os:
+    if: inputs.test-windows || inputs.test-macos
+    name: test-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: >-
+          ${{ fromJSON(
+            inputs.test-windows && inputs.test-macos && '["windows","macos"]'
+            || inputs.test-windows && '["windows"]'
+            || '["macos"]') }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
