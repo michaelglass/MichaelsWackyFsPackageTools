@@ -334,7 +334,7 @@ For monorepos or custom setups, create a `semantic-tagger.json`:
 | `packages` | array | List of packages to manage |
 | `packages[].name` | string | Package name |
 | `packages[].fsproj` | string | Path to the project file |
-| `packages[].dllPath` | string? | Path to compiled DLL (auto-derived if omitted) |
+| `packages[].dllPath` | string? | Path to compiled DLL. Omitted: `bin/Release/net10.0/<AssemblyName>.dll` beside the fsproj, with `AssemblyName` read from the fsproj, else the nearest `Directory.Build.props`, else the fsproj's file name |
 | `packages[].tagPrefix` | string? | Git/jj tag prefix (default: `"v"`) |
 | `packages[].fsProjsSharingSameTag` | string[]? | Other `.fsproj` files released under the same tag and version. They are the package's own source: a change in any of them, or in any project their `<ProjectReference>` closure bundles, releases the package (see below) |
 | `reservedVersions` | string[]? | Versions to skip |
@@ -344,7 +344,7 @@ For monorepos or custom setups, create a `semantic-tagger.json`:
 
 ### Projects sharing a tag
 
-Every project behind a tag — `fsproj` and each `fsProjsSharingSameTag` entry — counts for change detection, together with the `<ProjectReference>` closure each of them bundles (a closure stops at another package's `fsproj` or `fsProjsSharingSameTag` project, except under a `PackAsTool` project, which ships its whole closure). A change anywhere in that set releases the package; a change outside it is skipped.
+Every project behind a tag — `fsproj` and each `fsProjsSharingSameTag` entry — counts for change detection, together with the `<ProjectReference>` closure each of them bundles (a closure stops at another package's `fsproj` or `fsProjsSharingSameTag` project, except under a `PackAsTool` project, which ships its whole closure; `PackAsTool` is read from the fsproj, else the nearest `Directory.Build.props`). A change anywhere in that set releases the package; a change outside it is skipped.
 
 The computed bump comes from the primary `fsproj` only: its public API diff, and its CLI grammar diff when it has one. A sharing project has no baseline the tagger can fetch, and a tool project has no library API, so a change confined to sharing projects computes as a **patch**. Declare anything bigger in that project's changelog (`feat:` or `feat!:`, see above); the strongest declaration across every changelog behind the tag sets the floor.
 
