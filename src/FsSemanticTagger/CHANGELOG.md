@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.24 - 2026-10-05
+
 - feat!: **`PackAsTool` and `AssemblyName` are read from the nearest `Directory.Build.props` too, not just the fsproj text.** A project marked `<PackAsTool>true</PackAsTool>` only in its `Directory.Build.props` was a release candidate but was released as a library: its referenced projects were not counted as bundled, its own changes took the API-diff path rather than the CLI-grammar diff, and the gate between release waves probed it as a library. An `AssemblyName` set only there was ignored, so the DLL path pointed at `<fsproj name>.dll`. Both now follow the rule package discovery uses: the fsproj's value, else the nearest props file's; an empty value in the fsproj overrides the props file. A project whose fsproj or `Directory.Build.props` does not parse is not a tool, and its DLL is named after the fsproj.
   - `Config.isPackAsTool` takes the repository root and the fsproj path (`isPackAsTool rootDir fsprojPath`) instead of the fsproj's text.
   - `Config.deriveDllPath` takes the repository root too (`deriveDllPath rootDir fsprojPath`). `Config.deriveDllPathFromContent` is removed.

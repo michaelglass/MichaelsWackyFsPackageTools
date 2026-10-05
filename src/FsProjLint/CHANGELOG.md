@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.10.0-alpha.22 - 2026-10-05
+
 - feat!: **a `Directory.Build.props` that does not parse fails once, naming that file, and the projects under it are skipped.** It used to fail every project under it with the same "XML parse" message. Now it is one `FAIL XML parse (<path to Directory.Build.props>)`, and each project under it gets one `SKIP Project checks` whose reason names the broken file: without the props file, neither the project's properties nor whether it is packable can be known. The exit code is still 1. A project that does not parse itself still fails "XML parse" on its own.
   - `LintResult` gains `PropsChecks`, each broken `Directory.Build.props` with its failure.
 
