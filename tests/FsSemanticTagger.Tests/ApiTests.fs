@@ -542,7 +542,7 @@ let ``isPublished falls back to the restore probe when flat container has not in
 
     let fakeRun (cmd: string) (args: string) : FsSemanticTagger.Shell.CommandResult =
         invoked <- invoked @ [ (cmd, args) ]
-        FsSemanticTagger.Shell.Success ""
+        RestoreProbeFakes.restoreResolving "SomePackage" "1.2.3" RestoreProbeFakes.nugetOrg "" cmd args
 
     let fakeFetch (_url: string) : HttpResult = HttpOk """{"versions":[]}"""
 
@@ -572,7 +572,7 @@ let ``isPublishedViaRestore returns true and probes with --no-http-cache when re
 
     let fakeRun (cmd: string) (args: string) : FsSemanticTagger.Shell.CommandResult =
         invoked <- invoked @ [ (cmd, args) ]
-        FsSemanticTagger.Shell.Success ""
+        RestoreProbeFakes.restoreResolving "SomePackage" "1.2.3" RestoreProbeFakes.nugetOrg "" cmd args
 
     let ok = isPublishedViaRestore fakeRun "SomePackage" "1.2.3"
     test <@ ok = true @>
@@ -657,8 +657,8 @@ let ``flatContainerPresence - an unreadable 200 body is Unknown, not absence`` (
 let ``checkFeedPresence - the restore probe can only UPGRADE a verdict to OnFeed`` () =
     // A privately-published package is absent from the public flat container, so
     // the restore probe (which honours the repo nuget.config) rescues it.
-    let restoreSucceeds (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
-        FsSemanticTagger.Shell.Success ""
+    let restoreSucceeds =
+        RestoreProbeFakes.restoreResolving "SomePackage" "1.2.3" "https://pkgs.example.com/v3/index.json" ""
 
     let notOnNugetOrg (_url: string) : HttpResult = HttpOk """{"versions":[]}"""
     let feedUnreachable (_url: string) : HttpResult = HttpFailed "offline"
@@ -702,8 +702,8 @@ let ``checkFeedPresence - an unreachable feed stays Unknown when the probe canno
 // names this exact version, so it must restore.
 // ---------------------------------------------------------------------------
 
-let private restoreSucceeds (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
-    FsSemanticTagger.Shell.Success ""
+let private restoreSucceeds =
+    RestoreProbeFakes.restoreResolving "SomePackage" "1.2.3" RestoreProbeFakes.nugetOrg ""
 
 let private restoreFails (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
     FsSemanticTagger.Shell.Failure("error NU1102: Unable to find package SomePackage with version (= 1.2.3)", 1)
@@ -737,7 +737,7 @@ let ``checkRestorable - a library asks the restore probe, never only the index``
     test <@ restores = 1 @>
 
 [<Fact>]
-let ``checkRestorable - a tool is decided by the index, since a PackageReference probe of it always fails`` () =
+let ``checkRestorable - a tool is decided by the index`` () =
     let nu1212 (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
         FsSemanticTagger.Shell.Failure("error NU1212: Invalid project-package combination for SomeTool 1.2.3.", 1)
 
@@ -763,16 +763,135 @@ let ``checkRestorable - a tool never runs the restore probe`` () =
     test <@ restores = 0 @>
 
 [<Fact>]
-let ``probeAvailabilityArgs appends --no-http-cache and keeps --configfile when present`` () =
-    let args = probeAvailabilityArgs (Some "/repo/nuget.config") "/tmp/probe.csproj"
+let ``checkRestorable - a restore that exits 0 by resolving a different version is NotOnFeed`` () =
+    // Measured on FsHotWatch: the gate cleared core on its first check, minutes
+    // before nuget.org published it, because NuGet resolved a ref-stamped build
+    // from the global packages folder (NU1603, a warning, so exit 0).
+    let nearest =
+        RestoreProbeFakes.restoreResolvingNearest
+            "FsHotWatch"
+            "0.10.0-alpha.56"
+            "0.10.0-alpha.30-ref.mwlwqxru.g5945e3660675"
+
+    test <@ checkRestorable indexLacks nearest false "FsHotWatch" "0.10.0-alpha.56" = NotOnFeed @>
+    test <@ not (isPublishedViaRestore nearest "FsHotWatch" "0.10.0-alpha.56") @>
+
+[<Fact>]
+let ``checkRestorable - the exact version restored from a local folder feed is NotOnFeed`` () =
+    // A folder feed (a repo nuget.config `local` source) holds what this machine
+    // packed, which no consumer can restore.
+    let fromFolder =
+        RestoreProbeFakes.restoreResolving "SomePackage" "1.2.3" "/Users/someone/.nuget-local" ""
+
+    test <@ checkRestorable indexLacks fromFolder false "SomePackage" "1.2.3" = NotOnFeed @>
+
+[<Fact>]
+let ``checkRestorable - the exact version restored from a remote feed is OnFeed`` () =
+    let fromNuGet =
+        RestoreProbeFakes.restoreResolving "SomePackage" "1.2.3" RestoreProbeFakes.nugetOrg ""
+
+    let fromPrivateFeed =
+        RestoreProbeFakes.restoreResolving "SomePackage" "1.2.3" "https://pkgs.example.com/v3/index.json" ""
+
+    test <@ checkRestorable indexLacks fromNuGet false "SomePackage" "1.2.3" = OnFeed @>
+    test <@ checkRestorable indexLacks fromPrivateFeed false "SomePackage" "1.2.3" = OnFeed @>
+
+[<Fact>]
+let ``isPublishedViaRestore - a restore that exits 0 but leaves nothing behind is not restorable, and says so`` () =
+    let silent (_cmd: string) (_args: string) : FsSemanticTagger.Shell.CommandResult =
+        FsSemanticTagger.Shell.Success "  Restored probe.csproj"
+
+    let output, ok =
+        TestHelpers.withCapturedConsole (fun () -> isPublishedViaRestore silent "SomePackage" "1.2.3")
+
+    test <@ not ok @>
+
+    test
+        <@ output.Contains "Restore probe SomePackage 1.2.3: not restorable, restore exited 0 but restored no version" @>
+
+    test <@ output.Contains "resolved nothing; SDK unknown; sources unknown" @>
+    test <@ output.Contains "    |   Restored probe.csproj" @>
+
+[<Fact>]
+let ``isPublishedViaRestore - a package without readable metadata has an unknown source and is not restorable`` () =
+    // No `.nupkg.metadata`, and an assets file without the SDK's RID graph path.
+    let bare (_cmd: string) (args: string) : FsSemanticTagger.Shell.CommandResult =
+        let quoted =
+            System.Text.RegularExpressions.Regex.Matches(args, "\"([^\"]*)\"")
+            |> Seq.map (fun m -> m.Groups[1].Value)
+            |> List.ofSeq
+
+        let probeDir = System.IO.Path.GetDirectoryName quoted.Head
+        let packages = List.last quoted
+
+        System.IO.Directory.CreateDirectory(System.IO.Path.Combine(packages, "somepackage", "1.2.3"))
+        |> ignore
+
+        System.IO.Directory.CreateDirectory(System.IO.Path.Combine(probeDir, "obj"))
+        |> ignore
+
+        System.IO.File.WriteAllText(
+            System.IO.Path.Combine(probeDir, "obj", "project.assets.json"),
+            """{"project":{"frameworks":{"net10.0":{}},"restore":{"sources":{"https://pkgs.example.com/v3/index.json":{}}}}}"""
+        )
+
+        FsSemanticTagger.Shell.Success ""
+
+    let output, ok =
+        TestHelpers.withCapturedConsole (fun () -> isPublishedViaRestore bare "SomePackage" "1.2.3")
+
+    test <@ not ok @>
+    test <@ output.Contains "resolved 1.2.3 from an unknown source (no readable .nupkg.metadata)" @>
+    test <@ output.Contains "SDK unknown; sources https://pkgs.example.com/v3/index.json" @>
+
+[<Fact>]
+let ``isPublishedViaRestore logs the exit code, resolved version, source and SDK of every probe`` () =
+    let nearest =
+        RestoreProbeFakes.restoreResolvingNearest "FsHotWatch" "0.10.0-alpha.56" "0.10.0-alpha.30-ref.local"
+
+    let output, _ =
+        TestHelpers.withCapturedConsole (fun () -> isPublishedViaRestore nearest "FsHotWatch" "0.10.0-alpha.56")
+
+    test
+        <@
+            output.Contains
+                "Restore probe FsHotWatch 0.10.0-alpha.56: not restorable, restore resolved 0.10.0-alpha.30-ref.local instead (exit 0; resolved 0.10.0-alpha.30-ref.local from /private/tmp/proof-packages; SDK 10.0.400; sources /private/tmp/proof-packages; cwd "
+        @>
+
+    test <@ output.Contains "    | warning NU1603: probe depends on FsHotWatch (>= 0.10.0-alpha.56)" @>
+
+[<Fact>]
+let ``isPublishedViaRestore probes into a fresh packages folder, never the global one`` () =
+    // A version in ~/.nuget/packages restores with no feed involved at all.
+    let mutable args = ""
+
+    let recording (cmd: string) (a: string) : FsSemanticTagger.Shell.CommandResult =
+        args <- a
+        RestoreProbeFakes.restoreResolving "SomePackage" "1.2.3" RestoreProbeFakes.nugetOrg "" cmd a
+
+    isPublishedViaRestore recording "SomePackage" "1.2.3" |> ignore
+
+    let packages =
+        System.Text.RegularExpressions.Regex.Match(args, "--packages \"([^\"]*)\"")
+
+    test <@ packages.Success @>
+    test <@ packages.Groups[1].Value.StartsWith(System.IO.Path.GetTempPath()) @>
+    test <@ not (System.IO.Directory.Exists packages.Groups[1].Value) @>
+
+[<Fact>]
+let ``probeAvailabilityArgs appends --no-http-cache and --packages and keeps --configfile when present`` () =
+    let args =
+        probeAvailabilityArgs (Some "/repo/nuget.config") "/tmp/probe.csproj" "/tmp/packages"
+
     test <@ args.StartsWith("restore \"/tmp/probe.csproj\"") @>
     test <@ args.Contains("--configfile \"/repo/nuget.config\"") @>
     test <@ args.Contains("--no-http-cache") @>
+    test <@ args.Contains("--packages \"/tmp/packages\"") @>
 
 [<Fact>]
-let ``probeAvailabilityArgs appends --no-http-cache when no repo nuget.config`` () =
-    let args = probeAvailabilityArgs None "/tmp/probe.csproj"
-    test <@ args = "restore \"/tmp/probe.csproj\" --no-http-cache" @>
+let ``probeAvailabilityArgs appends --no-http-cache and --packages when no repo nuget.config`` () =
+    let args = probeAvailabilityArgs None "/tmp/probe.csproj" "/tmp/packages"
+    test <@ args = "restore \"/tmp/probe.csproj\" --no-http-cache --packages \"/tmp/packages\"" @>
 
 [<Fact>]
 let ``probeRestoreArgs pins repo nuget.config via --configfile when present`` () =

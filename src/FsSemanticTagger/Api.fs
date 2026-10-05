@@ -704,12 +704,13 @@ let internal probeRestoreArgs (nugetConfig: string option) (proj: string) : stri
     | Some cfg -> sprintf "restore \"%s\" --configfile \"%s\"" proj cfg
     | None -> sprintf "restore \"%s\"" proj
 
-/// Append `--no-http-cache` to the probe restore args so a version published
-/// seconds ago isn't masked by NuGet's HTTP cache. Used by the post-release
-/// availability poll (a freshly pushed package must be seen as soon as it
-/// indexes, not after the HTTP cache expires).
-let internal probeAvailabilityArgs (nugetConfig: string option) (proj: string) : string =
-    probeRestoreArgs nugetConfig proj + " --no-http-cache"
+/// The availability probe's restore arguments: `probeRestoreArgs`, plus
+/// `--no-http-cache` so a version published seconds ago isn't masked by NuGet's
+/// HTTP cache, plus a fresh `--packages` folder. Without the latter a version
+/// already in the global packages folder (packed and restored on this machine, or
+/// cached by an earlier run) restores without any feed being asked.
+let internal probeAvailabilityArgs (nugetConfig: string option) (proj: string) (packages: string) : string =
+    sprintf "%s --no-http-cache --packages \"%s\"" (probeRestoreArgs nugetConfig proj) packages
 
 /// The repo's nuget.config in the current working directory, if any.
 let internal currentNuGetConfig () : string option =
@@ -935,16 +936,195 @@ let internal flatContainerPresence (fetch: string -> HttpResult) (packageId: str
 let internal isPublishedViaFlatContainer (fetch: string -> HttpResult) (packageId: string) (version: string) : bool =
     flatContainerPresence fetch packageId version = OnFeed
 
-/// Is this exact package version restorable right now? Restores a throwaway
-/// project that references `packageId`/`version` with `--no-http-cache`, so a
-/// just-published release is reported as available as soon as NuGet indexes it.
-/// This honours the repo's `nuget.config`, so it is the authority for private
-/// feeds (where the nuget.org flat container can't see the package).
+/// What one availability probe observed: enough for a reader of the release log to
+/// tell a genuine "restorable" apart from a restore that exited 0 for another
+/// reason (a nearer version, a local folder feed, a cache).
+type internal RestoreProbe =
+    {
+        ExitCode: int
+        /// Each version of the package the probe's fresh packages folder holds after
+        /// the restore, with the feed its `.nupkg.metadata` says it came from.
+        Resolved: (string * string) list
+        /// The SDK that ran the restore, read from the probe's `project.assets.json`.
+        Sdk: string option
+        /// The package sources the restore used, from the same file.
+        Sources: string list
+        /// The last lines the restore printed.
+        OutputTail: string list
+    }
+
+/// Does this probe show `version` itself restored from a feed a consumer can reach?
+/// `Ok source` when it does, otherwise `Error` saying why not. Exit 0 alone is not
+/// enough: NuGet resolves the nearest higher version when the requested one is on
+/// no feed (NU1603, a warning), and a folder feed holds what this machine packed.
+let internal restoreProbeVerdict (version: string) (probe: RestoreProbe) : Result<string, string> =
+    let isRemote (source: string) =
+        source.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+        || source.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+
+    if probe.ExitCode <> 0 then
+        Error(sprintf "restore exited %d" probe.ExitCode)
+    else
+        match
+            probe.Resolved
+            |> List.tryFind (fun (v, _) -> String.Equals(v, version, StringComparison.OrdinalIgnoreCase))
+        with
+        | Some(_, source) when isRemote source -> Ok source
+        | Some(_, source) -> Error(sprintf "restored from %s, which no consumer can reach" source)
+        | None when List.isEmpty probe.Resolved -> Error "restore exited 0 but restored no version of the package"
+        | None -> Error(sprintf "restore resolved %s instead" (probe.Resolved |> List.map fst |> String.concat ", "))
+
+/// Read what a finished probe restore left in `probeDir` (its `obj/project.assets.json`)
+/// and in its `packages` folder.
+let private readRestoreProbe
+    (probeDir: string)
+    (packages: string)
+    (packageId: string)
+    (exitCode: int)
+    (output: string)
+    : RestoreProbe =
+    let resolved =
+        let idDir = Path.Combine(packages, packageId.ToLowerInvariant())
+
+        if Directory.Exists idDir then
+            Directory.GetDirectories idDir
+            |> Array.sort
+            |> Array.map (fun dir ->
+                let source =
+                    try
+                        let metadata =
+                            System.Text.Json.Nodes.JsonNode.Parse(
+                                File.ReadAllText(Path.Combine(dir, ".nupkg.metadata"))
+                            )
+
+                        metadata["source"].GetValue<string>()
+                    with _ ->
+                        "an unknown source (no readable .nupkg.metadata)"
+
+                Path.GetFileName dir, source)
+            |> List.ofArray
+        else
+            []
+
+    let sdk, sources =
+        try
+            let assets =
+                System.Text.Json.Nodes.JsonNode.Parse(
+                    File.ReadAllText(Path.Combine(probeDir, "obj", "project.assets.json"))
+                )
+
+            let project = assets["project"]
+
+            // `<sdk root>/sdk/<version>/PortableRuntimeIdentifierGraph.json`
+            let sdk =
+                project["frameworks"].AsObject()
+                |> Seq.tryPick (fun fw ->
+                    match fw.Value["runtimeIdentifierGraphPath"] with
+                    | null -> None
+                    | path -> Some(Path.GetFileName(Path.GetDirectoryName(path.GetValue<string>()))))
+
+            let sources =
+                let sources = project["restore"]["sources"]
+                sources.AsObject() |> Seq.map (fun p -> p.Key) |> List.ofSeq
+
+            sdk, sources
+        with _ ->
+            None, []
+
+    {
+        ExitCode = exitCode
+        Resolved = resolved
+        Sdk = sdk
+        Sources = sources
+        OutputTail =
+            output.Split('\n')
+            |> Array.map (fun l -> l.TrimEnd())
+            |> Array.filter (fun l -> l <> "")
+            |> Array.rev
+            |> Array.truncate 20
+            |> Array.rev
+            |> List.ofArray
+    }
+
+/// One log entry per probe: the verdict, then everything that decided it.
+let private logRestoreProbe
+    (packageId: string)
+    (version: string)
+    (probe: RestoreProbe)
+    (verdict: Result<string, string>)
+    =
+    let resolved =
+        match probe.Resolved with
+        | [] -> "nothing"
+        | rs ->
+            rs
+            |> List.map (fun (v, src) -> sprintf "%s from %s" v src)
+            |> String.concat ", "
+
+    printfn
+        "Restore probe %s %s: %s (exit %d; resolved %s; SDK %s; sources %s; cwd %s)"
+        packageId
+        version
+        (match verdict with
+         | Ok _ -> "restorable"
+         | Error reason -> "not restorable, " + reason)
+        probe.ExitCode
+        resolved
+        (defaultArg probe.Sdk "unknown")
+        (match probe.Sources with
+         | [] -> "unknown"
+         | s -> String.concat ", " s)
+        (Directory.GetCurrentDirectory())
+
+    for line in probe.OutputTail do
+        printfn "    | %s" line
+
+/// Is this exact package version restorable from a feed right now? Downloads it
+/// (`PackageDownload`, which takes an exact version and no dependencies) into a
+/// fresh packages folder with `--no-http-cache`, so neither the global packages
+/// folder nor the HTTP cache can answer for a feed. Honours the repo's
+/// `nuget.config`, so a private remote feed counts; a local folder feed does not.
+/// Passes only when that exact version was restored (`restoreProbeVerdict`), and
+/// logs every probe, since a restore's exit code alone has misled this gate before.
 let isPublishedViaRestore (run: string -> string -> Shell.CommandResult) (packageId: string) (version: string) : bool =
-    withProbeProject packageId version (fun proj ->
-        match run "dotnet" (probeAvailabilityArgs (currentNuGetConfig ()) proj) with
-        | Shell.Success _ -> true
-        | Shell.Failure _ -> false)
+    let probeDir =
+        Path.Combine(Path.GetTempPath(), "fsst-probe-" + Guid.NewGuid().ToString("N"))
+
+    let packages = Path.Combine(probeDir, "packages")
+    Directory.CreateDirectory(packages) |> ignore
+
+    try
+        let proj = Path.Combine(probeDir, "probe.csproj")
+
+        File.WriteAllText(
+            proj,
+            sprintf
+                """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageDownload Include="%s" Version="[%s]" />
+  </ItemGroup>
+</Project>"""
+                packageId
+                version
+        )
+
+        let exitCode, output =
+            match run "dotnet" (probeAvailabilityArgs (currentNuGetConfig ()) proj packages) with
+            | Shell.Success output -> 0, output
+            | Shell.Failure(output, code) -> code, output
+
+        let probe = readRestoreProbe probeDir packages packageId exitCode output
+        let verdict = restoreProbeVerdict version probe
+        logRestoreProbe packageId version probe verdict
+        Result.isOk verdict
+    finally
+        try
+            Directory.Delete(probeDir, true)
+        with _ ->
+            ()
 
 /// Is this exact package version published, as a three-valued verdict? THE
 /// publication authority: both the post-push availability poll and the orphan-tag
@@ -962,12 +1142,10 @@ let isPublishedViaRestore (run: string -> string -> Shell.CommandResult) (packag
 ///     repo's `nuget.config`, so a success there corrects the verdict — no
 ///     spurious republish of a privately-published release.
 ///   * A restore FAILURE never downgrades a definite answer, because it cannot
-///     un-know what the flat container already established. This is what makes the
-///     check work for `PackAsTool` packages at all: a `PackageReference` probe of
-///     a tool package always fails NU1212, so for a tool the probe is structurally
-///     incapable of confirming presence. Under a "failure downgrades" rule every
-///     tool would be permanently `FeedUnknown` — exactly the gap that left tools
-///     unable to recover from an orphan tag.
+///     un-know what the flat container already established. A probe fails for
+///     reasons unrelated to the version (an unreachable private feed, a broken
+///     SDK), and under a "failure downgrades" rule each of those would turn a
+///     published release into `FeedUnknown`.
 let checkFeedPresence
     (fetch: string -> HttpResult)
     (run: string -> string -> Shell.CommandResult)
@@ -994,9 +1172,7 @@ let checkFeedPresence
 /// index ever listing it, and the index listing a version does not pass a package
 /// the probe cannot fetch.
 ///
-/// For a `PackAsTool` package the probe is structurally useless (a
-/// `PackageReference` to a tool fails NU1212 whether or not it is published), so
-/// the flat container is the strongest answer available and decides instead.
+/// For a `PackAsTool` package the flat container decides instead.
 let checkRestorable
     (fetch: string -> HttpResult)
     (run: string -> string -> Shell.CommandResult)

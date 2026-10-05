@@ -269,6 +269,32 @@ let ``a dependency the index already lists is still held until it is restorable`
         test <@ output.Contains "restorable from NuGet" @>)
 
 [<Fact>]
+let ``a dependency whose restore resolves a different version keeps the gate polling`` () =
+    // The real `Api.checkRestorable` behind the gate, over a `dotnet restore` that
+    // exits 0 because NuGet substituted a nearer version (NU1603). That is not the
+    // version the dependent's nuspec names, so the dependent must stay unpushed.
+    withRepo [ "Cli", [ "TestPrune" ]; "TestPrune", [] ] (fun repo ->
+        let checkFeed = feed repo.Timeline (Map [ "TestPrune", 1; "Cli", 1 ])
+        let mutable restores = 0
+
+        let nearest =
+            RestoreProbeFakes.restoreResolvingNearest "TestPrune" "0.1.0-alpha.1" "0.1.0-alpha.0-ref.local"
+
+        let restore cmd args =
+            restores <- restores + 1
+            nearest cmd args
+
+        let checkRestorable =
+            Api.checkRestorable (fun _ -> HttpOk """{"versions":["0.1.0-alpha.1"]}""") restore
+
+        let _, result =
+            withCapturedConsole (fun () -> release (releaseInputWith repo [] checkFeed checkRestorable false PushTags))
+
+        test <@ result = 2 @>
+        test <@ pushes repo.Timeline = [ "push testprune-v0.1.0-alpha.1" ] @>
+        test <@ restores = 5 @>)
+
+[<Fact>]
 let ``a dependency that is a tool is gated as a tool`` () =
     // A PackAsTool package cannot be proven by a PackageReference restore, so the gate
     // must say which kind of package it is asking about rather than let every tool

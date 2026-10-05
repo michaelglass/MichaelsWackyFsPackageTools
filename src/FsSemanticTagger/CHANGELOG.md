@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: **the restorability gate between release waves no longer clears a version that is on no feed yet.** The probe restored a `PackageReference` and trusted exit code 0. When the requested version was not published, NuGet resolved the nearest higher version instead, which is only a warning (NU1603), so restore still exited 0. A ref-stamped local build in the global packages folder, such as `0.10.0-alpha.30-ref.…`, sorts above every `0.10.0-alpha.<n>`, so FsHotWatch's core package cleared the gate on its first check, minutes before nuget.org published it. The probe now downloads the exact version (`PackageDownload`, `[version]`, no dependencies) into a fresh `--packages` folder with `--no-http-cache`. It passes only when that version was restored from a remote feed, so the global packages folder, the HTTP cache and a local folder feed in the repo's `nuget.config` can no longer stand in for the feed. A private remote feed still counts. Every probe now logs its verdict, exit code, the version it resolved and the feed that version came from, the SDK, the sources, the working directory and the last 20 lines of restore output. `checkFeedPresence` uses the same probe.
+
 ## 0.14.0-alpha.22 - 2026-09-30
 
 - fix: **finding the packages to release reads `IsPackable`, `OutputType` and `PackAsTool` from the nearest `Directory.Build.props` too,** not just the fsproj, and parses the fsproj as XML rather than matching text. A test project marked `<IsPackable>false</IsPackable>` by a `tests/Directory.Build.props` is no longer a release candidate, and a `<PackageId>` inside an XML comment no longer counts. A project that does not parse is not a candidate. FsProjLint decides which projects are packable with the same code.

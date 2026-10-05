@@ -20,6 +20,7 @@
     <Compile Include="VersionTests.fs" />
     <Compile Include="ChangelogTests.fs" />
     <Compile Include="ApiFixtures.fs" />
+    <Compile Include="RestoreProbeFakes.fs" />
     <Compile Include="ApiTests.fs" />
     <Compile Include="GrammarBuilders.fs" />
     <Compile Include="ConfigTests.fs" />
