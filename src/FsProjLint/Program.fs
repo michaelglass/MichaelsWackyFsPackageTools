@@ -40,7 +40,10 @@ Repo-level checks (run once per repo):
     NuGet cache entries die with it).
 
 Project properties are read as MSBuild sees them: from the .fsproj,
-else from the nearest Directory.Build.props (up to the repo root).
+else from the nearest Directory.Build.props (up to the repo root). A
+Directory.Build.props that does not parse fails once, as "XML parse"
+naming that file, and the project-level checks of each project under
+it are skipped.
 
 Project-level checks (run for every checked .fsproj):
   - TreatWarningsAsErrors is true
@@ -87,6 +90,8 @@ let main argv =
         // Each check with the project it ran on, if any.
         let allChecks =
             (result.RepoChecks |> List.map (fun c -> None, c))
+            @ (result.PropsChecks
+               |> List.map (fun (props, c) -> Some(Path.GetRelativePath(cwd, props)), c))
             @ (result.ProjectChecks
                |> List.collect (fun (project, checks) ->
                    checks |> List.map (fun c -> Some(Path.GetRelativePath(cwd, project)), c)))

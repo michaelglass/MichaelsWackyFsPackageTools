@@ -35,7 +35,7 @@ FsProjLint checks every `.fsproj` under `src/`, and every packable `.fsproj` els
 
 ### Project properties
 
-Every project-level check reads a property as MSBuild sees it: the value in the `.fsproj`, else the value in the nearest `Directory.Build.props` at or above the project's directory, up to the repository root. MSBuild imports only that nearest file, so a property it lacks is unset even when a props file further up sets it. A value in the `.fsproj` overrides the props file, even an empty one. `PackageReference` checks look in both files. Conditions are not evaluated.
+Every project-level check reads a property as MSBuild sees it: the value in the `.fsproj`, else the value in the nearest `Directory.Build.props` at or above the project's directory, up to the repository root. MSBuild imports only that nearest file, so a property it lacks is unset even when a props file further up sets it. A value in the `.fsproj` overrides the props file, even an empty one. `PackageReference` checks look in both files. Conditions are not evaluated. A `Directory.Build.props` that does not parse fails once, as "XML parse" naming that file, and the project-level checks of each project under it are skipped with a reason naming it.
 
 ### Project-level checks (all checked projects)
 

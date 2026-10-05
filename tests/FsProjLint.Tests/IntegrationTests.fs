@@ -259,24 +259,69 @@ let ``runLint with malformed XML produces failure result instead of exception`` 
         test <@ checks.[0].Name = "XML parse" @>
         test <@ isFailed checks.[0] @>)
 
-[<Fact>]
-let ``runLint reports a Directory.Build.props that does not parse against the project`` () =
-    withTempDir (fun dir ->
-        writeFile dir "Directory.Build.props" "<Project"
-        writeFile dir "src/Lib/Lib.fsproj" "<Project />"
+let private reasonOf (check: CheckResult) =
+    match check.Outcome with
+    | Failed reason
+    | Skipped reason -> reason
+    | Passed -> ""
 
-        match (runLint dir).ProjectChecks with
+[<Fact>]
+let ``runLint fails a Directory.Build.props that does not parse once, and skips each project under it`` () =
+    withTempDir (fun dir ->
+        writeFile dir "src/Directory.Build.props" "<Project"
+        writeFile dir "src/A/A.fsproj" "<Project />"
+        writeFile dir "src/B/B.fsproj" "<Project />"
+        writeFile dir "tools/Fine/Fine.fsproj" (libraryFsproj "Fine" "")
+
+        let result = runLint dir
+
+        match result.PropsChecks with
+        | [ (props, check) ] ->
+            test <@ props = Path.Combine(dir, "src", "Directory.Build.props") @>
+            test <@ check.Name = "XML parse" && isFailed check @>
+            test <@ (reasonOf check).StartsWith "Failed to parse Directory.Build.props: " @>
+        | other -> failwithf "expected one props failure, got %A" other
+
+        let underProps =
+            result.ProjectChecks
+            |> List.filter (fun (path, _) -> not (path.Contains "Fine"))
+
+        test <@ underProps.Length = 2 @>
+
+        for _, checks in underProps do
+            match checks with
+            | [ check ] ->
+                test <@ CheckOutcome.isSkipped check.Outcome @>
+
+                test
+                    <@
+                        reasonOf check =
+                            sprintf
+                                "%s does not parse, so this project's properties cannot be read"
+                                (Path.Combine("src", "Directory.Build.props"))
+                    @>
+            | other -> failwithf "expected one skipped check, got %A" other
+
+        // A project outside the broken props file is still checked.
+        let fine =
+            result.ProjectChecks |> List.find (fun (path, _) -> path.Contains "Fine") |> snd
+
+        test <@ fine |> List.exists (fun c -> c.Name = "TreatWarningsAsErrors is true") @>)
+
+[<Fact>]
+let ``runLint reports a project that does not parse as its own failure, not its props file's`` () =
+    withTempDir (fun dir ->
+        writeFile dir "Directory.Build.props" "<Project><PropertyGroup /></Project>"
+        writeFile dir "src/Bad/Bad.fsproj" "<Project"
+
+        let result = runLint dir
+
+        test <@ List.isEmpty result.PropsChecks @>
+
+        match result.ProjectChecks with
         | [ (_, [ check ]) ] ->
             test <@ check.Name = "XML parse" && isFailed check @>
-
-            test
-                <@
-                    (match check.Outcome with
-                     | Failed r -> r
-                     | _ -> "")
-                        .Contains
-                        "Directory.Build.props"
-                @>
+            test <@ (reasonOf check).StartsWith "Failed to parse Bad.fsproj: " @>
         | other -> failwithf "expected one parse failure, got %A" other)
 
 [<Fact>]
@@ -408,6 +453,41 @@ let ``Program.main returns 0 for fully passing repo`` () =
             test <@ result = 0 @>
             test <@ printed.Contains "Passed:" @>
             test <@ not (printed.Contains "FAILED:") @>
+        finally
+            Directory.SetCurrentDirectory(prev))
+
+[<Fact>]
+let ``Program.main fails a broken Directory.Build.props once and skips the projects under it`` () =
+    withTempDir (fun tmpDir ->
+        writeFile tmpDir "LICENSE" ""
+        writeFile tmpDir "README.md" ""
+        writeFile tmpDir ".editorconfig" ""
+        writeFile tmpDir "src/Directory.Build.props" "<Project"
+        writeFile tmpDir "src/A/A.fsproj" "<Project />"
+        writeFile tmpDir "src/B/B.fsproj" "<Project />"
+
+        let prev = Directory.GetCurrentDirectory()
+
+        try
+            Directory.SetCurrentDirectory(tmpDir)
+
+            let printed, result = withCapturedConsole (fun () -> FsProjLint.Program.main [||])
+            let lines = printed.Split('\n') |> Array.map _.TrimEnd('\r')
+            let props = Path.Combine("src", "Directory.Build.props")
+
+            test <@ result = 1 @>
+            test <@ lines |> Array.filter _.StartsWith("  FAIL ") = [| sprintf "  FAIL XML parse (%s)" props |] @>
+
+            test
+                <@
+                    lines |> Array.filter _.StartsWith("  SKIP ") =
+                        [|
+                            sprintf "  SKIP Project checks (%s)" (Path.Combine("src", "A", "A.fsproj"))
+                            sprintf "  SKIP Project checks (%s)" (Path.Combine("src", "B", "B.fsproj"))
+                        |]
+                @>
+
+            test <@ printed.Contains(sprintf "%s does not parse, so this project's properties cannot be read" props) @>
         finally
             Directory.SetCurrentDirectory(prev))
 

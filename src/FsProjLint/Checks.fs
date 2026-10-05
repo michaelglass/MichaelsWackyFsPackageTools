@@ -37,6 +37,9 @@ type CheckResult = { Name: string; Outcome: CheckOutcome }
 type LintResult =
     {
         RepoChecks: CheckResult list
+        /// Each Directory.Build.props that does not parse, with its failure. Listed
+        /// once per file, however many projects import it.
+        PropsChecks: (string * CheckResult) list
         ProjectChecks: (string * CheckResult list) list
     }
 
@@ -649,10 +652,10 @@ let internal checkRepositoryUrls (origin: OriginRemote) (repoDir: string) (proje
 /// The projects fsprojlint checks, each parsed with its nearest
 /// Directory.Build.props: every .fsproj under src/, and every packable one
 /// (see `Shared.MsBuildProject.isPackable`) anywhere else in the repository, such
-/// as a root-level or tools/ project. A project that does not parse is kept, so
+/// as a root-level or tools/ project. A project that does not load is kept, so
 /// its failure is reported. The scan skips build output, dot-directories and
 /// nested checkouts (see `Shared.SourceTree.isSkippedDir`). Sorted by path.
-let internal discoverProjects (dir: string) : (string * Result<Project, string>) list =
+let internal discoverProjects (dir: string) : (string * Result<Project, LoadError>) list =
     // Every project under src/ is checked, packable or not, as before packable
     // projects elsewhere were found; TreatWarningsAsErrors applies to them all.
     let srcDir =
@@ -685,20 +688,42 @@ let runLint (dir: string) : LintResult =
             | Ok(project, true) -> Some project
             | _ -> None)
 
+    let parseFailed (failure: ParseFailure) =
+        {
+            Name = "XML parse"
+            Outcome = Failed(sprintf "Failed to parse %s: %s" (Path.GetFileName failure.File) failure.Message)
+        }
+
+    // A project under a broken Directory.Build.props is neither passed nor failed:
+    // its properties, and so whether it is packable, cannot be known. The props
+    // file fails once, in PropsChecks.
+    let propsBroken (props: ParseFailure) =
+        {
+            Name = "Project checks"
+            Outcome =
+                Skipped(
+                    sprintf
+                        "%s does not parse, so this project's properties cannot be read"
+                        (Path.GetRelativePath(dir, props.File))
+                )
+        }
+
     let projectChecks =
         classified
         |> List.map (fun (path, loaded) ->
             match loaded with
             | Ok(project, true) -> (path, checkProject project @ checkRepositoryUrls origin.Value dir project)
             | Ok(project, false) -> (path, checkProject project)
-            | Error msg ->
-                (path,
-                 [
-                     {
-                         Name = "XML parse"
-                         Outcome = Failed msg
-                     }
-                 ]))
+            | Error(ProjectUnparseable failure) -> (path, [ parseFailed failure ])
+            | Error(DirectoryBuildPropsUnparseable props) -> (path, [ propsBroken props ]))
+
+    let propsChecks =
+        projects
+        |> List.choose (function
+            | _, Error(DirectoryBuildPropsUnparseable props) -> Some props
+            | _ -> None)
+        |> List.distinctBy _.File
+        |> List.map (fun props -> props.File, parseFailed props)
 
     let hasPackable = not (List.isEmpty packableProjects)
 
@@ -712,5 +737,6 @@ let runLint (dir: string) : LintResult =
 
     {
         RepoChecks = repoChecks
+        PropsChecks = propsChecks
         ProjectChecks = projectChecks
     }
