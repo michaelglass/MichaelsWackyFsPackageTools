@@ -102,6 +102,15 @@ jobs:
         run: ${{ inputs.syncdocs-cmd }} check
       - name: Build
         run: dotnet build --warnaserror --no-restore
+      # The same command michaels-wacky-release.yml builds with. Some errors exist
+      # only in an optimised build: e.g. an `inline` internal function called from
+      # an InternalsVisibleTo test assembly compiles in Debug (where it is not
+      # inlined) and fails with FS1116/FS1118 in Release. Building Release here
+      # makes such an error fail the commit that introduced it rather than the
+      # release cut from it. Outputs go to bin/Release, so the Debug outputs the
+      # later steps run `--no-build` against are untouched.
+      - name: Build (Release)
+        run: dotnet build -c Release --no-restore -p:ReleaseBuild=true
       - name: Lint
         timeout-minutes: 15
         run: ${{ inputs.lint-cmd != '' && inputs.lint-cmd || format('dotnet fsharplint lint {0}', inputs.solution) }}
