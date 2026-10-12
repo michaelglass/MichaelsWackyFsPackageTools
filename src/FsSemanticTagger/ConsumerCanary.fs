@@ -29,8 +29,10 @@ type Consumer =
         /// The gate, run through `/bin/sh -c` in the workspace.
         Gate: string
         Timeout: TimeSpan
-        /// The revision the fresh workspace is created from.
-        Revision: string
+        /// The revision the fresh workspace is created from. `None` is the
+        /// remote's `main` after a fetch: `main@origin` in jj, `origin/main` in
+        /// git. A local `main` can sit behind the remote's.
+        Revision: string option
     }
 
 type CanaryConfig =
@@ -141,11 +143,14 @@ let parseConfig (path: string) (json: string) : Result<CanaryConfig, string> =
             else
                 Error(sprintf "%s: %s.%s must be a string" path where name))
 
-    let optionalStr (name: string) (fallback: string) (el: JsonElement) : Result<string, string> =
+    let maybeStr (name: string) (el: JsonElement) : Result<string option, string> =
         match el.TryGetProperty name with
-        | true, v when v.ValueKind = JsonValueKind.String -> Ok(v.GetString())
+        | true, v when v.ValueKind = JsonValueKind.String -> Ok(Some(v.GetString()))
         | true, _ -> Error(sprintf "%s: \"%s\" must be a string" path name)
-        | _ -> Ok fallback
+        | _ -> Ok None
+
+    let optionalStr (name: string) (fallback: string) (el: JsonElement) : Result<string, string> =
+        maybeStr name el |> Result.map (Option.defaultValue fallback)
 
     let consumer (index: int) (el: JsonElement) : Result<Consumer, string> =
         let where = sprintf "consumers[%d]" index
@@ -165,7 +170,7 @@ let parseConfig (path: string) (json: string) : Result<CanaryConfig, string> =
                                 Ok(TimeSpan.FromMinutes(t.GetDouble()))
                             | _ -> Error(sprintf "%s: %s.timeoutMinutes must be a positive number" path where))
                         |> Result.bind (fun timeout ->
-                            optionalStr "revision" "main" el
+                            maybeStr "revision" el
                             |> Result.map (fun revision ->
                                 {
                                     Package = package
@@ -225,7 +230,7 @@ let toJson (config: CanaryConfig) : string =
                 pin = c.Pin
                 gate = c.Gate
                 timeoutMinutes = c.Timeout.TotalMinutes
-                revision = c.Revision
+                revision = c.Revision |> Option.toObj
             |})
 
     JsonSerializer.Serialize(
@@ -233,7 +238,11 @@ let toJson (config: CanaryConfig) : string =
             localFeed = config.LocalFeed
             consumers = consumers
         |},
-        JsonSerializerOptions(WriteIndented = true, NewLine = "\n")
+        JsonSerializerOptions(
+            WriteIndented = true,
+            NewLine = "\n",
+            DefaultIgnoreCondition = Serialization.JsonIgnoreCondition.WhenWritingNull
+        )
     )
 
 /// Every (package, version, consumer) the plan touches, in plan order.
@@ -412,25 +421,42 @@ let private createWorkspace (ops: Ops) (consumer: Consumer) : Result<string, Ref
         if Directory.Exists path then
             Directory.Delete(path, true)
 
-    let add () =
+    let neither = sprintf "%s is neither a jj nor a git repository" consumer.Repo
+
+    let fetch (cmd: string) (args: string) (remoteMain: string) : Result<string, string> =
+        match ops.RunIn consumer.Repo cmd args with
+        | Success _ -> Ok remoteMain
+        | Failure(error, code) -> Error(sprintf "%s %s in %s exited %d: %s" cmd args consumer.Repo code error)
+
+    let revision () : Result<string, string> =
+        match consumer.Revision with
+        | Some revision -> Ok revision
+        | None when isJj -> fetch "jj" "git fetch --remote origin" "main@origin"
+        | None when isGit -> fetch "git" "fetch origin" "origin/main"
+        | None -> Error neither
+
+    let add (revision: string) =
         if isJj then
             ops.RunIn
                 consumer.Repo
                 "jj"
-                (sprintf "workspace add --name %s -r %s %s" (workspaceName consumer) consumer.Revision path)
+                (sprintf "workspace add --name %s -r %s %s" (workspaceName consumer) revision path)
         elif isGit then
-            ops.RunIn consumer.Repo "git" (sprintf "worktree add --detach %s %s" path consumer.Revision)
+            ops.RunIn consumer.Repo "git" (sprintf "worktree add --detach %s %s" path revision)
         else
-            Failure(sprintf "%s is neither a jj nor a git repository" consumer.Repo, 1)
+            Failure(neither, 1)
 
     if not (Directory.Exists consumer.Repo) then
         Error(WorkspaceFailed(sprintf "consumer repo %s does not exist" consumer.Repo))
     else
-        discardLeftover ()
+        match revision () with
+        | Error error -> Error(WorkspaceFailed error)
+        | Ok revision ->
+            discardLeftover ()
 
-        match add () with
-        | Success _ -> Ok path
-        | Failure(error, _) -> Error(WorkspaceFailed error)
+            match add revision with
+            | Success _ -> Ok path
+            | Failure(error, _) -> Error(WorkspaceFailed error)
 
 let private restoreCommand (pin: PinFile) : string =
     match pin with
@@ -632,11 +658,8 @@ let decide (settings: Settings) (rootDir: string) (plan: (PackageConfig * Versio
         loadConfig settings.ConfigPath
         |> Result.bind (fun outcome ->
             match outcome with
-            | NoConfig path ->
-                printfn "%s" (formatVerdict (Skipped(NoConsumerConfig path)))
-                Ok(Skipped(NoConsumerConfig path))
+            | NoConfig path -> Ok(Skipped(NoConsumerConfig path))
             | Loaded config when (selectConsumers config plan).IsEmpty ->
-                printfn "%s" (formatVerdict (Skipped(NoConsumersForPlan settings.ConfigPath)))
                 Ok(Skipped(NoConsumersForPlan settings.ConfigPath))
             | Loaded config ->
                 run settings rootDir config plan

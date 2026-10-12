@@ -40,6 +40,8 @@ let private pkg (name: string) : PackageConfig =
 
 let private v (s: string) : Version = parse s
 
+let private occurrences (needle: string) (haystack: string) : int = haystack.Split(needle).Length - 1
+
 // ---- config parsing ----
 
 [<Fact>]
@@ -57,8 +59,8 @@ let ``parseConfig - reads every field and applies the defaults`` () =
     test <@ first.Pin = ".config/dotnet-tools.json" @>
     test <@ first.Gate = "./build.fsx check" @>
     test <@ first.Timeout = TimeSpan.FromMinutes 90.0 @>
-    test <@ first.Revision = "main" @>
-    test <@ config.Consumers[1].Revision = "main@origin" @>
+    test <@ first.Revision = None @>
+    test <@ config.Consumers[1].Revision = Some "main@origin" @>
 
 [<Fact>]
 let ``parseConfig - expands a leading tilde in repo and feed paths`` () =
@@ -324,7 +326,7 @@ let private scaffold (dir: string) (gate: string -> GateOutcome) (commands: Resi
                         Pin = "src/C.fsproj"
                         Gate = "mise run ci"
                         Timeout = TimeSpan.FromMinutes 1.0
-                        Revision = "main"
+                        Revision = Some "main"
                     }
                 ]
         }
@@ -461,6 +463,118 @@ let ``run - a plan with no consumers runs nothing`` () =
         test <@ run settings root config [ pkg "Other", v "1.0.0" ] = Ok [] @>
         test <@ commands.Count = 0 @>)
 
+/// The scaffold's consumer, re-read from a config that names no revision. A
+/// `.jj` marker beside the `.git` one makes it a (colocated) jj consumer.
+let private withoutRevision (dir: string) (repo: string) (jj: bool) : CanaryConfig =
+    if jj then
+        Directory.CreateDirectory(Path.Combine(repo, ".jj")) |> ignore
+
+    let json =
+        sprintf
+            """{ "localFeed": %s, "consumers": [ { "package": "TestPrune.Core", "repo": %s, "pin": "src/C.fsproj", "gate": "mise run ci", "timeoutMinutes": 1 } ] }"""
+            (System.Text.Json.JsonSerializer.Serialize(Path.Combine(dir, "feed")))
+            (System.Text.Json.JsonSerializer.Serialize repo)
+
+    match parseConfig configPath json with
+    | Ok c -> c
+    | Error e -> failwith e
+
+[<Fact>]
+let ``toJson - an absent revision stays absent`` () =
+    withTempDir (fun dir ->
+        let commands = ResizeArray()
+        let _, repo, _, _ = scaffold dir (fun _ -> Exited 0) commands
+        let config = withoutRevision dir repo false
+        let json = toJson config
+        test <@ not (json.Contains "revision") @>
+        test <@ parseConfig configPath json = Ok config @>)
+
+let private indexOf (commands: ResizeArray<string>) (expected: string) : int =
+    commands.FindIndex(fun c -> c = expected)
+
+[<Fact>]
+let ``run - a jj consumer with no revision fetches, then works off main@origin`` () =
+    withTempDir (fun dir ->
+        let commands = ResizeArray()
+        let root, repo, settings, _ = scaffold dir (fun _ -> Exited 0) commands
+        let config = withoutRevision dir repo true
+        let workspace = repo + "-canary-testprune-core"
+
+        match run settings root config [ pkg "TestPrune.Core", v "12.0.0" ] with
+        | Ok _ -> ()
+        | Error refusal -> failwithf "%s" (formatRefusal refusal)
+
+        let fetched = indexOf commands (sprintf "%s: jj git fetch --remote origin" repo)
+
+        let added =
+            commands.FindIndex(fun c ->
+                c.StartsWith(sprintf "%s: jj workspace add " repo)
+                && c.EndsWith(sprintf " -r main@origin %s" workspace))
+
+        test <@ fetched >= 0 @>
+        test <@ added > fetched @>)
+
+[<Fact>]
+let ``run - a git consumer with no revision fetches, then works off origin/main`` () =
+    withTempDir (fun dir ->
+        let commands = ResizeArray()
+        let root, repo, settings, _ = scaffold dir (fun _ -> Exited 0) commands
+        let config = withoutRevision dir repo false
+        let workspace = repo + "-canary-testprune-core"
+
+        match run settings root config [ pkg "TestPrune.Core", v "12.0.0" ] with
+        | Ok _ -> ()
+        | Error refusal -> failwithf "%s" (formatRefusal refusal)
+
+        let fetched = indexOf commands (sprintf "%s: git fetch origin" repo)
+
+        let added =
+            indexOf commands (sprintf "%s: git worktree add --detach %s origin/main" repo workspace)
+
+        test <@ fetched >= 0 @>
+        test <@ added > fetched @>)
+
+[<Fact>]
+let ``run - an explicit revision is used as written and nothing is fetched`` () =
+    withTempDir (fun dir ->
+        let commands = ResizeArray()
+        let root, _, settings, config = scaffold dir (fun _ -> Exited 0) commands
+
+        match run settings root config [ pkg "TestPrune.Core", v "12.0.0" ] with
+        | Ok _ -> ()
+        | Error refusal -> failwithf "%s" (formatRefusal refusal)
+
+        test <@ not (commands |> Seq.exists (fun c -> c.Contains " fetch")) @>)
+
+[<Fact>]
+let ``run - a failed fetch refuses before any workspace is created`` () =
+    withTempDir (fun dir ->
+        let commands = ResizeArray()
+        let root, repo, settings, _ = scaffold dir (fun _ -> Exited 0) commands
+        let config = withoutRevision dir repo false
+
+        let offline =
+            { settings with
+                Ops =
+                    { settings.Ops with
+                        RunIn =
+                            fun cwd cmd args ->
+                                if cmd = "git" && args.StartsWith "fetch" then
+                                    commands.Add(sprintf "%s: %s %s" cwd cmd args)
+                                    Failure("could not resolve host", 128)
+                                else
+                                    settings.Ops.RunIn cwd cmd args
+                    }
+            }
+
+        match run offline root config [ pkg "TestPrune.Core", v "12.0.0" ] with
+        | Ok _ -> failwith "expected a refusal"
+        | Error refusal ->
+            let message = formatRefusal refusal
+            test <@ message.Contains "git fetch origin" @>
+            test <@ message.Contains "could not resolve host" @>
+            test <@ not (commands |> Seq.exists (fun c -> c.Contains "worktree add")) @>)
+
 // ---- the decision the release makes ----
 
 [<Fact>]
@@ -473,7 +587,9 @@ let ``decide - absent config skips with a note naming the path`` () =
             withCapturedConsole (fun () -> decide settings root [ pkg "TestPrune.Core", v "12.0.0" ])
 
         test <@ verdict = Ok(Skipped(NoConsumerConfig settings.ConfigPath)) @>
-        test <@ output.Contains settings.ConfigPath @>)
+        test <@ (formatVerdict (Skipped(NoConsumerConfig settings.ConfigPath))).Contains settings.ConfigPath @>
+        // The release prints the verdict; decide does not print it a second time.
+        test <@ output = "" @>)
 
 [<Fact>]
 let ``decide - break-glass skips loudly and is recorded`` () =
@@ -590,7 +706,7 @@ let private integrationRun (dir: string) (gateExit: int) =
                         Pin = "src/C.fsproj"
                         Gate = "sh gate.sh"
                         Timeout = TimeSpan.FromMinutes 1.0
-                        Revision = "main"
+                        Revision = Some "main"
                     }
                 ]
         }
@@ -748,7 +864,7 @@ let private canaryFor (dir: string) (gate: string -> GateOutcome) (commands: Res
                         Pin = "src/C.fsproj"
                         Gate = "mise run ci"
                         Timeout = TimeSpan.FromMinutes 1.0
-                        Revision = "main"
+                        Revision = Some "main"
                     }
                 ]
         }
@@ -835,6 +951,7 @@ let ``release - no config on the machine skips with a note naming the path`` () 
         let code, output, _, _ = releaseWith dir canary Release.PushTags
         test <@ code = 0 @>
         test <@ output.Contains(sprintf "Consumer canary: skipped (no %s on this machine)" canary.ConfigPath) @>
+        test <@ occurrences "Consumer canary: skipped" output = 1 @>
         test <@ commands.Count = 0 @>)
 
 [<Fact>]
@@ -878,7 +995,7 @@ let ``release - dry run with break-glass says so and a dry run with no consumer 
                             Pin = "x.fsproj"
                             Gate = "true"
                             Timeout = TimeSpan.FromMinutes 1.0
-                            Revision = "main"
+                            Revision = Some "main"
                         }
                     ]
             }
@@ -909,7 +1026,7 @@ let ``release - a config naming no consumer of the plan skips with a note`` () =
                             Pin = "x.fsproj"
                             Gate = "true"
                             Timeout = TimeSpan.FromMinutes 1.0
-                            Revision = "main"
+                            Revision = Some "main"
                         }
                     ]
             }
@@ -918,6 +1035,7 @@ let ``release - a config naming no consumer of the plan skips with a note`` () =
         let code, output, _, _ = releaseWith dir canary Release.PushTags
         test <@ code = 0 @>
         test <@ output.Contains "names no consumer of these packages" @>
+        test <@ occurrences "Consumer canary: skipped" output = 1 @>
         test <@ commands.Count = 0 @>)
 
 // ---- the remaining edges ----
@@ -981,7 +1099,7 @@ let ``formatRefusal - every reason reads as a sentence with the consumer and pac
                     Pin = "p.fsproj"
                     Gate = "mise run ci"
                     Timeout = TimeSpan.FromMinutes 1.0
-                    Revision = "main"
+                    Revision = Some "main"
                 }
             Reason = reason
             LogPath = None
@@ -1057,6 +1175,22 @@ let ``run - a consumer that is neither jj nor git, or does not exist, refuses`` 
         match run settings root config [ pkg "TestPrune.Core", v "12.0.0" ] with
         | Error { Reason = WorkspaceFailed msg } -> test <@ msg.Contains "neither a jj nor a git repository" @>
         | other -> failwithf "unexpected %A" other
+
+        let unpinned =
+            { config with
+                Consumers =
+                    [
+                        { config.Consumers[0] with
+                            Revision = None
+                        }
+                    ]
+            }
+
+        match run settings root unpinned [ pkg "TestPrune.Core", v "12.0.0" ] with
+        | Error { Reason = WorkspaceFailed msg } -> test <@ msg.Contains "neither a jj nor a git repository" @>
+        | other -> failwithf "unexpected %A" other
+
+        test <@ not (commands |> Seq.exists (fun c -> c.Contains " fetch")) @>
 
         let missing =
             { config with

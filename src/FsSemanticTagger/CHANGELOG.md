@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- fix!: **the consumer canary works off the consumer's remote `main` by default.** A consumer with no `revision` got a workspace off its local `main` bookmark, which in jj can sit behind `main@origin`, so the candidate was gated against stale consumer code. The canary now fetches first (`jj git fetch --remote origin` or `git fetch origin`) and creates the workspace from `main@origin` (jj) or `origin/main` (git). A failed fetch refuses the release. An explicit `revision` is used as written, without a fetch.
+  - `ConsumerCanary.Consumer.Revision` is a `string option`; `None` is the remote's `main`.
+- fix: **a consumer-canary skip is printed once.** A release with no `~/.fssemantictagger.json`, or with no consumer of the planned packages, printed the skip line twice. `ConsumerCanary.decide` no longer prints a skip verdict; the release prints it.
+
 ## 0.14.0-alpha.24 - 2026-10-05
 
 - feat!: **`PackAsTool` and `AssemblyName` are read from the nearest `Directory.Build.props` too, not just the fsproj text.** A project marked `<PackAsTool>true</PackAsTool>` only in its `Directory.Build.props` was a release candidate but was released as a library: its referenced projects were not counted as bundled, its own changes took the API-diff path rather than the CLI-grammar diff, and the gate between release waves probed it as a library. An `AssemblyName` set only there was ignored, so the DLL path pointed at `<fsproj name>.dll`. Both now follow the rule package discovery uses: the fsproj's value, else the nearest props file's; an empty value in the fsproj overrides the props file. A project whose fsproj or `Directory.Build.props` does not parse is not a tool, and its DLL is named after the fsproj.

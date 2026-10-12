@@ -252,7 +252,7 @@ A repo's own gate runs its own suite on its own tree; a regression that only app
       "pin": "src/FsHotWatch.TestPrune/FsHotWatch.TestPrune.fsproj",
       "gate": "mise run ci",
       "timeoutMinutes": 30,
-      "revision": "main"
+      "revision": "release-branch"
     }
   ]
 }
@@ -266,7 +266,7 @@ A repo's own gate runs its own suite on its own tree; a regression that only app
 | `consumers[].pin` | The file that pins the package, relative to `repo`: a `dotnet-tools.json` manifest (its `"version"` is rewritten) or an MSBuild project/props file (the `<PackageReference Include="..." Version="...">` is rewritten). Every other byte of the file is kept. |
 | `consumers[].gate` | The command that decides, run through `/bin/sh -c` in the workspace. Exit 0 is the only pass. |
 | `consumers[].timeoutMinutes` | The budget for the restore and for the gate, each. Exceeding it refuses the release. |
-| `consumers[].revision` | The revision the fresh workspace is created from. Optional; default `main`. |
+| `consumers[].revision` | The revision the fresh workspace is created from, used as written. Optional; when absent the consumer is fetched first (`jj git fetch --remote origin` or `git fetch origin`; a failed fetch refuses the release) and the workspace is created from the remote's `main`: `main@origin` in jj, `origin/main` in git. |
 
 After the plan is decided and the changelogs validated — before the fsproj is bumped, before anything is committed, tagged or pushed — for every package in the plan with a consumer:
 
