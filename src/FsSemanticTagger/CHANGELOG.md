@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.25 - 2026-10-14
+
 - fix!: **the consumer canary works off the consumer's remote `main` by default.** A consumer with no `revision` got a workspace off its local `main` bookmark, which in jj can sit behind `main@origin`, so the candidate was gated against stale consumer code. The canary now fetches first (`jj git fetch --remote origin` or `git fetch origin`) and creates the workspace from `main@origin` (jj) or `origin/main` (git). A failed fetch refuses the release. An explicit `revision` is used as written, without a fetch.
   - `ConsumerCanary.Consumer.Revision` is a `string option`; `None` is the remote's `main`.
 - fix: **a consumer-canary skip is printed once.** A release with no `~/.fssemantictagger.json`, or with no consumer of the planned packages, printed the skip line twice. `ConsumerCanary.decide` no longer prints a skip verdict; the release prints it.
