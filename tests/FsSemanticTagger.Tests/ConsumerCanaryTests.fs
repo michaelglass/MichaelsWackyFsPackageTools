@@ -493,7 +493,7 @@ let private indexOf (commands: ResizeArray<string>) (expected: string) : int =
     commands.FindIndex(fun c -> c = expected)
 
 [<Fact>]
-let ``run - a jj consumer with no revision fetches, then works off main@origin`` () =
+let ``run - a jj consumer with no revision fetches, then works off the remote's main`` () =
     withTempDir (fun dir ->
         let commands = ResizeArray()
         let root, repo, settings, _ = scaffold dir (fun _ -> Exited 0) commands
