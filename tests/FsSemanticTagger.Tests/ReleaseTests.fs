@@ -6680,10 +6680,14 @@ let ``release - a Release run that never appears within the budget is reported, 
 
 
 [<Fact>]
-let ``nuGetPollFromEnv - the default budget covers twenty minutes of index lag`` () =
-    // Packages can index 6-15 minutes after the Release run finishes.
+let ``nuGetPollFromEnv - the default budget covers the forty minutes FsHotWatch's barrier waits`` () =
+    // On 2026-10-06 the FsHotWatch alpha.91 CLI package took ~36 minutes (145 checks at
+    // 15s) to index. FsHotWatch's between-stage barrier waits 160 x 15s = 40 minutes; the
+    // tagger's wait between release waves must not give up sooner (AUTOMATION-1127).
     let intervalMs, attempts = nuGetPollFromEnv (fun _ -> None)
-    test <@ int64 (attempts - 1) * int64 intervalMs >= 20L * 60L * 1000L @>
+    let waitedMs = int64 (attempts - 1) * int64 intervalMs
+    test <@ waitedMs >= 36L * 60L * 1000L @>
+    test <@ waitedMs >= 160L * 15L * 1000L @>
 
 [<Fact>]
 let ``nuGetPollFromEnv - honours the same overrides as FsHotWatch's barrier`` () =

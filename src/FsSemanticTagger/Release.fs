@@ -224,13 +224,14 @@ let private waitForCiWithin
 /// (`FSHW_NUGET_PROBE_ATTEMPTS`, `FSHW_NUGET_PROBE_DELAY_MS`), so one setting tunes
 /// both ends of a release.
 ///
-/// 15s x 81 = twenty minutes. The package was measured three times on
-/// FsHotWatch (2026-09-15/16) to index 6-15 minutes AFTER the Release run finished,
-/// and the old 40 x 15s = 10 min gave up inside that window and printed "Release NOT
-/// CONFIRMED" for releases that were fine. FsHotWatch's own barrier was raised to
-/// 80 x 15s for the same reason.
+/// 15s x 161 = forty minutes (160 sleeps between 161 checks). The package was
+/// measured three times on FsHotWatch (2026-09-15/16) to index 6-15 minutes AFTER the
+/// Release run finished, and on 2026-10-06 FsHotWatch's alpha.91 CLI package took about
+/// 36 minutes (145 checks at 15s). FsHotWatch's own barrier waits 160 x 15s for the same
+/// reason; this wait between release waves must not give up before it does, or a slow
+/// index stops the release between waves.
 let internal defaultNuGetPollIntervalMs = 15000
-let internal defaultNuGetMaxAttempts = 81
+let internal defaultNuGetMaxAttempts = 161
 
 let nuGetPollFromEnv (getEnv: string -> string option) : int * int =
     Vcs.envIntOrDefault getEnv "FSHW_NUGET_PROBE_DELAY_MS" defaultNuGetPollIntervalMs,
