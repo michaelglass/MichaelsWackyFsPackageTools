@@ -235,32 +235,14 @@ let ``pinFileOf - the file name decides the shape`` () =
     | Ok _ -> failwith "expected an error"
     | Error msg -> test <@ msg.Contains "paket.dependencies" @>
 
-// ---- nuget.config ----
+// ---- the seed project ----
 
 [<Fact>]
-let ``withLocalFeed - no existing config writes a minimal one`` () =
-    let content = withLocalFeed None "/feeds/local"
-    test <@ content.Contains """<add key="fssemantictagger-consumer-canary" value="/feeds/local" />""" @>
-    test <@ content.Contains "<packageSources>" @>
-
-[<Fact>]
-let ``withLocalFeed - an existing config gains the feed after any clear and keeps the rest`` () =
-    let existing =
-        """<?xml version="1.0" encoding="utf-8"?>
-<configuration>
-  <packageSources>
-    <clear />
-    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
-  </packageSources>
-</configuration>
-"""
-
-    let content = withLocalFeed (Some existing) "/feeds/local"
-    let clearAt = content.IndexOf "<clear />"
-    let feedAt = content.IndexOf "fssemantictagger-consumer-canary"
-    test <@ clearAt >= 0 && feedAt > clearAt @>
-    test <@ content.Contains """<add key="nuget.org" value="https://api.nuget.org/v3/index.json" />""" @>
-    test <@ content.IndexOf "</packageSources>" > feedAt @>
+let ``seedProject - downloads exactly the candidate, for the running runtime's TFM`` () =
+    let content = seedProject "FsHotWatch.Cli" "0.14.0-alpha.130"
+    test <@ content.Contains """<PackageDownload Include="FsHotWatch.Cli" Version="[0.14.0-alpha.130]" />""" @>
+    test <@ content.Contains(sprintf "<TargetFramework>net%d.0</TargetFramework>" Environment.Version.Major) @>
+    test <@ not (content.Contains "PackageReference") @>
 
 // ---- orchestration through a fake host ----
 
@@ -311,6 +293,7 @@ let private scaffold (dir: string) (gate: string -> GateOutcome) (commands: Resi
             ConfigPath = Path.Combine(dir, ".fssemantictagger.json")
             Skip = false
             LogDir = Path.Combine(root, "artifacts", "consumer-canary")
+            ScratchDir = Path.Combine(dir, "scratch")
             PackagesCache = Path.Combine(dir, "cache")
             Ops = fakeOps commands gate
         }
@@ -327,6 +310,8 @@ let private scaffold (dir: string) (gate: string -> GateOutcome) (commands: Resi
                         Gate = "mise run ci"
                         Timeout = TimeSpan.FromMinutes 1.0
                         Revision = Some "main"
+                        Workspace = None
+                        Teardown = None
                     }
                 ]
         }
@@ -369,7 +354,7 @@ let ``run - green gate passes and the workspace saw the feed, the pin and the lo
             @>)
 
 [<Fact>]
-let ``run - edits the pin, writes nuget.config, restores, then runs the gate in the workspace`` () =
+let ``run - edits the pin, seeds the candidate from the scratch dir, then runs the gate in the workspace`` () =
     withTempDir (fun dir ->
         let commands = ResizeArray()
         let root, repo, settings, config = scaffold dir (fun _ -> Exited 0) commands
@@ -381,17 +366,20 @@ let ``run - edits the pin, writes nuget.config, restores, then runs the gate in 
 
         let pinned = File.ReadAllText(Path.Combine(workspace, "src", "C.fsproj"))
         test <@ pinned.Contains """<PackageReference Include="TestPrune.Core" Version="12.0.0" />""" @>
-        let nugetConfig = File.ReadAllText(Path.Combine(workspace, "nuget.config"))
-        test <@ nugetConfig.Contains config.LocalFeed @>
+        test <@ not (File.Exists(Path.Combine(workspace, "nuget.config"))) @>
+        let seedDir = Path.Combine(settings.ScratchDir, "testprune.core-12.0.0")
 
-        let logged =
-            commands
-            |> Seq.filter (fun c -> c.StartsWith(workspace + ": sh -c"))
-            |> List.ofSeq
+        test
+            <@
+                (File.ReadAllText(Path.Combine(seedDir, "seed.csproj"))).Contains
+                    """<PackageDownload Include="TestPrune.Core" Version="[12.0.0]" />"""
+            @>
+
+        let logged = commands |> Seq.filter (fun c -> c.Contains ": sh -c") |> List.ofSeq
 
         test <@ logged.Length = 2 @>
-        test <@ logged[0].Contains "dotnet restore src/C.fsproj" @>
-        test <@ logged[1].Contains "mise run ci" @>
+        test <@ logged[0].StartsWith(seedDir + ": sh -c dotnet restore seed.csproj") @>
+        test <@ logged[1].StartsWith(workspace + ": sh -c mise run ci") @>
         let logPath = Path.Combine(settings.LogDir, "TestPrune.Core-12.0.0-consumer.log")
         test <@ File.Exists logPath @>
         test <@ (File.ReadAllText logPath).Contains "mise run ci" @>)
@@ -691,6 +679,7 @@ let private integrationRun (dir: string) (gateExit: int) =
             ConfigPath = Path.Combine(dir, ".fssemantictagger.json")
             Skip = false
             LogDir = Path.Combine(root, "artifacts", "consumer-canary")
+            ScratchDir = Path.Combine(dir, "scratch")
             PackagesCache = Path.Combine(dir, "cache")
             Ops = integrationOps
         }
@@ -707,6 +696,8 @@ let private integrationRun (dir: string) (gateExit: int) =
                         Gate = "sh gate.sh"
                         Timeout = TimeSpan.FromMinutes 1.0
                         Revision = Some "main"
+                        Workspace = None
+                        Teardown = None
                     }
                 ]
         }
@@ -865,6 +856,8 @@ let private canaryFor (dir: string) (gate: string -> GateOutcome) (commands: Res
                         Gate = "mise run ci"
                         Timeout = TimeSpan.FromMinutes 1.0
                         Revision = Some "main"
+                        Workspace = None
+                        Teardown = None
                     }
                 ]
         }
@@ -876,6 +869,7 @@ let private canaryFor (dir: string) (gate: string -> GateOutcome) (commands: Res
         ConfigPath = configPath
         Skip = false
         LogDir = Path.Combine(dir, "logs")
+        ScratchDir = Path.Combine(dir, "scratch")
         PackagesCache = Path.Combine(dir, "cache")
         Ops = fakeOps commands gate
     }
@@ -996,6 +990,8 @@ let ``release - dry run with break-glass says so and a dry run with no consumer 
                             Gate = "true"
                             Timeout = TimeSpan.FromMinutes 1.0
                             Revision = Some "main"
+                            Workspace = None
+                            Teardown = None
                         }
                     ]
             }
@@ -1027,6 +1023,8 @@ let ``release - a config naming no consumer of the plan skips with a note`` () =
                             Gate = "true"
                             Timeout = TimeSpan.FromMinutes 1.0
                             Revision = Some "main"
+                            Workspace = None
+                            Teardown = None
                         }
                     ]
             }
@@ -1073,20 +1071,6 @@ let ``setPinVersion - fsproj: an absent reference is an error naming the file an
     | Ok _ -> failwith "expected an error"
 
 [<Fact>]
-let ``withLocalFeed - a config without packageSources gains the section`` () =
-    let inside =
-        withLocalFeed (Some "<configuration>\n</configuration>\n") "/feeds/local"
-
-    test
-        <@
-            inside.Contains "<packageSources>"
-            && inside.IndexOf "</configuration>" > inside.IndexOf "/feeds/local"
-        @>
-
-    let bare = withLocalFeed (Some "<!-- empty -->") "/feeds/local"
-    test <@ bare.StartsWith "<!-- empty -->" && bare.Contains "/feeds/local" @>
-
-[<Fact>]
 let ``formatRefusal - every reason reads as a sentence with the consumer and package`` () =
     let refusal reason =
         {
@@ -1100,6 +1084,8 @@ let ``formatRefusal - every reason reads as a sentence with the consumer and pac
                     Gate = "mise run ci"
                     Timeout = TimeSpan.FromMinutes 1.0
                     Revision = Some "main"
+                    Workspace = None
+                    Teardown = None
                 }
             Reason = reason
             LogPath = None
@@ -1128,11 +1114,13 @@ let ``formatVerdict - the skip and empty verdicts name what happened`` () =
     test <@ formatVerdict (Passed []) = "Consumer canary: nothing to run" @>
 
 [<Fact>]
-let ``defaultSettings - reads the home config and logs under the releasing repo`` () =
+let ``defaultSettings - reads the home config, logs per releasing repo and seeds from the temp dir`` () =
     let settings = defaultSettings true "/repo"
+    let home = Environment.GetFolderPath Environment.SpecialFolder.UserProfile
     test <@ settings.Skip @>
     test <@ Path.GetFileName settings.ConfigPath = ".fssemantictagger.json" @>
-    test <@ settings.LogDir = Path.Combine("/repo", "artifacts", "consumer-canary") @>
+    test <@ settings.LogDir = Path.Combine(home, ".fssemantictagger", "logs", "repo") @>
+    test <@ settings.ScratchDir.StartsWith(Path.GetTempPath()) @>
     test <@ settings.PackagesCache <> "" @>
 
 [<Fact>]
@@ -1240,7 +1228,7 @@ let ``run - a failed pack refuses before any workspace is made`` () =
         | Ok _ -> failwith "expected a refusal")
 
 [<Fact>]
-let ``run - a pin missing from the workspace, a restore timeout, and an existing nuget.config`` () =
+let ``run - a pin missing from the workspace, a seed timeout, and an existing nuget.config left alone`` () =
     withTempDir (fun dir ->
         let commands = ResizeArray()
 
@@ -1248,7 +1236,7 @@ let ``run - a pin missing from the workspace, a restore timeout, and an existing
             scaffold
                 dir
                 (fun c ->
-                    if c.StartsWith "dotnet tool restore" then
+                    if c.StartsWith "dotnet restore" then
                         TimedOut(TimeSpan.FromMinutes 1.0)
                     else
                         Exited 0)
@@ -1293,19 +1281,12 @@ let ``run - a pin missing from the workspace, a restore timeout, and an existing
         | other -> failwithf "unexpected %A" other
 
         let workspace = repo + "-canary-testprune-core"
+        test <@ not (commands |> Seq.exists (fun c -> c.Contains "mise run ci")) @>
 
         test
             <@
-                commands
-                |> Seq.exists (fun c -> c.Contains "dotnet tool restore --tool-manifest dotnet-tools.json")
-            @>
-
-        let merged = File.ReadAllText(Path.Combine(workspace, "NuGet.Config"))
-
-        test
-            <@
-                merged.Contains "<clear />"
-                && merged.IndexOf config.LocalFeed > merged.IndexOf "<clear />"
+                File.ReadAllText(Path.Combine(workspace, "NuGet.Config")) =
+                    File.ReadAllText(Path.Combine(repo, "NuGet.Config"))
             @>
 
         test <@ (File.ReadAllText(Path.Combine(workspace, "dotnet-tools.json"))).Contains "\"12.0.0\"" @>)
@@ -1415,3 +1396,263 @@ let ``runLogged - a gate that leaves nothing behind is logged in full`` () =
         test <@ [ "out1"; "out2"; "out3"; "err1"; "err2"; "err3" ] |> List.forall text.Contains @>
 
         test <@ not (text.Contains truncationNote) @>)
+
+// ---- AUTOMATION-1365: what the live proof on a real consumer found ----
+
+[<Fact>]
+let ``run - the candidate is restored outside the consumer workspace, with the feed as its only source`` () =
+    // Blocker 1: a restore in the workspace runs under the consumer's global.json
+    // with the releaser's SDK, so a consumer pinned to another SDK band exits 155.
+    withTempDir (fun dir ->
+        let commands = ResizeArray()
+        let root, repo, settings, config = scaffold dir (fun _ -> Exited 0) commands
+        let workspace = repo + "-canary-testprune-core"
+
+        match run settings root config [ pkg "TestPrune.Core", v "12.0.0" ] with
+        | Ok _ -> ()
+        | Error refusal -> failwithf "%s" (formatRefusal refusal)
+
+        let restores =
+            commands
+            |> Seq.filter (fun c -> c.Contains ": sh -c dotnet restore")
+            |> List.ofSeq
+
+        test <@ restores.Length = 1 @>
+        test <@ not (restores[0].StartsWith workspace) @>
+        test <@ restores[0].Contains(sprintf "--source '%s'" config.LocalFeed) @>
+        test <@ restores[0].Contains(sprintf "--packages '%s'" settings.PackagesCache) @>
+        test <@ not (commands |> Seq.exists (fun c -> c.StartsWith(workspace + ": sh -c dotnet"))) @>)
+
+[<Fact>]
+let ``run - the consumer's tracked nuget.config is left byte-for-byte as committed`` () =
+    // Blocker 2: the feed written into a tracked nuget.config is a filesystem
+    // source the consumer's own gate may forbid, so the gate is red before tests run.
+    withTempDir (fun dir ->
+        let commands = ResizeArray()
+        let root, repo, settings, config = scaffold dir (fun _ -> Exited 0) commands
+
+        let tracked =
+            "<configuration>\n  <packageSources>\n    <clear />\n  </packageSources>\n</configuration>\n"
+
+        File.WriteAllText(Path.Combine(repo, "nuget.config"), tracked)
+
+        match run settings root config [ pkg "TestPrune.Core", v "12.0.0" ] with
+        | Ok _ -> ()
+        | Error refusal -> failwithf "%s" (formatRefusal refusal)
+
+        let workspace = repo + "-canary-testprune-core"
+        test <@ File.ReadAllText(Path.Combine(workspace, "nuget.config")) = tracked @>)
+
+/// Make `dir` impossible to delete recursively, as a live process re-creating
+/// files in it does; `unlock` undoes it.
+let private lockAgainstDelete (dir: string) : unit -> unit =
+    Directory.CreateDirectory dir |> ignore
+    let file = Path.Combine(dir, "held")
+    File.WriteAllText(file, "held")
+
+    if OperatingSystem.IsWindows() then
+        File.SetAttributes(file, FileAttributes.ReadOnly)
+        fun () -> File.SetAttributes(file, FileAttributes.Normal)
+    else
+        File.SetUnixFileMode(dir, UnixFileMode.UserRead ||| UnixFileMode.UserExecute)
+
+        fun () ->
+            File.SetUnixFileMode(dir, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute)
+
+[<Fact>]
+let ``run - a leftover workspace that cannot be removed refuses instead of crashing`` () =
+    // Blocker 4: a daemon left alive by the previous gate kept the leftover
+    // workspace non-empty, and the release died with an unhandled IOException.
+    withTempDir (fun dir ->
+        let commands = ResizeArray()
+        let root, repo, settings, config = scaffold dir (fun _ -> Exited 0) commands
+        let workspace = repo + "-canary-testprune-core"
+        let unlock = lockAgainstDelete (Path.Combine(workspace, "busy"))
+
+        try
+            match run settings root config [ pkg "TestPrune.Core", v "12.0.0" ] with
+            | Error { Reason = WorkspaceFailed msg } -> test <@ msg.Contains workspace @>
+            | other -> failwithf "unexpected %A" other
+
+            test <@ not (commands |> Seq.exists (fun c -> c.Contains "mise run ci")) @>
+        finally
+            unlock ())
+
+[<Fact>]
+let ``defaultSettings - logs outside the releasing repo, so a refusal leaves its tree clean`` () =
+    // Blocker 5: a log under the releasing repo is an untracked file, and the next
+    // release stops on "uncommitted changes".
+    let root = Path.Combine(Path.GetTempPath(), "some-producer")
+    let settings = defaultSettings false root
+    let relative = Path.GetRelativePath(root, settings.LogDir)
+    test <@ relative.StartsWith ".." || Path.IsPathRooted relative @>
+
+[<Fact>]
+let ``run - the unpublished candidate is evicted from the NuGet cache when the canary ends, passed or refused`` () =
+    // Blocker 7: a candidate left in the cache at the version the real release
+    // reuses can be restored later in place of the published package.
+    for gateExit in [ 0; 3 ] do
+        withTempDir (fun dir ->
+            let commands = ResizeArray()
+            let cached = Path.Combine(dir, "cache", "testprune.core", "12.0.0")
+
+            let gate (command: string) =
+                if command.StartsWith "dotnet " then
+                    Directory.CreateDirectory cached |> ignore
+                    Exited 0
+                else
+                    Exited gateExit
+
+            let root, _, settings, config = scaffold dir gate commands
+            let result = run settings root config [ pkg "TestPrune.Core", v "12.0.0" ]
+            test <@ Result.isOk result = (gateExit = 0) @>
+            test <@ commands |> Seq.exists (fun c -> c.Contains "mise run ci") @>
+            test <@ not (Directory.Exists cached) @>)
+
+[<Fact>]
+let ``parseConfig - reads an optional workspace and teardown, and toJson round-trips them`` () =
+    let json =
+        """{ "consumers": [ { "package": "P", "repo": "/r", "pin": "p.fsproj", "gate": "true", "timeoutMinutes": 1,
+             "workspace": "~/ws", "teardown": "fshw stop" },
+           { "package": "Q", "repo": "/r", "pin": "p.fsproj", "gate": "true", "timeoutMinutes": 1,
+             "workspace": ".workspaces/canary-q" } ] }"""
+
+    let config =
+        match parseConfig configPath json with
+        | Ok c -> c
+        | Error e -> failwith e
+
+    let home = Environment.GetFolderPath Environment.SpecialFolder.UserProfile
+    test <@ config.Consumers[0].Workspace = Some(Path.Combine(home, "ws")) @>
+    test <@ config.Consumers[0].Teardown = Some "fshw stop" @>
+    test <@ config.Consumers[1].Workspace = Some ".workspaces/canary-q" @>
+    test <@ config.Consumers[1].Teardown = None @>
+    test <@ parseConfig configPath (toJson config) = Ok config @>
+
+    match parseConfig configPath (json.Replace("\"fshw stop\"", "3")) with
+    | Error msg -> test <@ msg.Contains "\"teardown\" must be a string" @>
+    | Ok _ -> failwith "expected an error"
+
+[<Fact>]
+let ``run - a configured relative workspace is created inside the consumer's checkout`` () =
+    // Blocker 3: tooling that finds its main checkout only among a workspace's
+    // ancestors (intelligence's dotenv) sees nothing from a sibling directory.
+    withTempDir (fun dir ->
+        let commands = ResizeArray()
+        let root, repo, settings, config = scaffold dir (fun _ -> Exited 0) commands
+
+        let inside =
+            { config with
+                Consumers =
+                    [
+                        { config.Consumers[0] with
+                            Workspace = Some(Path.Combine(".workspaces", "canary"))
+                        }
+                    ]
+            }
+
+        let workspace = Path.Combine(repo, ".workspaces", "canary")
+
+        match run settings root inside [ pkg "TestPrune.Core", v "12.0.0" ] with
+        | Ok _ -> ()
+        | Error refusal -> failwithf "%s" (formatRefusal refusal)
+
+        test <@ workspacePathFor inside.Consumers[0] = workspace @>
+
+        test
+            <@
+                commands
+                |> Seq.exists (fun c -> c = sprintf "%s: git worktree add --detach %s main" repo workspace)
+            @>
+
+        test <@ (File.ReadAllText(Path.Combine(workspace, "src", "C.fsproj"))).Contains "12.0.0" @>
+
+        test
+            <@
+                commands
+                |> Seq.exists (fun c -> c.StartsWith(workspace + ": sh -c mise run ci"))
+            @>
+
+        test <@ not (Directory.Exists(repo + "-canary-testprune-core")) @>
+        let absolute = Path.Combine(dir, "elsewhere")
+
+        test
+            <@
+                workspacePathFor
+                    { inside.Consumers[0] with
+                        Workspace = Some absolute
+                    }
+                    =
+                    absolute
+            @>)
+
+[<Fact>]
+let ``run - the teardown runs after the gate, passed or refused, and in a leftover before it is replaced`` () =
+    withTempDir (fun dir ->
+        let commands = ResizeArray()
+        let gateExit = ref 3
+
+        let root, repo, settings, config =
+            scaffold
+                dir
+                (fun c ->
+                    if c = "mise run ci" then
+                        Exited gateExit.Value
+                    else
+                        Exited 0)
+                commands
+
+        let withTeardown =
+            { config with
+                Consumers =
+                    [
+                        { config.Consumers[0] with
+                            Teardown = Some "stop-daemon"
+                        }
+                    ]
+            }
+
+        let workspace = repo + "-canary-testprune-core"
+        let teardown = sprintf "%s: sh -c stop-daemon" workspace
+        let gate = sprintf "%s: sh -c mise run ci" workspace
+
+        match run settings root withTeardown [ pkg "TestPrune.Core", v "12.0.0" ] with
+        | Error { Reason = GateFailed 3 } -> ()
+        | other -> failwithf "unexpected %A" other
+
+        let first = commands |> Seq.filter (fun c -> c.StartsWith teardown) |> List.ofSeq
+        test <@ first.Length = 1 @>
+        let tornDownAt = commands.FindIndex(fun c -> c.StartsWith teardown)
+        let gatedAt = commands.FindIndex(fun c -> c.StartsWith gate)
+        test <@ tornDownAt > gatedAt @>
+
+        commands.Clear()
+        gateExit.Value <- 0
+
+        match run settings root withTeardown [ pkg "TestPrune.Core", v "12.0.0" ] with
+        | Ok _ -> ()
+        | Error refusal -> failwithf "%s" (formatRefusal refusal)
+
+        let indices =
+            commands
+            |> Seq.indexed
+            |> Seq.filter (fun (_, c) -> c.StartsWith teardown || c.StartsWith gate || c.Contains "worktree add")
+            |> Seq.map (fun (_, c) ->
+                if c.StartsWith teardown then "teardown"
+                elif c.StartsWith gate then "gate"
+                else "add")
+            |> List.ofSeq
+
+        test <@ indices = [ "teardown"; "add"; "gate"; "teardown" ] @>)
+
+[<Fact>]
+let ``run - a plan with packages that have no consumer packs and gates only the consumed one`` () =
+    withTempDir (fun dir ->
+        let commands = ResizeArray()
+        let root, _, settings, config = scaffold dir (fun _ -> Exited 0) commands
+
+        match run settings root config [ pkg "Other", v "1.0.0"; pkg "TestPrune.Core", v "12.0.0" ] with
+        | Ok passed -> test <@ passed |> List.map (fun (p, _, _) -> p.Name) = [ "TestPrune.Core" ] @>
+        | Error refusal -> failwithf "%s" (formatRefusal refusal)
+
+        test <@ not (commands |> Seq.exists (fun c -> c.Contains "src/Other/Other.fsproj")) @>)

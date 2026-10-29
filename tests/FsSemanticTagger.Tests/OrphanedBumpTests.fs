@@ -26,6 +26,7 @@ let private noCanary: ConsumerCanary.Settings =
         ConfigPath = Path.Combine(Path.GetTempPath(), "no-such-fssemantictagger.json")
         Skip = false
         LogDir = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-logs")
+        ScratchDir = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-seed")
         PackagesCache = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-cache")
         Ops =
             {

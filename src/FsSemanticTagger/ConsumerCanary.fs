@@ -33,6 +33,16 @@ type Consumer =
         /// remote's `main` after a fetch: `main@origin` in jj, `origin/main` in
         /// git. A local `main` can sit behind the remote's.
         Revision: string option
+        /// Where the fresh workspace is created: relative to `Repo`, or absolute
+        /// (`~` expanded). `None` is `<repo>-canary-<package>`, beside the checkout.
+        /// A consumer whose tooling finds its main checkout only from inside it
+        /// (e.g. `.workspaces/`) needs it there; it must be ignored by the consumer.
+        Workspace: string option
+        /// Run through `/bin/sh -c` in the workspace after the gate, passed or
+        /// refused, and in a leftover workspace before it is replaced: it stops
+        /// anything the gate left running there (a daemon), so the workspace can
+        /// be removed. Best effort; its exit code is logged, not judged.
+        Teardown: string option
     }
 
 type CanaryConfig =
@@ -70,8 +80,13 @@ type Settings =
         ConfigPath: string
         /// `--skip-consumer-canary`.
         Skip: bool
-        /// Where each consumer's restore-and-gate log is written.
+        /// Where each consumer's restore-and-gate log is written. Outside the
+        /// releasing repo, so a refusal leaves no untracked file in its tree.
         LogDir: string
+        /// Where the candidate is restored into the cache from: a directory with
+        /// no `global.json` above it, so the restore uses the releaser's SDK
+        /// rather than whatever SDK the consumer's checkout requests.
+        ScratchDir: string
         /// NuGet's global package cache, whose entry for the candidate must be
         /// evicted: NuGet never re-extracts a version it has already cached.
         PackagesCache: string
@@ -171,15 +186,21 @@ let parseConfig (path: string) (json: string) : Result<CanaryConfig, string> =
                             | _ -> Error(sprintf "%s: %s.timeoutMinutes must be a positive number" path where))
                         |> Result.bind (fun timeout ->
                             maybeStr "revision" el
-                            |> Result.map (fun revision ->
-                                {
-                                    Package = package
-                                    Repo = expandHome repo
-                                    Pin = pin
-                                    Gate = gate
-                                    Timeout = timeout
-                                    Revision = revision
-                                }))))))
+                            |> Result.bind (fun revision ->
+                                maybeStr "workspace" el
+                                |> Result.bind (fun workspace ->
+                                    maybeStr "teardown" el
+                                    |> Result.map (fun teardown ->
+                                        {
+                                            Package = package
+                                            Repo = expandHome repo
+                                            Pin = pin
+                                            Gate = gate
+                                            Timeout = timeout
+                                            Revision = revision
+                                            Workspace = workspace |> Option.map expandHome
+                                            Teardown = teardown
+                                        }))))))))
 
     let parsed =
         try
@@ -231,6 +252,8 @@ let toJson (config: CanaryConfig) : string =
                 gate = c.Gate
                 timeoutMinutes = c.Timeout.TotalMinutes
                 revision = c.Revision |> Option.toObj
+                workspace = c.Workspace |> Option.toObj
+                teardown = c.Teardown |> Option.toObj
             |})
 
     JsonSerializer.Serialize(
@@ -316,51 +339,37 @@ let setPinVersion (pin: PinFile) (packageId: string) (version: string) (content:
 
             Ok edited
 
-let private feedSourceKey = "fssemantictagger-consumer-canary"
+/// Single-quote `text` for `/bin/sh`.
+let private shellQuote (text: string) : string = "'" + text.Replace("'", "'\\''") + "'"
 
-/// The workspace's `nuget.config` with the local feed as a source: a new
-/// minimal file, or the existing one with a source inserted before
-/// `</packageSources>` so it survives a `<clear />`.
-let withLocalFeed (existing: string option) (feed: string) : string =
-    let add = sprintf "    <add key=\"%s\" value=\"%s\" />" feedSourceKey feed
+/// A project whose only job is to put the candidate in the NuGet cache:
+/// `PackageDownload` of the exact version, no dependencies, no compatibility
+/// check, so it works for a tool package and a library alike. The TFM is the
+/// running runtime's, which the SDK that runs the tagger always has.
+let seedProject (packageId: string) (version: string) : string =
+    String.concat
+        "\n"
+        [
+            "<Project Sdk=\"Microsoft.NET.Sdk\">"
+            "  <PropertyGroup>"
+            sprintf "    <TargetFramework>net%d.0</TargetFramework>" Environment.Version.Major
+            "  </PropertyGroup>"
+            "  <ItemGroup>"
+            sprintf "    <PackageDownload Include=\"%s\" Version=\"[%s]\" />" packageId version
+            "  </ItemGroup>"
+            "</Project>"
+            ""
+        ]
 
-    match existing with
-    | None ->
-        String.concat
-            "\n"
-            [
-                "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
-                "<configuration>"
-                "  <packageSources>"
-                add
-                "  </packageSources>"
-                "</configuration>"
-                ""
-            ]
-    | Some content ->
-        let closing =
-            content.IndexOf("</packageSources>", StringComparison.OrdinalIgnoreCase)
-
-        if closing >= 0 then
-            content.Substring(0, closing)
-            + add.TrimStart()
-            + "\n  "
-            + content.Substring closing
-        else
-            let configEnd =
-                content.LastIndexOf("</configuration>", StringComparison.OrdinalIgnoreCase)
-
-            let block = "  <packageSources>\n" + add + "\n  </packageSources>\n"
-
-            if configEnd >= 0 then
-                content.Substring(0, configEnd) + block + content.Substring configEnd
-            else
-                content + "\n" + block
-
-/// `<repo>-canary-<package>`, beside the consumer's checkout.
+/// The fresh workspace's path: the consumer's `Workspace` (relative to `Repo`,
+/// or absolute), else `<repo>-canary-<package>` beside the checkout.
 let workspacePathFor (consumer: Consumer) : string =
-    let slug = consumer.Package.ToLowerInvariant().Replace('.', '-')
-    consumer.Repo.TrimEnd(Path.DirectorySeparatorChar) + "-canary-" + slug
+    match consumer.Workspace with
+    | Some path when Path.IsPathRooted path -> path
+    | Some path -> Path.GetFullPath(Path.Combine(consumer.Repo, path))
+    | None ->
+        let slug = consumer.Package.ToLowerInvariant().Replace('.', '-')
+        consumer.Repo.TrimEnd(Path.DirectorySeparatorChar) + "-canary-" + slug
 
 let private workspaceName (consumer: Consumer) : string =
     "canary-" + consumer.Package.ToLowerInvariant().Replace('.', '-')
@@ -370,6 +379,17 @@ let logPathFor (logDir: string) (pkg: PackageConfig) (version: Version) (consume
         Path.GetFileName(consumer.Repo.TrimEnd(Path.DirectorySeparatorChar))
 
     Path.Combine(logDir, sprintf "%s-%s-%s.log" pkg.Name (format version) consumerName)
+
+/// NuGet's cache entry for the candidate. NuGet never re-extracts a version it
+/// has cached, and the real release reuses this version.
+let private cachedCandidate (settings: Settings) (packageId: string) (version: Version) : string =
+    Path.Combine(settings.PackagesCache, packageId.ToLowerInvariant(), (format version).ToLowerInvariant())
+
+let private evict (settings: Settings) (packageId: string) (version: Version) : unit =
+    let cached = cachedCandidate settings packageId version
+
+    if Directory.Exists cached then
+        Directory.Delete(cached, true)
 
 /// Pack the candidate at its planned version into the feed and evict any cached
 /// copy of that id+version. `-p:Version` because the fsproj is not bumped until
@@ -383,12 +403,7 @@ let private packCandidate
     : Result<unit, RefusalReason> =
     Directory.CreateDirectory feed |> ignore
     let versionText = format version
-
-    let cached =
-        Path.Combine(settings.PackagesCache, pkg.Name.ToLowerInvariant(), versionText.ToLowerInvariant())
-
-    if Directory.Exists cached then
-        Directory.Delete(cached, true)
+    evict settings pkg.Name version
 
     let args =
         sprintf "pack %s -c Release -p:ReleaseBuild=true -p:Version=%s -o %s" pkg.Fsproj versionText feed
@@ -397,9 +412,49 @@ let private packCandidate
     | Success _ -> Ok()
     | Failure(error, code) -> Error(PackFailed(sprintf "dotnet %s exited %d: %s" args code error))
 
-/// A fresh workspace at `Revision`, beside the consumer's checkout. A leftover
-/// from an earlier run (kept for inspection) is replaced.
-let private createWorkspace (ops: Ops) (consumer: Consumer) : Result<string, RefusalReason> =
+/// How long a teardown may take before the canary moves on without it.
+let teardownBudget = TimeSpan.FromMinutes 5.0
+
+/// Run the consumer's teardown in `workspace`, if it has one and the workspace
+/// exists. Its outcome is in the log; the canary does not judge it.
+let private teardown (settings: Settings) (consumer: Consumer) (workspace: string) (logPath: string) : unit =
+    match consumer.Teardown with
+    | Some command when Directory.Exists workspace ->
+        settings.Ops.RunGate workspace command teardownBudget logPath |> ignore
+    | _ -> ()
+
+/// Remove a leftover workspace. A process still writing in it (a daemon the
+/// previous gate left alive) makes the delete fail; that is a refusal naming the
+/// workspace, not a crash, and nothing has been written by then.
+let private removeTree (path: string) : Result<unit, string> =
+    let rec attempt (left: int) =
+        try
+            if Directory.Exists path then
+                Directory.Delete(path, true)
+
+            Ok()
+        with
+        | _ when left > 1 ->
+            Threading.Thread.Sleep 500
+            attempt (left - 1)
+        | e ->
+            Error(
+                sprintf
+                    "the leftover workspace %s could not be removed (%s); something may still be running in it. Stop it (a `teardown` in the consumer's config does this on every run), then re-run."
+                    path
+                    e.Message
+            )
+
+    attempt 3
+
+/// A fresh workspace at `Revision`, at `workspacePathFor`. A leftover from an
+/// earlier run (kept for inspection) is torn down and replaced.
+let private createWorkspace
+    (settings: Settings)
+    (consumer: Consumer)
+    (logPath: string)
+    : Result<string, RefusalReason> =
+    let ops = settings.Ops
     let path = workspacePathFor consumer
     let isJj = Directory.Exists(Path.Combine(consumer.Repo, ".jj"))
 
@@ -408,6 +463,8 @@ let private createWorkspace (ops: Ops) (consumer: Consumer) : Result<string, Ref
         || File.Exists(Path.Combine(consumer.Repo, ".git"))
 
     let discardLeftover () =
+        teardown settings consumer path logPath
+
         if isJj then
             ops.RunIn consumer.Repo "jj" (sprintf "workspace forget %s" (workspaceName consumer))
             |> ignore
@@ -418,8 +475,7 @@ let private createWorkspace (ops: Ops) (consumer: Consumer) : Result<string, Ref
 
             ops.RunIn consumer.Repo "git" "worktree prune" |> ignore
 
-        if Directory.Exists path then
-            Directory.Delete(path, true)
+        removeTree path
 
     let neither = sprintf "%s is neither a jj nor a git repository" consumer.Repo
 
@@ -436,6 +492,8 @@ let private createWorkspace (ops: Ops) (consumer: Consumer) : Result<string, Ref
         | None -> Error neither
 
     let add (revision: string) =
+        Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+
         if isJj then
             ops.RunIn
                 consumer.Repo
@@ -449,21 +507,47 @@ let private createWorkspace (ops: Ops) (consumer: Consumer) : Result<string, Ref
     if not (Directory.Exists consumer.Repo) then
         Error(WorkspaceFailed(sprintf "consumer repo %s does not exist" consumer.Repo))
     else
-        match revision () with
-        | Error error -> Error(WorkspaceFailed error)
-        | Ok revision ->
-            discardLeftover ()
-
+        revision ()
+        |> Result.bind (fun revision -> discardLeftover () |> Result.map (fun () -> revision))
+        |> Result.mapError WorkspaceFailed
+        |> Result.bind (fun revision ->
             match add revision with
             | Success _ -> Ok path
-            | Failure(error, _) -> Error(WorkspaceFailed error)
+            | Failure(error, _) -> Error(WorkspaceFailed error))
 
-let private restoreCommand (pin: PinFile) : string =
-    match pin with
-    | ToolManifest path -> sprintf "dotnet tool restore --tool-manifest %s" path
-    | MsBuildProject path -> sprintf "dotnet restore %s" path
+/// Put the candidate in the NuGet cache from `ScratchDir`, with the feed as the
+/// only source. Run outside the consumer's checkout, so its `global.json` cannot
+/// select an SDK the releaser lacks, and its tracked `nuget.config` is never
+/// edited; the consumer's own restore then finds the exact version in the cache.
+let private seedCandidate
+    (settings: Settings)
+    (feed: string)
+    (pkg: PackageConfig)
+    (version: Version)
+    (timeout: TimeSpan)
+    (logPath: string)
+    : Result<unit, RefusalReason> =
+    let dir =
+        Path.Combine(settings.ScratchDir, sprintf "%s-%s" (pkg.Name.ToLowerInvariant()) (format version))
 
-/// Pin the candidate, point the workspace at the feed, restore, then gate.
+    if Directory.Exists dir then
+        Directory.Delete(dir, true)
+
+    Directory.CreateDirectory dir |> ignore
+    File.WriteAllText(Path.Combine(dir, "seed.csproj"), seedProject pkg.Name (format version))
+
+    let command =
+        sprintf
+            "dotnet restore seed.csproj --source %s --packages %s"
+            (shellQuote feed)
+            (shellQuote settings.PackagesCache)
+
+    match settings.Ops.RunGate dir command timeout logPath with
+    | Exited 0 -> Ok()
+    | Exited code -> Error(RestoreFailed code)
+    | TimedOut budget -> Error(RestoreTimedOut budget)
+
+/// Pin the candidate, put it in the cache, then gate; tear down after the gate.
 let private runOne
     (settings: Settings)
     (feed: string)
@@ -483,36 +567,21 @@ let private runOne
         else
             setPinVersion pin pkg.Name (format version) (File.ReadAllText pinPath)
             |> Result.mapError PinFailed
-            |> Result.map (fun edited ->
-                File.WriteAllText(pinPath, edited)
-                pin))
-    |> Result.bind (fun pin ->
-        let nugetConfig =
-            [ "nuget.config"; "NuGet.Config"; "NuGet.config" ]
-            |> List.map (fun name -> Path.Combine(workspace, name))
-            |> List.tryFind File.Exists
-            |> Option.defaultValue (Path.Combine(workspace, "nuget.config"))
-
-        let existing =
-            if File.Exists nugetConfig then
-                Some(File.ReadAllText nugetConfig)
-            else
-                None
-
-        File.WriteAllText(nugetConfig, withLocalFeed existing feed)
-
-        match settings.Ops.RunGate workspace (restoreCommand pin) consumer.Timeout logPath with
-        | Exited 0 -> Ok()
-        | Exited code -> Error(RestoreFailed code)
-        | TimedOut budget -> Error(RestoreTimedOut budget))
+            |> Result.map (fun edited -> File.WriteAllText(pinPath, edited)))
+    |> Result.bind (fun () -> seedCandidate settings feed pkg version consumer.Timeout logPath)
     |> Result.bind (fun () ->
-        match settings.Ops.RunGate workspace consumer.Gate consumer.Timeout logPath with
+        let outcome = settings.Ops.RunGate workspace consumer.Gate consumer.Timeout logPath
+        teardown settings consumer workspace logPath
+
+        match outcome with
         | Exited 0 -> Ok()
         | Exited code -> Error(GateFailed code)
         | TimedOut budget -> Error(GateTimedOut budget))
 
 /// Run every consumer the plan selects, stopping at the first refusal. Each
-/// package is packed once, however many consumers it has.
+/// package is packed once, however many consumers it has. When the canary ends,
+/// passed or refused, every packed candidate is evicted from the NuGet cache:
+/// it was never published, and the real release reuses its version.
 let run
     (settings: Settings)
     (rootDir: string)
@@ -532,10 +601,13 @@ let run
                 Workspace = workspace
             }
 
-    let packed =
+    let candidates =
         selected
         |> List.map (fun (pkg, version, _) -> pkg.Name, version)
         |> List.distinct
+
+    let packed =
+        candidates
         |> List.fold
             (fun acc (name, version) ->
                 acc
@@ -551,38 +623,44 @@ let run
                         pkg, version, consumer, reason)))
             (Ok())
 
-    match packed with
-    | Error(pkg, version, consumer, reason) -> refuse pkg version consumer reason None None
-    | Ok() ->
-        selected
-        |> List.fold
-            (fun acc (pkg, version, consumer) ->
-                acc
-                |> Result.bind (fun passed ->
-                    let logPath = logPathFor settings.LogDir pkg version consumer
-                    Directory.CreateDirectory settings.LogDir |> ignore
+    let outcome =
+        match packed with
+        | Error(pkg, version, consumer, reason) -> refuse pkg version consumer reason None None
+        | Ok() ->
+            selected
+            |> List.fold
+                (fun acc (pkg, version, consumer) ->
+                    acc
+                    |> Result.bind (fun passed ->
+                        let logPath = logPathFor settings.LogDir pkg version consumer
+                        Directory.CreateDirectory settings.LogDir |> ignore
 
-                    if File.Exists logPath then
-                        File.Delete logPath
+                        if File.Exists logPath then
+                            File.Delete logPath
 
-                    printfn
-                        "Consumer canary: %s %s -> %s (gate: %s, up to %gm, log: %s)"
-                        pkg.Name
-                        (format version)
-                        consumer.Repo
-                        consumer.Gate
-                        consumer.Timeout.TotalMinutes
-                        logPath
+                        printfn
+                            "Consumer canary: %s %s -> %s (gate: %s, up to %gm, log: %s)"
+                            pkg.Name
+                            (format version)
+                            consumer.Repo
+                            consumer.Gate
+                            consumer.Timeout.TotalMinutes
+                            logPath
 
-                    match createWorkspace settings.Ops consumer with
-                    | Error reason -> refuse pkg version consumer reason (Some logPath) None
-                    | Ok workspace ->
-                        match runOne settings config.LocalFeed pkg version consumer workspace logPath with
-                        | Ok() ->
-                            printfn "Consumer canary: %s passed for %s %s" consumer.Repo pkg.Name (format version)
-                            Ok(passed @ [ pkg, version, consumer ])
-                        | Error reason -> refuse pkg version consumer reason (Some logPath) (Some workspace)))
-            (Ok [])
+                        match createWorkspace settings consumer logPath with
+                        | Error reason -> refuse pkg version consumer reason (Some logPath) None
+                        | Ok workspace ->
+                            match runOne settings config.LocalFeed pkg version consumer workspace logPath with
+                            | Ok() ->
+                                printfn "Consumer canary: %s passed for %s %s" consumer.Repo pkg.Name (format version)
+                                Ok(passed @ [ pkg, version, consumer ])
+                            | Error reason -> refuse pkg version consumer reason (Some logPath) (Some workspace)))
+                (Ok [])
+
+    for name, version in candidates do
+        evict settings name version
+
+    outcome
 
 let private formatBudget (budget: TimeSpan) : string =
     sprintf "%dm%ds" (int budget.TotalMinutes) budget.Seconds
@@ -666,12 +744,22 @@ let decide (settings: Settings) (rootDir: string) (plan: (PackageConfig * Versio
                 |> Result.map Passed
                 |> Result.mapError formatRefusal)
 
+/// Logs for the releasing repo `rootDir`: `~/.fssemantictagger/logs/<repo name>`.
+let defaultLogDir (rootDir: string) : string =
+    Path.Combine(
+        Environment.GetFolderPath Environment.SpecialFolder.UserProfile,
+        ".fssemantictagger",
+        "logs",
+        Path.GetFileName(rootDir.TrimEnd(Path.DirectorySeparatorChar))
+    )
+
 /// The production seam: real processes, the user's config and NuGet cache.
 let defaultSettings (skip: bool) (rootDir: string) : Settings =
     {
         ConfigPath = defaultConfigPath
         Skip = skip
-        LogDir = Path.Combine(rootDir, "artifacts", "consumer-canary")
+        LogDir = defaultLogDir rootDir
+        ScratchDir = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-seed")
         PackagesCache = defaultPackagesCache
         Ops = { RunIn = runIn; RunGate = runLogged }
     }
