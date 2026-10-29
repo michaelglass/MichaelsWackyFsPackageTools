@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.26 - 2026-10-29
+
 - fix!: **the consumer canary lets a good candidate through on a consumer with its own SDK, NuGet and workspace rules.** The first live run against a real consumer (an FsHotWatch.Cli candidate gated by a 20,000-test application) refused every good candidate, for reasons that had nothing to do with the candidate:
   - **The restore ran under the consumer's `global.json` with the releaser's SDK.** A consumer pinned to another SDK band exited 155 before its gate ran. The candidate is now put into NuGet's cache from a scratch directory under the temp directory (a `PackageDownload` of the exact version, with `localFeed` as the only source), so no consumer `global.json` is in play; the consumer's own restore finds the exact version in the cache.
   - **The local feed was written into the consumer's tracked `nuget.config`.** A consumer whose gate forbids filesystem sources in a tracked `nuget.config` was red before its tests ran. The workspace's `nuget.config` is no longer touched.
