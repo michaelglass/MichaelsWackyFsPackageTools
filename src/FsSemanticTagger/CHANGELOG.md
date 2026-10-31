@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.27 - 2026-10-30
+
 - fix: **the consumer canary stamps the planned version on the packed package only, not on the projects it references.** The candidate was packed with `dotnet pack -p:Version=<planned>`, and a global property reaches every `ProjectReference` too. A package that references other projects of its own repository was packed with all of them restamped at its planned version: an FsHotWatch.Cli candidate bundled the in-repo TestPrune projects as `0.14.0-alpha.132` instead of their own `13.5.2`, then failed to load `TestPrune.Core, Version=13.5.2.0` at startup, so the canary refused a good release. The package's own fsprojs (its `fsproj` and `fsProjsSharingSameTag`, the ones the release bumps) now carry the planned `<Version>` while the pack runs and get their exact bytes back after it, whether it passed or failed. A package fsproj with no `<Version>` element, or that does not exist, refuses the release before packing, naming it.
 
 ## 0.14.0-alpha.26 - 2026-10-29
