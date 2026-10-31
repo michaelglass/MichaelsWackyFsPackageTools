@@ -255,14 +255,38 @@ let private copyTree (source: string) (target: string) =
         Directory.CreateDirectory(Path.GetDirectoryName destination) |> ignore
         File.Copy(file, destination)
 
+/// The producer checkout at `<dir>/producer`, holding the TestPrune.Core fsproj
+/// the canary stamps with the planned version while it packs.
+let private producerRoot (dir: string) : string =
+    let root = Path.Combine(dir, "producer")
+    let project = Path.Combine(root, "src", "TestPrune.Core")
+    Directory.CreateDirectory project |> ignore
+
+    File.WriteAllText(
+        Path.Combine(project, "TestPrune.Core.fsproj"),
+        """<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><Version>11.0.0</Version></PropertyGroup></Project>"""
+    )
+
+    root
+
 /// Records every command; `dotnet` succeeds without running, a `git worktree
 /// add` populates the workspace from the checkout, and the gate is answered by
-/// `gate`.
+/// `gate`. A `dotnet pack` also records the `<Version>` its project file held
+/// while it ran, as `packed <fsproj> at <version>`.
 let private fakeOps (commands: ResizeArray<string>) (gate: string -> GateOutcome) : Ops =
     {
         RunIn =
             fun cwd cmd args ->
                 commands.Add(sprintf "%s: %s %s" cwd cmd args)
+
+                if cmd = "dotnet" && args.StartsWith "pack " then
+                    let project = args.Split(' ')[1]
+                    let content = File.ReadAllText(Path.Combine(cwd, project))
+
+                    let version =
+                        Text.RegularExpressions.Regex.Match(content, "<Version>([^<]*)</Version>").Groups[1].Value
+
+                    commands.Add(sprintf "packed %s at %s" project version)
 
                 if cmd = "git" && args.StartsWith "worktree add --detach " then
                     copyTree cwd (args.Split(' ')[3])
@@ -285,8 +309,7 @@ let private scaffold (dir: string) (gate: string -> GateOutcome) (commands: Resi
     Directory.CreateDirectory(Path.Combine(repo, ".git")) |> ignore
     Directory.CreateDirectory(Path.Combine(repo, "src")) |> ignore
     File.WriteAllText(Path.Combine(repo, "src", "C.fsproj"), fsproj)
-    let root = Path.Combine(dir, "producer")
-    Directory.CreateDirectory root |> ignore
+    let root = producerRoot dir
 
     let settings =
         {
@@ -338,9 +361,18 @@ let ``run - green gate passes and the workspace saw the feed, the pin and the lo
                 commands
                 |> Seq.exists (fun c ->
                     c.StartsWith(root + ": dotnet pack src/TestPrune.Core/TestPrune.Core.fsproj")
-                    && c.Contains "-p:Version=12.0.0"
+                    && not (c.Contains "-p:Version")
                     && c.Contains "-p:ReleaseBuild=true"
                     && c.Contains config.LocalFeed)
+            @>
+
+        // The planned version was the fsproj's own while it packed, and its bytes came back after.
+        test <@ commands.Contains "packed src/TestPrune.Core/TestPrune.Core.fsproj at 12.0.0" @>
+
+        test
+            <@
+                (File.ReadAllText(Path.Combine(root, "src", "TestPrune.Core", "TestPrune.Core.fsproj"))).Contains
+                    "<Version>11.0.0</Version>"
             @>
 
         test <@ not (Directory.Exists stale) @>
@@ -671,8 +703,7 @@ let private gitRepoWithGate (dir: string) (gateExit: int) : string =
 
 let private integrationRun (dir: string) (gateExit: int) =
     let repo = gitRepoWithGate dir gateExit
-    let root = Path.Combine(dir, "producer")
-    Directory.CreateDirectory root |> ignore
+    let root = producerRoot dir
 
     let settings =
         {
@@ -899,7 +930,14 @@ let ``release - a green consumer gate lets the tag through and the pack named th
         let code, output, calls, _ = releaseWith dir canary Release.PushTags
         test <@ code = 0 @>
         test <@ output.Contains "Consumer canary: passed" @>
-        test <@ commands |> Seq.exists (fun c -> c.Contains "-p:Version=0.1.0-alpha.1") @>
+
+        test
+            <@
+                commands
+                |> Seq.exists (fun c -> c.StartsWith "packed " && c.EndsWith "MyLib.fsproj at 0.1.0-alpha.1")
+            @>
+
+        test <@ not (commands |> Seq.exists (fun c -> c.Contains "-p:Version")) @>
 
         test
             <@
@@ -962,7 +1000,14 @@ let ``release - resuming an already-bumped release still runs the canary before 
         test <@ code = 1 @>
         test <@ output.Contains "Resuming in-progress release" @>
         test <@ output.Contains "exited 4" @>
-        test <@ commands |> Seq.exists (fun c -> c.Contains "-p:Version=0.2.0-alpha.1") @>
+
+        test
+            <@
+                commands
+                |> Seq.exists (fun c -> c.StartsWith "packed " && c.EndsWith "MyLib.fsproj at 0.2.0-alpha.1")
+            @>
+
+        test <@ not (commands |> Seq.exists (fun c -> c.Contains "-p:Version")) @>
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith "tag set")) @>)
 
 [<Fact>]
@@ -1217,7 +1262,7 @@ let ``run - a failed pack refuses before any workspace is made`` () =
         | Error refusal ->
             let expected =
                 PackFailed(
-                    "dotnet pack src/TestPrune.Core/TestPrune.Core.fsproj -c Release -p:ReleaseBuild=true -p:Version=12.0.0 -o "
+                    "dotnet pack src/TestPrune.Core/TestPrune.Core.fsproj -c Release -p:ReleaseBuild=true -o "
                     + config.LocalFeed
                     + " exited 7: NU1"
                 )
@@ -1225,6 +1270,12 @@ let ``run - a failed pack refuses before any workspace is made`` () =
             test <@ refusal.Reason = expected @>
             test <@ refusal.LogPath = None @>
             test <@ not (Directory.Exists(repo + "-canary-testprune-core")) @>
+            // A failed pack still gives the fsproj its bytes back.
+            test
+                <@
+                    (File.ReadAllText(Path.Combine(root, "src", "TestPrune.Core", "TestPrune.Core.fsproj"))).Contains
+                        "<Version>11.0.0</Version>"
+                @>
         | Ok _ -> failwith "expected a refusal")
 
 [<Fact>]
@@ -1656,3 +1707,132 @@ let ``run - a plan with packages that have no consumer packs and gates only the 
         | Error refusal -> failwithf "%s" (formatRefusal refusal)
 
         test <@ not (commands |> Seq.exists (fun c -> c.Contains "src/Other/Other.fsproj")) @>)
+
+// ---- the candidate's version reaches the packed package only ----
+
+let private projectWith (version: string) (extra: string) =
+    sprintf
+        """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Version>%s</Version>
+  </PropertyGroup>
+%s
+</Project>
+"""
+        version
+        extra
+
+/// A real `dotnet pack` of a project that references another project of the same
+/// repository. The release bumps only the packed package's own fsproj, so the
+/// candidate must too: a global `-p:Version` also restamps every referenced
+/// project, which made a candidate bundle the repository's other projects at the
+/// planned version (and name dependencies at a version that was never released).
+[<Xunit.Fact(Timeout = IntegrationTimeoutMs)>]
+let ``packCandidate - a referenced in-repo project keeps its own version in the candidate`` () =
+    withTempDir (fun dir ->
+        let root = Path.Combine(dir, "producer")
+        let feed = Path.Combine(dir, "feed")
+        let libDir = Path.Combine(root, "src", "Lib")
+        let appDir = Path.Combine(root, "src", "App")
+        Directory.CreateDirectory libDir |> ignore
+        Directory.CreateDirectory appDir |> ignore
+        File.WriteAllText(Path.Combine(libDir, "Lib.csproj"), projectWith "1.2.3" "")
+        File.WriteAllText(Path.Combine(libDir, "Lib.cs"), "namespace Lib { public static class L { } }")
+
+        let appProject =
+            projectWith "0.1.0" """  <ItemGroup><ProjectReference Include="../Lib/Lib.csproj" /></ItemGroup>"""
+
+        let appPath = Path.Combine(appDir, "App.csproj")
+        File.WriteAllText(appPath, appProject)
+        File.WriteAllText(Path.Combine(appDir, "App.cs"), "namespace App { public static class A { } }")
+
+        let settings =
+            {
+                ConfigPath = Path.Combine(dir, ".fssemantictagger.json")
+                Skip = false
+                LogDir = Path.Combine(dir, "logs")
+                ScratchDir = Path.Combine(dir, "scratch")
+                PackagesCache = Path.Combine(dir, "cache")
+                Ops = { RunIn = runIn; RunGate = runLogged }
+            }
+
+        let app =
+            { pkg "App" with
+                Fsproj = "src/App/App.csproj"
+            }
+
+        let result = packCandidate settings root feed app (v "9.9.9")
+        test <@ result = Ok() @>
+
+        let nupkg = Path.Combine(feed, "App.9.9.9.nupkg")
+        test <@ File.Exists nupkg @>
+
+        let nuspec =
+            use archive = System.IO.Compression.ZipFile.OpenRead nupkg
+            let entry = archive.GetEntry "App.nuspec"
+            use reader = new StreamReader(entry.Open())
+            reader.ReadToEnd()
+
+        test <@ nuspec.Contains "<dependency id=\"Lib\" version=\"1.2.3\"" @>
+        test <@ not (nuspec.Contains "<dependency id=\"Lib\" version=\"9.9.9\"") @>
+        // The stamp is the candidate's alone: the producer's fsproj is left byte-exact.
+        test <@ File.ReadAllText appPath = appProject @>)
+
+[<Fact>]
+let ``packCandidate - every fsproj sharing the package's tag is stamped, and all get their bytes back`` () =
+    withTempDir (fun dir ->
+        let commands = ResizeArray()
+        let root, _, settings, config = scaffold dir (fun _ -> Exited 0) commands
+        let toolDir = Path.Combine(root, "src", "TestPrune")
+        Directory.CreateDirectory toolDir |> ignore
+        let tool = Path.Combine(toolDir, "TestPrune.fsproj")
+
+        let toolProject =
+            """<Project><PropertyGroup><Version>11.0.0</Version></PropertyGroup></Project>"""
+
+        File.WriteAllText(tool, toolProject)
+
+        let shared =
+            { pkg "TestPrune.Core" with
+                FsProjsSharingSameTag = [ "src/TestPrune/TestPrune.fsproj" ]
+            }
+
+        let seen = ResizeArray()
+
+        let settings =
+            { settings with
+                Ops =
+                    { settings.Ops with
+                        RunIn =
+                            fun cwd cmd args ->
+                                seen.Add(File.ReadAllText tool)
+                                settings.Ops.RunIn cwd cmd args
+                    }
+            }
+
+        test <@ packCandidate settings root config.LocalFeed shared (v "12.0.0") = Ok() @>
+        test <@ seen |> Seq.exists (fun content -> content.Contains "<Version>12.0.0</Version>") @>
+        test <@ File.ReadAllText tool = toolProject @>)
+
+[<Fact>]
+let ``packCandidate - a package fsproj with no Version element, or none at all, refuses without packing`` () =
+    withTempDir (fun dir ->
+        let commands = ResizeArray()
+        let root, _, settings, config = scaffold dir (fun _ -> Exited 0) commands
+        let core = Path.Combine(root, "src", "TestPrune.Core", "TestPrune.Core.fsproj")
+        let unversioned = """<Project><PropertyGroup /></Project>"""
+        File.WriteAllText(core, unversioned)
+
+        let shared =
+            { pkg "TestPrune.Core" with
+                FsProjsSharingSameTag = [ "src/Missing/Missing.fsproj" ]
+            }
+
+        let expected =
+            PackFailed
+                "cannot stamp 12.0.0 on src/TestPrune.Core/TestPrune.Core.fsproj, src/Missing/Missing.fsproj: no <Version> element to set"
+
+        test <@ packCandidate settings root config.LocalFeed shared (v "12.0.0") = Error expected @>
+        test <@ not (commands |> Seq.exists (fun c -> c.Contains "dotnet pack")) @>
+        test <@ File.ReadAllText core = unversioned @>)

@@ -391,10 +391,18 @@ let private evict (settings: Settings) (packageId: string) (version: Version) : 
     if Directory.Exists cached then
         Directory.Delete(cached, true)
 
+let private versionElement =
+    Regex("<Version>[^<]*</Version>", RegexOptions.Compiled)
+
 /// Pack the candidate at its planned version into the feed and evict any cached
-/// copy of that id+version. `-p:Version` because the fsproj is not bumped until
-/// after the canary; `-p:ReleaseBuild=true` so RefStamp emits the clean version.
-let private packCandidate
+/// copy of that id+version. The fsproj is not bumped until after the canary, so
+/// the package's own fsprojs (the ones the release bumps) carry the planned
+/// `<Version>` for the duration of the pack and get their exact bytes back after.
+/// Not `-p:Version`: a global property reaches every ProjectReference too, so the
+/// candidate bundled the repository's other projects at the planned version and
+/// named dependencies at versions that were never released. `-p:ReleaseBuild=true`
+/// so RefStamp emits the clean version.
+let internal packCandidate
     (settings: Settings)
     (rootDir: string)
     (feed: string)
@@ -405,12 +413,54 @@ let private packCandidate
     let versionText = format version
     evict settings pkg.Name version
 
-    let args =
-        sprintf "pack %s -c Release -p:ReleaseBuild=true -p:Version=%s -o %s" pkg.Fsproj versionText feed
+    let stamped =
+        pkg.Fsproj :: pkg.FsProjsSharingSameTag
+        |> List.map (fun fsproj ->
+            let path = Path.Combine(rootDir, fsproj)
 
-    match settings.Ops.RunIn rootDir "dotnet" args with
-    | Success _ -> Ok()
-    | Failure(error, code) -> Error(PackFailed(sprintf "dotnet %s exited %d: %s" args code error))
+            let original =
+                if File.Exists path then
+                    Some(File.ReadAllText path)
+                else
+                    None
+
+            fsproj, path, original)
+
+    let unstampable =
+        stamped
+        |> List.filter (fun (_, _, original) ->
+            match original with
+            | Some content -> not (versionElement.IsMatch content)
+            | None -> true)
+        |> List.map (fun (fsproj, _, _) -> fsproj)
+
+    if not unstampable.IsEmpty then
+        Error(
+            PackFailed(
+                sprintf
+                    "cannot stamp %s on %s: no <Version> element to set"
+                    versionText
+                    (String.concat ", " unstampable)
+            )
+        )
+    else
+        let args = sprintf "pack %s -c Release -p:ReleaseBuild=true -o %s" pkg.Fsproj feed
+
+        try
+            for (_, path, original) in stamped do
+                original
+                |> Option.iter (fun content ->
+                    File.WriteAllText(
+                        path,
+                        versionElement.Replace(content, sprintf "<Version>%s</Version>" versionText)
+                    ))
+
+            match settings.Ops.RunIn rootDir "dotnet" args with
+            | Success _ -> Ok()
+            | Failure(error, code) -> Error(PackFailed(sprintf "dotnet %s exited %d: %s" args code error))
+        finally
+            for (_, path, original) in stamped do
+                original |> Option.iter (fun content -> File.WriteAllText(path, content))
 
 /// How long a teardown may take before the canary moves on without it.
 let teardownBudget = TimeSpan.FromMinutes 5.0
