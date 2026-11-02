@@ -15,7 +15,7 @@
     <Version>0.10.0-alpha.22</Version>
     <Authors>michaelglass</Authors>
     <Description>Opinionated F# project and repo validator for OSS readiness</Description>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/michaelglass/MichaelsWackyFsPackageTools</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>fsharp;lint;fsproj;oss;validation</PackageTags>

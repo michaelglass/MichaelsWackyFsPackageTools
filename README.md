@@ -146,4 +146,6 @@ together and re-measure the branch floors.
 
 ## License
 
-MIT
+[MPL-2.0](https://mozilla.org/MPL/2.0/)
+
+Code contributed before 2026-11-02 was released under the MIT License; that notice is kept in [LICENSE-MIT](LICENSE-MIT).

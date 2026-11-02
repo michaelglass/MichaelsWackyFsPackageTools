@@ -11,7 +11,7 @@
     <Version>0.1.0-alpha.4</Version>
     <Authors>michaelglass</Authors>
     <Description>MSBuild guard that derives local `dotnet pack` versions from the jj/git source ref, so a dev machine cannot produce a release-shaped version</Description>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/michaelglass/MichaelsWackyFsPackageTools</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>msbuild;pack;versioning;jj;jujutsu;git;nuget</PackageTags>

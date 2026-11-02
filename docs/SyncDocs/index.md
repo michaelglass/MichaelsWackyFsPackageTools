@@ -106,4 +106,4 @@ A README that exists is a configured package and its docs target must exist too:
 
 ## License
 
-MIT
+[MPL-2.0](https://mozilla.org/MPL/2.0/)

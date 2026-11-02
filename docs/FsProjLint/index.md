@@ -87,4 +87,4 @@ A check that cannot run here is listed under `Skipped:` with its reason and left
 
 ## License
 
-MIT
+[MPL-2.0](https://mozilla.org/MPL/2.0/)

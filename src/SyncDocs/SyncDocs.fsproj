@@ -15,7 +15,7 @@
     <Version>0.13.0-alpha.8</Version>
     <Authors>michaelglass</Authors>
     <Description>README-to-docs section syncing with convention-based discovery</Description>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/michaelglass/MichaelsWackyFsPackageTools</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>docs;documentation;readme;sync</PackageTags>
