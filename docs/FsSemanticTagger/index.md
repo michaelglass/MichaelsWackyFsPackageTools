@@ -369,4 +369,4 @@ FsSemanticTagger works with both Git and [Jujutsu](https://jj-vcs.github.io/jj/)
 
 ## License
 
-MIT
+[MPL-2.0](https://mozilla.org/MPL/2.0/)

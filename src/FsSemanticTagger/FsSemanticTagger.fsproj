@@ -15,7 +15,7 @@
     <Version>0.14.0-alpha.27</Version>
     <Authors>michaelglass</Authors>
     <Description>Semantic versioning with API change detection for F# NuGet packages</Description>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/michaelglass/MichaelsWackyFsPackageTools</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>fsharp;semver;release;nuget;api</PackageTags>

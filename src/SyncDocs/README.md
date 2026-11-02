@@ -186,4 +186,4 @@ A docs page whose README is missing is not a configured package, so it is only a
 
 ## License
 
-MIT
+[MPL-2.0](https://mozilla.org/MPL/2.0/)
