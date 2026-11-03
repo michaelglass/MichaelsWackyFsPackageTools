@@ -918,9 +918,22 @@ let private preReleaseChecks (input: ReleaseInput) : Result<unit, int> =
 
             Error 1
         else
+            // A tag-pushing release must end by moving main forward to its bump
+            // commit, which a base behind main@origin can never do: refuse that
+            // now, before the CI wait and the canary are spent on it.
+            let baseIsMain =
+                match input.Mode with
+                | PushTags ->
+                    MainFreshness.confirmBaseIsMain input.Run
+                    |> Result.mapError (fun reason ->
+                        printfn "Error: %s" reason
+                        1)
+                | _ -> Ok()
+
             // Precondition FIRST: the release commit is pushed and its CI green,
             // before any expensive coverage reconciliation.
-            confirmReleaseCommitCiGreen input
+            baseIsMain
+            |> Result.bind (fun () -> confirmReleaseCommitCiGreen input)
             |> Result.bind (fun () -> reconcileCoverageFromCi input)
 
 let private runPreBuild (input: ReleaseInput) : unit =
@@ -1570,6 +1583,72 @@ let private resumeAlreadyBumped
 let internal rebundleChangelogBullet =
     "- chore: rebuild to bundle updated dependencies"
 
+/// Everything a release's packages are built and promoted from, repo-relative with
+/// forward slashes: each package's source and bundled-dependency directories
+/// (`packageChangeDirs`) and the changelogs promotion rewrites (`changelogPathsFor`).
+/// A commit outside all of these cannot change what the release ships.
+let internal releaseFootprint (config: ToolConfig) (packages: PackageConfig list) : string list =
+    let relative (path: string) =
+        let rel =
+            if System.IO.Path.IsPathRooted path then
+                System.IO.Path.GetRelativePath(config.RootDir, path)
+            else
+                path
+
+        rel.Replace('\\', '/').TrimEnd('/')
+
+    packages
+    |> List.collect (fun pkg -> packageChangeDirs config pkg @ (changelogPathsFor config pkg |> List.map snd))
+    |> List.map relative
+    |> List.distinct
+
+/// After the canary, before the first write: continue only if `main@origin` has not
+/// moved, or moved by commits outside the release (see
+/// `MainFreshness.reconcileAfterCanary` for why the canary's verdict then holds).
+let private stillOnMainAfterCanary (input: ReleaseInput) (packages: PackageConfig list) : Result<unit, int> =
+    match MainFreshness.reconcileAfterCanary input.Run (releaseFootprint input.Config packages) with
+    | Ok MainFreshness.Unmoved -> Ok()
+    | Ok(MainFreshness.MovedOntoMain commits) ->
+        printfn "\nmain moved during the release: main@origin gained %d commit(s):" commits.Length
+
+        for commit in commits do
+            printfn "  %s %s" commit.Id commit.Summary
+
+        printfn
+            "They touch none of the released packages (%s), so the consumer canary's verdict still holds. Continuing on the new main."
+            (packages |> List.map (fun p -> p.Name) |> String.concat ", ")
+
+        Ok()
+    | Error reason ->
+        printfn "\nError: %s" reason
+        Error 1
+
+/// Report a version bump that did not become `main`, and leave the workspace clean.
+///
+/// A refused move leaves a bump commit that main never reached, so it was never
+/// pushed and nothing tags it: abandoning it loses nothing, while keeping it would
+/// leave the next run's working copy carrying a stale bump. If it cannot be
+/// abandoned, say exactly what is left and how to drop it.
+let private reportMainNotAdvanced (run: string -> string -> CommandResult) (error: AdvanceMainError) : int =
+    printfn "\nError: %s" (describeAdvanceMainError error)
+
+    match error with
+    | BumpCommitFailed _ -> ()
+    | MainRefused(bumpCommit, _) ->
+        match abandonCommit run bumpCommit with
+        | Ok() ->
+            printfn
+                "The unpushed version-bump commit %s was abandoned; the working copy is back on the release base."
+                bumpCommit
+        | Error reason ->
+            printfn
+                "Left behind: the unpushed version-bump commit %s (abandoning it failed: %s). Drop it with `jj abandon %s` before re-running."
+                bumpCommit
+                reason
+                bumpCommit
+
+    1
+
 let private executeBumps
     (input: ReleaseInput)
     (graph: ReleaseOrder.ReleaseGraph)
@@ -1647,6 +1726,9 @@ let private executeBumps
     // The canary runs before the first write: a refusal leaves the tree exactly
     // as the plan found it. Only a tag push publishes, so `--publish` skips it.
     | PushTags when (consumerCanaryGate input allBumps |> Result.isError) -> 1
+    // The canary took minutes; main may have moved under it. Settled before the
+    // first write, so a refusal still leaves the tree as the plan found it.
+    | PushTags when (stillOnMainAfterCanary input (allBumps |> List.map fst) |> Result.isError) -> 1
     | mode ->
         for (pkg, version, _) in needsBump do
             updateFsprojVersion pkg.Fsproj version
@@ -1669,25 +1751,26 @@ let private executeBumps
             |> List.map (fun (pkg, version) -> sprintf "%s %s" pkg.Name (format version))
             |> String.concat ", "
 
-        commitAndAdvanceMain input.Run (sprintf "Bump versions: %s" versionSummary)
+        match commitAndAdvanceMain input.Run (sprintf "Bump versions: %s" versionSummary) with
+        | Error error -> reportMainNotAdvanced input.Run error
+        | Ok() ->
+            match mode with
+            | PushTags ->
+                // Push the bump commit BEFORE creating any local tag. If the push
+                // fails, no tag exists yet, so the next run's resume logic
+                // (`inProgressResumeVersion`, which keys off "no tag at the fsproj
+                // version") still fires and finishes the release. Tagging first would
+                // leave an orphan local tag pointing at a commit that never reached the
+                // remote, which the resume path treats as "already done".
+                pushMain input.Run
 
-        match mode with
-        | PushTags ->
-            // Push the bump commit BEFORE creating any local tag. If the push
-            // fails, no tag exists yet, so the next run's resume logic
-            // (`inProgressResumeVersion`, which keys off "no tag at the fsproj
-            // version") still fires and finishes the release. Tagging first would
-            // leave an orphan local tag pointing at a commit that never reached the
-            // remote, which the resume path treats as "already done".
-            pushMain input.Run
+                for (pkg, version) in allBumps do
+                    let tag = toTag pkg.TagPrefix version
+                    tagRevision input.Run tag "main"
 
-            for (pkg, version) in allBumps do
-                let tag = toTag pkg.TagPrefix version
-                tagRevision input.Run tag "main"
-
-            waitForCiAndPushTags input graph allBumps
-        | LocalPublish -> packLocally input.Run allBumps
-        | DryRun -> 0
+                waitForCiAndPushTags input graph allBumps
+            | LocalPublish -> packLocally input.Run allBumps
+            | DryRun -> 0
 
 /// The promise `--check` makes, stated with its limits so a pass is not read as
 /// "the promoted changelog covers every commit". Pinned by tests.

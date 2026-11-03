@@ -118,6 +118,7 @@ let private fakeRun (root: string) (world: World) (timeline: ResizeArray<string>
 
     match cmd, args with
     | "jj", "diff --summary" -> Success ""
+    | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
     | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
     | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
     | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"

@@ -598,6 +598,7 @@ let ``runReleaseWith - returns Ok 0 for empty-package config when CI passes`` ()
             | "jj", a when a.Contains("remote_bookmarks()") -> Shell.Success "parentbeef"
             | "gh", a when a.StartsWith("run list") -> Shell.Success ghPassed
             | "dotnet", "build -c Release" -> Shell.Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Shell.Success ""
             | _ -> Shell.Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let result =

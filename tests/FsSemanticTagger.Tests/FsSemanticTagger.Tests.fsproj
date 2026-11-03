@@ -30,6 +30,7 @@
     <Compile Include="ReleaseOrderTests.fs" />
     <Compile Include="ExtractionFakes.fs" />
     <Compile Include="ReleaseTests.fs" />
+    <Compile Include="MainMovedTests.fs" />
     <Compile Include="ConsumerCanaryTests.fs" />
     <Compile Include="ReleaseWavesTests.fs" />
     <Compile Include="OrphanedBumpTests.fs" />

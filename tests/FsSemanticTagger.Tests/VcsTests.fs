@@ -344,7 +344,9 @@ let ``commitAndAdvanceMain - commits and moves main bookmark`` () =
         | "jj", a when a.StartsWith("bookmark set") -> Success ""
         | _ -> Failure(sprintf "unexpected: %s %s" cmd args, 1)
 
-    commitAndAdvanceMain run "Bump versions"
+    let result = commitAndAdvanceMain run "Bump versions"
+
+    test <@ result = Ok() @>
 
     test
         <@
@@ -353,6 +355,144 @@ let ``commitAndAdvanceMain - commits and moves main bookmark`` () =
         @>
 
     test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a.Contains("bookmark set main")) @>
+
+/// Observed 2026-11-02: main moved during a release's canary, jj refused the
+/// bookmark move, and the release died with an unhandled exception and a stray
+/// bump commit. The refusal is a result now, naming the commit it left behind.
+[<Fact>]
+let ``commitAndAdvanceMain - a refused bookmark move is a typed result naming the bump commit`` () =
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", a when a.StartsWith("commit") -> Success ""
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "bump0123456789"
+        | "jj", a when a.StartsWith("bookmark set") ->
+            Failure("Error: Refusing to move bookmark backwards or sideways: main", 1)
+        | _ -> Failure(sprintf "unexpected: %s %s" cmd args, 1)
+
+    let result = commitAndAdvanceMain run "Bump versions"
+
+    test
+        <@ result = Error(MainRefused("bump0123456789", "Error: Refusing to move bookmark backwards or sideways: main")) @>
+
+[<Fact>]
+let ``commitAndAdvanceMain - a failed commit is a typed result and main is never touched`` () =
+    let mutable calls: (string * string) list = []
+
+    let run (cmd: string) (args: string) =
+        calls <- calls @ [ (cmd, args) ]
+
+        match cmd, args with
+        | "jj", a when a.StartsWith("commit") -> Failure("Error: working copy is stale", 1)
+        | _ -> Success ""
+
+    let result = commitAndAdvanceMain run "Bump versions"
+
+    test <@ result = Error(BumpCommitFailed "Error: working copy is stale") @>
+    test <@ not (calls |> List.exists (fun (_, a) -> a.StartsWith("bookmark set"))) @>
+
+[<Fact>]
+let ``describeAdvanceMainError - a refused move names the commit, the jj reason and the remedy`` () =
+    let text =
+        describeAdvanceMainError (MainRefused("bump0123456789", "Refusing to move bookmark backwards or sideways"))
+
+    test <@ text.Contains("bump0123456789") @>
+    test <@ text.Contains("Refusing to move bookmark backwards or sideways") @>
+    test <@ text.Contains("re-run") @>
+
+[<Fact>]
+let ``describeAdvanceMainError - a failed commit says the edits are uncommitted in the working copy`` () =
+    let text = describeAdvanceMainError (BumpCommitFailed "stale")
+
+    test <@ text.Contains("stale") @>
+    test <@ text.Contains("uncommitted") @>
+
+// main@origin freshness
+
+[<Fact>]
+let ``fetchMain - fetches with jj and reports a failure as its reason`` () =
+    let ok = fakeRun [ "jj", "git fetch", Success "" ]
+
+    let broken =
+        fakeRun [ "jj", "git fetch", Failure("Error: could not resolve host\n", 1) ]
+
+    test <@ fetchMain ok = Ok() @>
+    test <@ fetchMain broken = Error "Error: could not resolve host" @>
+
+[<Fact>]
+let ``commitsOnMainMissingFrom - lists remote main's commits the base lacks, id and summary`` () =
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", a when a.StartsWith("log -r \"@-..main@origin\"") ->
+            Success "aaaaaaaaaaaa fix: one\u001ebbbbbbbbbbbb \u001ecccccccccccc feat: three words here\u001e"
+        | _ -> Failure(sprintf "unexpected: %s %s" cmd args, 1)
+
+    let result = commitsOnMainMissingFrom run "@-"
+
+    test
+        <@
+            result =
+                Ok
+                    [
+                        {
+                            Id = "aaaaaaaaaaaa"
+                            Summary = "fix: one"
+                        }
+                        { Id = "bbbbbbbbbbbb"; Summary = "" }
+                        {
+                            Id = "cccccccccccc"
+                            Summary = "feat: three words here"
+                        }
+                    ]
+        @>
+
+[<Fact>]
+let ``commitsOnMainMissingFrom - empty when the base already contains remote main`` () =
+    let run (_: string) (_: string) = Success ""
+
+    test <@ commitsOnMainMissingFrom run "@-" = Ok [] @>
+
+[<Fact>]
+let ``commitsOnMainMissingFrom - an unreadable answer is an error, never no commits`` () =
+    let run (_: string) (_: string) =
+        Failure("Error: Revision `main@origin` doesn't exist", 1)
+
+    test <@ commitsOnMainMissingFrom run "@-" = Error "Error: Revision `main@origin` doesn't exist" @>
+
+[<Fact>]
+let ``pathsChangedOnMainSince - the paths remote main changed relative to the base`` () =
+    let run =
+        fakeRun
+            [
+                "jj", "diff --from @- --to main@origin --name-only", Success "docs/a.md\nsrc/Other/B.fs\n"
+            ]
+
+    let broken (_: string) (_: string) = Failure("boom", 1)
+
+    test <@ pathsChangedOnMainSince run "@-" = Ok [ "docs/a.md"; "src/Other/B.fs" ] @>
+    test <@ pathsChangedOnMainSince broken "@-" = Error "boom" @>
+
+[<Fact>]
+let ``isAncestorOfMain - true only when nothing in the base is missing from remote main`` () =
+    let query = "log -r \"@- ~ ::main@origin\" --no-graph -T commit_id"
+    let ancestor = fakeRun [ "jj", query, Success "" ]
+    let diverged = fakeRun [ "jj", query, Success "abc" ]
+    let broken = fakeRun []
+
+    test <@ isAncestorOfMain ancestor "@-" = Ok true @>
+    test <@ isAncestorOfMain diverged "@-" = Ok false @>
+    test <@ isAncestorOfMain broken "@-" |> Result.isError @>
+
+[<Fact>]
+let ``moveOntoMain and abandonCommit - one jj command each, failures reported`` () =
+    let ok =
+        fakeRun [ "jj", "new main@origin", Success ""; "jj", "abandon bump1", Success "" ]
+
+    let broken = fakeRun []
+
+    test <@ moveOntoMain ok = Ok() @>
+    test <@ abandonCommit ok "bump1" = Ok() @>
+    test <@ moveOntoMain broken |> Result.isError @>
+    test <@ abandonCommit broken "bump1" |> Result.isError @>
 
 // hasChangesSinceTag
 

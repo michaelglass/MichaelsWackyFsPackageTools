@@ -126,6 +126,7 @@ let private remote (timeline: ResizeArray<string>) (rejectedTags: string list) (
         ->
         timeline.Add(sprintf "write %s" (a.Split(' ')[0]))
         Success ""
+    | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
     | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
 /// A feed on which each package appears only after it has been asked about

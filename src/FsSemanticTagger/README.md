@@ -112,15 +112,18 @@ fssemantictagger stable
 
 The `release` command:
 1. Checks for a clean working copy (no uncommitted changes)
-2. **Fail-fast CI precondition:** confirms the release commit is on the remote and waits for its CI to go green — *before* the expensive build / coverage reconciliation. If the commit isn't pushed yet, it stops in ~1 second with an actionable "push first (or pass `--push`)" message instead of running the whole local CI and only then failing. (See [Fail-fast CI precondition](#fail-fast-ci-precondition).)
-3. Reconciles local coverage floors from the green CI run's coverage artifact (when `coverageratchet` is a local tool)
-4. Builds in Release configuration
-5. Compares API against the previous release tag
-6. Validates each bumped package's `CHANGELOG.md` has a non-empty `## Unreleased` section
-7. Runs the gates of the consumers configured on this machine against the candidate (see [Consumer canary](#consumer-canary)); a red gate refuses the release here, before any write
-8. Updates the version in your `.fsproj` file(s)
-9. Promotes the `## Unreleased` section to `## <version> - YYYY-MM-DD` and inserts a fresh empty `## Unreleased` above it
-10. Creates a VCS tag (supports both Git and [Jujutsu](https://jj-vcs.github.io/jj/))
+2. For a tag-pushing release, fetches and refuses unless the release base (`@-`) already contains `main@origin`, naming the commits it lacks: a version-bump commit on a stale base could never move `main` forward, so the CI wait and the canary would be wasted. Re-run from the new main (`jj new main@origin`).
+3. **Fail-fast CI precondition:** confirms the release commit is on the remote and waits for its CI to go green — *before* the expensive build / coverage reconciliation. If the commit isn't pushed yet, it stops in ~1 second with an actionable "push first (or pass `--push`)" message instead of running the whole local CI and only then failing. (See [Fail-fast CI precondition](#fail-fast-ci-precondition).)
+4. Reconciles local coverage floors from the green CI run's coverage artifact (when `coverageratchet` is a local tool)
+5. Builds in Release configuration
+6. Compares API against the previous release tag
+7. Validates each bumped package's `CHANGELOG.md` has a non-empty `## Unreleased` section
+8. Runs the gates of the consumers configured on this machine against the candidate (see [Consumer canary](#consumer-canary)); a red gate refuses the release here, before any write
+9. For a tag-pushing release, fetches again. If `main@origin` moved during the canary by commits that touch none of the released packages (their source and bundled-dependency directories, their changelogs, and shared build inputs such as `Directory.Build.props`, `*.targets`, `global.json`, `NuGet.config`), the release moves onto the new main and continues: those commits cannot change what ships, so the canary's verdict still holds. Otherwise it refuses, naming the commits and the paths they touch, with nothing written
+10. Updates the version in your `.fsproj` file(s)
+11. Promotes the `## Unreleased` section to `## <version> - YYYY-MM-DD` and inserts a fresh empty `## Unreleased` above it
+12. Commits the bump and moves `main` to it; if jj refuses the move, the unpushed bump commit is abandoned (or the release says exactly what was left)
+13. Creates a VCS tag (supports both Git and [Jujutsu](https://jj-vcs.github.io/jj/))
 
 ### Fail-fast CI precondition
 

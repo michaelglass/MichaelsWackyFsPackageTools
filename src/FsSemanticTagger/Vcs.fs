@@ -84,9 +84,109 @@ let tagRevision (run: string -> string -> CommandResult) (tag: string) (revision
         | Success _ -> ()
         | Failure(gitError, _) -> failwithf "cannot tag %s at %s\n  jj: %s\n  git: %s" tag revision jjError gitError
 
-let commitAndAdvanceMain (run: string -> string -> CommandResult) (message: string) : unit =
-    runOrFail run "jj" (sprintf "commit -m \"%s\"" message) |> ignore
-    runOrFail run "jj" "bookmark set main -r @-" |> ignore
+/// Why the version-bump commit did not become `main`, and what each case left behind.
+type AdvanceMainError =
+    /// `jj commit` failed: no bump commit exists, and the bump edits are still
+    /// uncommitted in the working copy.
+    | BumpCommitFailed of reason: string
+    /// The bump commit `bumpCommit` exists, but jj refused to move `main` to it —
+    /// typically because `main` moved since the release began, so the move would
+    /// be backwards or sideways. Nothing has been pushed.
+    | MainRefused of bumpCommit: string * reason: string
+
+/// The refusal in the operator's terms: what happened, what is left, what to do.
+let describeAdvanceMainError (error: AdvanceMainError) : string =
+    match error with
+    | BumpCommitFailed reason ->
+        sprintf
+            "could not commit the version bump (jj said: %s). The bumped versions and changelogs are uncommitted \
+             in the working copy; discard them with `jj restore`, then re-run the release."
+            (reason.Trim())
+    | MainRefused(bumpCommit, reason) ->
+        sprintf
+            "jj refused to move main to the version-bump commit %s (jj said: %s). main has moved since this \
+             release began, so the bump would not land on it. Nothing was pushed or tagged; re-run the release \
+             from the new main (`jj new main@origin`)."
+            bumpCommit
+            (reason.Trim())
+
+/// Commit the version bump and move `main` to it.
+///
+/// A refusal is a RESULT, not an exception. A release on 2026-11-02 reached this
+/// point after a 25-minute consumer canary, found `main` had moved during it, and
+/// died with a stack trace and a stray bump commit. The caller decides what to do
+/// with a commit left behind (`MainRefused` names it).
+let commitAndAdvanceMain (run: string -> string -> CommandResult) (message: string) : Result<unit, AdvanceMainError> =
+    match run "jj" (sprintf "commit -m \"%s\"" message) with
+    | Failure(reason, _) -> Error(BumpCommitFailed reason)
+    | Success _ ->
+        match run "jj" "bookmark set main -r @-" with
+        | Success _ -> Ok()
+        | Failure(reason, _) ->
+            let bumpCommit =
+                match runSilent run "jj" "log -r @- --no-graph -T commit_id" with
+                | Some id when id.Trim() <> "" -> id.Trim()
+                | _ -> "@-"
+
+            Error(MainRefused(bumpCommit, reason))
+
+/// A commit on `main@origin`, by short id and the first line of its description.
+type MainCommit = { Id: string; Summary: string }
+
+let private resultOf (run: string -> string -> CommandResult) (args: string) : Result<string, string> =
+    match run "jj" args with
+    | Success output -> Ok output
+    | Failure(error, _) -> Error(error.Trim())
+
+/// `jj git fetch`, so `main@origin` says where the remote's main is NOW.
+let fetchMain (run: string -> string -> CommandResult) : Result<unit, string> =
+    resultOf run "git fetch" |> Result.map ignore
+
+/// The commits on `main@origin` that `baseRev` does not contain, newest first.
+/// Empty when `baseRev` already contains `main@origin` (including when it is ahead
+/// of it). An unreadable answer is an `Error`, never "no commits".
+let commitsOnMainMissingFrom
+    (run: string -> string -> CommandResult)
+    (baseRev: string)
+    : Result<MainCommit list, string> =
+    let args =
+        sprintf
+            "log -r \"%s..main@origin\" --no-graph -T \"commit_id.short(12) ++ \\\" \\\" ++ description.first_line() ++ \\\"\\x1e\\\"\""
+            baseRev
+
+    resultOf run args
+    |> Result.map (fun output ->
+        output.Split('\u001e')
+        |> Array.map (fun record -> record.Trim())
+        |> Array.filter (fun record -> record <> "")
+        |> Array.map (fun record ->
+            match record.IndexOf(' ') with
+            | -1 -> { Id = record; Summary = "" }
+            | space ->
+                {
+                    Id = record.Substring(0, space)
+                    Summary = record.Substring(space + 1).Trim()
+                })
+        |> Array.toList)
+
+/// The repo-relative paths whose content differs between `baseRev` and `main@origin`.
+let pathsChangedOnMainSince (run: string -> string -> CommandResult) (baseRev: string) : Result<string list, string> =
+    resultOf run (sprintf "diff --from %s --to main@origin --name-only" baseRev)
+    |> Result.map (splitLines >> Array.toList)
+
+/// Is every commit of `baseRev` already on `main@origin`? False when the base holds
+/// commits main does not — moving the release onto main would drop them.
+let isAncestorOfMain (run: string -> string -> CommandResult) (baseRev: string) : Result<bool, string> =
+    resultOf run (sprintf "log -r \"%s ~ ::main@origin\" --no-graph -T commit_id" baseRev)
+    |> Result.map (fun output -> output.Trim() = "")
+
+/// Start a new working-copy commit on `main@origin`.
+let moveOntoMain (run: string -> string -> CommandResult) : Result<unit, string> =
+    resultOf run "new main@origin" |> Result.map ignore
+
+/// Abandon `commit`; its descendants (the working copy) are rebased onto its parent.
+let abandonCommit (run: string -> string -> CommandResult) (commit: string) : Result<unit, string> =
+    resultOf run (sprintf "abandon %s" commit) |> Result.map ignore
 
 let hasChangesSinceTag (run: string -> string -> CommandResult) (tag: string) (path: string) : bool =
     let args = sprintf "diff --from %s --to @ --summary \"glob:%s/**\"" tag path

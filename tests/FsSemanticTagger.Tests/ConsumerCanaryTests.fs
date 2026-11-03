@@ -811,6 +811,7 @@ let private releaseWithVersion (fsprojVersion: string) (dir: string) (canary: Se
         | "jj", "git push" -> Success ""
         | "jj", "git export" -> Success ""
         | "git", a when a.StartsWith "push origin" -> Success ""
+        | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config: ToolConfig =

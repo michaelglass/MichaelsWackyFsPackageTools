@@ -334,6 +334,7 @@ let ``release - returns 1 when uncommitted changes`` () =
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
         | "jj", "diff --summary" -> Success "M src/Foo.fs"
+        | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
@@ -360,6 +361,7 @@ let ``release - returns 1 when CI not passing`` () =
         | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
         | "gh", a when a.Contains("run list") ->
             Success """[{"status":"completed","conclusion":"failure","name":"CI","url":"https://example.com/1"}]"""
+        | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
@@ -388,6 +390,7 @@ let ``release - Auto with no previous tags returns 0 with no packages`` () =
             Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
         | "dotnet", "build -c Release" -> Success "Build succeeded."
         | "git", arg when arg.StartsWith("tag -l") -> Success ""
+        | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
@@ -446,6 +449,7 @@ let ``release - StartAlpha with FirstRelease tags and bumps version`` () =
             | "jj", "git push" -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -521,6 +525,7 @@ let ``release - Auto first-releases an untagged package at its declared fsproj v
             | "jj", "git push" -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -583,6 +588,7 @@ let private passingCiRun (extraResponses: (string * string * CommandResult) list
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
             | "dotnet", arg when arg.StartsWith("pack") -> Success "Successfully created package"
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     (fakeRun, (fun () -> calls))
@@ -1133,6 +1139,7 @@ let ``release - skips packages with no changes since last tag`` () =
             | "jj", "git push" -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -2263,6 +2270,7 @@ let ``release - does not push tags when post-push CI fails`` () =
             | "jj", a when a.StartsWith("commit") -> Success ""
             | "jj", a when a.StartsWith("bookmark set") -> Success ""
             | "jj", "git push" -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -2325,6 +2333,7 @@ let ``release - does not push tags when post-push CI times out`` () =
             | "jj", a when a.StartsWith("commit") -> Success ""
             | "jj", a when a.StartsWith("bookmark set") -> Success ""
             | "jj", "git push" -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -2385,6 +2394,7 @@ let ``release - does not push tags when post-push CI has no runs`` () =
             | "jj", a when a.StartsWith("commit") -> Success ""
             | "jj", a when a.StartsWith("bookmark set") -> Success ""
             | "jj", "git push" -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -2444,6 +2454,7 @@ let ``release - reconciles coverage via loosen-from-ci after CI is green`` () =
             | "dotnet", a when a.StartsWith("tool run coverageratchet loosen-from-ci") -> Success ""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
@@ -2478,6 +2489,7 @@ let ``release - returns 1 when coverageratchet loosen-from-ci fails`` () =
             match cmd, args with
             | "dotnet", "tool list" -> Success "coverageratchet    0.8.0-alpha.4    coverageratchet"
             | "dotnet", a when a.StartsWith("tool run coverageratchet loosen-from-ci") -> Failure("CI not green", 1)
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
@@ -2504,6 +2516,7 @@ let ``release - prints coverageratchet error message when loosen-from-ci fails``
             | "dotnet", "tool list" -> Success "coverageratchet    0.8.0-alpha.4    coverageratchet"
             | "dotnet", a when a.StartsWith("tool run coverageratchet loosen-from-ci") ->
                 Failure("coverage threshold mismatch", 1)
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
@@ -2534,6 +2547,7 @@ let ``release - fails fast with actionable push-first message when commit isn't 
         | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
         | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
         | "jj", a when a.Contains("remote_bookmarks()") -> Success ""
+        | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
@@ -2591,6 +2605,7 @@ let ``release - with --push pushes the commit then waits for CI when not pushed`
         | "dotnet", "tool list" -> Success "" // no coverageratchet -> reconciliation no-op
         | "dotnet", "build -c Release" -> Success "Build succeeded."
         | "git", arg when arg.StartsWith("tag -l") -> Success ""
+        | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
@@ -2619,6 +2634,7 @@ let ``release - distinguishes a genuine CI failure from an unpushed commit`` () 
         | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1" // pushed
         | "gh", a when a.Contains("run list") ->
             Success """[{"status":"completed","conclusion":"failure","name":"CI","url":"https://example.com/9"}]"""
+        | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
@@ -2648,6 +2664,7 @@ let ``release - returns 1 when CI status is Unknown`` () =
         | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
         | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
         | "gh", a when a.Contains("run list") -> Failure("gh not installed", 1)
+        | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
@@ -2674,6 +2691,7 @@ let ``release - waits then returns 1 when pushed CI times out still in progress`
         | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
         | "gh", a when a.Contains("run list") ->
             Success """[{"status":"in_progress","conclusion":null,"name":"CI","url":"https://example.com/1"}]"""
+        | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
@@ -2698,6 +2716,7 @@ let ``release - returns 1 when the release commit sha can't be determined`` () =
         | "jj", "log -r @- --no-graph -T commit_id" -> Success ""
         | "jj", "log -r @ --no-graph -T commit_id" -> Success ""
         | "git", "rev-parse HEAD" -> Failure("not a git repo", 1)
+        | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
@@ -2725,6 +2744,7 @@ let ``release - pushed commit whose CI run never registers times out`` () =
         | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
         | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1" // pushed
         | "gh", a when a.Contains("run list") -> Success "[]"
+        | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
     let config =
@@ -3002,6 +3022,7 @@ let ``release - resumes when fsproj already has target version (idempotent)`` ()
             | "jj", "git push" -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -3070,6 +3091,7 @@ let ``release - fails fast when resuming and CI has failed`` () =
             | "git", "tag -l v0.2.0-alpha.1" -> Success ""
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", "git push" -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -3124,6 +3146,7 @@ let ``release - a tag that triggered no workflow run fails the release`` () =
             | "jj", "git push" -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -3190,6 +3213,7 @@ let ``release - resumes and polls when CI is in progress`` () =
             | "jj", "git push" -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -3240,6 +3264,7 @@ let ``release - second run after successful first run produces no changes`` () =
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "jj", a when a.Contains("tag list") && a.Contains("\"glob:v") -> Success "v0.2.0-alpha.1"
             | "jj", a when a.Contains("--from v0.2.0-alpha.1") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -3294,6 +3319,7 @@ let ``release - aborts with exit 1 when CHANGELOG has no Unreleased section`` ()
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -3365,6 +3391,7 @@ let ``release - dryRun skips uncommitted check and does not write fsproj`` () =
 
             match cmd, args with
             | "git", arg when arg.StartsWith("tag -l") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -3492,6 +3519,7 @@ let ``release - resume in DryRun mode takes no actions and returns 0`` () =
                 Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
             | "jj", a when a.Contains("tag list") && a.Contains("\"glob:v") -> Success "v0.1.0-alpha.1"
             | "jj", a when a.Contains("--from v0.1.0-alpha.1") -> Success "1 file changed"
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -3550,6 +3578,7 @@ let ``release - resume with LocalPublish packs without pushing`` () =
             | "git", "tag -l v0.2.0-alpha.1" -> Success ""
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "dotnet", arg when arg.StartsWith("pack") -> Success "Successfully created package"
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -4087,6 +4116,7 @@ let ``release - scoping composes with dry-run (only target previewed)`` () =
             match cmd, args with
             | "git", arg when arg.StartsWith("tag -l") -> Success ""
             | "jj", a when a.Contains("tag list") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -4161,6 +4191,7 @@ let ``release - Auto resumes when fsproj is ahead of last tag and no tag at that
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -4227,6 +4258,7 @@ let ``release - Auto dry-run reports the resume plan instead of 'No packages to 
             | "jj", "tag list core-v0.8.0-alpha.17" -> Success ""
             | "git", "tag -l core-v0.8.0-alpha.17" -> Success ""
             | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -4283,6 +4315,7 @@ let ``release - Auto with fsproj equal to last tag has nothing to do (not a resu
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "jj", a when a.Contains("tag list") && a.Contains("\"glob:core-v") -> Success "core-v0.8.0-alpha.16"
             | "jj", a when a.Contains("--from core-v0.8.0-alpha.16") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -4769,6 +4802,7 @@ let ``release - multi-package mixed: one mid-release resumes, one fresh bumps`` 
             | "jj", "git push" -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -4901,6 +4935,7 @@ let ``release - Auto rebundles when only a bundled dependency changed`` () =
             | "jj", "git push" -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -4958,6 +4993,7 @@ let ``release - Auto skips when neither own nor dependency changed`` () =
             | "dotnet", "build -c Release" -> Success "Build succeeded."
             | "git", arg when arg.StartsWith("tag -l") -> Success "v1.0.0"
             | "jj", a when a.Contains("--from v1.0.0") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -5015,6 +5051,7 @@ let ``release - own change still uses API diff, ignoring dependency`` () =
             | "jj", "git push" -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         // Minor, not a rebundle's patch: the API diff ran.
@@ -5096,6 +5133,7 @@ let ``release - explicit command rebundles on dependency-only change`` () =
             | "jj", "git push" -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -5153,6 +5191,7 @@ let ``release - dependency-only rebundle skips a reserved explicit version`` () 
             | "git", arg when arg.StartsWith("tag -l") -> Success "v0.1.0-alpha.3"
             | "jj", a when a.Contains("--from v0.1.0-alpha.3") && a.Contains(ownSrcDir) -> Success ""
             | "jj", a when a.Contains("--from v0.1.0-alpha.3") && a.Contains("src/Dep") -> Success "1 file changed"
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -5230,6 +5269,7 @@ let ``release - library does NOT rebundle when only a separately-published depen
             | "jj", a when a.Contains("--from core-v2.0.0") -> Success ""
             // Lib excludes Core; a Core-dir query answered here would show up as a rebundle.
             | "jj", a when a.Contains("--from lib-v1.0.0") -> Success "1 file changed"
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -5340,6 +5380,7 @@ let ``release - PackAsTool rebundles when a separately-published bundled depende
             | "jj", "git push" -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -5448,6 +5489,7 @@ let ``release - library rebundles when a non-configured helper dependency change
             | "jj", "git push" -> Success ""
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -5531,6 +5573,7 @@ let ``release - pushes main before creating tags so a push failure leaves no orp
             | "jj", "git push" -> Failure("push failed: remote rejected", 1)
             | "jj", "git export" -> Success ""
             | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let config =
@@ -5695,6 +5738,7 @@ let private checkRun (diffOut: string) (logOut: string) =
         | "jj", a when a.StartsWith("tag list") -> Success "v1.0.0"
         | "jj", a when a.StartsWith("diff --from v1.0.0") -> Success diffOut
         | "jj", a when a.StartsWith("log -r \"v1.0.0..@\"") -> Success logOut
+        | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
         | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
 [<Fact>]
@@ -5740,6 +5784,7 @@ let ``release --check passes when the changed package has no prior tag`` () =
                 match cmd, args with
                 | "jj", a when a.StartsWith("tag list") -> Success ""
                 | "git", a when a.StartsWith("tag -l") -> Success ""
+                | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
                 | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
         let result = release (releaseInput run config Auto PushTags true)
@@ -6417,6 +6462,7 @@ let private calloutBuriedText =
 let private noTags (cmd: string) (args: string) : CommandResult =
     match cmd, args with
     | "git", a when a.StartsWith("tag -l") -> Success ""
+    | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
     | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
 
 let private runCheck (config: ToolConfig) =
