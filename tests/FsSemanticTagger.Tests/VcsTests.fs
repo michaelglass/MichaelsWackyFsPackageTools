@@ -1016,8 +1016,50 @@ let ``pushMain - pushes main bookmark via jj`` () =
         | "jj", "git push" -> Success ""
         | _ -> Failure("unexpected", 1)
 
-    pushMain run
+    test <@ pushMain run = Ok() @>
     test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push") @>
+
+/// jj 0.46's answer when main moved on the remote after the last fetch, verbatim.
+let private jjStaleRejection =
+    "Warning: The following references unexpectedly moved on the remote:\n  refs/heads/main (reason: stale info)\nHint: Try fetching from the remote, then make the bookmark point to where you want it to be, and push again.\nError: Failed to push some bookmarks"
+
+[<Theory>]
+[<InlineData("jj-stale")>]
+[<InlineData(" ! [rejected]        main -> main (non-fast-forward)")>]
+[<InlineData(" ! [rejected]        main -> main (fetch first)")>]
+let ``pushMain - a push rejected because main moved on the remote is MainMovedOnRemote`` (answer: string) =
+    let reason = if answer = "jj-stale" then jjStaleRejection else answer
+
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", "git push" -> Failure(reason, 1)
+        | _ -> Failure("unexpected", 1)
+
+    test <@ pushMain run = Error(MainMovedOnRemote reason) @>
+
+[<Fact>]
+let ``pushMain - any other push failure is PushFailed, diagnosed like a tag push`` () =
+    let run (cmd: string) (args: string) =
+        match cmd, args with
+        | "jj", "git push" -> Failure("Error: failed to authenticate: sign_and_send_pubkey: signing failed", 1)
+        | "git", "remote get-url origin" -> Success "git@github.com:example/repo.git"
+        | _ -> Failure("unexpected", 1)
+
+    match pushMain run with
+    | Error(MainPushFailed diagnosis) ->
+        test <@ diagnosis.Contains("sign_and_send_pubkey") @>
+        test <@ diagnosis.Contains("git@github.com:example/repo.git") @>
+    | other -> failwithf "expected MainPushFailed, got %A" other
+
+[<Fact>]
+let ``describePushMainError - a moved main says so and says to re-run from the new main`` () =
+    let moved = describePushMainError (MainMovedOnRemote "stale info")
+    let failed = describePushMainError (MainPushFailed "the remote is unreachable")
+
+    test <@ moved.Contains("main moved on the remote") && moved.Contains("re-run") @>
+    test <@ moved.Contains("jj new main@origin") @>
+    test <@ failed.Contains("the remote is unreachable") @>
+    test <@ not (failed.Contains("main moved")) @>
 
 // RunStatus.ofString
 

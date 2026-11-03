@@ -35,6 +35,7 @@ type private Scenario =
         Commit: CommandResult
         BookmarkSet: CommandResult
         Abandon: CommandResult
+        GitPush: CommandResult
     }
 
 let private calm =
@@ -48,6 +49,7 @@ let private calm =
         Commit = Success ""
         BookmarkSet = Success ""
         Abandon = Success ""
+        GitPush = Success ""
     }
 
 let private landed = "deadbeef0001 feat: someone else's change\u001e"
@@ -118,7 +120,7 @@ let private releaseUnder (scenario: Scenario) : string * int * (string * string)
             | "jj", a when a.StartsWith("tag set") -> Success ""
             | "jj", a when a.StartsWith("commit") -> scenario.Commit
             | "jj", a when a.StartsWith("bookmark set") -> scenario.BookmarkSet
-            | "jj", "git push" -> Success ""
+            | "jj", "git push" -> scenario.GitPush
             | "jj", "git export" -> Success ""
             | "git", a when a.StartsWith("push origin") -> Success ""
             | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
@@ -454,3 +456,48 @@ let ``releaseFootprint - repo-relative package dirs as configured, plus the root
             }
 
         test <@ releaseFootprint config [ pkg ] = [ "src/MyLib"; "CHANGELOG.md" ] @>)
+
+let private staleMain =
+    Failure(
+        "Warning: The following references unexpectedly moved on the remote:\n  refs/heads/main (reason: stale info)\nError: Failed to push some bookmarks",
+        1
+    )
+
+[<Fact>]
+let ``main moving between the second fetch and the push tags nothing and abandons the bump commit`` () =
+    let output, result, calls, _ = releaseUnder { calm with GitPush = staleMain }
+
+    test <@ result = 1 @>
+    test <@ output.Contains("main moved on the remote") @>
+    test <@ output.Contains("re-run") @>
+    test <@ ran calls "abandon bump0123456789" @>
+    test <@ output.Contains("abandoned") @>
+    test <@ not (ran calls "tag set") @>
+
+[<Fact>]
+let ``a rejected push whose bump commit cannot be abandoned prints the exact jj abandon`` () =
+    let output, result, _, _ =
+        releaseUnder
+            { calm with
+                GitPush = staleMain
+                Abandon = Failure("Error: some jj failure", 1)
+            }
+
+    test <@ result = 1 @>
+    test <@ output.Contains("jj abandon bump0123456789") @>
+    test <@ output.Contains("some jj failure") @>
+
+[<Fact>]
+let ``a push that fails for another reason keeps the bump commit for a resume and tags nothing`` () =
+    let output, result, calls, _ =
+        releaseUnder
+            { calm with
+                GitPush = Failure("Error: failed to authenticate", 1)
+            }
+
+    test <@ result = 1 @>
+    test <@ output.Contains("failed to authenticate") @>
+    test <@ not (output.Contains("main moved on the remote")) @>
+    test <@ output.Contains("resume") @>
+    test <@ not (ran calls "abandon") @>
+    test <@ not (ran calls "tag set") @>

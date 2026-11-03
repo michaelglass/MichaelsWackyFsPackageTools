@@ -2625,6 +2625,40 @@ let ``release - with --push pushes the commit then waits for CI when not pushed`
     test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push") @>
 
 [<Fact>]
+let ``release - with --push, a rejected push of the release commit refuses before waiting for CI`` () =
+    let mutable calls = []
+
+    let fakeRun (cmd: string) (args: string) : CommandResult =
+        calls <- calls @ [ (cmd, args) ]
+
+        match cmd, args with
+        | "jj", "diff --summary" -> Success ""
+        | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+        | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+        | "jj", a when a.Contains("remote_bookmarks()") -> Success ""
+        | "jj", "git push" -> Failure("Warning: refs/heads/main (reason: stale info)", 1)
+        | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
+        | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
+
+    let config =
+        {
+            Packages = []
+            ReservedVersions = Set.empty
+            PreBuildCmds = []
+            PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+            CiTimeout = None
+            RootDir = ""
+        }
+
+    let output, result =
+        withCapturedConsole (fun () ->
+            runReleaseWithPush fakeRun config Auto PushTags noPreviousApi noCurrentApi 0 10 true)
+
+    test <@ result = 1 @>
+    test <@ output.Contains("main moved on the remote") @>
+    test <@ not (calls |> List.exists (fun (c, _) -> c = "gh")) @>
+
+[<Fact>]
 let ``release - distinguishes a genuine CI failure from an unpushed commit`` () =
     let fakeRun (cmd: string) (args: string) : CommandResult =
         match cmd, args with
@@ -3057,6 +3091,68 @@ let ``release - resumes when fsproj already has target version (idempotent)`` ()
 
         let content = File.ReadAllText(tmpFile)
         test <@ content.Contains("<Version>0.2.0-alpha.1</Version>") @>
+    finally
+        File.Delete(tmpFile)
+
+[<Fact>]
+let ``release - resuming a release whose re-push of main is rejected tags nothing and says main moved`` () =
+    let tmpFile = scratchFile ()
+
+    try
+        // A previous run already bumped to 0.2.0-alpha.1.
+        File.WriteAllText(tmpFile, "<Project><PropertyGroup><Version>0.2.0-alpha.1</Version></PropertyGroup></Project>")
+
+        let mutable calls = []
+
+        let fakeRun (cmd: string) (args: string) : CommandResult =
+            calls <- calls @ [ (cmd, args) ]
+
+            match cmd, args with
+            | "jj", "diff --summary" -> Success ""
+            | "jj", "log -r @ --no-graph -T commit_id" -> Success "abc123"
+            | "jj", "log -r @- --no-graph -T commit_id" -> Success "parent1"
+            | "jj", a when a.Contains("remote_bookmarks()") -> Success "parent1"
+            | "gh", a when a.Contains("run list") ->
+                Success """[{"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/1"}]"""
+            | "dotnet", "build -c Release" -> Success "Build succeeded."
+            | "jj", a when a.Contains("tag list") && a.Contains("\"glob:v") -> Success "v0.1.0-alpha.1"
+            | "jj", a when a.Contains("--from v0.1.0-alpha.1") -> Success "1 file changed"
+            | "jj", "tag list v0.2.0-alpha.1" -> Success ""
+            | "git", "tag -l v0.2.0-alpha.1" -> Success ""
+            | "jj", a when a.StartsWith("tag set") -> Success ""
+            | "jj", "git push" -> Failure("Warning: refs/heads/main (reason: stale info)", 1)
+            | "jj", "git export" -> Success ""
+            | "git", arg when arg.StartsWith("push origin") -> Success ""
+            | "jj", a when a = "git fetch" || a.Contains("main@origin") -> Success ""
+            | _ -> Failure(sprintf "unexpected call: %s %s" cmd args, 1)
+
+        let config =
+            {
+                Packages =
+                    [
+                        {
+                            Name = "MyLib"
+                            Fsproj = tmpFile
+                            DllPath = "src/MyLib/bin/Release/net10.0/MyLib.dll"
+                            TagPrefix = "v"
+                            FsProjsSharingSameTag = []
+                        }
+                    ]
+                ReservedVersions = Set.empty
+                PreBuildCmds = []
+                PublishWorkflows = FsSemanticTagger.Config.defaultPublishWorkflows
+                CiTimeout = None
+                RootDir = ""
+            }
+
+        let output, result =
+            withCapturedConsole (fun () ->
+                runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10)
+
+        test <@ result = 1 @>
+        test <@ output.Contains("main moved on the remote") @>
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>
+        test <@ not (calls |> List.exists (fun (c, a) -> c = "git" && a.StartsWith("push origin"))) @>
     finally
         File.Delete(tmpFile)
 
@@ -5595,16 +5691,11 @@ let ``release - pushes main before creating tags so a push failure leaves no orp
                 RootDir = ""
             }
 
-        let threw =
-            try
-                runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
-                |> ignore
+        // A failed push is a diagnosed refusal (exit 1), not an exception.
+        let result =
+            runRelease fakeRun config StartAlpha PushTags noPreviousApi noCurrentApi 0 10
 
-                false
-            with _ ->
-                true
-
-        test <@ threw @>
+        test <@ result = 1 @>
 
         test <@ calls |> List.exists (fun (c, a) -> c = "jj" && a = "git push") @>
         test <@ not (calls |> List.exists (fun (c, a) -> c = "jj" && a.StartsWith("tag set"))) @>

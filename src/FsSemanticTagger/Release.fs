@@ -879,8 +879,12 @@ let private confirmReleaseCommitCiGreen (input: ReleaseInput) : Result<unit, int
             waitForReleaseCi input
         elif input.Push then
             printfn "Release commit isn't pushed yet; --push given, pushing and waiting for CI..."
-            pushMain input.Run
-            waitForReleaseCi input
+
+            match pushMain input.Run with
+            | Ok() -> waitForReleaseCi input
+            | Error error ->
+                printfn "Error: %s" (describePushMainError error)
+                Error 1
         else
             printfn "%s" notPushedMessage
             Error 1
@@ -1567,15 +1571,18 @@ let private resumeAlreadyBumped
             // Re-push main first: if the original run failed at `pushMain`, the bump
             // commit is still local-only here. `jj git push` is idempotent, so pushing
             // again is safe and closes the partial-failure window before tagging.
-            pushMain input.Run
+            match pushMain input.Run with
+            | Error error ->
+                printfn "\nError: %s" (describePushMainError error)
+                1
+            | Ok() ->
+                for (pkg, version) in alreadyBumped do
+                    let tag = toTag pkg.TagPrefix version
 
-            for (pkg, version) in alreadyBumped do
-                let tag = toTag pkg.TagPrefix version
+                    if not (tagExists input.Run tag) then
+                        tagRevision input.Run tag "main"
 
-                if not (tagExists input.Run tag) then
-                    tagRevision input.Run tag "main"
-
-            waitForCiAndPushTags input graph alreadyBumped
+                waitForCiAndPushTags input graph alreadyBumped
     | LocalPublish -> packLocally input.Run alreadyBumped
 
 /// The changelog bullet auto-inserted for a dependency-triggered rebundle bump
@@ -1623,6 +1630,22 @@ let private stillOnMainAfterCanary (input: ReleaseInput) (packages: PackageConfi
         printfn "\nError: %s" reason
         Error 1
 
+/// Abandon a version-bump commit that never reached the remote, or say exactly what
+/// is left and how to drop it. Nothing tags it and nothing was pushed, so abandoning
+/// loses nothing; keeping it would leave the next run carrying a stale bump.
+let private abandonUnpushedBump (run: string -> string -> CommandResult) (bumpCommit: string) : unit =
+    match abandonCommit run bumpCommit with
+    | Ok() ->
+        printfn
+            "The unpushed version-bump commit %s was abandoned; the working copy is back on the release base."
+            bumpCommit
+    | Error reason ->
+        printfn
+            "Left behind: the unpushed version-bump commit %s (abandoning it failed: %s). Drop it with `jj abandon %s` before re-running."
+            bumpCommit
+            reason
+            bumpCommit
+
 /// Report a version bump that did not become `main`, and leave the workspace clean.
 ///
 /// A refused move leaves a bump commit that main never reached, so it was never
@@ -1634,18 +1657,25 @@ let private reportMainNotAdvanced (run: string -> string -> CommandResult) (erro
 
     match error with
     | BumpCommitFailed _ -> ()
-    | MainRefused(bumpCommit, _) ->
-        match abandonCommit run bumpCommit with
-        | Ok() ->
-            printfn
-                "The unpushed version-bump commit %s was abandoned; the working copy is back on the release base."
-                bumpCommit
-        | Error reason ->
-            printfn
-                "Left behind: the unpushed version-bump commit %s (abandoning it failed: %s). Drop it with `jj abandon %s` before re-running."
-                bumpCommit
-                reason
-                bumpCommit
+    | MainRefused(bumpCommit, _) -> abandonUnpushedBump run bumpCommit
+
+    1
+
+/// Report a version-bump commit that `main` reached locally but the push did not.
+///
+/// When main moved on the remote, this base can never be pushed: the bump commit is
+/// abandoned (jj moves the local `main` back to its parent), exactly as for a refused
+/// local move. Any other failure (authentication, network) can clear on its own, and
+/// the release resumes from an unpushed bump with no tag, so the commit is KEPT.
+/// Nothing is tagged either way: tags are made only after a successful push.
+let private reportMainNotPushed (run: string -> string -> CommandResult) (error: PushMainError) : int =
+    printfn "\nError: %s" (describePushMainError error)
+
+    match error with
+    | MainMovedOnRemote _ -> abandonUnpushedBump run (releaseCommitSha run |> Option.defaultValue "@-")
+    | MainPushFailed _ ->
+        printfn
+            "The version-bump commit stays on the local main, unpushed and untagged. Once the push can succeed, re-run the same release command: it resumes from the bump."
 
     1
 
@@ -1762,13 +1792,14 @@ let private executeBumps
                 // version") still fires and finishes the release. Tagging first would
                 // leave an orphan local tag pointing at a commit that never reached the
                 // remote, which the resume path treats as "already done".
-                pushMain input.Run
+                match pushMain input.Run with
+                | Error error -> reportMainNotPushed input.Run error
+                | Ok() ->
+                    for (pkg, version) in allBumps do
+                        let tag = toTag pkg.TagPrefix version
+                        tagRevision input.Run tag "main"
 
-                for (pkg, version) in allBumps do
-                    let tag = toTag pkg.TagPrefix version
-                    tagRevision input.Run tag "main"
-
-                waitForCiAndPushTags input graph allBumps
+                    waitForCiAndPushTags input graph allBumps
             | LocalPublish -> packLocally input.Run allBumps
             | DryRun -> 0
 

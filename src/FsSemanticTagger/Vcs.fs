@@ -574,8 +574,6 @@ let hasCoverageRatchet (run: string -> string -> CommandResult) : bool =
     | Success output -> output.Contains("coverageratchet")
     | Failure _ -> false
 
-let pushMain (run: string -> string -> CommandResult) : unit = runOrFail run "jj" "git push" |> ignore
-
 /// One run of a PUBLISHING workflow that GitHub reports for a ref, in the terms this
 /// poll needs.
 ///
@@ -842,6 +840,47 @@ let internal diagnosePushFailure (run: string -> string -> CommandResult) (error
             h
             (error.Trim())
     | false, _ -> sprintf "pushing to %s failed. git said: %s" (if remote = "" then "origin" else remote) (error.Trim())
+
+/// Why pushing `main` failed, split by what the operator does next.
+type PushMainError =
+    /// The remote's `main` moved since the last fetch, so the push would not be a
+    /// fast-forward and was rejected (`jj`: "unexpectedly moved on the remote";
+    /// `git`: "non-fast-forward" / "fetch first"). Re-running on THIS base cannot
+    /// succeed.
+    | MainMovedOnRemote of reason: string
+    /// Any other failure — authentication, network, a missing remote — diagnosed as
+    /// a tag push is (`diagnosePushFailure`). Retrying the same push can succeed.
+    | MainPushFailed of diagnosis: string
+
+/// Does a push failure say the remote ref moved, rather than that the push could not
+/// be made at all?
+let private isMovedRemoteRejection (error: string) : bool =
+    [
+        "unexpectedly moved on the remote"
+        "stale info"
+        "non-fast-forward"
+        "(fetch first)"
+    ]
+    |> List.exists (fun marker -> error.Contains(marker: string))
+
+/// The push failure in the operator's terms.
+let describePushMainError (error: PushMainError) : string =
+    match error with
+    | MainMovedOnRemote reason ->
+        sprintf
+            "the push of main was rejected because main moved on the remote during the release (jj said: %s). \
+             Nothing was tagged; re-run the release from the new main (`jj new main@origin`)."
+            (reason.Trim())
+    | MainPushFailed diagnosis -> sprintf "could not push main: %s" diagnosis
+
+/// Push `main`. A failure is a RESULT: a release reaches this after its version-bump
+/// commit exists, and main moving on the remote in the seconds since the last fetch
+/// must end in a diagnosed refusal, not a stack trace.
+let pushMain (run: string -> string -> CommandResult) : Result<unit, PushMainError> =
+    match run "jj" "git push" with
+    | Success _ -> Ok()
+    | Failure(error, _) when isMovedRemoteRejection error -> Error(MainMovedOnRemote error)
+    | Failure(error, _) -> Error(MainPushFailed(diagnosePushFailure run error))
 
 /// Push one tag, preferring the repo's own VCS front-end.
 ///
