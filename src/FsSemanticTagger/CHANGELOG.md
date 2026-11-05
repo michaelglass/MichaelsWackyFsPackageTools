@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0-alpha.28 - 2026-11-05
+
 - fix!: **a release resumed after its bump commit was pushed no longer re-runs the consumer canary, and can finish.** On 2026-11-05 the canary passed for an FsHotWatch release, the bump commit was pushed, and the wait for its CI stopped early. The resume ran the canary again on the post-bump tree, whose CLI bundles TestPrune.Core 15.0.0 from the same release, not yet on NuGet: the canary's restore failed with NU1102, so the release could never pass it.
   - **Every canary verdict is recorded** in `~/.fssemantictagger/verdicts/`, keyed by the release plan and the consumers it ran, with the commit it ran on. A resumed release reuses a recorded **pass**, and says so, when the only change from that commit to its own is the release's bump (the plan's changelogs, and its fsprojs changed in nothing but `<Version>`). A refusal is never reused, nor a pass taken on other content; the output says why the canary runs again.
   - **The canary packs what the consumer resolves.** Besides the consumed package, every package of the same release it depends on (the publication-order graph) that is not on NuGet yet is packed into `localFeed` and seeded into the cache beside it, and while the packs run, every planned fsproj carries its planned `<Version>`, as the bump commit will. A canary run after a bump can restore its dependencies, and a candidate packed before the bump names and bundles them at the versions this release gives them.

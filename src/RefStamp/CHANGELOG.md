@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.5 - 2026-11-05
+
+- chore: relicense under MPL-2.0
+
+
 ## 0.1.0-alpha.4 - 2026-09-30
 
 - deps: bump CommandTree 0.11.3, MetadataLoadContext, test and dev tools

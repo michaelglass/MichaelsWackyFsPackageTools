@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.13.0-alpha.9 - 2026-11-05
+
+- chore: relicense under MPL-2.0
+
+
 ## 0.13.0-alpha.8 - 2026-09-30
 
 - fix: **the scan for code-sourced docs skips every dot-directory and every nested checkout.** It already skipped `.git`, `.jj`, `.workspaces` and `.fsdocs` by name. It now skips any dot-directory (`.fshw`, `.devenv`, …) and any directory with its own `.jj` or `.git` entry, such as a jj workspace or git worktree outside `.workspaces/`. This is the same rule FsSemanticTagger and FsProjLint apply.
