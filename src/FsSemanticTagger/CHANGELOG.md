@@ -3,6 +3,7 @@
 ## Unreleased
 
 - fix: **the processes the tagger starts no longer leave MSBuild worker nodes running.** A `release --dry-run` shells out to `dotnet build`, `dotnet pack` and `dotnet restore`, and runs consumer gates, all of which left `/nodeReuse:true` MSBuild nodes alive after the tagger exited, holding memory nothing would reuse. Every child process now carries `MSBUILDDISABLENODEREUSE=1`, inherited by anything it starts in turn.
+- docs: `FeedPresence` no longer claims `FeedUnknown` always behaves like `OnFeed`. It does where "absent" would act (orphan re-publish, prior-release classification); where "present" would act (the post-push poll, the gate between publication waves, the consumer canary's `IsPublished`) it behaves like `NotOnFeed`, which is the safe answer there. The doc now says which, and a test pins the poll's half. No behaviour change.
 
 ## 0.14.0-alpha.28 - 2026-11-05
 

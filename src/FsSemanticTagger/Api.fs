@@ -845,11 +845,23 @@ let httpGet (url: string) : HttpResult =
 ///
 /// The whole point of the type is that `NotOnFeed` is a POSITIVE claim — the
 /// feed was reached and it does not have this version — while `FeedUnknown`
-/// admits we could not find out. Only `NotOnFeed` may drive a destructive
-/// decision (re-publishing an orphan release); `FeedUnknown` must always behave
-/// like `OnFeed`, because the two wrong guesses are not symmetric: a wrong
-/// "absent" re-publishes on every run of an outage, while a wrong "published"
-/// merely defers to the next run that can reach the feed.
+/// admits we could not find out. A caller never guesses; it resolves
+/// `FeedUnknown` to whichever answer is SAFE for its own decision:
+///
+///   * Where "absent" would act — re-publish an orphan release
+///     (`Release.isOrphanRelease`) or walk back past a prior release
+///     (`Release.classifyPriorRelease`) — `FeedUnknown` behaves like `OnFeed`.
+///     Only `NotOnFeed` may drive those decisions, because the two wrong guesses
+///     are not symmetric: a wrong "absent" re-publishes on every run of an outage,
+///     while a wrong "published" merely defers to the next run that can reach the
+///     feed.
+///   * Where "present" would act — clear a package from the post-push
+///     availability poll, or from the gate that holds a later publication wave
+///     back (`Release.waitForNuGetOn`), or leave a planned dependency out of the
+///     consumer canary's local feed (`ConsumerCanary.PlanContext.IsPublished`) —
+///     `FeedUnknown` behaves like `NotOnFeed`. Only `OnFeed` may clear those: an
+///     unreachable feed is not evidence of arrival, and a wrong "published" there
+///     would push a dependent ahead of its dependency or restore against nothing.
 type FeedPresence =
     | OnFeed
     | NotOnFeed
@@ -1185,9 +1197,9 @@ let checkRestorable
     else NotOnFeed
 
 /// Is this exact package version live right now? The two-valued view of
-/// `checkFeedPresence`. No production caller remains — the post-push availability
-/// poll (`Release.waitForNuGet`) consumes `FeedPresence` directly so that
-/// `FeedUnknown` behaves like "published" instead of like "absent". Prefer
+/// `checkFeedPresence`, which folds `FeedUnknown` into "absent". No production
+/// caller remains: every release decision consumes `FeedPresence` directly and
+/// resolves `FeedUnknown` to the answer that is safe for it (see `FeedPresence`). Prefer
 /// `checkFeedPresence` for anything new; a `bool` cannot express the distinction a
 /// release decision depends on.
 let isPublished

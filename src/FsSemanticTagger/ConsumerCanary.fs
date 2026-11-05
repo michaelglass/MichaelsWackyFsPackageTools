@@ -688,7 +688,9 @@ type PlanContext =
         /// The packages a package depends on, directly or transitively (the release
         /// graph): the ones it bundles or names as NuGet dependencies.
         DependenciesOf: string -> Set<string>
-        /// Is this version of this package already on the feed?
+        /// Is this version of this package already on the feed? True only on a
+        /// definite answer: a feed that cannot be reached counts as "not yet", so
+        /// the canary packs the dependency itself rather than restore against nothing.
         IsPublished: string -> Version -> bool
     }
 
