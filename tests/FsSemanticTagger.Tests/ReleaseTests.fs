@@ -42,20 +42,7 @@ let private noPreviousApi (_pkg: string) (_version: string) : PreviousApiResult 
 let private noCurrentApi (_dll: string) : ApiSignature list = []
 
 /// No machine-local canary config, and a host that must never be reached.
-let private noCanary: ConsumerCanary.Settings =
-    {
-        ConfigPath = Path.Combine(scratchDir, "no-such-fssemantictagger.json")
-        Skip = false
-        LogDir = Path.Combine(scratchDir, "fssemantictagger-canary-logs")
-        ScratchDir = Path.Combine(scratchDir, "fssemantictagger-canary-seed")
-        PackagesCache = Path.Combine(scratchDir, "fssemantictagger-canary-cache")
-        VerdictDir = Path.Combine(scratchDir, "fssemantictagger-canary-verdicts")
-        Ops =
-            {
-                RunIn = fun _ cmd _ -> failwithf "unexpected canary process: %s" cmd
-                RunGate = fun _ command _ _ -> failwithf "unexpected canary gate: %s" command
-            }
-    }
+let private noCanary = CanaryFixtures.noCanaryUnder scratchDir
 
 /// Re-seeds the temp-dir CHANGELOG.md before each release call (promotion mutates it).
 let private seedTmpChangelog () =

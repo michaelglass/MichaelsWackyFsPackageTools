@@ -29,6 +29,7 @@
     <Compile Include="CiWaitTests.fs" />
     <Compile Include="ReleaseOrderTests.fs" />
     <Compile Include="ExtractionFakes.fs" />
+    <Compile Include="CanaryFixtures.fs" />
     <Compile Include="ReleaseTests.fs" />
     <Compile Include="MainMovedTests.fs" />
     <Compile Include="ConsumerCanaryTests.fs" />
@@ -40,6 +41,7 @@
     <Compile Include="DeclaredBumpTests.fs" />
     <Compile Include="ProgramTests.fs" />
     <Compile Include="GrammarDiffSpec.fs" />
+    <Compile Include="TempIsolationTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
