@@ -49,6 +49,7 @@ let private noCanary: ConsumerCanary.Settings =
         LogDir = Path.Combine(scratchDir, "fssemantictagger-canary-logs")
         ScratchDir = Path.Combine(scratchDir, "fssemantictagger-canary-seed")
         PackagesCache = Path.Combine(scratchDir, "fssemantictagger-canary-cache")
+        VerdictDir = Path.Combine(scratchDir, "fssemantictagger-canary-verdicts")
         Ops =
             {
                 RunIn = fun _ cmd _ -> failwithf "unexpected canary process: %s" cmd

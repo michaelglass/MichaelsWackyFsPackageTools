@@ -174,6 +174,15 @@ let pathsChangedOnMainSince (run: string -> string -> CommandResult) (baseRev: s
     resultOf run (sprintf "diff --from %s --to main@origin --name-only" baseRev)
     |> Result.map (splitLines >> Array.toList)
 
+/// The repo-relative paths whose content differs between `fromRev` and `toRev`.
+let pathsChangedBetween
+    (run: string -> string -> CommandResult)
+    (fromRev: string)
+    (toRev: string)
+    : Result<string list, string> =
+    resultOf run (sprintf "diff --from %s --to %s --name-only" fromRev toRev)
+    |> Result.map (splitLines >> Array.toList)
+
 /// Is every commit of `baseRev` already on `main@origin`? False when the base holds
 /// commits main does not — moving the release onto main would drop them.
 let isAncestorOfMain (run: string -> string -> CommandResult) (baseRev: string) : Result<bool, string> =

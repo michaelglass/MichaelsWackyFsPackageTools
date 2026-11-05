@@ -61,6 +61,7 @@ let private noCanary (dir: string) : ConsumerCanary.Settings =
         LogDir = Path.Combine(dir, "canary-logs")
         ScratchDir = Path.Combine(dir, "canary-seed")
         PackagesCache = Path.Combine(dir, "canary-cache")
+        VerdictDir = Path.Combine(dir, "canary-cache-verdicts")
         Ops =
             {
                 RunIn = fun _ cmd _ -> failwithf "unexpected canary process: %s" cmd

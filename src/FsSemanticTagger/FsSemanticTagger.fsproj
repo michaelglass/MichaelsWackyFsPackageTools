@@ -53,6 +53,7 @@
     <Compile Include="Vcs.fs" />
     <Compile Include="MainFreshness.fs" />
     <Compile Include="CiWait.fs" />
+    <Compile Include="CanaryVerdict.fs" />
     <Compile Include="ConsumerCanary.fs" />
     <Compile Include="Release.fs" />
     <Compile Include="Program.fs" />

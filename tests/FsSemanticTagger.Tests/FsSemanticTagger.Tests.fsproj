@@ -33,6 +33,8 @@
     <Compile Include="MainMovedTests.fs" />
     <Compile Include="ConsumerCanaryTests.fs" />
     <Compile Include="ReleaseWavesTests.fs" />
+    <Compile Include="CanaryVerdictTests.fs" />
+    <Compile Include="ResumedReleaseTests.fs" />
     <Compile Include="OrphanedBumpTests.fs" />
     <Compile Include="BumpTests.fs" />
     <Compile Include="DeclaredBumpTests.fs" />

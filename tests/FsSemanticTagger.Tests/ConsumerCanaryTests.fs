@@ -318,6 +318,7 @@ let private scaffold (dir: string) (gate: string -> GateOutcome) (commands: Resi
             LogDir = Path.Combine(root, "artifacts", "consumer-canary")
             ScratchDir = Path.Combine(dir, "scratch")
             PackagesCache = Path.Combine(dir, "cache")
+            VerdictDir = Path.Combine(dir, "cache-verdicts")
             Ops = fakeOps commands gate
         }
 
@@ -712,6 +713,7 @@ let private integrationRun (dir: string) (gateExit: int) =
             LogDir = Path.Combine(root, "artifacts", "consumer-canary")
             ScratchDir = Path.Combine(dir, "scratch")
             PackagesCache = Path.Combine(dir, "cache")
+            VerdictDir = Path.Combine(dir, "cache-verdicts")
             Ops = integrationOps
         }
 
@@ -903,6 +905,7 @@ let private canaryFor (dir: string) (gate: string -> GateOutcome) (commands: Res
         LogDir = Path.Combine(dir, "logs")
         ScratchDir = Path.Combine(dir, "scratch")
         PackagesCache = Path.Combine(dir, "cache")
+        VerdictDir = Path.Combine(dir, "cache-verdicts")
         Ops = fakeOps commands gate
     }
 
@@ -1755,6 +1758,7 @@ let ``packCandidate - a referenced in-repo project keeps its own version in the 
                 LogDir = Path.Combine(dir, "logs")
                 ScratchDir = Path.Combine(dir, "scratch")
                 PackagesCache = Path.Combine(dir, "cache")
+                VerdictDir = Path.Combine(dir, "cache-verdicts")
                 Ops = { RunIn = runIn; RunGate = runLogged }
             }
 

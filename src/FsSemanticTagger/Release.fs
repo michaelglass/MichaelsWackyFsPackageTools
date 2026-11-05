@@ -185,28 +185,44 @@ let internal formatElapsed (elapsed: System.TimeSpan) : string = CiWait.formatDu
 let internal pollBudget (intervalMs: int) (attempts: int) : System.TimeSpan =
     System.TimeSpan.FromMilliseconds(float (max 0 (attempts - 1)) * float intervalMs)
 
+/// How many unreadable CI answers in a row the wait tolerates before it gives up.
+///
+/// One failed `gh` call is a blip, not a verdict. Observed 2026-11-05 in the
+/// FsHotWatch release: a single unreadable answer ended the wait on the bump commit
+/// about 30 minutes into its 54-minute budget, while that commit's CI was still
+/// running (it passed 29m45s after it started). Twenty in a row, five minutes at the
+/// production 15-second poll, is `gh` being down or absent, not a blip.
+let internal unknownTolerance = 20
+
 let internal waitForCi (run: string -> string -> CommandResult) (pollIntervalMs: int) (maxAttempts: int) : CiStatus =
-    let rec poll attempt =
+    let rec poll attempt unreadable =
         let status = getCiStatus run
 
         match status with
         | NoRuns when attempt < maxAttempts ->
             printfn "  ...still waiting for CI to start (this is expected — not a hang)"
             System.Threading.Thread.Sleep(pollIntervalMs)
-            poll (attempt + 1)
+            poll (attempt + 1) 0
         | InProgress runs when attempt < maxAttempts ->
             let completed =
                 runs |> List.filter (fun r -> r.Status = Vcs.Completed) |> List.length
 
             printfn "  ...CI still running (%d/%d runs complete — expected, not a hang)" completed runs.Length
             System.Threading.Thread.Sleep(pollIntervalMs)
-            poll (attempt + 1)
+            poll (attempt + 1) 0
         | InProgress _ ->
             printfn "Timed out waiting for CI after %d attempts" maxAttempts
             status
+        | Unknown when attempt < maxAttempts && unreadable + 1 < unknownTolerance ->
+            printfn
+                "  ...could not read the CI status (%d in a row); asking again — one unreadable answer is not a verdict"
+                (unreadable + 1)
+
+            System.Threading.Thread.Sleep(pollIntervalMs)
+            poll (attempt + 1) (unreadable + 1)
         | other -> other
 
-    poll 0
+    poll 0 0
 
 /// Wait for CI within `budget`, first telling the operator what is being waited
 /// for and how long that is expected to take.
@@ -601,26 +617,18 @@ let private waitForCiAndPushTags
         1
     | InProgress _ ->
         printfn "Error: CI still running after timeout. Not pushing tags."
-        printfn "Run the release command again to resume."
+
+        printfn
+            "Run the release command again to resume: it waits for this commit's CI again, and reuses the consumer canary's recorded pass."
+
         1
     | _ ->
         printfn "Error: could not determine CI status. Not pushing tags."
-        printfn "Run the release command again to resume."
+
+        printfn
+            "Run the release command again to resume: it waits for this commit's CI again, and reuses the consumer canary's recorded pass."
+
         1
-
-/// Run the consumer canary on the plan. Called before anything is written or
-/// pushed, so a refusal leaves nothing to undo. The verdict — including a
-/// break-glass skip — is printed so the release output records it.
-let private consumerCanaryGate (input: ReleaseInput) (plan: (PackageConfig * Version) list) : Result<unit, int> =
-    printfn ""
-
-    match ConsumerCanary.decide input.Canary input.Config.RootDir plan with
-    | Ok verdict ->
-        printfn "%s" (ConsumerCanary.formatVerdict verdict)
-        Ok()
-    | Error message ->
-        printfn "\nError: %s" message
-        Error 1
 
 /// What a dry run says about the canary: the consumers it would exercise.
 let private describeConsumerCanary (input: ReleaseInput) (plan: (PackageConfig * Version) list) : unit =
@@ -1550,6 +1558,82 @@ let private decideBump
                     Some(NeedsBump(pkg, v, OwnChange))
             | _ -> explicitBump "first release" OwnChange
 
+/// `path` relative to the repo root, with forward slashes: how jj names a path.
+let internal repoRelative (config: ToolConfig) (path: string) : string =
+    let rel =
+        if System.IO.Path.IsPathRooted path then
+            System.IO.Path.GetRelativePath(config.RootDir, path)
+        else
+            path
+
+    rel.Replace('\\', '/').TrimEnd('/')
+
+/// Is every change from `baseRev` to `head` the release's own version bump for
+/// `plan`: a changelog it promotes, or one of its fsprojs changed in nothing but
+/// `<Version>`? What the release writes between the canary and its bump commit
+/// (`executeBumps`) is exactly that, so a canary verdict taken on `baseRev` holds
+/// for `head`.
+let internal bumpOnlySince
+    (input: ReleaseInput)
+    (plan: (PackageConfig * Version) list)
+    (head: string)
+    (baseRev: string)
+    : Result<unit, string> =
+    let packages = plan |> List.map fst
+
+    let fsprojs =
+        packages
+        |> List.collect packageFsprojs
+        |> List.map (repoRelative input.Config)
+        |> Set.ofList
+
+    let changelogs =
+        packages
+        |> List.collect (changelogPathsFor input.Config >> List.map snd)
+        |> List.map (repoRelative input.Config)
+        |> Set.ofList
+
+    match pathsChangedBetween input.Run baseRev head with
+    | Error reason -> Error(sprintf "could not compare %s with %s (%s)" baseRev head reason)
+    | Ok changed -> CanaryVerdict.bumpOnly fsprojs changelogs changed (fileAtRevision input.Run) baseRev head
+
+/// Run the consumer canary on the plan. Called before anything is written or
+/// pushed, so a refusal leaves nothing to undo. The verdict — including a
+/// break-glass skip, or a reused pass — is printed so the release output records it.
+///
+/// The verdict is recorded against the release commit, so a release resumed from
+/// its pushed bump commit reuses a pass instead of running the canary again
+/// (`ConsumerCanary.decideWith`). The canary also packs every unpublished planned
+/// package the consumed one depends on (`ReleaseOrder.dependenciesOf`).
+let private consumerCanaryGate
+    (input: ReleaseInput)
+    (graph: ReleaseOrder.ReleaseGraph)
+    (plan: (PackageConfig * Version) list)
+    : Result<unit, int> =
+    printfn ""
+
+    let context: ConsumerCanary.PlanContext =
+        {
+            DependenciesOf = ReleaseOrder.dependenciesOf graph
+            IsPublished = fun name version -> input.CheckFeedPresence name (format version) = OnFeed
+        }
+
+    let content: ConsumerCanary.Content option =
+        releaseCommitSha input.Run
+        |> Option.map (fun head ->
+            {
+                Head = head
+                BumpOnlySince = bumpOnlySince input plan head
+            })
+
+    match ConsumerCanary.decideWith input.Canary input.Config.RootDir context content plan with
+    | Ok verdict ->
+        printfn "%s" (ConsumerCanary.formatVerdict verdict)
+        Ok()
+    | Error message ->
+        printfn "\nError: %s" message
+        Error 1
+
 let private resumeAlreadyBumped
     (input: ReleaseInput)
     (graph: ReleaseOrder.ReleaseGraph)
@@ -1565,7 +1649,7 @@ let private resumeAlreadyBumped
         describeConsumerCanary input alreadyBumped
         0
     | PushTags ->
-        match consumerCanaryGate input alreadyBumped with
+        match consumerCanaryGate input graph alreadyBumped with
         | Error code -> code
         | Ok() ->
             // Re-push main first: if the original run failed at `pushMain`, the bump
@@ -1595,18 +1679,9 @@ let internal rebundleChangelogBullet =
 /// (`packageChangeDirs`) and the changelogs promotion rewrites (`changelogPathsFor`).
 /// A commit outside all of these cannot change what the release ships.
 let internal releaseFootprint (config: ToolConfig) (packages: PackageConfig list) : string list =
-    let relative (path: string) =
-        let rel =
-            if System.IO.Path.IsPathRooted path then
-                System.IO.Path.GetRelativePath(config.RootDir, path)
-            else
-                path
-
-        rel.Replace('\\', '/').TrimEnd('/')
-
     packages
     |> List.collect (fun pkg -> packageChangeDirs config pkg @ (changelogPathsFor config pkg |> List.map snd))
-    |> List.map relative
+    |> List.map (repoRelative config)
     |> List.distinct
 
 /// After the canary, before the first write: continue only if `main@origin` has not
@@ -1755,7 +1830,7 @@ let private executeBumps
         1
     // The canary runs before the first write: a refusal leaves the tree exactly
     // as the plan found it. Only a tag push publishes, so `--publish` skips it.
-    | PushTags when (consumerCanaryGate input allBumps |> Result.isError) -> 1
+    | PushTags when (consumerCanaryGate input graph allBumps |> Result.isError) -> 1
     // The canary took minutes; main may have moved under it. Settled before the
     // first write, so a refusal still leaves the tree as the plan found it.
     | PushTags when (stillOnMainAfterCanary input (allBumps |> List.map fst) |> Result.isError) -> 1

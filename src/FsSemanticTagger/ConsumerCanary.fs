@@ -90,6 +90,9 @@ type Settings =
         /// NuGet's global package cache, whose entry for the candidate must be
         /// evicted: NuGet never re-extracts a version it has already cached.
         PackagesCache: string
+        /// Where each canary verdict is recorded, keyed by release plan and consumers,
+        /// so a resumed release can tell whether the verdict still holds.
+        VerdictDir: string
         Ops: Ops
     }
 
@@ -120,6 +123,9 @@ type SkipReason =
 type Verdict =
     | Skipped of SkipReason
     | Passed of (PackageConfig * Version * Consumer) list
+    /// A pass recorded earlier for this plan and these consumers, on content that
+    /// differs from this run's by nothing but the release's own version bump.
+    | Reused of recorded: CanaryVerdict.Record * runs: (PackageConfig * Version * Consumer) list
 
 let private expandHome (path: string) : string =
     if path = "~" || path.StartsWith "~/" then
@@ -342,11 +348,11 @@ let setPinVersion (pin: PinFile) (packageId: string) (version: string) (content:
 /// Single-quote `text` for `/bin/sh`.
 let private shellQuote (text: string) : string = "'" + text.Replace("'", "'\\''") + "'"
 
-/// A project whose only job is to put the candidate in the NuGet cache:
-/// `PackageDownload` of the exact version, no dependencies, no compatibility
+/// A project whose only job is to put the candidates in the NuGet cache:
+/// `PackageDownload` of each exact (id, version), no dependencies, no compatibility
 /// check, so it works for a tool package and a library alike. The TFM is the
 /// running runtime's, which the SDK that runs the tagger always has.
-let seedProject (packageId: string) (version: string) : string =
+let seedProjectFor (candidates: (string * string) list) : string =
     String.concat
         "\n"
         [
@@ -355,11 +361,15 @@ let seedProject (packageId: string) (version: string) : string =
             sprintf "    <TargetFramework>net%d.0</TargetFramework>" Environment.Version.Major
             "  </PropertyGroup>"
             "  <ItemGroup>"
-            sprintf "    <PackageDownload Include=\"%s\" Version=\"[%s]\" />" packageId version
+            for packageId, version in candidates do
+                sprintf "    <PackageDownload Include=\"%s\" Version=\"[%s]\" />" packageId version
             "  </ItemGroup>"
             "</Project>"
             ""
         ]
+
+/// `seedProjectFor` one candidate.
+let seedProject (packageId: string) (version: string) : string = seedProjectFor [ packageId, version ]
 
 /// The fresh workspace's path: the consumer's `Workspace` (relative to `Repo`,
 /// or absolute), else `<repo>-canary-<package>` beside the checkout.
@@ -394,14 +404,99 @@ let private evict (settings: Settings) (packageId: string) (version: Version) : 
 let private versionElement =
     Regex("<Version>[^<]*</Version>", RegexOptions.Compiled)
 
-/// Pack the candidate at its planned version into the feed and evict any cached
-/// copy of that id+version. The fsproj is not bumped until after the canary, so
-/// the package's own fsprojs (the ones the release bumps) carry the planned
-/// `<Version>` for the duration of the pack and get their exact bytes back after.
+/// Pack `toPack` at their planned versions into the feed and evict any cached copy
+/// of each. The fsprojs are not bumped until after the canary, so for the duration
+/// of the packs every fsproj the release bumps (each `plan` package's own, plus any
+/// sharing its tag) carries its planned `<Version>`, exactly as the bump commit
+/// will, and gets its exact bytes back after. A candidate therefore names, and
+/// bundles, each planned dependency at the version this release gives it, and a
+/// project the release does not bump keeps its own version.
 /// Not `-p:Version`: a global property reaches every ProjectReference too, so the
 /// candidate bundled the repository's other projects at the planned version and
 /// named dependencies at versions that were never released. `-p:ReleaseBuild=true`
 /// so RefStamp emits the clean version.
+let internal packCandidates
+    (settings: Settings)
+    (rootDir: string)
+    (feed: string)
+    (plan: (PackageConfig * Version) list)
+    (toPack: (PackageConfig * Version) list)
+    : Result<unit, PackageConfig * Version * RefusalReason> =
+    Directory.CreateDirectory feed |> ignore
+
+    let read (fsproj: string) =
+        let path = Path.Combine(rootDir, fsproj)
+
+        let original =
+            if File.Exists path then
+                Some(File.ReadAllText path)
+            else
+                None
+
+        path, original
+
+    let stampable (original: string option) =
+        original |> Option.exists versionElement.IsMatch
+
+    let unstampable =
+        toPack
+        |> List.tryPick (fun (pkg, version) ->
+            match
+                pkg.Fsproj :: pkg.FsProjsSharingSameTag
+                |> List.filter (fun fsproj -> not (stampable (snd (read fsproj))))
+            with
+            | [] -> None
+            | missing ->
+                Some(
+                    pkg,
+                    version,
+                    PackFailed(
+                        sprintf
+                            "cannot stamp %s on %s: no <Version> element to set"
+                            (format version)
+                            (String.concat ", " missing)
+                    )
+                ))
+
+    match unstampable with
+    | Some refusal -> Error refusal
+    | None ->
+        let stamped =
+            plan
+            |> List.collect (fun (pkg, version) ->
+                pkg.Fsproj :: pkg.FsProjsSharingSameTag
+                |> List.map (fun fsproj ->
+                    let path, original = read fsproj
+                    path, original, format version))
+            |> List.distinctBy (fun (path, _, _) -> path)
+            |> List.choose (fun (path, original, version) ->
+                match original with
+                | Some content when versionElement.IsMatch content -> Some(path, content, version)
+                | _ -> None)
+
+        try
+            for path, content, version in stamped do
+                File.WriteAllText(path, versionElement.Replace(content, sprintf "<Version>%s</Version>" version))
+
+            toPack
+            |> List.fold
+                (fun acc (pkg, version) ->
+                    acc
+                    |> Result.bind (fun () ->
+                        printfn "Consumer canary: packing %s %s into %s" pkg.Name (format version) feed
+                        evict settings pkg.Name version
+                        let args = sprintf "pack %s -c Release -p:ReleaseBuild=true -o %s" pkg.Fsproj feed
+
+                        match settings.Ops.RunIn rootDir "dotnet" args with
+                        | Success _ -> Ok()
+                        | Failure(error, code) ->
+                            Error(pkg, version, PackFailed(sprintf "dotnet %s exited %d: %s" args code error))))
+                (Ok())
+        finally
+            for path, content, _ in stamped do
+                File.WriteAllText(path, content)
+
+/// `packCandidates` for one package that is the whole plan.
 let internal packCandidate
     (settings: Settings)
     (rootDir: string)
@@ -409,58 +504,8 @@ let internal packCandidate
     (pkg: PackageConfig)
     (version: Version)
     : Result<unit, RefusalReason> =
-    Directory.CreateDirectory feed |> ignore
-    let versionText = format version
-    evict settings pkg.Name version
-
-    let stamped =
-        pkg.Fsproj :: pkg.FsProjsSharingSameTag
-        |> List.map (fun fsproj ->
-            let path = Path.Combine(rootDir, fsproj)
-
-            let original =
-                if File.Exists path then
-                    Some(File.ReadAllText path)
-                else
-                    None
-
-            fsproj, path, original)
-
-    let unstampable =
-        stamped
-        |> List.filter (fun (_, _, original) ->
-            match original with
-            | Some content -> not (versionElement.IsMatch content)
-            | None -> true)
-        |> List.map (fun (fsproj, _, _) -> fsproj)
-
-    if not unstampable.IsEmpty then
-        Error(
-            PackFailed(
-                sprintf
-                    "cannot stamp %s on %s: no <Version> element to set"
-                    versionText
-                    (String.concat ", " unstampable)
-            )
-        )
-    else
-        let args = sprintf "pack %s -c Release -p:ReleaseBuild=true -o %s" pkg.Fsproj feed
-
-        try
-            for (_, path, original) in stamped do
-                original
-                |> Option.iter (fun content ->
-                    File.WriteAllText(
-                        path,
-                        versionElement.Replace(content, sprintf "<Version>%s</Version>" versionText)
-                    ))
-
-            match settings.Ops.RunIn rootDir "dotnet" args with
-            | Success _ -> Ok()
-            | Failure(error, code) -> Error(PackFailed(sprintf "dotnet %s exited %d: %s" args code error))
-        finally
-            for (_, path, original) in stamped do
-                original |> Option.iter (fun content -> File.WriteAllText(path, content))
+    packCandidates settings rootDir feed [ pkg, version ] [ pkg, version ]
+    |> Result.mapError (fun (_, _, reason) -> reason)
 
 /// How long a teardown may take before the canary moves on without it.
 let teardownBudget = TimeSpan.FromMinutes 5.0
@@ -565,15 +610,17 @@ let private createWorkspace
             | Success _ -> Ok path
             | Failure(error, _) -> Error(WorkspaceFailed error))
 
-/// Put the candidate in the NuGet cache from `ScratchDir`, with the feed as the
-/// only source. Run outside the consumer's checkout, so its `global.json` cannot
-/// select an SDK the releaser lacks, and its tracked `nuget.config` is never
-/// edited; the consumer's own restore then finds the exact version in the cache.
-let private seedCandidate
+/// Put the candidates a consumer resolves in the NuGet cache from `ScratchDir`, with
+/// the feed as the only source. Run outside the consumer's checkout, so its
+/// `global.json` cannot select an SDK the releaser lacks, and its tracked
+/// `nuget.config` is never edited; the consumer's own restore then finds each exact
+/// version in the cache.
+let private seedCandidates
     (settings: Settings)
     (feed: string)
     (pkg: PackageConfig)
     (version: Version)
+    (candidates: (PackageConfig * Version) list)
     (timeout: TimeSpan)
     (logPath: string)
     : Result<unit, RefusalReason> =
@@ -584,7 +631,11 @@ let private seedCandidate
         Directory.Delete(dir, true)
 
     Directory.CreateDirectory dir |> ignore
-    File.WriteAllText(Path.Combine(dir, "seed.csproj"), seedProject pkg.Name (format version))
+
+    File.WriteAllText(
+        Path.Combine(dir, "seed.csproj"),
+        seedProjectFor (candidates |> List.map (fun (p, v) -> p.Name, format v))
+    )
 
     let command =
         sprintf
@@ -597,12 +648,14 @@ let private seedCandidate
     | Exited code -> Error(RestoreFailed code)
     | TimedOut budget -> Error(RestoreTimedOut budget)
 
-/// Pin the candidate, put it in the cache, then gate; tear down after the gate.
+/// Pin the candidate, put it and the candidates it resolves in the cache, then
+/// gate; tear down after the gate.
 let private runOne
     (settings: Settings)
     (feed: string)
     (pkg: PackageConfig)
     (version: Version)
+    (candidates: (PackageConfig * Version) list)
     (consumer: Consumer)
     (workspace: string)
     (logPath: string)
@@ -618,7 +671,7 @@ let private runOne
             setPinVersion pin pkg.Name (format version) (File.ReadAllText pinPath)
             |> Result.mapError PinFailed
             |> Result.map (fun edited -> File.WriteAllText(pinPath, edited)))
-    |> Result.bind (fun () -> seedCandidate settings feed pkg version consumer.Timeout logPath)
+    |> Result.bind (fun () -> seedCandidates settings feed pkg version candidates consumer.Timeout logPath)
     |> Result.bind (fun () ->
         let outcome = settings.Ops.RunGate workspace consumer.Gate consumer.Timeout logPath
         teardown settings consumer workspace logPath
@@ -628,13 +681,38 @@ let private runOne
         | Exited code -> Error(GateFailed code)
         | TimedOut budget -> Error(GateTimedOut budget))
 
-/// Run every consumer the plan selects, stopping at the first refusal. Each
-/// package is packed once, however many consumers it has. When the canary ends,
-/// passed or refused, every packed candidate is evicted from the NuGet cache:
-/// it was never published, and the real release reuses its version.
-let run
+/// What the canary knows about the release beyond its plan.
+[<NoEquality; NoComparison>]
+type PlanContext =
+    {
+        /// The packages a package depends on, directly or transitively (the release
+        /// graph): the ones it bundles or names as NuGet dependencies.
+        DependenciesOf: string -> Set<string>
+        /// Is this version of this package already on the feed?
+        IsPublished: string -> Version -> bool
+    }
+
+/// A plan whose packages depend on nothing and of which nothing is published.
+let independentPlan: PlanContext =
+    {
+        DependenciesOf = fun _ -> Set.empty
+        IsPublished = fun _ _ -> false
+    }
+
+/// Run every consumer the plan selects, stopping at the first refusal.
+///
+/// A consumer resolves its package and, through it, the planned packages that
+/// package depends on. Those this release has not published yet exist nowhere but
+/// in this tree (observed 2026-11-05: a CLI bundling TestPrune.Core 15.0.0 from the
+/// same release failed its canary restore with NU1102), so each is packed and seeded
+/// beside the consumed package. Each package is packed once, however many consumers
+/// need it. When the canary ends, passed or refused, every packed candidate is
+/// evicted from the NuGet cache: it was never published, and the real release
+/// reuses its version.
+let runWith
     (settings: Settings)
     (rootDir: string)
+    (context: PlanContext)
     (config: CanaryConfig)
     (plan: (PackageConfig * Version) list)
     : Result<(PackageConfig * Version * Consumer) list, Refusal> =
@@ -651,27 +729,33 @@ let run
                 Workspace = workspace
             }
 
-    let candidates =
+    let candidatesFor (pkg: PackageConfig) (version: Version) : (PackageConfig * Version) list =
+        let dependencies = context.DependenciesOf pkg.Name
+
+        (pkg, version)
+        :: (plan
+            |> List.filter (fun (dep, depVersion) ->
+                dep.Name <> pkg.Name
+                && dependencies.Contains dep.Name
+                && not (context.IsPublished dep.Name depVersion)))
+
+    let toPack =
         selected
-        |> List.map (fun (pkg, version, _) -> pkg.Name, version)
-        |> List.distinct
+        |> List.collect (fun (pkg, version, _) -> candidatesFor pkg version)
+        |> List.distinctBy (fun (pkg, _) -> pkg.Name)
 
     let packed =
-        candidates
-        |> List.fold
-            (fun acc (name, version) ->
-                acc
-                |> Result.bind (fun () ->
-                    let pkg = plan |> List.pick (fun (p, _) -> if p.Name = name then Some p else None)
-                    printfn "Consumer canary: packing %s %s into %s" pkg.Name (format version) config.LocalFeed
+        packCandidates settings rootDir config.LocalFeed plan toPack
+        |> Result.mapError (fun (pkg, version, reason) ->
+            let consumer =
+                selected
+                |> List.pick (fun (p, v, c) ->
+                    if candidatesFor p v |> List.exists (fun (dep, _) -> dep.Name = pkg.Name) then
+                        Some c
+                    else
+                        None)
 
-                    packCandidate settings rootDir config.LocalFeed pkg version
-                    |> Result.mapError (fun reason ->
-                        let consumer =
-                            selected |> List.pick (fun (p, _, c) -> if p.Name = name then Some c else None)
-
-                        pkg, version, consumer, reason)))
-            (Ok())
+            pkg, version, consumer, reason)
 
     let outcome =
         match packed with
@@ -697,20 +781,33 @@ let run
                             consumer.Timeout.TotalMinutes
                             logPath
 
+                        let candidates = candidatesFor pkg version
+
                         match createWorkspace settings consumer logPath with
                         | Error reason -> refuse pkg version consumer reason (Some logPath) None
                         | Ok workspace ->
-                            match runOne settings config.LocalFeed pkg version consumer workspace logPath with
+                            match
+                                runOne settings config.LocalFeed pkg version candidates consumer workspace logPath
+                            with
                             | Ok() ->
                                 printfn "Consumer canary: %s passed for %s %s" consumer.Repo pkg.Name (format version)
                                 Ok(passed @ [ pkg, version, consumer ])
                             | Error reason -> refuse pkg version consumer reason (Some logPath) (Some workspace)))
                 (Ok [])
 
-    for name, version in candidates do
-        evict settings name version
+    for pkg, version in toPack do
+        evict settings pkg.Name version
 
     outcome
+
+/// `runWith` a plan whose packages depend on nothing.
+let run
+    (settings: Settings)
+    (rootDir: string)
+    (config: CanaryConfig)
+    (plan: (PackageConfig * Version) list)
+    : Result<(PackageConfig * Version * Consumer) list, Refusal> =
+    runWith settings rootDir independentPlan config plan
 
 let private formatBudget (budget: TimeSpan) : string =
     sprintf "%dm%ds" (int budget.TotalMinutes) budget.Seconds
@@ -759,6 +856,14 @@ let formatVerdict (verdict: Verdict) : string =
         |> List.map (fun (pkg, version, consumer) -> sprintf "%s %s -> %s" pkg.Name (format version) consumer.Repo)
         |> String.concat ", "
         |> sprintf "Consumer canary: passed (%s)"
+    | Reused(recorded, runs) ->
+        sprintf
+            "Consumer canary: reused the verdict that passed on %s at %s (%s); the only change since is the release's own version bump, so the canary was not run again"
+            recorded.Content
+            (recorded.RecordedAt.ToString("u", Globalization.CultureInfo.InvariantCulture))
+            (runs
+             |> List.map (fun (pkg, version, consumer) -> sprintf "%s %s -> %s" pkg.Name (format version) consumer.Repo)
+             |> String.concat ", ")
 
 /// One line per consumer a dry run would exercise.
 let describePlan (config: CanaryConfig) (plan: (PackageConfig * Version) list) : string list =
@@ -773,10 +878,51 @@ let describePlan (config: CanaryConfig) (plan: (PackageConfig * Version) list) :
             consumer.Gate
             consumer.Timeout.TotalMinutes)
 
-/// The release's decision: skip (and say why), pass, or refuse. A malformed
-/// config is an `Error` even though nothing ran, because "no consumers" must
-/// never be the reading of a typo.
-let decide (settings: Settings) (rootDir: string) (plan: (PackageConfig * Version) list) : Result<Verdict, string> =
+/// The tree the release packs from, so the verdict can be recorded against it and a
+/// recorded one checked against it.
+[<NoEquality; NoComparison>]
+type Content =
+    {
+        /// The commit the candidates are packed from now.
+        Head: string
+        /// `Ok` when every change from the given commit to `Head` is the release's
+        /// own version bump (see `CanaryVerdict.bumpOnly`), else what changed.
+        BumpOnlySince: string -> Result<unit, string>
+    }
+
+/// The keys a verdict is recorded under: the plan, and every consumer it selects.
+let private verdictKeys
+    (selected: (PackageConfig * Version * Consumer) list)
+    (plan: (PackageConfig * Version) list)
+    : string list * string list =
+    let planKey =
+        plan
+        |> List.map (fun (pkg, version) -> sprintf "%s %s" pkg.Name (format version))
+        |> List.sort
+
+    let consumersKey =
+        selected
+        |> List.map (fun (_, _, c) -> sprintf "%s %s %s %s" c.Package c.Repo c.Pin c.Gate)
+        |> List.distinct
+        |> List.sort
+
+    planKey, consumersKey
+
+/// The release's decision: skip (and say why), reuse a recorded pass, pass, or
+/// refuse. A malformed config is an `Error` even though nothing ran, because "no
+/// consumers" must never be the reading of a typo.
+///
+/// With `content`, the verdict of every run is recorded against `content.Head`,
+/// and a recorded pass for this plan and these consumers is reused instead of
+/// running again when it was taken on `Head`, or on a commit from which `Head`
+/// differs only by the release's own version bump (`CanaryVerdict.decide`).
+let decideWith
+    (settings: Settings)
+    (rootDir: string)
+    (context: PlanContext)
+    (content: Content option)
+    (plan: (PackageConfig * Version) list)
+    : Result<Verdict, string> =
     if settings.Skip then
         printfn ""
         printfn "!!! CONSUMER CANARY SKIPPED: --skip-consumer-canary (break-glass) !!!"
@@ -790,9 +936,44 @@ let decide (settings: Settings) (rootDir: string) (plan: (PackageConfig * Versio
             | Loaded config when (selectConsumers config plan).IsEmpty ->
                 Ok(Skipped(NoConsumersForPlan settings.ConfigPath))
             | Loaded config ->
-                run settings rootDir config plan
-                |> Result.map Passed
-                |> Result.mapError formatRefusal)
+                let selected = selectConsumers config plan
+                let planKey, consumersKey = verdictKeys selected plan
+                let recorded = CanaryVerdict.load settings.VerdictDir planKey consumersKey
+
+                let reuse =
+                    content
+                    |> Option.map (fun c -> CanaryVerdict.decide recorded c.Head c.BumpOnlySince)
+
+                match reuse with
+                | Some(CanaryVerdict.Reusable record) -> Ok(Reused(record, selected))
+                | _ ->
+                    match reuse, recorded with
+                    | Some(CanaryVerdict.NotReusable reason), Some _ ->
+                        printfn "Consumer canary: the recorded verdict does not apply (%s); running the canary." reason
+                    | _ -> ()
+
+                    let outcome = runWith settings rootDir context config plan
+
+                    content
+                    |> Option.iter (fun c ->
+                        CanaryVerdict.save
+                            settings.VerdictDir
+                            {
+                                Plan = planKey
+                                Consumers = consumersKey
+                                Content = c.Head
+                                Outcome =
+                                    match outcome with
+                                    | Ok _ -> CanaryVerdict.CanaryPassed
+                                    | Error _ -> CanaryVerdict.CanaryRefused
+                                RecordedAt = DateTimeOffset.UtcNow
+                            })
+
+                    outcome |> Result.map Passed |> Result.mapError formatRefusal)
+
+/// `decideWith` a plan whose packages depend on nothing, recording nothing.
+let decide (settings: Settings) (rootDir: string) (plan: (PackageConfig * Version) list) : Result<Verdict, string> =
+    decideWith settings rootDir independentPlan None plan
 
 /// Logs for the releasing repo `rootDir`: `~/.fssemantictagger/logs/<repo name>`.
 let defaultLogDir (rootDir: string) : string =
@@ -811,5 +992,11 @@ let defaultSettings (skip: bool) (rootDir: string) : Settings =
         LogDir = defaultLogDir rootDir
         ScratchDir = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-seed")
         PackagesCache = defaultPackagesCache
+        VerdictDir =
+            Path.Combine(
+                Environment.GetFolderPath Environment.SpecialFolder.UserProfile,
+                ".fssemantictagger",
+                "verdicts"
+            )
         Ops = { RunIn = runIn; RunGate = runLogged }
     }
