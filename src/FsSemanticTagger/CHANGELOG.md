@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: **the processes the tagger starts no longer leave MSBuild worker nodes running.** A `release --dry-run` shells out to `dotnet build`, `dotnet pack` and `dotnet restore`, and runs consumer gates, all of which left `/nodeReuse:true` MSBuild nodes alive after the tagger exited, holding memory nothing would reuse. Every child process now carries `MSBUILDDISABLENODEREUSE=1`, inherited by anything it starts in turn.
+
 ## 0.14.0-alpha.28 - 2026-11-05
 
 - fix!: **a release resumed after its bump commit was pushed no longer re-runs the consumer canary, and can finish.** On 2026-11-05 the canary passed for an FsHotWatch release, the bump commit was pushed, and the wait for its CI stopped early. The resume ran the canary again on the post-bump tree, whose CLI bundles TestPrune.Core 15.0.0 from the same release, not yet on NuGet: the canary's restore failed with NU1102, so the release could never pass it.

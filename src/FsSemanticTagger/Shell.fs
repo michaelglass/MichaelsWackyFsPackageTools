@@ -7,8 +7,16 @@ type CommandResult =
     | Success of string
     | Failure of string * exitCode: int
 
+/// Set on every process the tagger starts. A `dotnet build`/`pack`/`restore`
+/// otherwise leaves MSBuild worker nodes (`/nodeReuse:true`) running after the
+/// tagger exits, holding memory nobody will reuse. Inherited, so it also covers
+/// the `dotnet` a consumer's gate command starts.
+let private disableNodeReuse (psi: ProcessStartInfo) =
+    psi.Environment["MSBUILDDISABLENODEREUSE"] <- "1"
+
 let private startInfo (cmd: string) (args: string) : ProcessStartInfo =
     let psi = ProcessStartInfo(cmd, args)
+    disableNodeReuse psi
     psi.RedirectStandardOutput <- true
     psi.RedirectStandardError <- true
     psi.UseShellExecute <- false
@@ -87,6 +95,7 @@ let runLoggedWithin
     let psi = ProcessStartInfo("sh")
     psi.ArgumentList.Add "-c"
     psi.ArgumentList.Add command
+    disableNodeReuse psi
     psi.WorkingDirectory <- cwd
     psi.RedirectStandardOutput <- true
     psi.RedirectStandardError <- true

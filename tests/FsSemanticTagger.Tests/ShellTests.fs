@@ -76,3 +76,35 @@ let ``runWithGitDir - git reaches the store through its own environment, not thi
 
         test <@ answer = Success "from-the-store" @>
         test <@ System.Environment.GetEnvironmentVariable "GIT_DIR" = before @>)
+
+// AUTOMATION-1086: a `dotnet` the tagger starts (pack, build, restore probes, a
+// consumer's gate) must not leave persistent MSBuild worker nodes behind.
+let private nodeReuseSeenBy (runner: string -> string -> CommandResult) =
+    runner "sh" "-c \"printf %s $MSBUILDDISABLENODEREUSE\""
+
+[<Fact>]
+let ``run - every child process is told not to keep MSBuild nodes alive`` () =
+    test <@ nodeReuseSeenBy run = Success "1" @>
+
+[<Fact>]
+let ``runIn - every child process is told not to keep MSBuild nodes alive`` () =
+    TestHelpers.withTempDir (fun tmpDir -> test <@ nodeReuseSeenBy (runIn tmpDir) = Success "1" @>)
+
+[<Fact>]
+let ``runWithGitDir - every child process is told not to keep MSBuild nodes alive`` () =
+    test <@ nodeReuseSeenBy (runWithGitDir None) = Success "1" @>
+
+[<Fact>]
+let ``runLogged - the gate is told not to keep MSBuild nodes alive`` () =
+    TestHelpers.withTempDir (fun tmpDir ->
+        let logPath = System.IO.Path.Combine(tmpDir, "gate.log")
+
+        let outcome =
+            runLogged
+                tmpDir
+                "printf 'node-reuse=%s\\n' \"$MSBUILDDISABLENODEREUSE\""
+                (System.TimeSpan.FromMinutes 1.0)
+                logPath
+
+        test <@ outcome = Exited 0 @>
+        test <@ (System.IO.File.ReadAllLines logPath) |> Array.contains "node-reuse=1" @>)
