@@ -15,21 +15,8 @@ open FsSemanticTagger.Release
 open Tests.Common.TestHelpers
 open FsSemanticTagger.Tests.ExtractionFakes
 
-/// No machine-local canary config, and a host that must never be reached.
-let private noCanary: ConsumerCanary.Settings =
-    {
-        ConfigPath = Path.Combine(Path.GetTempPath(), "no-such-fssemantictagger.json")
-        Skip = false
-        LogDir = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-logs")
-        ScratchDir = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-seed")
-        PackagesCache = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-cache")
-        VerdictDir = Path.Combine(Path.GetTempPath(), "fssemantictagger-canary-cache-verdicts")
-        Ops =
-            {
-                RunIn = fun _ cmd _ -> failwithf "unexpected canary process: %s" cmd
-                RunGate = fun _ command _ _ -> failwithf "unexpected canary gate: %s" command
-            }
-    }
+/// No machine-local canary config, under a root of this run's own.
+let internal noCanary = CanaryFixtures.noCanaryUnder (createTempDir ())
 
 type private Repo =
     {

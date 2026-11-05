@@ -758,7 +758,10 @@ let ``extractGrammarForType on a non-union type is None`` () =
 [<Fact>]
 let ``extraction of an unreadable path is None (never throws)`` () =
     let bogus =
-        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "no-such-grammar.dll")
+        System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "no-such-grammar-" + System.Guid.NewGuid().ToString("N") + ".dll"
+        )
 
     test <@ modelledGrammar bogus = None @>
     test <@ Grammar.extractGrammarForType bogus "Whatever" = None @>
@@ -774,7 +777,10 @@ let ``extraction of an unreadable path is None (never throws)`` () =
 [<Fact>]
 let ``grammar cache readers report an absent package as unreadable`` () =
     let bogusRoot =
-        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "no-such-cache-root")
+        System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "no-such-cache-root-" + System.Guid.NewGuid().ToString("N")
+        )
 
     test
         <@
