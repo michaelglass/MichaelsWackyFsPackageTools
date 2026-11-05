@@ -6848,6 +6848,23 @@ let ``waitForNuGetOn - the give-up names the measured wait, not the budget`` () 
     test <@ output.Contains("Gave up waiting for PkgA 1.0.0 on NuGet after 0.2s (3 checks") @>
 
 [<Fact>]
+let ``waitForNuGetOn - an unreachable feed is not evidence of arrival`` () =
+    // `FeedPresence` doc: where "present" would act, `FeedUnknown` behaves like
+    // `NotOnFeed`. A feed that never answers keeps the package pending to the end.
+    let unconfirmed, _ =
+        withCapturedConsole (fun () ->
+            waitForNuGetOn
+                ignore
+                (fun () -> System.TimeSpan.Zero)
+                (fun _ _ -> FeedUnknown "timed out")
+                1
+                2
+                [ "PkgA", "1.0.0" ])
+        |> snd
+
+    test <@ unconfirmed = [ "PkgA", "1.0.0" ] @>
+
+[<Fact>]
 let ``waitForNuGetTimed - measures the wait on the wall clock`` () =
     let _, (unconfirmed, waited) =
         withCapturedConsole (fun () -> waitForNuGetTimed (fun _ _ -> NotOnFeed) 50 2 [ "PkgA", "1.0.0" ])
