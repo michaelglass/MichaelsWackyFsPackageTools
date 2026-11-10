@@ -147,7 +147,7 @@ jobs:
               ${{ inputs.test-extra-args }}
           done
       - name: Coverage report
-        uses: danielpalme/ReportGenerator-GitHub-Action@5
+        uses: danielpalme/ReportGenerator-GitHub-Action@5f3701a41d14548c9b8e575a5c235230e515cbc0 # 5.6.0; a tag of only hex digits (`5`) is refused as a shortened SHA when its commit starts with them
         with:
           reports: coverage/*/coverage.cobertura.xml
           targetdir: coverage/report
