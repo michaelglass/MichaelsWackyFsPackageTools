@@ -369,6 +369,39 @@ let parseCiRuns (json: string) : CiRunInfo list =
             }
     ]
 
+/// What a completed run says about its sha.
+type private Verdict =
+    /// It passed.
+    | Green
+    /// It failed: `failure`, `timed_out`, `startup_failure`, `action_required`, and any
+    /// conclusion the tagger does not know, which refuses rather than guesses.
+    | Red
+    /// It says nothing about the code: `cancelled` (GitHub cancels a run a newer one for the same
+    /// ref supersedes, and a duplicate can be cancelled by hand), `skipped`, `neutral`, `stale`.
+    | NoVerdict
+
+let private verdictOf (conclusion: RunConclusion) : Verdict =
+    match conclusion with
+    | SuccessConclusion -> Green
+    | CancelledConclusion
+    | SkippedConclusion
+    | NeutralConclusion
+    | OtherConclusion "stale" -> NoVerdict
+    | FailureConclusion
+    | PendingConclusion
+    | OtherConclusion _ -> Red
+
+/// Whether the required CI workflow (`.github/workflows/ci.yml`, the full CI) passed on exactly
+/// `sha`, judged over EVERY run of it on that sha, not the newest attempt (AUTOMATION-1750):
+/// - any completed `Red` run refuses (`Failed`): a red is never rerun to green;
+/// - otherwise any completed `Green` run passes, even while another run of the same sha is still
+///   going (fast-forwarding main to a sha its branch's CI already passed starts a second run of
+///   the same tree, and the release does not wait for it);
+/// - otherwise runs still queued or running wait (`InProgress`);
+/// - otherwise no run, or only `NoVerdict` runs, is `NoRuns`: waited for like a run not yet
+///   started;
+/// - runs only in a state the tagger does not know refuse.
+/// Runs of more than one workflow under the one path refuse too.
 let checkCiStatusForSha (run: string -> string -> CommandResult) (sha: string) : CiStatus =
     let args =
         sprintf
@@ -379,24 +412,17 @@ let checkCiStatusForSha (run: string -> string -> CommandResult) (sha: string) :
     | Success output ->
         // The workflow PATH is the stable identity. Display names are not:
         // two workflows may share one, and a name can be edited at any time.
-        let consideredRuns = parseCiRuns output
+        let runs = parseCiRuns output
 
-        let ordered =
-            consideredRuns
-            |> List.sortByDescending (fun workflowRun ->
-                workflowRun.CreatedAt, workflowRun.Attempt, workflowRun.RunIdOrdinal)
-
-        let runs = ordered |> List.truncate 1
-
-        let reportRefusal reason =
+        let reportRefusal reason (deciding: CiRunInfo list) =
             printfn "Required CI workflow refused the release for %s: %s" sha reason
 
-            for workflowRun in consideredRuns do
+            for workflowRun in runs do
                 let decision =
-                    if runs |> List.contains workflowRun then
-                        "authoritative attempt"
+                    if deciding |> List.contains workflowRun then
+                        "deciding run"
                     else
-                        "older attempt"
+                        "considered"
 
                 printfn
                     "  run %s attempt %d workflow %A: %s — created=%O status=%A conclusion=%A — %s"
@@ -409,45 +435,43 @@ let checkCiStatusForSha (run: string -> string -> CommandResult) (sha: string) :
                     workflowRun.Conclusion
                     decision
 
-        if runs.IsEmpty then
-            reportRefusal "no run from .github/workflows/ci.yml exists on the exact release SHA"
+        let completed = runs |> List.filter (fun r -> r.Status = Completed)
+
+        let withVerdict verdict =
+            completed |> List.filter (fun r -> verdictOf r.Conclusion = verdict)
+
+        let red = withVerdict Red
+        let green = withVerdict Green
+
+        let going =
+            runs |> List.filter (fun r -> r.Status = InProgressStatus || r.Status = Queued)
+
+        if runs |> List.choose _.WorkflowId |> List.distinct |> List.length > 1 then
+            reportRefusal "the workflow path resolved to more than one workflow database id" runs
+            Failed runs
+        elif not red.IsEmpty then
+            reportRefusal "a required CI run on this exact SHA ended without success" red
+            Failed red
+        elif not green.IsEmpty then
+            Passed
+        elif not going.IsEmpty then
+            reportRefusal "the required CI runs on this exact SHA are queued or running" going
+            InProgress going
+        elif runs.IsEmpty then
+            reportRefusal "no run from .github/workflows/ci.yml exists on the exact release SHA" []
+            NoRuns
+        elif not completed.IsEmpty then
+            // Only cancelled, skipped, neutral or stale runs: no verdict yet, as if none had run.
+            reportRefusal
+                "the required CI runs on this exact SHA ended without a verdict (cancelled, skipped, neutral or stale)"
+                completed
+
             NoRuns
         else
-            let latest = List.head runs
-
-            let workflowIdentityAmbiguous =
-                ordered |> List.choose _.WorkflowId |> List.distinct |> List.length > 1
-
-            let ambiguous =
-                ordered
-                |> List.skip 1
-                |> List.exists (fun other ->
-                    other.CreatedAt = latest.CreatedAt
-                    && other.Attempt = latest.Attempt
-                    && other.RunIdOrdinal = latest.RunIdOrdinal)
-
-            if workflowIdentityAmbiguous then
-                reportRefusal "the workflow path resolved to more than one workflow database id"
-                Failed ordered
-            elif ambiguous then
-                reportRefusal "multiple newest CI runs have the same creation time and attempt"
-
-                Failed(
-                    ordered
-                    |> List.takeWhile (fun other ->
-                        other.CreatedAt = latest.CreatedAt
-                        && other.Attempt = latest.Attempt
-                        && other.RunIdOrdinal = latest.RunIdOrdinal)
-                )
-            elif latest.Status = Completed && latest.Conclusion = SuccessConclusion then
-                Passed
-            elif latest.Status = InProgressStatus || latest.Status = Queued then
-                reportRefusal "the newest required CI attempt is queued or running"
-                InProgress runs
-            else
-                reportRefusal "the newest required CI attempt ended without success"
-                Failed runs
+            reportRefusal "the required CI runs on this exact SHA are in a state the tagger does not know" runs
+            Failed runs
     | Failure _ -> Unknown
+
 
 /// How long each of the last `limit` successful runs of the required CI workflow
 /// took, newest first: from the run's start to its last update, which for a

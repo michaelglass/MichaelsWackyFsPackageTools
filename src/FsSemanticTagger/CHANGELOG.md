@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix!: **a release no longer waits for a second CI run of a sha that CI already passed.** The required-CI gate judged only the newest attempt on the release sha, so fast-forwarding main to a sha whose branch CI was green started a new run, and FsHotWatch alpha.152 waited 26 minutes for it (AUTOMATION-1750). The gate now judges every run of `.github/workflows/ci.yml` on the exact sha: any completed run that did not succeed refuses, so a red is never rerun to green; otherwise a completed success passes, even while another run is going; otherwise runs still going wait. Breaking: an earlier failed attempt now refuses a sha that a later attempt passed. A refusal marks each listed run "deciding run" or "considered".
+
 - fix: **the processes the tagger starts no longer leave MSBuild worker nodes running.** A `release --dry-run` shells out to `dotnet build`, `dotnet pack` and `dotnet restore`, and runs consumer gates, all of which left `/nodeReuse:true` MSBuild nodes alive after the tagger exited, holding memory nothing would reuse. Every child process now carries `MSBUILDDISABLENODEREUSE=1`, inherited by anything it starts in turn.
 - docs: `FeedPresence` no longer claims `FeedUnknown` always behaves like `OnFeed`. It does where "absent" would act (orphan re-publish, prior-release classification); where "present" would act (the post-push poll, the gate between publication waves, the consumer canary's `IsPublished`) it behaves like `NotOnFeed`, which is the safe answer there. The doc now says which, and a test pins the poll's half. No behaviour change.
 

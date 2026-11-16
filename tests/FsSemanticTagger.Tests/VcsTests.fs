@@ -808,7 +808,7 @@ let ``checkCiStatusForSha - unrelated success without required CI fails closed``
 [<Fact>]
 let ``checkCiStatusForSha - refusal lists every exact-SHA run and why it was considered`` () =
     let json =
-        """[{"databaseId":101,"attempt":2,"createdAt":"2026-08-31T13:00:00Z","workflowDatabaseId":77,"status":"in_progress","conclusion":null,"name":"CI","url":"https://example.com/ci/101"},{"databaseId":99,"attempt":1,"createdAt":"2026-08-31T12:00:00Z","workflowDatabaseId":77,"status":"completed","conclusion":"success","name":"CI","url":"https://example.com/ci/99"}]"""
+        """[{"databaseId":101,"attempt":2,"createdAt":"2026-08-31T13:00:00Z","workflowDatabaseId":77,"status":"in_progress","conclusion":null,"name":"CI","url":"https://example.com/ci/101"},{"databaseId":99,"attempt":1,"createdAt":"2026-08-31T12:00:00Z","workflowDatabaseId":77,"status":"completed","conclusion":"failure","name":"CI","url":"https://example.com/ci/99"}]"""
 
     let run = fakeRun [ ("gh", ghCiArgs "abc123", Success json) ]
 
@@ -819,61 +819,70 @@ let ``checkCiStatusForSha - refusal lists every exact-SHA run and why it was con
         <@
             status
             |> function
-                | InProgress _ -> true
+                | Failed _ -> true
                 | _ -> false
         @>
 
     test <@ output.Contains("run 101 attempt 2 workflow Some 77L: CI") @>
 
-    test <@ output.Contains("status=InProgressStatus conclusion=PendingConclusion — authoritative attempt") @>
+    test <@ output.Contains("status=InProgressStatus conclusion=PendingConclusion — considered") @>
 
     test <@ output.Contains("run 99 attempt 1 workflow Some 77L: CI") @>
 
-    test <@ output.Contains("status=Completed conclusion=SuccessConclusion — older attempt") @>
+    test <@ output.Contains("status=Completed conclusion=FailureConclusion — deciding run") @>
 
 [<Fact>]
-let ``checkCiStatusForSha - newer successful rerun overrides older failure`` () =
+let ``checkCiStatusForSha - a failed run refuses even after a green rerun of the same sha`` () =
+    // A red is never rerun to green: a completed failure on the exact sha refuses the release.
     let json =
         """[{"databaseId":11,"attempt":1,"createdAt":"2026-08-31T12:00:00Z","workflowDatabaseId":77,"status":"completed","conclusion":"failure","name":"CI","url":"old"},{"databaseId":12,"attempt":2,"createdAt":"2026-08-31T13:00:00Z","workflowDatabaseId":77,"status":"completed","conclusion":"success","name":"CI","url":"new"}]"""
 
     let run = fakeRun [ ("gh", ghCiArgs "abc123", Success json) ]
+
+    test
+        <@
+            match checkCiStatusForSha run "abc123" with
+            | Failed [ failed ] -> failed.RunId = "11"
+            | _ -> false
+        @>
+
+[<Fact>]
+let ``checkCiStatusForSha - a green run on the exact sha passes while a later run of it is still going`` () =
+    // AUTOMATION-1750: fast-forwarding main to a sha CI already passed on its branch starts a
+    // second run of the same tree; the release does not wait for it.
+    let json =
+        """[{"databaseId":11,"attempt":1,"createdAt":"2026-08-31T12:00:00Z","workflowDatabaseId":77,"status":"completed","conclusion":"success","name":"CI","url":"old"},{"databaseId":12,"attempt":1,"createdAt":"2026-08-31T13:00:00Z","workflowDatabaseId":77,"status":"in_progress","conclusion":null,"name":"CI","url":"new"}]"""
+
+    let run = fakeRun [ ("gh", ghCiArgs "abc123", Success json) ]
     test <@ checkCiStatusForSha run "abc123" = Passed @>
 
 [<Fact>]
-let ``checkCiStatusForSha - newer running rerun waits despite older success`` () =
+let ``checkCiStatusForSha - only runs still going wait`` () =
     let json =
-        """[{"databaseId":11,"attempt":1,"createdAt":"2026-08-31T12:00:00Z","workflowDatabaseId":77,"status":"completed","conclusion":"success","name":"CI","url":"old"},{"databaseId":12,"attempt":2,"createdAt":"2026-08-31T13:00:00Z","workflowDatabaseId":77,"status":"in_progress","conclusion":null,"name":"CI","url":"new"}]"""
+        """[{"databaseId":12,"attempt":1,"createdAt":"2026-08-31T13:00:00Z","workflowDatabaseId":77,"status":"in_progress","conclusion":null,"name":"CI","url":"one"},{"databaseId":13,"attempt":1,"createdAt":"2026-08-31T13:05:00Z","workflowDatabaseId":77,"status":"queued","conclusion":null,"name":"CI","url":"two"}]"""
 
     let run = fakeRun [ ("gh", ghCiArgs "abc123", Success json) ]
 
     test
         <@
             match checkCiStatusForSha run "abc123" with
-            | InProgress [ latest ] -> latest.RunId = "12"
+            | InProgress runs -> runs.Length = 2
             | _ -> false
         @>
 
 [<Fact>]
-let ``checkCiStatusForSha - ambiguous newest attempts fail closed`` () =
-    let json =
-        """[{"databaseId":12,"attempt":2,"createdAt":"2026-08-31T13:00:00Z","workflowDatabaseId":77,"status":"completed","conclusion":"success","name":"CI","url":"one"},{"databaseId":12,"attempt":2,"createdAt":"2026-08-31T13:00:00Z","workflowDatabaseId":77,"status":"completed","conclusion":"success","name":"CI","url":"two"}]"""
-
-    let run = fakeRun [ ("gh", ghCiArgs "abc123", Success json) ]
-
-    test
-        <@
-            match checkCiStatusForSha run "abc123" with
-            | Failed runs -> runs.Length = 2
-            | _ -> false
-        @>
-
-[<Fact>]
-let ``checkCiStatusForSha - database id chooses newest when creation and attempt match`` () =
+let ``checkCiStatusForSha - a failure beside a green run with the same creation and attempt refuses`` () =
     let json =
         """[{"databaseId":11,"attempt":2,"createdAt":"2026-08-31T13:00:00Z","workflowDatabaseId":77,"status":"completed","conclusion":"failure","name":"CI","url":"old"},{"databaseId":12,"attempt":2,"createdAt":"2026-08-31T13:00:00Z","workflowDatabaseId":77,"status":"completed","conclusion":"success","name":"CI","url":"new"}]"""
 
     let run = fakeRun [ ("gh", ghCiArgs "abc123", Success json) ]
-    test <@ checkCiStatusForSha run "abc123" = Passed @>
+
+    test
+        <@
+            match checkCiStatusForSha run "abc123" with
+            | Failed [ failed ] -> failed.RunId = "11"
+            | _ -> false
+        @>
 
 [<Fact>]
 let ``checkCiStatusForSha - conflicting workflow database identities fail closed`` () =
@@ -890,17 +899,13 @@ let ``checkCiStatusForSha - conflicting workflow database identities fail closed
         @>
 
 [<Fact>]
-let ``checkCiStatusForSha - every completed non-success conclusion fails immediately`` () =
+let ``checkCiStatusForSha - every red conclusion, and one the tagger does not know, fails immediately`` () =
     for conclusion in
         [
             "failure"
-            "cancelled"
             "timed_out"
             "action_required"
             "startup_failure"
-            "stale"
-            "skipped"
-            "neutral"
             "unexpected_future_value"
         ] do
         let json =
@@ -916,6 +921,20 @@ let ``checkCiStatusForSha - every completed non-success conclusion fails immedia
             @>
 
 [<Fact>]
+let ``checkCiStatusForSha - runs only in a state the tagger does not know refuse`` () =
+    let json =
+        """[{"databaseId":11,"attempt":1,"createdAt":"2026-08-31T12:00:00Z","workflowDatabaseId":77,"status":"waiting","conclusion":null,"name":"CI","url":"run"}]"""
+
+    let run = fakeRun [ ("gh", ghCiArgs "abc123", Success json) ]
+
+    test
+        <@
+            match checkCiStatusForSha run "abc123" with
+            | Failed [ unknown ] -> unknown.RunId = "11"
+            | _ -> false
+        @>
+
+[<Fact>]
 let ``checkCiStatusForSha - no runs returns NoRuns`` () =
     let run = fakeRun [ ("gh", ghCiArgs "abc123", Success "[]") ]
     test <@ checkCiStatusForSha run "abc123" = NoRuns @>
@@ -926,19 +945,25 @@ let ``checkCiStatusForSha - gh failure returns Unknown`` () =
     test <@ checkCiStatusForSha run "abc123" = Unknown @>
 
 [<Fact>]
-let ``checkCiStatusForSha - cancelled treated as failure`` () =
+let ``checkCiStatusForSha - a cancelled, skipped, neutral or stale run alone is no verdict, waited for like no run``
+    ()
+    =
+    // GitHub cancels a run a newer one for the same ref supersedes, and a duplicate can be
+    // cancelled by hand: neither says anything about the code (AUTOMATION-1750).
+    for conclusion in [ "cancelled"; "skipped"; "neutral"; "stale" ] do
+        let json =
+            $"[{{\"databaseId\":11,\"attempt\":1,\"createdAt\":\"2026-08-31T12:00:00Z\",\"workflowDatabaseId\":77,\"status\":\"completed\",\"conclusion\":\"%s{conclusion}\",\"name\":\"CI\",\"url\":\"run\"}}]"
+
+        let run = fakeRun [ ("gh", ghCiArgs "abc123", Success json) ]
+        test <@ (conclusion, checkCiStatusForSha run "abc123") = (conclusion, NoRuns) @>
+
+[<Fact>]
+let ``checkCiStatusForSha - a green run beside a cancelled one passes`` () =
     let json =
-        """[{"status":"completed","conclusion":"cancelled","name":"CI","url":"https://example.com/1"}]"""
+        """[{"databaseId":11,"attempt":1,"createdAt":"2026-08-31T12:00:00Z","workflowDatabaseId":77,"status":"completed","conclusion":"success","name":"CI","url":"green"},{"databaseId":12,"attempt":1,"createdAt":"2026-08-31T13:00:00Z","workflowDatabaseId":77,"status":"completed","conclusion":"cancelled","name":"CI","url":"cancelled"}]"""
 
     let run = fakeRun [ ("gh", ghCiArgs "abc123", Success json) ]
-    let result = checkCiStatusForSha run "abc123"
-
-    test
-        <@
-            match result with
-            | Failed runs -> runs.Length = 1
-            | _ -> false
-        @>
+    test <@ checkCiStatusForSha run "abc123" = Passed @>
 
 // getCiStatus
 
