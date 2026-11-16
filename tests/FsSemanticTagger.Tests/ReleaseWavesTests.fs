@@ -386,3 +386,45 @@ let ``a dry run prints the publication waves without pushing`` () =
         test <@ result = 0 @>
         test <@ repo.Timeline.Count = 0 @>
         test <@ output.Contains "  1. TestPrune\n  2. Cli" @>)
+
+[<Fact>]
+let ``a bump of versions and changelogs over a green parent pushes its tags without waiting for its own CI`` () =
+    // AUTOMATION-1750: the bump commit (main) changes only Lib's <Version> and changelog over a
+    // parent whose full CI passed, so the tags go at once and the bump's own CI is reported after.
+    withRepo [ "Lib", [] ] (fun repo ->
+        // A single-package repository keeps its changelog at the root.
+        File.WriteAllText(
+            Path.Combine(repo.Root, "CHANGELOG.md"),
+            "# Changelog\n\n## Unreleased\n\n- feat: a change\n"
+        )
+
+        let bump = String.replicate 40 "b"
+        let parent = String.replicate 40 "a"
+
+        let fsproj (version: string) =
+            $"<Project><PropertyGroup><Version>%s{version}</Version></PropertyGroup><ItemGroup></ItemGroup></Project>"
+
+        let run (cmd: string) (args: string) =
+            match cmd, args with
+            | "jj", "log -r main --no-graph -T commit_id" -> Success bump
+            | "jj", "log -r main- --no-graph -T commit_id" -> Success parent
+            | "jj", a when a = $"diff --from %s{parent} --to %s{bump} --name-only" ->
+                Success "src/Lib/Lib.fsproj\nCHANGELOG.md"
+            | "jj", a when a = $"file show -r \"%s{parent}\" \"src/Lib/Lib.fsproj\"" -> Success(fsproj "0.0.0")
+            | "jj", a when a = $"file show -r \"%s{bump}\" \"src/Lib/Lib.fsproj\"" -> Success(fsproj "0.1.0-alpha.1")
+            | _ -> remote repo.Timeline [] cmd args
+
+        let checkFeed = feed repo.Timeline (Map [ "Lib", 1 ])
+
+        let output, result =
+            withCapturedConsole (fun () ->
+                release
+                    { releaseInput repo [] checkFeed false PushTags with
+                        Run = run
+                    })
+
+        test <@ result = 0 @>
+        test <@ pushes repo.Timeline = [ "push lib-v0.1.0-alpha.1" ] @>
+        test <@ output.Contains "without waiting for its own CI" @>
+        test <@ not (output.Contains "Waiting for CI on the version-bump commit") @>
+        test <@ output.Contains "The version-bump commit's own CI passed." @>)

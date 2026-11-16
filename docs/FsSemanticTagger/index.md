@@ -124,6 +124,7 @@ The `release` command:
 11. Promotes the `## Unreleased` section to `## <version> - YYYY-MM-DD` and inserts a fresh empty `## Unreleased` above it
 12. Commits the bump and moves `main` to it; if jj refuses the move, the unpushed bump commit is abandoned (or the release says exactly what was left)
 13. Creates a VCS tag (supports both Git and [Jujutsu](https://jj-vcs.github.io/jj/))
+14. Clears the version-bump commit for its tags. When it has one parent, changes nothing but the released projects' `<Version>` elements and their changelogs over it (each fsproj read at both commits and compared with its version masked; any other path refuses), and that parent passed the full CI, the tags go at once: the code they name was proven green. The release then reports the bump commit's own CI when the release ends, and exits **3** if it went red (the release is out: do not re-run it; roll forward). Anything else waits for the bump commit's own full CI, as before.
 
 ### Fail-fast CI precondition
 
@@ -133,8 +134,8 @@ Releasing needs the release commit's **CI coverage artifact** (to reconcile the 
 |---|---|
 | Not on the remote (not pushed) | **Fail fast in ~1 second** with: *"the release commit isn't on the remote … Push the branch and wait for CI, then re-run — or pass `--push`."* It is never mislabelled as a CI failure. |
 | Pushed, CI queued / running | **Waits** (polls) for the run to finish — you don't hand-roll a `gh run watch` loop. The wait is sized from this repo's CI history (see below); a run still going when it runs out refuses the release. |
-| Pushed, CI passed | Proceeds. |
-| Pushed, CI failed | Errors *"CI failed for the release commit"* and names the failing run's URL — the real failure case, kept distinct from "not pushed". |
+| Pushed, CI passed | Proceeds, even while another run of the same commit is still going (fast-forwarding `main` to a commit CI passed on its branch starts one). |
+| Pushed, CI failed | Errors *"CI failed for the release commit"* and names the failing run's URL — the real failure case, kept distinct from "not pushed". A completed `failure`, `timed_out`, `startup_failure` or `action_required` run on the exact commit (or a conclusion the tagger does not know) refuses, even if a later run passed: a red is never rerun to green. A `cancelled`, `skipped`, `neutral` or `stale` run is no verdict: it is ignored, and a commit with only such runs is waited for like one whose CI has not started. |
 
 How long it waits: twice the median duration of the last 10 successful runs of `.github/workflows/ci.yml` (from `gh run list --status success`), and never less than 5 minutes. An answer from `gh` that cannot be read is asked again on the next poll rather than ending the wait; only 20 unreadable answers in a row (five minutes at the 15-second poll) stop it. The wait's first line prints the expected duration and the budget, e.g. *"(expected ~16m39s, the median of the last 8 successful CI runs; giving up after 33m18s)"*. With no successful run yet, it waits 5 minutes; when the history cannot be read, 15. `ciTimeoutMinutes` in `semantic-tagger.json` replaces the estimate with a fixed budget. Either way, CI that fails or is still running when the budget ends refuses the release.
 
@@ -312,6 +313,7 @@ After the tags are pushed, `release` confirms each one triggered a run of a publ
 |------|----------------|----------|------------|
 | A publish workflow run for each tag | 10 min (121 asks, 5s apart) | `FSST_RUN_POLL_ATTEMPTS`, `FSST_RUN_POLL_DELAY_MS` | exit **2** — the tag IS pushed, the run may still be starting; do **not** delete and re-push the tag (that publishes twice). A run that exists and has already failed is exit **1**. |
 | The package(s) on NuGet | 40 min (161 checks, 15s apart) | `FSHW_NUGET_PROBE_ATTEMPTS`, `FSHW_NUGET_PROBE_DELAY_MS` | exit **2** — the tags and their Release runs are the evidence of the publish; re-running the same release command resumes instead of re-publishing. |
+| The version-bump commit's own CI, when its tags went without waiting for it (step 14) | none: checked once when the release ends | — | exit **3** if it went red — the packages ARE published; do not re-run the release, roll forward. A wave that did not finish keeps its own exit code. |
 
 Exit `0` means every tag has a run, every package with dependents in the release is restorable, and (unless `--skip-nuget-wait`) every package of the last wave is on the index. Exit `1` is reserved for a release that demonstrably did not happen: CI red, a tag push that failed, or a publish run that finished without publishing.
 

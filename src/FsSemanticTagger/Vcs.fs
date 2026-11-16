@@ -402,7 +402,9 @@ let private verdictOf (conclusion: RunConclusion) : Verdict =
 ///   started;
 /// - runs only in a state the tagger does not know refuse.
 /// Runs of more than one workflow under the one path refuse too.
-let checkCiStatusForSha (run: string -> string -> CommandResult) (sha: string) : CiStatus =
+/// `checkCiStatusForSha`, printing why it refused only when `report` is set: a check made after
+/// the release is out (`Release.reportBumpCi`) states its own outcome.
+let checkCiStatusOf (report: bool) (run: string -> string -> CommandResult) (sha: string) : CiStatus =
     let args =
         sprintf
             "run list --workflow .github/workflows/ci.yml --commit %s --json status,conclusion,name,url,databaseId,attempt,createdAt,workflowDatabaseId"
@@ -415,25 +417,26 @@ let checkCiStatusForSha (run: string -> string -> CommandResult) (sha: string) :
         let runs = parseCiRuns output
 
         let reportRefusal reason (deciding: CiRunInfo list) =
-            printfn "Required CI workflow refused the release for %s: %s" sha reason
+            if report then
+                printfn "Required CI workflow refused the release for %s: %s" sha reason
 
-            for workflowRun in runs do
-                let decision =
-                    if deciding |> List.contains workflowRun then
-                        "deciding run"
-                    else
-                        "considered"
+                for workflowRun in runs do
+                    let decision =
+                        if deciding |> List.contains workflowRun then
+                            "deciding run"
+                        else
+                            "considered"
 
-                printfn
-                    "  run %s attempt %d workflow %A: %s — created=%O status=%A conclusion=%A — %s"
-                    workflowRun.RunId
-                    workflowRun.Attempt
-                    workflowRun.WorkflowId
-                    workflowRun.Name
-                    workflowRun.CreatedAt
-                    workflowRun.Status
-                    workflowRun.Conclusion
-                    decision
+                    printfn
+                        "  run %s attempt %d workflow %A: %s — created=%O status=%A conclusion=%A — %s"
+                        workflowRun.RunId
+                        workflowRun.Attempt
+                        workflowRun.WorkflowId
+                        workflowRun.Name
+                        workflowRun.CreatedAt
+                        workflowRun.Status
+                        workflowRun.Conclusion
+                        decision
 
         let completed = runs |> List.filter (fun r -> r.Status = Completed)
 
@@ -472,6 +475,9 @@ let checkCiStatusForSha (run: string -> string -> CommandResult) (sha: string) :
             Failed runs
     | Failure _ -> Unknown
 
+/// Whether the required CI workflow passed on exactly `sha` (`checkCiStatusOf`), printing why
+/// when it refuses.
+let checkCiStatusForSha (run: string -> string -> CommandResult) (sha: string) : CiStatus = checkCiStatusOf true run sha
 
 /// How long each of the last `limit` successful runs of the required CI workflow
 /// took, newest first: from the run's start to its last update, which for a

@@ -595,41 +595,6 @@ let private pushTagsInWaves (input: ReleaseInput) (waves: (PackageConfig * Versi
 
     publish waves
 
-let private waitForCiAndPushTags
-    (input: ReleaseInput)
-    (graph: ReleaseOrder.ReleaseGraph)
-    (bumps: (PackageConfig * Version) list)
-    : int =
-    match
-        waitForCiWithin
-            input.Run
-            input.CiPollIntervalMs
-            (input.CiWait())
-            "Waiting for CI on the version-bump commit to pass before pushing the tag"
-    with
-    | Passed -> pushTagsInWaves input (ReleaseOrder.waves graph (fun (pkg: PackageConfig, _) -> pkg.Name) bumps)
-    | Failed runs ->
-        printfn "Error: CI failed on version bump commit. Not pushing tags."
-
-        for r in runs do
-            printfn "  FAILED: %s — %s" r.Name r.Url
-
-        1
-    | InProgress _ ->
-        printfn "Error: CI still running after timeout. Not pushing tags."
-
-        printfn
-            "Run the release command again to resume: it waits for this commit's CI again, and reuses the consumer canary's recorded pass."
-
-        1
-    | _ ->
-        printfn "Error: could not determine CI status. Not pushing tags."
-
-        printfn
-            "Run the release command again to resume: it waits for this commit's CI again, and reuses the consumer canary's recorded pass."
-
-        1
-
 /// What a dry run says about the canary: the consumers it would exercise.
 let private describeConsumerCanary (input: ReleaseInput) (plan: (PackageConfig * Version) list) : unit =
     printfn ""
@@ -1572,9 +1537,11 @@ let internal repoRelative (config: ToolConfig) (path: string) : string =
 /// `plan`: a changelog it promotes, or one of its fsprojs changed in nothing but
 /// `<Version>`? What the release writes between the canary and its bump commit
 /// (`executeBumps`) is exactly that, so a canary verdict taken on `baseRev` holds
-/// for `head`.
+/// for `head`. The version-bump commit's CI gate asks the same of the bump over its parent
+/// (`bumpOverGreenParent`).
 let internal bumpOnlySince
-    (input: ReleaseInput)
+    (run: string -> string -> CommandResult)
+    (config: ToolConfig)
     (plan: (PackageConfig * Version) list)
     (head: string)
     (baseRev: string)
@@ -1584,18 +1551,142 @@ let internal bumpOnlySince
     let fsprojs =
         packages
         |> List.collect packageFsprojs
-        |> List.map (repoRelative input.Config)
+        |> List.map (repoRelative config)
         |> Set.ofList
 
     let changelogs =
         packages
-        |> List.collect (changelogPathsFor input.Config >> List.map snd)
-        |> List.map (repoRelative input.Config)
+        |> List.collect (changelogPathsFor config >> List.map snd)
+        |> List.map (repoRelative config)
         |> Set.ofList
 
-    match pathsChangedBetween input.Run baseRev head with
+    match pathsChangedBetween run baseRev head with
     | Error reason -> Error(sprintf "could not compare %s with %s (%s)" baseRev head reason)
-    | Ok changed -> CanaryVerdict.bumpOnly fsprojs changelogs changed (fileAtRevision input.Run) baseRev head
+    | Ok changed -> CanaryVerdict.bumpOnly fsprojs changelogs changed (fileAtRevision run) baseRev head
+
+/// `Ok(bump, parent)` when the version-bump commit (`main`) has one parent, changes only `bumps`'
+/// `<Version>` elements and changelogs over it (`bumpOnlySince`: each fsproj's text at both
+/// revisions, compared with its version masked, and any other path refused), and that parent passed
+/// the full CI. The code the tags name was then proven green, so they need not wait for a second
+/// full run of it (AUTOMATION-1750). `Error` says why the bump waits for its own CI instead.
+let internal bumpOverGreenParent
+    (run: string -> string -> CommandResult)
+    (config: ToolConfig)
+    (bumps: (PackageConfig * Version) list)
+    : Result<string * string, string> =
+    let commit (revset: string) =
+        match run "jj" $"log -r %s{revset} --no-graph -T commit_id" with
+        | Success sha when sha.Trim().Length = 40 -> Some(sha.Trim())
+        | _ -> None
+
+    match commit "main", commit "main-" with
+    | Some bump, Some parent ->
+        bumpOnlySince run config bumps bump parent
+        |> Result.bind (fun () ->
+            match Vcs.checkCiStatusOf false run parent with
+            | Vcs.Passed -> Ok(bump, parent)
+            | Vcs.Failed _ -> Error $"its parent %s{parent} failed CI"
+            | Vcs.InProgress _ -> Error $"its parent %s{parent}'s CI is still running"
+            | Vcs.NoRuns -> Error $"its parent %s{parent} has no CI run"
+            | Vcs.Unknown -> Error $"its parent %s{parent}'s CI could not be read")
+    | _ -> Error "the bump commit and a single parent of it could not be read"
+
+/// The exit code of a release that published, and whose version-bump commit then went red on its
+/// own CI. Distinct from 1 (the release did not happen) and 2 (a post-push wait gave up), so a
+/// calling script does not read it as a failed release and re-run it: the packages are out.
+[<Literal>]
+let PublishedBumpCiRed = 3
+
+/// After tags pushed without waiting for the bump commit's own CI: what that CI says now. A red
+/// there after the release is out is rolled forward, and exits `PublishedBumpCiRed`; one still
+/// going is named, to be seen on main's CI.
+let internal reportBumpCi (run: string -> string -> CommandResult) (bump: string) (code: int) : int =
+    match Vcs.checkCiStatusOf false run bump with
+    | Vcs.Passed ->
+        printfn "The version-bump commit's own CI passed."
+        code
+    | Vcs.Failed runs ->
+        printfn
+            "Published, but the version-bump commit %s failed its own CI after its tags were pushed (exit %d). The packages are out: do not re-run the release; roll forward with a fix."
+            bump
+            PublishedBumpCiRed
+
+        for r in runs do
+            printfn "  FAILED: %s — %s" r.Name r.Url
+
+        // A wave that did not finish (1, 2) still says so: re-running the release is then right.
+        if code = 0 then PublishedBumpCiRed else code
+    | Vcs.InProgress runs ->
+        printfn "The version-bump commit's own CI is still running; a red there shows on main's CI:"
+
+        for r in runs do
+            printfn "  %s — %s" r.Name r.Url
+
+        code
+    | Vcs.NoRuns
+    | Vcs.Unknown ->
+        printfn
+            "The version-bump commit's own CI was not found yet; it runs on main: gh run list --workflow .github/workflows/ci.yml --commit %s"
+            bump
+
+        code
+
+/// The full wait: the version-bump commit's own CI, then the tags.
+let private waitForBumpCiAndPush (input: ReleaseInput) (push: unit -> int) : int =
+    match
+        waitForCiWithin
+            input.Run
+            input.CiPollIntervalMs
+            (input.CiWait())
+            "Waiting for CI on the version-bump commit to pass before pushing the tag"
+    with
+    | Passed -> push ()
+    | Failed runs ->
+        printfn "Error: CI failed on version bump commit. Not pushing tags."
+
+        for r in runs do
+            printfn "  FAILED: %s — %s" r.Name r.Url
+
+        1
+    | InProgress _ ->
+        printfn "Error: CI still running after timeout. Not pushing tags."
+
+        printfn
+            "Run the release command again to resume: it waits for this commit's CI again, and reuses the consumer canary's recorded pass."
+
+        1
+    | _ ->
+        printfn "Error: could not determine CI status. Not pushing tags."
+
+        printfn
+            "Run the release command again to resume: it waits for this commit's CI again, and reuses the consumer canary's recorded pass."
+
+        1
+
+/// Push the tags once the version-bump commit is cleared: at once when it provably changes only
+/// versions and changelogs over a green parent (`bumpOverGreenParent`), otherwise after its own
+/// full CI (`waitForBumpCiAndPush`).
+let private waitForCiAndPushTags
+    (input: ReleaseInput)
+    (graph: ReleaseOrder.ReleaseGraph)
+    (bumps: (PackageConfig * Version) list)
+    : int =
+    let push () =
+        pushTagsInWaves input (ReleaseOrder.waves graph (fun (pkg: PackageConfig, _) -> pkg.Name) bumps)
+
+    match bumpOverGreenParent input.Run input.Config bumps with
+    | Ok(bump, parent) ->
+        printfn
+            "The version-bump commit %s changes only versions and changelogs over %s, whose CI passed: pushing the tags without waiting for its own CI. It runs on main: gh run list --workflow .github/workflows/ci.yml --commit %s"
+            bump
+            parent
+            bump
+
+        push () |> reportBumpCi input.Run bump
+    | Error reason ->
+        printfn "The version-bump commit waits for its own CI: %s" reason
+        waitForBumpCiAndPush input push
+
 
 /// Run the consumer canary on the plan. Called before anything is written or
 /// pushed, so a refusal leaves nothing to undo. The verdict — including a
@@ -1623,7 +1714,7 @@ let private consumerCanaryGate
         |> Option.map (fun head ->
             {
                 Head = head
-                BumpOnlySince = bumpOnlySince input plan head
+                BumpOnlySince = bumpOnlySince input.Run input.Config plan head
             })
 
     match ConsumerCanary.decideWith input.Canary input.Config.RootDir context content plan with

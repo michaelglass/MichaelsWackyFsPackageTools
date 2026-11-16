@@ -38,6 +38,7 @@
     <Compile Include="ResumedReleaseTests.fs" />
     <Compile Include="OrphanedBumpTests.fs" />
     <Compile Include="BumpTests.fs" />
+    <Compile Include="BumpGateTests.fs" />
     <Compile Include="DeclaredBumpTests.fs" />
     <Compile Include="ProgramTests.fs" />
     <Compile Include="GrammarDiffSpec.fs" />
