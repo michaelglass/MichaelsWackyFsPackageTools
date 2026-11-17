@@ -24,6 +24,7 @@
     <Compile Include="ApiTests.fs" />
     <Compile Include="GrammarBuilders.fs" />
     <Compile Include="ConfigTests.fs" />
+    <Compile Include="../Shared/GitDirTests.fs" Link="GitDirTests.fs" />
     <Compile Include="ShellTests.fs" />
     <Compile Include="VcsTests.fs" />
     <Compile Include="CiWaitTests.fs" />
