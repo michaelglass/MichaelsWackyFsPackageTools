@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: **a jj workspace of a git-colocated repository resolves to that repository's `.git`.** A colocated repo keeps no `.jj/repo/store/git`; its store names the checkout's `.git` in `git_target`. A workspace of it (remote-ci's `ci-fresh-*`) walked up to the parent and left the repository to git's own discovery, which found the PARENT worktree (every tracked path under an ignored `.workspaces/` read as gitignored) or, under `GIT_CEILING_DIRECTORIES`, nothing, so fsprojlint skipped its RepositoryUrl and gitignored-history checks (AUTOMATION-1764).
+
 ## 0.10.0-alpha.23 - 2026-11-05
 
 - chore: relicense under MPL-2.0

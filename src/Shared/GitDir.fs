@@ -14,7 +14,9 @@ open System.IO
 /// ancestor that is a repo root decides the result:
 ///   * a `.git` entry (dir or file) -> None: a native git checkout, let git's
 ///     own discovery handle GIT_DIR; do not override it.
-///   * a `.jj` dir -> Some <store/git>: `<root>/.jj/repo` is either a directory
+///   * a `.jj` dir -> Some <store/git>, or for a colocated repo, whose store has no `git`
+///     directory, the `.git` its `store/git_target` names (relative to the store, or absolute).
+///     `<root>/.jj/repo` is either a directory
 ///     (default checkout) or a small ASCII FILE whose contents are a path
 ///     (usually relative to `<root>/.jj/`) pointing at the real repo dir
 ///     (secondary workspace created by `jj workspace add`).
@@ -42,8 +44,29 @@ let internal resolveGitDir (startDir: string) : string option =
                 None
 
         realRepo
-        |> Option.map (fun repo -> Path.GetFullPath(Path.Combine(repo, "store", "git")))
-        |> Option.filter Directory.Exists
+        |> Option.bind (fun repo ->
+            let store = Path.Combine(repo, "store")
+            let own = Path.GetFullPath(Path.Combine(store, "git"))
+            let target = Path.Combine(store, "git_target")
+
+            if Directory.Exists own then
+                Some own
+            elif File.Exists target then
+                // A colocated repo: its store names the checkout's `.git`, relative to the
+                // store (AUTOMATION-1764). A workspace of it resolves there too.
+                let pointer = File.ReadAllText(target).Trim()
+
+                Some(
+                    Path.GetFullPath(
+                        if Path.IsPathRooted pointer then
+                            pointer
+                        else
+                            Path.Combine(store, pointer)
+                    )
+                )
+                |> Option.filter Directory.Exists
+            else
+                None)
 
     let rec walk (dir: string) : string option =
         let dotGit = Path.Combine(dir, ".git")
